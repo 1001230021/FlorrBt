@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="FlorrBt.vcxproj" Id="a5863369-b891-4ce9-9fdf-fee6e58a565f" />
+</Solution>
