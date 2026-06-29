@@ -1,5 +1,7 @@
 #include "states.h"
 
+#include <cmath>
+
 // =========== Posion ===========
 CPoisonState::CPoisonState(CMobBase* owner, float timer, float basicDmg, ERarity rarity, CEntity* applier)
     : CState(owner, timer, rarity), m_BasicDmg(basicDmg), m_pApplier(applier)
@@ -31,7 +33,7 @@ CPoisonState::CPoisonState(CMobBase* owner, float timer, float basicDmg, ERarity
 void CPoisonState::Tick(float dt)
 {
     if (!m_IsValid || !m_pOwner) return;
-    m_pOwner->TakeDamage(m_BasicDmg * dt * pow(3, GetLevel(m_Rarity) - 1), m_pApplier, EDamageType::Poison);
+    m_pOwner->TakeDamage(m_BasicDmg * dt * std::pow(3, GetLevel(m_Rarity) - 1), m_pApplier, EDamageType::Poison);
     m_Timer -= dt;
 }
 

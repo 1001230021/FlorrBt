@@ -1,8 +1,8 @@
 #include <iostream>
 #include <cmath>
 #include "Game/gameworld.h"
-#include "Game/Entities/flower.h"
-#include "Game/Entities/petals/petals_behavior.h"
+#include "Game/entities/flower.h"
+#include "Game/entities/petals/petals_behavior.h"
 #include "../Shared/shared.h"
 
 

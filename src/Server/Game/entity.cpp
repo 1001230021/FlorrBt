@@ -1,5 +1,7 @@
 #include "entity.h"
 
+#include <cmath>
+
 bool CEntity::isCollision(const CEntity& other) const
 {
     sf::Vector2f diff = m_Pos - other.m_Pos;
