@@ -1,6 +1,6 @@
-#include "petals/petal.h"
 #include "flower.h"
 #include "../../../Shared/shared.h"
+#include "petals/petal.h"
 
 void CFlower::Tick(float dt)
 {
@@ -13,7 +13,8 @@ void CFlower::Tick(float dt)
         if (!slot.m_Available || slot.m_Banned)
         {
             for (auto* cp : slot.m_pPetals)
-                if (cp) cp->m_IsMarkedForDes = true;
+                if (cp)
+                    cp->m_IsMarkedForDes = true;
             continue;
         }
 
@@ -33,13 +34,14 @@ void CFlower::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
 {
     for (auto& slot : this->GetSlots())
     {
-        if (!slot.m_pProto || !slot.m_pProto->m_pBehavior) continue;
+        if (!slot.m_pProto || !slot.m_pProto->m_pBehavior)
+            continue;
         for (auto* petal : slot.m_pPetals)
         {
             if (petal && !petal->m_IsMarkedForDes)
             {
-                slot.m_pProto->m_pBehavior->OnFlowerTakeDamage
-                    (petal, slot.m_StoredRarity, this, dmg, damage_type, attacker);
+                slot.m_pProto->m_pBehavior->OnFlowerTakeDamage(petal, slot.m_StoredRarity, this, dmg, damage_type,
+                                                               attacker);
             }
         }
     }
@@ -69,19 +71,23 @@ void CFlower::RebuildFinalStats()
 
 void CFlower::EquipPetal(int slotIdx, const CPetalPrototype* proto, ERarity rarity)
 {
-    if (slotIdx < 0 || slotIdx >= static_cast<int>(m_Slots.size())) return;
-    if (!m_Slots[slotIdx].m_Available) return;
-    if (!proto || !proto->m_pBehavior) return;
+    if (slotIdx < 0 || slotIdx >= static_cast<int>(m_Slots.size()))
+        return;
+    if (!m_Slots[slotIdx].m_Available)
+        return;
+    if (!proto || !proto->m_pBehavior)
+        return;
 
     m_Slots[slotIdx].SetPetal(proto, slotIdx, rarity);
-    
+
     if (!proto->m_pBehavior->GetPetalStats(rarity).stack)
         ApplyExclusivity(proto->m_Type);
 }
 
 void CFlower::UnequipPetal(int slotIdx)
 {
-    if (slotIdx < 0 || slotIdx >= static_cast<int>(m_Slots.size())) return;
+    if (slotIdx < 0 || slotIdx >= static_cast<int>(m_Slots.size()))
+        return;
 
     EPetalType oldType = EPetalType::None;
     bool isExclusive = false;
@@ -116,9 +122,12 @@ void CFlower::ApplyExclusivity(EPetalType type)
 
     for (auto& slot : m_Slots)
     {
-        if (!slot.m_pProto || slot.m_pProto->m_Type != type) continue;
-        if (!slot.m_pProto->m_pBehavior) continue;
-        if (slot.m_pProto->m_pBehavior->GetPetalStats(slot.m_StoredRarity).stack) continue;
+        if (!slot.m_pProto || slot.m_pProto->m_Type != type)
+            continue;
+        if (!slot.m_pProto->m_pBehavior)
+            continue;
+        if (slot.m_pProto->m_pBehavior->GetPetalStats(slot.m_StoredRarity).stack)
+            continue;
 
         int rarityLevel = static_cast<int>(slot.m_StoredRarity);
         if (rarityLevel > best_rarity)
@@ -130,9 +139,12 @@ void CFlower::ApplyExclusivity(EPetalType type)
 
     for (auto& slot : m_Slots)
     {
-        if (!slot.m_pProto || slot.m_pProto->m_Type != type) continue;
-        if (!slot.m_pProto->m_pBehavior) continue;
-        if (slot.m_pProto->m_pBehavior->GetPetalStats(slot.m_StoredRarity).stack) continue;
+        if (!slot.m_pProto || slot.m_pProto->m_Type != type)
+            continue;
+        if (!slot.m_pProto->m_pBehavior)
+            continue;
+        if (slot.m_pProto->m_pBehavior->GetPetalStats(slot.m_StoredRarity).stack)
+            continue;
         slot.m_Available = (&slot == best_slot);
     }
 
@@ -140,7 +152,8 @@ void CFlower::ApplyExclusivity(EPetalType type)
     {
         for (auto& slot : m_Slots)
         {
-            if (!slot.m_pProto || slot.m_pProto->m_Type != type) continue;
+            if (!slot.m_pProto || slot.m_pProto->m_Type != type)
+                continue;
             slot.m_Available = true;
         }
     }
@@ -148,7 +161,8 @@ void CFlower::ApplyExclusivity(EPetalType type)
 
 void CFlower::SetBanned(bool banned, int slotIdx)
 {
-    if (slotIdx < 0 || slotIdx >= static_cast<int>(m_Slots.size())) return;
+    if (slotIdx < 0 || slotIdx >= static_cast<int>(m_Slots.size()))
+        return;
     m_Slots[slotIdx].m_Banned = banned;
 }
 

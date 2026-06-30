@@ -2,36 +2,44 @@
 #include "console.h"
 #include "logger.h"
 
-namespace {
-    std::vector<std::string> SplitString(const std::string& str) {
-        std::vector<std::string> args;
-        std::string current;
-        bool inQuotes = false;
+namespace
+{
+std::vector<std::string> SplitString(const std::string& str)
+{
+    std::vector<std::string> args;
+    std::string current;
+    bool inQuotes = false;
 
-        for (char ch : str) {
-            if (ch == '"') {
-                inQuotes = !inQuotes;
-            }
-            else if (std::isspace(ch) && !inQuotes) {
-                if (!current.empty()) {
-                    args.push_back(current);
-                    current.clear();
-                }
-            }
-            else {
-                current += ch;
+    for (char ch : str)
+    {
+        if (ch == '"')
+        {
+            inQuotes = !inQuotes;
+        }
+        else if (std::isspace(ch) && !inQuotes)
+        {
+            if (!current.empty())
+            {
+                args.push_back(current);
+                current.clear();
             }
         }
-        if (!current.empty()) {
-            args.push_back(current);
+        else
+        {
+            current += ch;
         }
-        return args;
     }
+    if (!current.empty())
+    {
+        args.push_back(current);
+    }
+    return args;
 }
+} // namespace
 
 void CConsole::RegisterCommand(std::string name, CallBack cb)
 {
-    auto [it, inserted] = m_Cmds.insert({name, cb});
+    auto [it, inserted] = m_Cmds.insert({ name, cb });
     if (!inserted)
     {
         it->second = std::move(cb);

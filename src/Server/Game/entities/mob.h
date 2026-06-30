@@ -1,14 +1,15 @@
 #pragma once
-#include "../entity.h"
 #include "../../../Shared/shared.h"
+#include "../entity.h"
 #include "../state.h"
 #include <memory>
 #include <vector>
 
-class CMobBase : public CEntity {
-public:
-    CMobBase(CGameWorld* pworld, float x, float y, float r)
-        : CEntity(pworld, x, y, r) {
+class CMobBase : public CEntity
+{
+  public:
+    CMobBase(CGameWorld* pworld, float x, float y, float r) : CEntity(pworld, x, y, r)
+    {
     }
 
     virtual ~CMobBase();
@@ -21,14 +22,14 @@ public:
     virtual const SMobStats* GetBaseStats() = 0;
     virtual const SMobStats* GetFinalStats() = 0;
 
-    template<typename TState>
-    std::vector<TState*> FindStates()
+    template <typename TState> std::vector<TState*> FindStates()
     {
         std::vector<TState*> vt;
         for (auto& state : m_States)
         {
             auto* casted = dynamic_cast<TState*>(state.get());
-            if (casted) vt.push_back(casted);
+            if (casted)
+                vt.push_back(casted);
         }
         return vt;
     }
@@ -37,13 +38,13 @@ public:
 
     sf::Vector2f m_Vel = { 0.f, 0.f };
 
-protected:
+  protected:
     std::vector<std::unique_ptr<CState>> m_States;
 };
 
-template <typename TStats = SMobStats>
-class CMob : public CMobBase {
-public:
+template <typename TStats = SMobStats> class CMob : public CMobBase
+{
+  public:
     CMob(CGameWorld* pworld, float x, float y, float r, ERarity rarity, const TStats& stats)
         : CMobBase(pworld, x, y, r), m_Rarity(rarity), m_BaseStats(stats), m_FinalStats(stats)
     {
@@ -52,13 +53,20 @@ public:
 
     virtual ~CMob() override;
 
-    void Tick(float dt) override {
+    void Tick(float dt) override
+    {
         m_Pos += m_Vel * dt;
         TickStates(dt);
     }
 
-    const SMobStats* GetBaseStats() { return m_BaseStats; }
-    const SMobStats* GetFinalStats() { return m_FinalStats; }
+    const SMobStats* GetBaseStats()
+    {
+        return m_BaseStats;
+    }
+    const SMobStats* GetFinalStats()
+    {
+        return m_FinalStats;
+    }
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {

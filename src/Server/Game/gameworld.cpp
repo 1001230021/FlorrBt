@@ -1,5 +1,5 @@
-#include <limits>
 #include "gameworld.h"
+#include <limits>
 
 CGameWorld::~CGameWorld()
 {
@@ -97,7 +97,8 @@ CEntity* CGameWorld::GetEntity(int id) const
 }
 
 CEntity* CGameWorld::FindClosestEntity(const sf::Vector2f& center, float maxRange,
-    std::function<bool(const CEntity*)> filter) const {
+                                       std::function<bool(const CEntity*)> filter) const
+{
     return m_SpatialGrid.FindClosest(center, maxRange, filter);
 }
 

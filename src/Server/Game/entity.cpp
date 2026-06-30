@@ -13,7 +13,7 @@ bool CEntity::isCollision(const CEntity& other) const
 void CEntity::TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type)
 {
     m_Health -= dmg;
-    if(m_Health <= 0)
+    if (m_Health <= 0)
     {
         m_Health = 0;
         m_IsMarkedForDes = true;
