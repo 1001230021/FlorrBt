@@ -4,24 +4,25 @@
 
 void CMeleeController::OnTick(CMobBase* mob, float dt)
 {
-    sf::Vector2f delta_pos = m_TargetPos;
-    float angle = atan2f(delta_pos.x, delta_pos.y);
-    sf::Vector2f target_vel = { mob->GetFinalStats()->max_velocity * cosf(angle),
-                                mob->GetFinalStats()->max_velocity * sinf(angle) };
+    sf::Vector2f delta_pos = m_TargetPos - mob->m_Pos;
+    if (delta_pos != sf::Vector2f(0.f, 0.f))
+        m_Angle = atan2f(delta_pos.y, delta_pos.x);
+    sf::Vector2f target_vel = { mob->GetFinalStats()->max_velocity * cosf(m_Angle),
+                                mob->GetFinalStats()->max_velocity * sinf(m_Angle)};
     sf::Vector2f delta_vel = target_vel - mob->m_Vel;
-    float spu_angle = atan2f(delta_vel.x, delta_vel.y);
-    mob->m_Vel += { mob->GetFinalStats()->acceleration * cosf(spu_angle) * dt,
-                    mob->GetFinalStats()->acceleration * sinf(spu_angle) * dt };
+    if (delta_vel != sf::Vector2f(0.f, 0.f))
+        m_VelAngle = atan2f(delta_vel.y, delta_vel.x);
+    mob->m_Vel += { mob->GetFinalStats()->acceleration * cosf(m_VelAngle) * dt,
+                    mob->GetFinalStats()->acceleration * sinf(m_VelAngle) * dt };
 
     float p = 2.f * m_ChangeTargetCount / target_time;
-    if (CheckChance(p))
+    if (CheckChance(p) || !m_pTarget)
     {
         m_ChangeTargetCount = 0.f;
 
         auto candidates = mob->GameWorld()->GetSpatialGrid().QueryRange(
             mob->m_Pos, mob->GetFinalStats()->search_range * 2.f,
-            [mob](const CEntity* e) -> bool
-            {
+            [mob](const CEntity* e) -> bool {
                 if (e)
                     if (!CheckTeam(e->m_Team, mob->m_Team))
                     {
@@ -35,9 +36,7 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
                             return true;
                         else
                             return false;
-                    }
-                    else
-                    {
+                    } else {
                         return false;
                     }
                 else
@@ -57,16 +56,13 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
         m_pTarget = best_target;
         if (m_pTarget)
             m_TargetPos = m_pTarget->m_Pos;
-        else
-        {
+        else {
             float a = mob->GetFinalStats()->search_range / 8.f;
             sf::Vector2f s = mob->m_Pos - sf::Vector2f(a, a);
             s += sf::Vector2f(GetLimitedRng(0.f, a * 2), GetLimitedRng(0.f, a * 2));
             m_TargetPos = s;
         }
-    }
-    else
-    {
+    } else {
         m_ChangeTargetCount += dt;
     }
 }

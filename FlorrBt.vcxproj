@@ -158,7 +158,13 @@
     <ClInclude Include="src\Server\Game\entity.h" />
     <ClInclude Include="src\Server\Game\gameworld.h" />
     <ClInclude Include="src\Server\Game\states\states.h" />
+    <ClInclude Include="src\Server\Module\console_module.h" />
+    <ClInclude Include="src\Server\Module\module.h" />
+    <ClInclude Include="src\Engine\commands_registry.h" />
+    <ClInclude Include="src\Server\Module\world_module.h" />
+    <ClInclude Include="src\Server\server.h" />
     <ClInclude Include="src\Shared\damage_type.h" />
+    <ClInclude Include="src\Shared\game_config.h" />
     <ClInclude Include="src\Shared\petal_type.h" />
     <ClInclude Include="src\Shared\rarity.h" />
     <ClInclude Include="src\Shared\tools.h" />
@@ -177,6 +183,10 @@
     <ClCompile Include="src\Server\Game\gameworld.cpp" />
     <ClCompile Include="src\Server\Game\states\states.cpp" />
     <ClCompile Include="src\Server\main.cpp" />
+    <ClCompile Include="src\Server\Module\console_module.cpp" />
+    <ClCompile Include="src\Server\Module\world_module.cpp" />
+    <ClCompile Include="src\Server\server.cpp" />
+    <ClCompile Include="src\Shared\commands.cpp" />
     <ClCompile Include="src\Shared\spatial_hash_grid.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

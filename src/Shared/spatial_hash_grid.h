@@ -1,15 +1,18 @@
 #pragma once
 #include "../Server/Game/entity.h"
+#include <cstddef>
 #include <SFML/System/Vector2.hpp>
 #include <functional>
 #include <unordered_map>
 #include <vector>
 
 class CEntity;
+class CGameWorld;
+
 class CSpatialHashGrid
 {
   public:
-    explicit CSpatialHashGrid(float cellSize);
+    explicit CSpatialHashGrid(CGameWorld* world, float cellSize);
 
     void Clear();
     void Insert(CEntity* entity);
@@ -27,5 +30,6 @@ class CSpatialHashGrid
     int CellY(float worldY) const;
 
     float m_CellSize;
-    std::unordered_map<int, std::vector<CEntity*>> m_Grid;
+    std::unordered_map<int, std::vector<int>> m_Grid;
+    CGameWorld* m_pWorld{nullptr};
 };

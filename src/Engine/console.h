@@ -14,6 +14,7 @@ class CConsole
   public:
     void RegisterCommand(std::string name, CallBack cb);
     void ExecuteLine(std::string line);
+    void InstallCommands();
 
     CConsole() = default;
     ~CConsole() = default;

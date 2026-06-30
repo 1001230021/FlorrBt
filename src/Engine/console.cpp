@@ -1,6 +1,7 @@
 #pragma once
 #include "console.h"
 #include "logger.h"
+#include "commands_registry.h"
 
 namespace
 {
@@ -35,7 +36,7 @@ std::vector<std::string> SplitString(const std::string& str)
     }
     return args;
 }
-} // namespace
+}
 
 void CConsole::RegisterCommand(std::string name, CallBack cb)
 {
@@ -64,4 +65,12 @@ void CConsole::ExecuteLine(std::string line)
         it->second(args);
     else
         LOG_WARN("console", "Unknown command " + func_name + ".");
+}
+
+void CConsole::InstallCommands()
+{
+    for (const auto& [name, callback] : GetGlobalCommandRegistry())
+    {
+        RegisterCommand(name, callback);
+    }
 }

@@ -61,7 +61,7 @@ struct SPetalStats
     int copy = 1;
     bool stack = true;
 
-    void ActedOn(SFlowerStats& other)
+    void ActedOn(const SFlowerStats& other)
     {
         health = health * other.petal_health_multiplier;
         damage = damage * other.petal_dmg_multiplier;

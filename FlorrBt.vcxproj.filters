@@ -81,6 +81,24 @@
     <ClInclude Include="src\Shared\tools.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="src\Shared\game_config.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server\Module\module.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Engine\commands_registry.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server\Module\console_module.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server\Module\world_module.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server\server.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Engine\console.cpp">
@@ -114,6 +132,18 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\controllers\melee_controller.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Shared\commands.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Module\console_module.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Module\world_module.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\server.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

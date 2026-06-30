@@ -1,5 +1,8 @@
 #include "spatial_hash_grid.h"
 #include "../Server/Game/entity.h"
+#include <limits>
+#include <cmath>
+#include "../Server/Game/gameworld.h"
 #include <cmath>
 #include <limits>
 
@@ -8,7 +11,7 @@ namespace
 constexpr float GLOBAL_RANGE = -1.0f;
 }
 
-CSpatialHashGrid::CSpatialHashGrid(float cellSize) : m_CellSize(cellSize) {}
+CSpatialHashGrid::CSpatialHashGrid(CGameWorld* world, float cellSize) : m_CellSize(cellSize), m_pWorld(world) {}
 
 void CSpatialHashGrid::Clear()
 {
@@ -21,7 +24,10 @@ void CSpatialHashGrid::Insert(CEntity* entity)
         return;
     int cx = CellX(entity->m_Pos.x);
     int cy = CellY(entity->m_Pos.y);
-    m_Grid[HashCell(cx, cy)].push_back(entity);
+    int id = entity->m_ID;
+    if (id < 0)
+        return;
+    m_Grid[HashCell(cx, cy)].push_back(id);
 }
 
 void CSpatialHashGrid::Rebuild(const std::vector<CEntity*>& entities)
@@ -45,9 +51,12 @@ CEntity* CSpatialHashGrid::FindClosest(const sf::Vector2f& center, float maxRang
     {
         for (const auto& pair : m_Grid)
         {
-            for (CEntity* e : pair.second)
+            for (int id : pair.second)
             {
+                CEntity* e = m_pWorld ? m_pWorld->GetEntity(id) : nullptr;
                 if (!e)
+                    continue;
+                if (e->m_IsMarkedForDes)
                     continue;
                 if (filter && !filter(e))
                     continue;
@@ -77,9 +86,12 @@ CEntity* CSpatialHashGrid::FindClosest(const sf::Vector2f& center, float maxRang
                 if (it == m_Grid.end())
                     continue;
 
-                for (CEntity* e : it->second)
+                for (int id : it->second)
                 {
+                    CEntity* e = m_pWorld ? m_pWorld->GetEntity(id) : nullptr;
                     if (!e)
+                        continue;
+                    if (e->m_IsMarkedForDes)
                         continue;
                     if (filter && !filter(e))
                         continue;
@@ -98,9 +110,12 @@ CEntity* CSpatialHashGrid::FindClosest(const sf::Vector2f& center, float maxRang
         {
             for (const auto& pair : m_Grid)
             {
-                for (CEntity* e : pair.second)
+                for (int id : pair.second)
                 {
+                    CEntity* e = m_pWorld ? m_pWorld->GetEntity(id) : nullptr;
                     if (!e)
+                        continue;
+                    if (e->m_IsMarkedForDes)
                         continue;
                     if (filter && !filter(e))
                         continue;
@@ -119,7 +134,7 @@ CEntity* CSpatialHashGrid::FindClosest(const sf::Vector2f& center, float maxRang
 }
 
 std::vector<CEntity*> CSpatialHashGrid::QueryRange(const sf::Vector2f& center, float radius,
-                                                   std::function<bool(const CEntity*)> filter = nullptr) const
+                                                   std::function<bool(const CEntity*)> filter) const
 {
     std::vector<CEntity*> result;
     if (radius <= 0.f)
@@ -138,9 +153,12 @@ std::vector<CEntity*> CSpatialHashGrid::QueryRange(const sf::Vector2f& center, f
             if (it == m_Grid.end())
                 continue;
 
-            for (CEntity* e : it->second)
+            for (int id : it->second)
             {
+                CEntity* e = m_pWorld ? m_pWorld->GetEntity(id) : nullptr;
                 if (!e)
+                    continue;
+                if (e->m_IsMarkedForDes)
                     continue;
                 if (filter && !filter(e))
                     continue;

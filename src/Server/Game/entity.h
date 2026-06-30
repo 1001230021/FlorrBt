@@ -9,9 +9,7 @@ class CEntity
     CGameWorld* m_pGameWorld;
 
   public:
-    CEntity(CGameWorld* pworld, float x, float y, float r) : m_pGameWorld(pworld), m_Pos(x, y), m_Radius(r)
-    {
-    }
+    CEntity(CGameWorld* pworld, float x, float y, float r) : m_pGameWorld(pworld), m_Pos(x, y), m_Radius(r) {}
     virtual ~CEntity() = default;
 
     CGameWorld* GameWorld()

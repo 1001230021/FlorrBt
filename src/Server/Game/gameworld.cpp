@@ -1,13 +1,10 @@
 #include "gameworld.h"
 #include <limits>
 
+CGameWorld::CGameWorld() : m_SpatialGrid(this, 200.f) {}
+
 CGameWorld::~CGameWorld()
 {
-    for (CEntity* entity : m_pEntities)
-    {
-        if (entity != nullptr)
-            delete entity;
-    }
     m_pEntities.clear();
 }
 
@@ -36,12 +33,15 @@ void CGameWorld::FreeID(int id)
     m_FreeIDs.insert(id);
 }
 
-void CGameWorld::InsertEntity(CEntity* entity)
+void CGameWorld::InsertEntity(std::unique_ptr<CEntity> entity)
 {
+    if (!entity)
+        return;
+
     int id = GetNewID();
 
     if (id >= static_cast<int>(m_pEntities.size()))
-        m_pEntities.resize(id + 1, nullptr);
+        m_pEntities.resize(id + 1);
 
     if (m_pEntities[id] != nullptr)
     {
@@ -54,8 +54,37 @@ void CGameWorld::InsertEntity(CEntity* entity)
         return;
     }
 
-    m_pEntities[id] = entity;
+    entity->m_ID = id;
+    m_pEntities[id] = std::move(entity);
+}
 
+void CGameWorld::InsertEntity(CEntity* entity)
+{
+    if (!entity)
+        return;
+    InsertEntity(std::unique_ptr<CEntity>(entity));
+}
+
+void CGameWorld::InsertNonOwningEntity(CEntity* entity)
+{
+    if (!entity)
+        return;
+
+    int id = GetNewID();
+
+    if (id >= static_cast<int>(m_pEntities.size()))
+        m_pEntities.resize(id + 1);
+
+    if (id >= static_cast<int>(m_pEntityRefs.size()))
+        m_pEntityRefs.resize(id + 1, nullptr);
+
+    if (m_pEntityRefs[id] != nullptr)
+    {
+        LOG_FATAL("gameworld", "Non-owning entity slot " + std::to_string(id) + " already occupied.");
+        return;
+    }
+
+    m_pEntityRefs[id] = entity;
     entity->m_ID = id;
 }
 
@@ -66,7 +95,7 @@ void CGameWorld::RemoveEntity(int id)
         LOG_FATAL("gameworld", "Entity invalid ID " + std::to_string(id));
         return;
     }
-    if (m_pEntities[id] == nullptr)
+    if (!m_pEntities[id])
     {
         LOG_ERROR("gameworld", "Entity ID " + std::to_string(id) + " is already null");
         return;
@@ -75,25 +104,41 @@ void CGameWorld::RemoveEntity(int id)
     m_pEntities[id]->m_IsMarkedForDes = true;
 }
 
-void CGameWorld::Tick(float dt) // 注意：有待完善
+void CGameWorld::Tick(float dt)
 {
-    std::vector<CEntity*> entities = m_pEntities; // 防止迭代器失效
+    std::vector<CEntity*> entities;
+    entities.reserve(m_pEntities.size() + m_pEntityRefs.size());
+    for (const auto& p : m_pEntities)
+        entities.push_back(p.get());
+    for (const auto& r : m_pEntityRefs)
+        entities.push_back(r);
+
+    m_SpatialGrid.Rebuild(entities);
+
     for (CEntity* entity : entities)
     {
         if (entity != nullptr && !entity->m_SkipWorldTick)
             entity->Tick(dt);
     }
 
-    m_SpatialGrid.Rebuild(entities);
-
     Cleanup();
 }
 
 CEntity* CGameWorld::GetEntity(int id) const
 {
-    if (id < 0 || id >= static_cast<int>(m_pEntities.size()))
+    if (id < 0)
         return nullptr;
-    return m_pEntities[id];
+
+    if (id < static_cast<int>(m_pEntities.size()))
+    {
+        if (m_pEntities[id])
+            return m_pEntities[id].get();
+    }
+
+    if (id < static_cast<int>(m_pEntityRefs.size()))
+        return m_pEntityRefs[id];
+
+    return nullptr;
 }
 
 CEntity* CGameWorld::FindClosestEntity(const sf::Vector2f& center, float maxRange,
@@ -106,11 +151,22 @@ void CGameWorld::Cleanup()
 {
     for (size_t i = 0; i < m_pEntities.size(); ++i)
     {
-        if (m_pEntities[i] != nullptr && m_pEntities[i]->m_IsMarkedForDes)
+        if (m_pEntities[i] && m_pEntities[i]->m_IsMarkedForDes)
         {
             FreeID(m_pEntities[i]->m_ID);
-            delete m_pEntities[i];
-            m_pEntities[i] = nullptr;
+            m_pEntities[i].reset();
         }
+    }
+
+    for (auto it = m_pEntityRefs.begin(); it != m_pEntityRefs.end();)
+    {
+        if (*it && (*it)->m_IsMarkedForDes)
+        {
+            FreeID((*it)->m_ID);
+            *it = nullptr;
+            ++it;
+        }
+        else
+            ++it;
     }
 }

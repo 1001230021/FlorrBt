@@ -2,6 +2,7 @@
 #include "../../../Shared/shared.h"
 #include "../entity.h"
 #include "../state.h"
+#include "../controller.h"
 #include <memory>
 #include <vector>
 
@@ -38,6 +39,8 @@ class CMobBase : public CEntity
 
     sf::Vector2f m_Vel = { 0.f, 0.f };
 
+    IController* m_Controller;
+
   protected:
     std::vector<std::unique_ptr<CState>> m_States;
 };
@@ -59,14 +62,8 @@ template <typename TStats = SMobStats> class CMob : public CMobBase
         TickStates(dt);
     }
 
-    const SMobStats* GetBaseStats()
-    {
-        return m_BaseStats;
-    }
-    const SMobStats* GetFinalStats()
-    {
-        return m_FinalStats;
-    }
+    const TStats* GetBaseStats() { return &m_BaseStats; }
+    const TStats* GetFinalStats() { return &m_FinalStats; }
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {

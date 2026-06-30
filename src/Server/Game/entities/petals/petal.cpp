@@ -18,7 +18,7 @@ void CPetal::Tick(float dt)
     if (flower)
     {
         m_FinalPetalStats = m_BasePetalStats;
-        m_FinalPetalStats.ActedOn(flower->GetStats());
+        m_FinalPetalStats.ActedOn(*flower->GetFinalStats());
     }
     CProjectile::Tick(dt);
 }
@@ -49,7 +49,7 @@ void CPetalSlot::SpawnCopy(int copyIndex, CFlower* flower)
     {
         pPet->m_CopyIndex = copyIndex;
         m_pPetals[copyIndex] = pPet;
-        flower->GameWorld()->InsertEntity(pPet);
+        flower->GameWorld()->InsertNonOwningEntity(pPet);
         m_pProto->m_pBehavior->OnPetalSpawned(pPet, m_StoredRarity, flower);
     }
 }
@@ -100,7 +100,7 @@ void CPetalSlot::Tick(float dt, CFlower* flower)
     {
         if (m_ReloadTimers[i] > 0.0f)
         {
-            float mul = flower->GetStats().petal_reload_multiplier;
+            float mul = flower->GetFinalStats()->detection_multiplier;
             if (mul < 0.001f) mul = 0.001f;
             m_ReloadTimers[i] -= dt / mul;
             if (m_ReloadTimers[i] <= 0.0f)

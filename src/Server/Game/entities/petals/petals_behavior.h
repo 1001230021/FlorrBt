@@ -33,7 +33,7 @@ inline CMobBase* PetalFindTarget(CPetal* owner, CFlower* flower)
 {
     CGameWorld* world = flower->GameWorld();
     if (!world) return nullptr;
-    float searchRange = flower->GetStats().petal_attraction_range + owner->m_Radius;
+    float searchRange = flower->GetFinalStats()->petal_attraction_range + owner->m_Radius;
     if (searchRange <= 0.0f) return nullptr;
 
     CEntity* raw = world->FindClosestEntity(owner->m_Pos, searchRange,
@@ -114,7 +114,7 @@ public:
 
     void OnTick(CPetal* owner, ERarity rarity, CFlower* flower, float dt) override
     {
-        float orbitDistance = flower->GetStats().radius + owner->m_Radius;
+        float orbitDistance = flower->GetFinalStats()->radius + owner->m_Radius;
         if (flower->m_Attacking)
         {
             orbitDistance += 30.0f;
@@ -173,7 +173,7 @@ public:
 
     void OnTick(CPetal* owner, ERarity rarity, CFlower* flower, float dt) override
     {
-        float orbitDistance = flower->GetStats().radius + owner->m_Radius;
+        float orbitDistance = flower->GetFinalStats()->radius + owner->m_Radius;
         if (flower->m_Attacking) orbitDistance += 30.0f;
         else if (flower->m_Defending) orbitDistance -= 10.0f;
         PetalOrbitMove(owner, flower, orbitDistance, 5.0f, true);
