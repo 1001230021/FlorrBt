@@ -23,6 +23,7 @@ public:
 	CEntity* FindClosestEntity(const sf::Vector2f& center, float maxRange,
 		std::function<bool(const CEntity*)> filter = nullptr) const;
 	const std::vector<CEntity*>& GetAllEntities() const { return m_pEntities; }
+	const CSpatialHashGrid GetSpatialGrid() const { return m_SpatialGrid; }
 
 private:
 	void Cleanup();

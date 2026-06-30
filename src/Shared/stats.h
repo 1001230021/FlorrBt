@@ -6,6 +6,8 @@ struct SMobStats {
     float damage = 0;
     float radius = 10.0f;
     float mass = 0.f;
+    float search_range = 1024.f;
+    float detection_multiplier = 1.f;
     float max_velocity = 50.f;
     float acceleration = 100.f;
 
@@ -16,6 +18,7 @@ struct SMobStats {
         damage += other.damage;
         radius += other.radius;
         mass += other.mass;
+        detection_multiplier *= other.detection_multiplier;
     }
 };
 

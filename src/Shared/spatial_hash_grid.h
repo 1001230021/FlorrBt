@@ -20,6 +20,12 @@ public:
         std::function<bool(const CEntity*)> filter = nullptr
     ) const;
 
+    std::vector<CEntity*> QueryRange(
+        const sf::Vector2f& center,
+        float radius,
+        std::function<bool(const CEntity*)> filter = nullptr
+    ) const;
+
 private:
     int HashCell(int cx, int cy) const;
     int CellX(float worldX) const;

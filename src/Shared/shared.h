@@ -4,3 +4,4 @@
 #include "rarity.h"
 #include "stats.h"
 #include "damage_type.h"
+#include "tools.h"

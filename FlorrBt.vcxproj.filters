@@ -78,6 +78,9 @@
     <ClInclude Include="src\Server\Game\controllers\melee_controller.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="src\Shared\tools.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Engine\console.cpp">

@@ -161,6 +161,7 @@
     <ClInclude Include="src\Shared\damage_type.h" />
     <ClInclude Include="src\Shared\petal_type.h" />
     <ClInclude Include="src\Shared\rarity.h" />
+    <ClInclude Include="src\Shared\tools.h" />
     <ClInclude Include="src\Shared\shared.h" />
     <ClInclude Include="src\Shared\spatial_hash_grid.h" />
     <ClInclude Include="src\Shared\stats.h" />

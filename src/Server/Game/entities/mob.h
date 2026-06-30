@@ -18,6 +18,9 @@ public:
     void AddState(std::unique_ptr<CState> state);
     void TickStates(float dt);
 
+    virtual const SMobStats* GetBaseStats() = 0;
+    virtual const SMobStats* GetFinalStats() = 0;
+
     template<typename TState>
     std::vector<TState*> FindStates()
     {
@@ -54,8 +57,8 @@ public:
         TickStates(dt);
     }
 
-    const TStats& GetStats() const { return m_BaseStats; }
-    TStats& GetStats() { return m_BaseStats; }
+    const SMobStats* GetBaseStats() { return m_BaseStats; }
+    const SMobStats* GetFinalStats() { return m_FinalStats; }
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {

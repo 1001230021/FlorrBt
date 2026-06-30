@@ -47,12 +47,6 @@ inline CMobBase* PetalFindTarget(CPetal* owner, CFlower* flower)
     return static_cast<CMobBase*>(raw);
 }
 
-inline bool CheckTeam(int t1, int t2)
-{
-    if(t1 == 0 || t2 == 0) return false;
-    return t1 == t2;
-}
-
 // ----------------------------------------------------------------------
 
 // ================ Air ================

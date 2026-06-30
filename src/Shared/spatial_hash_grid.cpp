@@ -98,6 +98,41 @@ CEntity* CSpatialHashGrid::FindClosest(
     return target;
 }
 
+std::vector<CEntity*> CSpatialHashGrid::QueryRange(
+    const sf::Vector2f& center,
+    float radius,
+    std::function<bool(const CEntity*)> filter = nullptr) const
+{
+    std::vector<CEntity*> result;
+    if (radius <= 0.f) return result;
+
+    float rsq = radius * radius;
+    int cx = CellX(center.x);
+    int cy = CellY(center.y);
+
+    for (int dx = -1; dx <= 1; ++dx)
+    {
+        for (int dy = -1; dy <= 1; ++dy)
+        {
+            int hash = HashCell(cx + dx, cy + dy);
+            auto it = m_Grid.find(hash);
+            if (it == m_Grid.end()) continue;
+
+            for (CEntity* e : it->second)
+            {
+                if (!e) continue;
+                if (filter && !filter(e)) continue;
+
+                sf::Vector2f diff = e->m_Pos - center;
+                float distSq = diff.x * diff.x + diff.y * diff.y;
+                if (distSq <= rsq)
+                    result.push_back(e);
+            }
+        }
+    }
+    return result;
+}
+
 int CSpatialHashGrid::HashCell(int cx, int cy) const {
     return cx * 10000 + cy;
 }
