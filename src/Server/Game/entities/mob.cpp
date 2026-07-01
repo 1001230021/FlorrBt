@@ -22,11 +22,32 @@ void CMobBase::TickStates(float dt)
         if ((*it)->m_Timer <= 0.0f)
         {
             it = m_States.erase(it);
-        }
-        else
-        {
+        } else
             ++it;
-        }
+    }
+}
+
+void CMobBase::MoveTowards(const sf::Vector2f& targetPos, float dt)
+{
+    sf::Vector2f delta = targetPos - m_Pos;
+    float len = Length(delta);
+    if (len <= m_Radius)
+    {
+        m_Vel *= 0.9f;
+        if (LengthSq(m_Vel) <= 1e-5) m_Vel *= 0.f;
+        return;
+    }
+    float dx = delta.x / len;
+    float dy = delta.y / len;
+    sf::Vector2f desired_vel = { dx * GetFinalStats()->max_velocity, dy * GetFinalStats()->max_velocity };
+    sf::Vector2f diff = desired_vel - m_Vel;
+    float diff_len = sqrt(diff.x * diff.x + diff.y * diff.y);
+    if (diff_len <= GetFinalStats()->acceleration * dt)
+    {
+        m_Vel = desired_vel;
+    } else {
+        sf::Vector2f accelDir = diff / diff_len;
+        m_Vel += accelDir * GetFinalStats()->acceleration * dt;
     }
 }
 

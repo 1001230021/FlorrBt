@@ -9,9 +9,7 @@
 class CMobBase : public CEntity
 {
   public:
-    CMobBase(CGameWorld* pworld, float x, float y, float r) : CEntity(pworld, x, y, r)
-    {
-    }
+    CMobBase(CGameWorld* pworld, float x, float y, float r) : CEntity(pworld, x, y, r) {}
 
     virtual ~CMobBase();
     CMobBase(const CMobBase&) = delete;
@@ -19,6 +17,7 @@ class CMobBase : public CEntity
 
     void AddState(std::unique_ptr<CState> state);
     void TickStates(float dt);
+    virtual void MoveTowards(const sf::Vector2f& targetPos, float dt);
 
     virtual const SMobStats* GetBaseStats() = 0;
     virtual const SMobStats* GetFinalStats() = 0;
@@ -39,7 +38,7 @@ class CMobBase : public CEntity
 
     sf::Vector2f m_Vel = { 0.f, 0.f };
 
-    IController* m_Controller;
+    IController* m_Controller = nullptr;
 
   protected:
     std::vector<std::unique_ptr<CState>> m_States;

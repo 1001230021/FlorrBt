@@ -2,7 +2,7 @@
 #include "../controller.h"
 #include "../entities/flower.h"
 
-constexpr float target_time = 8.f;
+constexpr float target_time = 16.f;
 
 class CMeleeController : public IController
 {

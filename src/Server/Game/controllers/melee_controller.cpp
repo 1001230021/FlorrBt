@@ -4,18 +4,7 @@
 
 void CMeleeController::OnTick(CMobBase* mob, float dt)
 {
-    sf::Vector2f delta_pos = m_TargetPos - mob->m_Pos;
-    if (delta_pos != sf::Vector2f(0.f, 0.f))
-        m_Angle = atan2f(delta_pos.y, delta_pos.x);
-    sf::Vector2f target_vel = { mob->GetFinalStats()->max_velocity * cosf(m_Angle),
-                                mob->GetFinalStats()->max_velocity * sinf(m_Angle)};
-    sf::Vector2f delta_vel = target_vel - mob->m_Vel;
-    if (delta_vel != sf::Vector2f(0.f, 0.f))
-        m_VelAngle = atan2f(delta_vel.y, delta_vel.x);
-    mob->m_Vel += { mob->GetFinalStats()->acceleration * cosf(m_VelAngle) * dt,
-                    mob->GetFinalStats()->acceleration * sinf(m_VelAngle) * dt };
-
-    float p = 2.f * m_ChangeTargetCount / target_time;
+    float p = 2.f * m_ChangeTargetCount / target_time * target_time;
     if (CheckChance(p) || !m_pTarget)
     {
         m_ChangeTargetCount = 0.f;
@@ -65,4 +54,6 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
     } else {
         m_ChangeTargetCount += dt;
     }
+
+    mob->MoveTowards(m_TargetPos, dt);
 }
