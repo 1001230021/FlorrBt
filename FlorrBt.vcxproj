@@ -187,6 +187,7 @@
     <ClCompile Include="src\Server\Module\world_module.cpp" />
     <ClCompile Include="src\Server\server.cpp" />
     <ClCompile Include="src\Shared\commands.cpp" />
+    <ClCompile Include="src\Shared\mob_type.cpp" />
     <ClCompile Include="src\Shared\spatial_hash_grid.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

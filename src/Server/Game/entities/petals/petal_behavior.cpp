@@ -21,7 +21,7 @@ void RegisterDust()
         CPetalPrototype proto;
         proto.m_Type = EPetalType::Dust; 
         proto.m_Name = "Dust";
-        proto.m_BaseRadius = 7.5f;
+        proto.m_BaseRadius = GameConfig::default_dust_base_radius;
         proto.m_pBehavior = std::make_unique<CDustBehavior>();
         REGISTER_PETAL(EPetalType::Dust, CPetal, proto);
         });
@@ -34,7 +34,7 @@ void RegisterGoldenLeaf()
         CPetalPrototype proto;
         proto.m_Type = EPetalType::GoldenLeaf;
         proto.m_Name = "GoldenLeaf";
-        proto.m_BaseRadius = 15.0f;
+        proto.m_BaseRadius = GameConfig::default_goldenleaf_base_radius;
         proto.m_pBehavior = std::make_unique<CGoldenLeafBehavior>();
         REGISTER_PETAL(EPetalType::GoldenLeaf, CPetal, proto);
         });

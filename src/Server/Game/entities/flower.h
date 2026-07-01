@@ -1,5 +1,6 @@
 #pragma once
 #include "../../../Shared/shared.h"
+#include "../../../Shared/game_config.h"
 #include "mob.h"
 #include "petals/petal_slot.h"
 #include <vector>
@@ -42,7 +43,7 @@ class CFlower : public CMob<SFlowerStats>
     int m_TotalCopies = 0;
 
   private:
-    int m_PetalNumMax = 5;
+    int m_PetalNumMax = static_cast<int>(GameConfig::default_flower_petal_num_max);
 
     int m_Shield = 0;
 

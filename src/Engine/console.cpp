@@ -17,7 +17,7 @@ std::vector<std::string> SplitString(const std::string& str)
         {
             inQuotes = !inQuotes;
         }
-        else if (std::isspace(ch) && !inQuotes)
+        else if (std::isspace(static_cast<unsigned char>(ch)) && !inQuotes)
         {
             if (!current.empty())
             {

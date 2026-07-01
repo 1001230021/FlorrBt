@@ -2,6 +2,7 @@
 #include "petal.h"
 #include "petal_slot.h"
 #include "../../gameworld.h"
+#include "../../../../Shared/game_config.h"
 #include <cmath>
 
 inline void PetalOrbitMove(CPetal* owner, CFlower* flower, float orbitDistance, float k, bool isOpen)
@@ -13,17 +14,17 @@ inline void PetalOrbitMove(CPetal* owner, CFlower* flower, float orbitDistance, 
     sf::Vector2f global;
     if (isOpen)
     {
-        float angle = (2.0f * 3.14159f * (startIndex + owner->m_CopyIndex)) / (float)totalCopies;
+        float angle = (2.0f * GameConfig::PI * (startIndex + owner->m_CopyIndex)) / (float)totalCopies;
         global = flower->m_Pos + sf::Vector2f(cos(angle), sin(angle)) * orbitDistance;
     }
     else
     {
-        float groupAngle = (2.0f * 3.14159f * startIndex) / (float)totalCopies;
+        float groupAngle = (2.0f * GameConfig::PI * startIndex) / (float)totalCopies;
         sf::Vector2f groupGlobal = flower->m_Pos + sf::Vector2f(cos(groupAngle), sin(groupAngle)) * orbitDistance;
         int copiesInGroup = owner->m_BasePetalStats.copy;
         float spreadRadius = 0.0f;
-        if (copiesInGroup > 1) spreadRadius = owner->m_Radius / sin(3.14159f / copiesInGroup);
-        float subAngle = (2.0f * 3.14159f * owner->m_CopyIndex) / (float)copiesInGroup;
+        if (copiesInGroup > 1) spreadRadius = owner->m_Radius / sin(GameConfig::PI / copiesInGroup);
+        float subAngle = (2.0f * GameConfig::PI * owner->m_CopyIndex) / (float)copiesInGroup;
         global = groupGlobal + sf::Vector2f(cos(subAngle), sin(subAngle)) * spreadRadius;
     }
     owner->m_Vel = (global - owner->m_Pos) * k;
@@ -58,10 +59,10 @@ public:
 
     SFlowerStats GetStats(ERarity rarity) const override
     {
-        SFlowerStats stats;
+    SFlowerStats stats;
         int level = GetLevel(rarity);
-        stats.radius = 8.f * level;
-        stats.mass = 16.f * level;
+        stats.radius = GameConfig::default_air_base_radius * level;
+        stats.mass = GameConfig::default_air_base_mass * level;
         return stats;
     }
 
@@ -105,10 +106,10 @@ public:
         SPetalStats ps;
         int level = static_cast<int>(rarity);
         if (level < 1) level = 1;
-        ps.damage = 4.3f * pow(3, level - 1);
-        ps.health = 1.7f * pow(3, level - 1);
-        ps.copy = 3;
-        ps.mass = 1;
+        ps.damage = GameConfig::default_dust_base_damage * pow(GameConfig::default_petal_pow, level - 1);
+        ps.health = GameConfig::default_dust_base_health * pow(GameConfig::default_petal_pow, level - 1);
+        ps.copy = static_cast<int>(GameConfig::default_dust_copy);
+        ps.mass = GameConfig::default_dust_mass;
         return ps;
     }
 
@@ -117,13 +118,13 @@ public:
         float orbitDistance = flower->GetFinalStats()->radius + owner->m_Radius;
         if (flower->m_Attacking)
         {
-            orbitDistance += 30.0f;
+            orbitDistance += GameConfig::default_petal_attack_offset;
             m_IsOpen = true;
         } else {
-            if (flower->m_Defending) orbitDistance -= 10.0f;
+            if (flower->m_Defending) orbitDistance += GameConfig::default_petal_defend_offset;
             m_IsOpen = false;
         }
-        PetalOrbitMove(owner, flower, orbitDistance, 5.0f, m_IsOpen);
+        PetalOrbitMove(owner, flower, orbitDistance, GameConfig::default_petal_orbit_k, m_IsOpen);
 
         CMobBase* target = PetalFindTarget(owner, flower);
         if (!target || target->m_IsMarkedForDes) return;
@@ -164,19 +165,19 @@ public:
         SPetalStats ps;
         int level = static_cast<int>(rarity);
         if (level < 1) level = 1;
-        ps.damage = 16 * pow(3, level - 1);
-        ps.health = 12 * pow(3, level - 1);
-        ps.copy = 1;
-        ps.mass = 3;
+        ps.damage = GameConfig::default_goldenleaf_base_damage * pow(GameConfig::default_petal_pow, level - 1);
+        ps.health = GameConfig::default_goldenleaf_base_health * pow(GameConfig::default_petal_pow, level - 1);
+        ps.copy = static_cast<int>(GameConfig::default_goldenleaf_copy);
+        ps.mass = GameConfig::default_goldenleaf_mass;
         return ps;
     }
 
     void OnTick(CPetal* owner, ERarity rarity, CFlower* flower, float dt) override
     {
         float orbitDistance = flower->GetFinalStats()->radius + owner->m_Radius;
-        if (flower->m_Attacking) orbitDistance += 30.0f;
-        else if (flower->m_Defending) orbitDistance -= 10.0f;
-        PetalOrbitMove(owner, flower, orbitDistance, 5.0f, true);
+        if (flower->m_Attacking) orbitDistance += GameConfig::default_petal_attack_offset;
+        else if (flower->m_Defending) orbitDistance += GameConfig::default_petal_defend_offset;
+        PetalOrbitMove(owner, flower, orbitDistance, GameConfig::default_petal_orbit_k, true);
 
         CMobBase* target = PetalFindTarget(owner, flower);
         if (!target || target->m_IsMarkedForDes) return;
