@@ -165,6 +165,7 @@
     <ClInclude Include="src\Server\server.h" />
     <ClInclude Include="src\Shared\damage_type.h" />
     <ClInclude Include="src\Shared\game_config.h" />
+    <ClInclude Include="src\Shared\network_msg.h" />
     <ClInclude Include="src\Shared\petal_type.h" />
     <ClInclude Include="src\Shared\rarity.h" />
     <ClInclude Include="src\Shared\tools.h" />

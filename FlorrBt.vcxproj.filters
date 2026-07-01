@@ -99,6 +99,9 @@
     <ClInclude Include="src\Server\server.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="src\Shared\network_msg.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Engine\console.cpp">
