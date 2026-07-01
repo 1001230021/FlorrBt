@@ -35,6 +35,7 @@ inline float default_dust_mass = 1.0f;
 inline float default_goldenleaf_base_radius = 15.0f;
 inline float default_goldenleaf_base_damage = 16.0f;
 inline float default_goldenleaf_base_health = 12.0f;
+inline float default_goldenleaf_base_reload_reduction = 0.05f;
 inline float default_goldenleaf_copy = 1.0f;
 inline float default_goldenleaf_mass = 3.0f;
 
@@ -79,6 +80,7 @@ inline std::unordered_map<std::string, ConfigEntry>& GetConfigEntries()
         REGISTER_CONFIG("goldenleaf_base_radius", default_goldenleaf_base_radius),
         REGISTER_CONFIG("goldenleaf_base_damage", default_goldenleaf_base_damage),
         REGISTER_CONFIG("goldenleaf_base_health", default_goldenleaf_base_health),
+        REGISTER_CONFIG("goldenleaf_base_reload_reduction", default_goldenleaf_base_reload_reduction),
         REGISTER_CONFIG("goldenleaf_copy", default_goldenleaf_copy),
         REGISTER_CONFIG("goldenleaf_mass", default_goldenleaf_mass),
         REGISTER_CONFIG("search_range", default_search_range),

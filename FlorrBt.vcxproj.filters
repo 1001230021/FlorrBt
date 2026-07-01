@@ -146,7 +146,7 @@
     <ClCompile Include="src\Server\server.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="src\Shared\mob_type.cpp">
+    <ClCompile Include="src\Shared\mob_type.h">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

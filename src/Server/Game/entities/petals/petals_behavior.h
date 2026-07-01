@@ -96,7 +96,7 @@ public:
         SFlowerStats stats;
         int level = static_cast<int>(rarity);
         if (level < 1) level = 1;
-        stats.petal_reload_multiplier = 1.0f - level * 0.05f;
+        stats.petal_reload_multiplier = std::min(1.0f - level * GameConfig::default_goldenleaf_base_reload_reduction, GameConfig::default_goldenleaf_base_reload_reduction);
         if (stats.petal_reload_multiplier < 0.05f) stats.petal_reload_multiplier = 0.05f;
         return stats;
     }
@@ -118,7 +118,7 @@ public:
         float orbitDistance = flower->GetFinalStats()->radius + owner->m_Radius;
         if (flower->m_Attacking)
         {
-            orbitDistance += GameConfig::default_petal_attack_offset;
+            orbitDistance += (GameConfig::default_petal_attack_offset + flower->GetFinalStats()->reach);
             m_IsOpen = true;
         } else {
             if (flower->m_Defending) orbitDistance += GameConfig::default_petal_defend_offset;
