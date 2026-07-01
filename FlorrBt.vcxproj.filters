@@ -102,6 +102,9 @@
     <ClInclude Include="src\Shared\network_msg.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="src\Server\Game\controllers\player_controller.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Engine\console.cpp">
@@ -150,6 +153,9 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="src\Shared\mob_type.h">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Game\controllers\player_controller.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

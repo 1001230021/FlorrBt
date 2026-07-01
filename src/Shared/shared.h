@@ -5,3 +5,4 @@
 #include "rarity.h"
 #include "stats.h"
 #include "tools.h"
+#include "network_msg.h"

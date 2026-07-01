@@ -148,6 +148,7 @@
     <ClInclude Include="src\Engine\logger.h" />
     <ClInclude Include="src\Server\Game\controller.h" />
     <ClInclude Include="src\Server\Game\controllers\melee_controller.h" />
+    <ClInclude Include="src\Server\Game\controllers\player_controller.h" />
     <ClInclude Include="src\Server\Game\entities\flower.h" />
     <ClInclude Include="src\Server\Game\entities\mob.h" />
     <ClInclude Include="src\Server\Game\entities\petals\petal.h" />
@@ -176,6 +177,7 @@
   <ItemGroup>
     <ClCompile Include="src\Engine\console.cpp" />
     <ClCompile Include="src\Server\Game\controllers\melee_controller.cpp" />
+    <ClCompile Include="src\Server\Game\controllers\player_controller.cpp" />
     <ClCompile Include="src\Server\Game\entities\flower.cpp" />
     <ClCompile Include="src\Server\Game\entities\mob.cpp" />
     <ClCompile Include="src\Server\Game\entities\petals\petal.cpp" />
