@@ -1,5 +1,4 @@
 #include "mob.h"
-#include "../state.h"
 
 CMobBase::~CMobBase() = default;
 
@@ -10,58 +9,80 @@ template class CMob<SFlowerStats>;
 
 void CMobBase::AddState(std::unique_ptr<CState> state)
 {
-    if (state)
-        m_States.push_back(std::move(state));
+    if (state) m_states.push_back(std::move(state));
 }
 
 void CMobBase::TickStates(float dt)
 {
-    for (auto it = m_States.begin(); it != m_States.end();)
+    for (auto it = m_states.begin(); it != m_states.end();)
     {
         (*it)->Tick(dt);
-        if ((*it)->m_Timer <= 0.0f)
+        if ((*it)->m_timer != endless && (*it)->m_timer <= 0.0f)
         {
-            it = m_States.erase(it);
-        } else
+            it = m_states.erase(it);
+        } else {
             ++it;
+        }
     }
 }
 
-void CMobBase::MoveTowards(const sf::Vector2f& targetPos, float dt)
+void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
 {
-    sf::Vector2f delta = targetPos - m_Pos;
+    const SMobStats* stats = GetFinalStats();
+    if (!stats) return;
+
+    sf::Vector2f delta = target_pos - m_pos;
     float len = Length(delta);
-    if (len <= m_Radius)
+    if (len <= m_radius)
     {
-        m_Vel *= 0.9f;
-        if (LengthSq(m_Vel) <= 1e-5) m_Vel *= 0.f;
+        m_vel *= 0.9f;
+        if (LengthSq(m_vel) <= 1e-5f) m_vel = {0.f, 0.f};
         return;
     }
-    float dx = delta.x / len;
-    float dy = delta.y / len;
-    sf::Vector2f desired_vel = { dx * GetFinalStats()->max_velocity, dy * GetFinalStats()->max_velocity };
-    sf::Vector2f diff = desired_vel - m_Vel;
-    float diff_len = sqrt(diff.x * diff.x + diff.y * diff.y);
-    if (diff_len <= GetFinalStats()->acceleration * dt)
+
+    sf::Vector2f desired_vel = delta / len * stats->max_velocity;
+    sf::Vector2f diff = desired_vel - m_vel;
+    float diff_len = Length(diff);
+    float max_accel = stats->acceleration * dt;
+
+    if (diff_len <= max_accel)
     {
-        m_Vel = desired_vel;
+        m_vel = desired_vel;
     } else {
-        sf::Vector2f accelDir = diff / diff_len;
-        m_Vel += accelDir * GetFinalStats()->acceleration * dt;
+        m_vel += diff / diff_len * max_accel;
     }
 }
 
 bool CMobBase::RemoveState(CState* state)
 {
-    if (!state)
-        return false;
-    for (auto it = m_States.begin(); it != m_States.end(); ++it)
+    if (!state) return false;
+
+    for (auto it = m_states.begin(); it != m_states.end(); ++it)
     {
         if (it->get() == state)
         {
-            m_States.erase(it);
+            m_states.erase(it);
             return true;
         }
     }
     return false;
+}
+
+const CMobPrototype* FindMobPrototype(EMobType type)
+{
+    auto it = g_mob_registry.find(type);
+    if (it == g_mob_registry.end()) return nullptr;
+    return it->second.get();
+}
+
+std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, float x, float y, ERarity rarity)
+{
+    const CMobPrototype* prototype = FindMobPrototype(type);
+    if (!prototype || !prototype->m_factory) return nullptr;
+    return prototype->m_factory(world, x, y, rarity);
+}
+
+void RegisterMobs()
+{
+    RegisterNormalLadybug();
 }

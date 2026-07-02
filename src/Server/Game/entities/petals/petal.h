@@ -1,16 +1,17 @@
 #pragma once
-#include <string>
-#include <memory>
-#include <functional>
-#include <unordered_map>
+#include "../../../../Shared/shared.h"
 #include "../flower.h"
 #include "../projectile.h"
-#include "../../../../Shared/shared.h"
+#include <functional>
+#include <memory>
+#include <string>
+#include <unordered_map>
 
 class CPetal;
 
-class CPetalBehavior {
-public:
+class CPetalBehavior
+{
+  public:
     virtual ~CPetalBehavior() = default;
 
     virtual bool IsOpen() const { return false; }
@@ -19,52 +20,64 @@ public:
     virtual SPetalStats GetPetalStats(ERarity rarity) const = 0;
 
     virtual void OnTick(CPetal* owner, ERarity rarity, CFlower* flower, float dt) = 0;
-    virtual void OnFlowerTakeDamage(CPetal* owner, ERarity rarity, CFlower* flower, float& dmg, EDamageType damage_type, CEntity* attacker) = 0;
+    virtual void OnFlowerTakeDamage(CPetal* owner, ERarity rarity, CFlower* flower, float& dmg,
+                                    EDamageType damage_type, CEntity* attacker) = 0;
     virtual void OnPetalSpawned(CPetal* owner, ERarity rarity, CFlower* flower) = 0;
     virtual void OnPetalDestroyed(CPetal* owner, ERarity rarity, CFlower* flower) = 0;
 };
 
-class CPetalPrototype {
-public:
+class CPetalPrototype
+{
+  public:
+    using petal_factory = std::function<std::unique_ptr<CPetal>(CFlower*, int, ERarity)>;
+
     CPetalPrototype() = default;
     CPetalPrototype(const CPetalPrototype&) = delete;
     CPetalPrototype& operator=(const CPetalPrototype&) = delete;
     CPetalPrototype(CPetalPrototype&&) = default;
     CPetalPrototype& operator=(CPetalPrototype&&) = default;
 
-    EPetalType m_Type;
-    std::string m_Name;
-    float m_BaseRadius;
-    std::unique_ptr<CPetalBehavior> m_pBehavior;
-    std::function<CPetal* (CFlower*, int, ERarity)> m_Factory;
+    EPetalType m_type = EPetalType::None;
+    std::string m_name;
+    float m_base_radius = 0.f;
+    std::unique_ptr<CPetalBehavior> m_p_behavior;
+    petal_factory m_factory;
 };
 
-class CPetal : public CProjectile {
-public:
-    CPetal(float r, CFlower* owner, int slot, SPetalStats petalStats);
-    virtual void Tick(float dt) override;
+class CPetal : public CProjectile
+{
+  public:
+    CPetal(float r, CFlower* owner, int slot, SPetalStats petal_stats);
+    void Tick(float dt) override;
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
 
-    SPetalStats m_BasePetalStats;
-    SPetalStats m_FinalPetalStats;
-    int m_MaxSlotNum;
-    int m_CopyIndex = 0;
-    int m_SlotIndex = 0;
+    SPetalStats m_base_petal_stats;
+    SPetalStats m_final_petal_stats;
+    int m_max_slot_num = 0;
+    int m_copy_index = 0;
+    int m_slot_index = 0;
 };
 
-inline std::unordered_map<EPetalType, std::unique_ptr<CPetalPrototype>> g_PetalRegistry;
+inline std::unordered_map<EPetalType, std::unique_ptr<CPetalPrototype>> g_petal_registry;
 
-#define REGISTER_PETAL(type, petalClass, proto) \
-    static bool _reg_##petalClass = [&]() -> bool { \
-        auto ptr = std::make_unique<CPetalPrototype>(std::move(proto)); \
-        CPetalPrototype* rawPtr = ptr.get(); \
-        rawPtr->m_Factory = [rawPtr](CFlower* f, int slot, ERarity rarity) -> CPetal* { \
-            SPetalStats petalStats = rawPtr->m_pBehavior->GetPetalStats(rarity); \
-            auto* p = new petalClass(petalStats.radius, f, slot, petalStats); \
-            p->m_SlotIndex = slot; \
-            return p; \
-        }; \
-        g_PetalRegistry[type] = std::move(ptr); \
-        return true; \
-    }()
+template <typename TPetal> bool RegisterPetalPrototype(EPetalType type, CPetalPrototype prototype)
+{
+    auto ptr = std::make_unique<CPetalPrototype>(std::move(prototype));
+    CPetalPrototype* raw_ptr = ptr.get();
+    raw_ptr->m_factory = [raw_ptr](CFlower* flower, int slot, ERarity rarity) -> std::unique_ptr<CPetal>
+    {
+        if (!flower || !raw_ptr->m_p_behavior) return nullptr;
+
+        SPetalStats petal_stats = raw_ptr->m_p_behavior->GetPetalStats(rarity);
+        auto petal = std::make_unique<TPetal>(petal_stats.radius, flower, slot, petal_stats);
+        petal->m_slot_index = slot;
+        return petal;
+    };
+    g_petal_registry[type] = std::move(ptr);
+    return true;
+}
+
+const CPetalPrototype* FindPetalPrototype(EPetalType type);
+
+#define REGISTER_PETAL(type, petal_class, proto) RegisterPetalPrototype<petal_class>(type, std::move(proto))

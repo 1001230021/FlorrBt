@@ -1,59 +1,62 @@
 #include "melee_controller.h"
 #include "../entities/projectile.h"
 #include "../gameworld.h"
+#include <limits>
 
 void CMeleeController::OnTick(CMobBase* mob, float dt)
 {
-    float p = 2.f * m_ChangeTargetCount / target_time * target_time;
-    if (CheckChance(p) || !m_pTarget)
+    if (!mob || !mob->GameWorld()) return;
+
+    const SMobStats* stats = mob->GetFinalStats();
+    if (!stats) return;
+
+    bool target_invalid = !m_p_target || m_p_target->m_is_marked_for_des || CheckTeam(m_p_target->m_team, mob->m_team);
+    float retarget_chance = m_change_target_count / target_time;
+    if (target_invalid || CheckChance(retarget_chance))
     {
-        m_ChangeTargetCount = 0.f;
+        m_change_target_count = 0.f;
 
         auto candidates = mob->GameWorld()->GetSpatialGrid().QueryRange(
-            mob->m_Pos, mob->GetFinalStats()->search_range * 2.f,
-            [mob](const CEntity* e) -> bool {
-                if (e)
-                    if (!CheckTeam(e->m_Team, mob->m_Team))
-                    {
-                        if (dynamic_cast<const CProjectile*>(e))
-                            return false;
+            mob->m_pos, stats->search_range,
+            [mob, stats](const CEntity* entity) -> bool
+            {
+                if (!entity || entity->m_is_marked_for_des) return false;
+                if (entity == mob) return false;
+                if (CheckTeam(entity->m_team, mob->m_team)) return false;
+                if (dynamic_cast<const CProjectile*>(entity)) return false;
 
-                        float mult = dynamic_cast<const CFlower*>(e)
-                                         ? static_cast<const CFlower*>(e)->m_FinalStats.detection_multiplier
-                                         : 1.f;
-                        if ((mob->m_Pos - e->m_Pos).length() <= mob->GetFinalStats()->search_range * mult)
-                            return true;
-                        else
-                            return false;
-                    } else {
-                        return false;
-                    }
-                else
-                    return false;
+                float detection_multiplier = 1.f;
+                if (auto* flower = dynamic_cast<const CFlower*>(entity)) detection_multiplier = flower->m_final_stats.detection_multiplier;
+
+                float range = stats->search_range * detection_multiplier;
+                return DistanceSq(mob->m_pos, entity->m_pos) <= range * range;
             });
 
-        float best_dist = std::numeric_limits<float>::max();
-        CEntity* best_target = nullptr;
-        for (auto* it : candidates)
+        float best_dist_sq = std::numeric_limits<float>::max();
+        CEntity* p_best_target = nullptr;
+        for (auto* candidate : candidates)
         {
-            if ((mob->m_Pos - it->m_Pos).length() <= best_dist)
+            float dist_sq = DistanceSq(mob->m_pos, candidate->m_pos);
+            if (dist_sq < best_dist_sq)
             {
-                best_dist = (mob->m_Pos - it->m_Pos).length();
-                best_target = it;
+                best_dist_sq = dist_sq;
+                p_best_target = candidate;
             }
         }
-        m_pTarget = best_target;
-        if (m_pTarget)
-            m_TargetPos = m_pTarget->m_Pos;
-        else {
-            float a = mob->GetFinalStats()->search_range / 8.f;
-            sf::Vector2f s = mob->m_Pos - sf::Vector2f(a, a);
-            s += sf::Vector2f(GetLimitedRng(0.f, a * 2), GetLimitedRng(0.f, a * 2));
-            m_TargetPos = s;
+
+        m_p_target = p_best_target;
+        if (m_p_target)
+        {
+            m_target_pos = m_p_target->m_pos;
+        } else {
+            float half_range = stats->search_range / 8.f;
+            sf::Vector2f min_pos = mob->m_pos - sf::Vector2f(half_range, half_range);
+            m_target_pos = min_pos + sf::Vector2f(GetLimitedRng(0.f, half_range * 2.f), GetLimitedRng(0.f, half_range * 2.f));
         }
     } else {
-        m_ChangeTargetCount += dt;
+        m_change_target_count += dt;
+        if (m_p_target) m_target_pos = m_p_target->m_pos;
     }
 
-    mob->MoveTowards(m_TargetPos, dt);
+    mob->MoveTowards(m_target_pos, dt);
 }

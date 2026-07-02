@@ -1,15 +1,18 @@
 #pragma once
-#include "module.h"
 #include "../Game/gameworld.h"
+#include "module.h"
 #include <memory>
+#include <vector>
 
-class IWorldModule : public IModule {
+class IWorldModule : public IModule
+{
   public:
-    virtual bool Init() override;
-    virtual void Tick(float dt) override;
-    virtual void ShutDown() override;
-    const std::vector<std::unique_ptr<CGameWorld>>& GetWorlds() const { return m_Worlds; }
+    IWorldModule();
+    bool Init() override;
+    void Tick(float dt) override;
+    void ShutDown() override;
+    const std::vector<std::unique_ptr<CGameWorld>>& GetWorlds() const { return m_worlds; }
 
   private:
-    std::vector<std::unique_ptr<CGameWorld>> m_Worlds;
+    std::vector<std::unique_ptr<CGameWorld>> m_worlds;
 };

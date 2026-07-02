@@ -3,38 +3,30 @@
 #include "../entities/flower.h"
 #include "../state.h"
 
-// ============ Posion ============
 class CPoisonState : public CState
 {
   public:
-    CPoisonState(CMobBase* owner, float timer, float basicDmg, ERarity rarity, CEntity* applier);
+    CPoisonState(CMobBase* owner, float timer, float basic_dmg, ERarity rarity, CEntity* applier);
 
     void Tick(float dt) override;
 
-    bool IsValid() const
-    {
-        return m_IsValid;
-    }
-    float GetBasicDmg() const
-    {
-        return m_BasicDmg;
-    }
+    bool IsValid() const { return m_is_valid; }
+    float GetBasicDmg() const { return m_basic_dmg; }
 
   private:
-    float m_BasicDmg;
-    CEntity* m_pApplier;
-    bool m_IsValid = false;
+    float m_basic_dmg = 0.f;
+    CEntity* m_p_applier = nullptr;
+    bool m_is_valid = false;
 };
 
-// ============ BanSlot ============
 class CBanSlotState : public CState
 {
   public:
     CBanSlotState(CMobBase* owner, float timer, int slot, ERarity rarity);
-    ~CBanSlotState();
+    ~CBanSlotState() override;
     void Tick(float dt) override;
 
   private:
-    int m_SlotIdx;
-    CFlower* m_pFlower;
+    int m_slot_index = -1;
+    CFlower* m_p_flower = nullptr;
 };

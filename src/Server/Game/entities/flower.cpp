@@ -1,5 +1,4 @@
 #include "flower.h"
-#include "../../../Shared/shared.h"
 #include "petals/petal.h"
 
 void CFlower::Tick(float dt)
@@ -7,176 +6,160 @@ void CFlower::Tick(float dt)
     CMob::Tick(dt);
     RebuildFinalStats();
 
-    m_TotalCopies = 0;
-    for (auto& slot : m_Slots)
+    m_total_copies = 0;
+    for (auto& slot : m_slots)
     {
-        if (!slot.m_Available || slot.m_Banned)
+        if (!slot.m_available || slot.m_banned)
         {
-            for (auto* cp : slot.m_pPetals)
-                if (cp)
-                    cp->m_IsMarkedForDes = true;
+            for (CPetal*& petal : slot.m_p_petals)
+            {
+                if (petal) petal->m_is_marked_for_des = true;
+                petal = nullptr;
+            }
+            slot.m_start_copy_index = -1;
             continue;
         }
 
         int copies = slot.GetCurrentCopyCount();
         if (copies > 0)
         {
-            slot.m_StartCopyIndex = m_TotalCopies;
-            m_TotalCopies += copies;
+            slot.m_start_copy_index = m_total_copies;
+            m_total_copies += copies;
+        } else {
+            slot.m_start_copy_index = -1;
         }
-        else
-            slot.m_StartCopyIndex = -1;
         slot.Tick(dt, this);
     }
 }
 
 void CFlower::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
 {
-    for (auto& slot : this->GetSlots())
+    for (auto& slot : GetSlots())
     {
-        if (!slot.m_pProto || !slot.m_pProto->m_pBehavior)
-            continue;
-        for (auto* petal : slot.m_pPetals)
+        if (!slot.m_p_proto || !slot.m_p_proto->m_p_behavior) continue;
+
+        for (auto* petal : slot.m_p_petals)
         {
-            if (petal && !petal->m_IsMarkedForDes)
+            if (petal && !petal->m_is_marked_for_des)
             {
-                slot.m_pProto->m_pBehavior->OnFlowerTakeDamage(petal, slot.m_StoredRarity, this, dmg, damage_type,
-                                                               attacker);
+                slot.m_p_proto->m_p_behavior->OnFlowerTakeDamage(petal, slot.m_stored_rarity, this, dmg, damage_type,
+                                                                attacker);
             }
         }
     }
     CMob::TakeDamage(dmg, attacker, damage_type);
 }
 
-int CFlower::GetStartCopyIndex(int slotIndex) const
+int CFlower::GetStartCopyIndex(int slot_index) const
 {
-    if (slotIndex >= 0 && slotIndex < (int)m_Slots.size())
-        return m_Slots[slotIndex].m_StartCopyIndex;
-
+    if (slot_index >= 0 && slot_index < static_cast<int>(m_slots.size())) return m_slots[slot_index].m_start_copy_index;
     return -1;
 }
 
 void CFlower::RebuildFinalStats()
 {
-    int oldMax = m_FinalStats.max_health;
+    float old_max = m_final_stats.max_health;
 
-    m_FinalStats = m_BaseStats;
-    for (const auto& slot : m_Slots)
-        slot.ApplyStatsTo(m_FinalStats);
-
-    int newMax = m_FinalStats.max_health;
-    if (oldMax > 0 && newMax != oldMax)
-        m_Health = m_Health * newMax / oldMax;
-}
-
-void CFlower::EquipPetal(int slotIdx, const CPetalPrototype* proto, ERarity rarity)
-{
-    if (slotIdx < 0 || slotIdx >= static_cast<int>(m_Slots.size()))
-        return;
-    if (!m_Slots[slotIdx].m_Available)
-        return;
-    if (!proto || !proto->m_pBehavior)
-        return;
-
-    m_Slots[slotIdx].SetPetal(proto, slotIdx, rarity);
-
-    if (!proto->m_pBehavior->GetPetalStats(rarity).stack)
-        ApplyExclusivity(proto->m_Type);
-}
-
-void CFlower::UnequipPetal(int slotIdx)
-{
-    if (slotIdx < 0 || slotIdx >= static_cast<int>(m_Slots.size()))
-        return;
-
-    EPetalType oldType = EPetalType::None;
-    bool isExclusive = false;
-
-    if (m_Slots[slotIdx].m_pProto && m_Slots[slotIdx].m_pProto->m_pBehavior)
+    m_final_stats = m_base_stats;
+    for (const auto& slot : m_slots)
     {
-        if (!m_Slots[slotIdx].m_pProto->m_pBehavior->GetPetalStats(m_Slots[slotIdx].m_StoredRarity).stack)
+        slot.ApplyStatsTo(m_final_stats);
+    }
+
+    float new_max = m_final_stats.max_health;
+    if (old_max > 0.f && new_max != old_max) m_health = m_health * new_max / old_max;
+}
+
+void CFlower::EquipPetal(int slot_index, const CPetalPrototype* proto, ERarity rarity)
+{
+    if (slot_index < 0 || slot_index >= static_cast<int>(m_slots.size())) return;
+    if (!m_slots[slot_index].m_available) return;
+    if (!proto || !proto->m_p_behavior) return;
+
+    m_slots[slot_index].SetPetal(proto, slot_index, rarity);
+
+    if (!proto->m_p_behavior->GetPetalStats(rarity).stack) ApplyExclusivity(proto->m_type);
+}
+
+void CFlower::UnequipPetal(int slot_index)
+{
+    if (slot_index < 0 || slot_index >= static_cast<int>(m_slots.size())) return;
+
+    CPetalSlot& target_slot = m_slots[slot_index];
+    EPetalType old_type = EPetalType::None;
+    bool was_exclusive = false;
+
+    if (target_slot.m_p_proto && target_slot.m_p_proto->m_p_behavior)
+    {
+        if (!target_slot.m_p_proto->m_p_behavior->GetPetalStats(target_slot.m_stored_rarity).stack)
         {
-            oldType = m_Slots[slotIdx].m_pProto->m_Type;
-            isExclusive = true;
+            old_type = target_slot.m_p_proto->m_type;
+            was_exclusive = true;
         }
     }
 
-    m_Slots[slotIdx].ClearPetal();
+    target_slot.ClearPetal();
+    target_slot.m_p_proto = nullptr;
+    target_slot.m_stored_rarity = ERarity::Null;
+    target_slot.m_available = true;
 
-    if (isExclusive)
+    if (!was_exclusive) return;
+
+    for (auto& slot : m_slots)
     {
-        for (auto& slot : m_Slots)
-        {
-            if (slot.m_pProto && slot.m_pProto->m_Type == oldType)
-            {
-                slot.m_Available = true;
-                slot.SetPetal(slot.m_pProto, slot.m_SlotIndex, slot.m_StoredRarity);
-            }
-        }
+        if (slot.m_p_proto && slot.m_p_proto->m_type == old_type) slot.m_available = true;
     }
+    ApplyExclusivity(old_type);
 }
+
 void CFlower::ApplyExclusivity(EPetalType type)
 {
-    CPetalSlot* best_slot = nullptr;
+    CPetalSlot* p_best_slot = nullptr;
     int best_rarity = -1;
 
-    for (auto& slot : m_Slots)
+    for (auto& slot : m_slots)
     {
-        if (!slot.m_pProto || slot.m_pProto->m_Type != type)
-            continue;
-        if (!slot.m_pProto->m_pBehavior)
-            continue;
-        if (slot.m_pProto->m_pBehavior->GetPetalStats(slot.m_StoredRarity).stack)
-            continue;
+        if (!slot.m_p_proto || slot.m_p_proto->m_type != type) continue;
+        if (!slot.m_p_proto->m_p_behavior) continue;
+        if (slot.m_p_proto->m_p_behavior->GetPetalStats(slot.m_stored_rarity).stack) continue;
 
-        int rarityLevel = static_cast<int>(slot.m_StoredRarity);
-        if (rarityLevel > best_rarity)
+        int rarity_level = static_cast<int>(slot.m_stored_rarity);
+        if (rarity_level > best_rarity)
         {
-            best_rarity = rarityLevel;
-            best_slot = &slot;
+            best_rarity = rarity_level;
+            p_best_slot = &slot;
         }
     }
 
-    for (auto& slot : m_Slots)
+    for (auto& slot : m_slots)
     {
-        if (!slot.m_pProto || slot.m_pProto->m_Type != type)
-            continue;
-        if (!slot.m_pProto->m_pBehavior)
-            continue;
-        if (slot.m_pProto->m_pBehavior->GetPetalStats(slot.m_StoredRarity).stack)
-            continue;
-        slot.m_Available = (&slot == best_slot);
+        if (!slot.m_p_proto || slot.m_p_proto->m_type != type) continue;
+        if (!slot.m_p_proto->m_p_behavior) continue;
+        if (slot.m_p_proto->m_p_behavior->GetPetalStats(slot.m_stored_rarity).stack) continue;
+        slot.m_available = (&slot == p_best_slot);
     }
 
-    if (!best_slot)
+    if (p_best_slot) return;
+
+    for (auto& slot : m_slots)
     {
-        for (auto& slot : m_Slots)
-        {
-            if (!slot.m_pProto || slot.m_pProto->m_Type != type)
-                continue;
-            slot.m_Available = true;
-        }
+        if (slot.m_p_proto && slot.m_p_proto->m_type == type) slot.m_available = true;
     }
 }
 
-void CFlower::SetBanned(bool banned, int slotIdx)
+void CFlower::SetBanned(bool banned, int slot_index)
 {
-    if (slotIdx < 0 || slotIdx >= static_cast<int>(m_Slots.size()))
-        return;
-    m_Slots[slotIdx].m_Banned = banned;
+    if (slot_index < 0 || slot_index >= static_cast<int>(m_slots.size())) return;
+    m_slots[slot_index].m_banned = banned;
 }
 
 void CFlower::InitSlots()
 {
-    size_t oldSize = m_Slots.size();
-    m_Slots.resize(m_PetalNumMax);
+    size_t old_size = m_slots.size();
+    m_slots.resize(m_petal_num_max);
 
-    for (size_t i = oldSize; i < m_Slots.size(); i++)
-        m_Slots[i].m_SlotIndex = static_cast<int>(i);
-
-    for (size_t i = 0; i < m_Slots.size(); i++)
+    for (size_t i = old_size; i < m_slots.size(); ++i)
     {
-        m_Slots[i].m_SlotIndex = static_cast<int>(i);
-        // 寫好背包記得更改這裏：卸下的花瓣返回背包。
+        m_slots[i].m_slot_index = static_cast<int>(i);
     }
 }

@@ -1,6 +1,16 @@
 BasedOnStyle: LLVM
 
-BreakBeforeBraces: Allman
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: true
+  AfterControlStatement: true
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterStruct: true
+  AfterUnion: true
+  BeforeCatch: false
+  BeforeElse: false
 
 IndentWidth: 4
 UseTab: Never
@@ -14,8 +24,8 @@ SpaceBeforeParens: ControlStatements
 SpacesInContainerLiterals: true
 Cpp11BracedListStyle: false
 
-AllowShortFunctionsOnASingleLine: None
-
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse
 AllowShortEnumsOnASingleLine: false
 
 AlignAfterOpenBracket: Align

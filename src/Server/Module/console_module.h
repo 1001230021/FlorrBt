@@ -1,14 +1,19 @@
 #pragma once
-#include "module.h"
 #include "../../Engine/console.h"
+#include "module.h"
+#include <string>
 
-class IConsoleModule : public IModule {
+class IConsoleModule : public IModule
+{
   public:
-    virtual bool Init() override;
-    virtual void Tick(float dt) override;
-    virtual void ShutDown() override;
-    CConsole& GetConsole() { return m_Console; }
+    bool Init() override;
+    void Tick(float dt) override;
+    void ShutDown() override;
+    CConsole& GetConsole() { return m_console; }
 
   private:
-    CConsole m_Console;
+    bool TryReadLine(std::string& line);
+
+    CConsole m_console;
+    std::string m_pending_line;
 };

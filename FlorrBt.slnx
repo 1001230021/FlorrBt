@@ -3,5 +3,6 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
+  <Project Path="../FlorrBClient/FlorrBClient.vcxproj" Id="f2df660f-8a6e-479d-96ec-4ceb0da6c131" />
   <Project Path="FlorrBt.vcxproj" Id="a5863369-b891-4ce9-9fdf-fee6e58a565f" />
 </Solution>

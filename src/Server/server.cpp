@@ -1,42 +1,67 @@
 #include "server.h"
+#include "Game/entities/mob.h"
+#include "Game/entities/petals/petals_behavior.h"
 #include "Module/console_module.h"
+#include "Module/network_module.h"
 #include "Module/world_module.h"
+#include <stdexcept>
 
-CServer* CServer::s_pInstance = nullptr;
+CServer* CServer::s_p_instance = nullptr;
 
 CServer::CServer()
 {
-    s_pInstance = this;
-    m_Modules.emplace_back(std::make_unique<IConsoleModule>());
-    m_Modules.emplace_back(std::make_unique<IWorldModule>());
+    s_p_instance = this;
+    m_modules.emplace_back(std::make_unique<IConsoleModule>());
+
+    auto world_mod = std::make_unique<IWorldModule>();
+    auto& worlds = world_mod->GetWorlds();
+    if (worlds.empty())
+    {
+        throw std::runtime_error("IWorldModule returned no worlds");
+    }
+
+    CGameWorld& world = *worlds[0];
+    m_modules.emplace_back(std::move(world_mod));
+    m_modules.emplace_back(std::make_unique<INetworkModule>(world));
 }
 
 CServer::~CServer()
 {
-    s_pInstance = nullptr;
+    s_p_instance = nullptr;
 }
 
 void CServer::Init()
 {
-    for (auto& m : m_Modules)
-        if (!m->Init())
+    RegisterPetals();
+    RegisterMobs();
+
+    for (auto& module : m_modules)
+    {
+        if (!module->Init())
         {
-            m_Running = false;
+            m_running = false;
             return;
         }
+    }
 }
 
 void CServer::Run()
 {
     const float dt = 0.016f;
-    while (m_Running)
-        for (auto& m : m_Modules)
-            m->Tick(dt);
+    while (m_running)
+    {
+        for (auto& module : m_modules)
+        {
+            module->Tick(dt);
+        }
+    }
 }
 
 void CServer::ShutDown()
 {
-    for (auto& m : m_Modules)
-        m->ShutDown();
-    m_Running = false;
+    for (auto& module : m_modules)
+    {
+        module->ShutDown();
+    }
+    m_running = false;
 }

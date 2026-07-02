@@ -1,6 +1,6 @@
 #pragma once
-#include "../controller.h"
 #include "../../../Shared/shared.h"
+#include "../controller.h"
 #include <queue>
 
 class CFlower;
@@ -13,9 +13,8 @@ class CPlayerController : public IController
     void PushOperate(const ClientOperate& op);
 
   private:
-    sf::Vector2f m_MoveDir = { 0.f, 0.f };
-
-    std::queue<ClientOperate> m_OpQueue;
-
     void ExecuteOperate(const ClientOperate& op, CMobBase* mob);
+
+    sf::Vector2f m_move_dir = {0.f, 0.f};
+    std::queue<ClientOperate> m_op_queue;
 };

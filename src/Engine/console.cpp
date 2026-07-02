@@ -1,7 +1,7 @@
-#pragma once
 #include "console.h"
-#include "logger.h"
 #include "commands_registry.h"
+#include "logger.h"
+#include <cctype>
 
 namespace
 {
@@ -9,62 +9,52 @@ std::vector<std::string> SplitString(const std::string& str)
 {
     std::vector<std::string> args;
     std::string current;
-    bool inQuotes = false;
+    bool in_quotes = false;
 
     for (char ch : str)
     {
         if (ch == '"')
         {
-            inQuotes = !inQuotes;
-        }
-        else if (std::isspace(static_cast<unsigned char>(ch)) && !inQuotes)
-        {
+            in_quotes = !in_quotes;
+        } else if (std::isspace(static_cast<unsigned char>(ch)) && !in_quotes) {
             if (!current.empty())
             {
                 args.push_back(current);
                 current.clear();
             }
-        }
-        else
-        {
+        } else {
             current += ch;
         }
     }
-    if (!current.empty())
-    {
-        args.push_back(current);
-    }
+
+    if (!current.empty()) args.push_back(current);
     return args;
 }
 }
 
-void CConsole::RegisterCommand(std::string name, CallBack cb)
+void CConsole::RegisterCommand(std::string name, CallBack callback)
 {
-    auto [it, inserted] = m_Cmds.insert({ name, cb });
+    auto [it, inserted] = m_cmds.insert({name, callback});
     if (!inserted)
     {
-        it->second = std::move(cb);
+        it->second = std::move(callback);
         LOG_WARN("console", "The command " + name + " already exists.");
     }
 }
 
 void CConsole::ExecuteLine(std::string line)
 {
-    if (line.empty())
-        return;
+    if (line.empty()) return;
 
-    std::vector<std::string> vs = SplitString(line);
-    if (vs.empty())
-        return;
+    std::vector<std::string> tokens = SplitString(line);
+    if (tokens.empty()) return;
 
-    std::string func_name = vs[0];
-    std::vector<std::string> args(vs.begin() + 1, vs.end());
+    std::string func_name = tokens[0];
+    std::vector<std::string> args(tokens.begin() + 1, tokens.end());
 
-    auto it = m_Cmds.find(func_name);
-    if (it != m_Cmds.end())
-        it->second(args);
-    else
-        LOG_WARN("console", "Unknown command " + func_name + ".");
+    auto it = m_cmds.find(func_name);
+    if (it != m_cmds.end()) it->second(args);
+    else LOG_WARN("console", "Unknown command " + func_name + ".");
 }
 
 void CConsole::InstallCommands()

@@ -10,9 +10,16 @@ if(MSVC)
 endif()
 
 file(GLOB_RECURSE SOURCES
-    "src/*.cpp"
+    "src/Engine/*.cpp"
+    "src/Server/*.cpp"
+    "src/Shared/*.cpp"
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 
 target_include_directories(${PROJECT_NAME} PRIVATE src)
+
+find_package(SFML 3 COMPONENTS Network System QUIET)
+if(SFML_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE SFML::Network SFML::System)
+endif()

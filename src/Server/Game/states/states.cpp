@@ -1,75 +1,59 @@
 #include "states.h"
-
 #include <cmath>
 
-// =========== Posion ===========
-CPoisonState::CPoisonState(CMobBase* owner, float timer, float basicDmg, ERarity rarity, CEntity* applier)
-    : CState(owner, timer, rarity), m_BasicDmg(basicDmg), m_pApplier(applier)
+CPoisonState::CPoisonState(CMobBase* owner, float timer, float basic_dmg, ERarity rarity, CEntity* applier)
+    : CState(owner, timer, rarity), m_basic_dmg(basic_dmg), m_p_applier(applier)
 {
-    auto existingVec = owner->FindStates<CPoisonState>();
-    CPoisonState* existing = existingVec.empty() ? nullptr : existingVec[0];
+    auto existing_states = owner ? owner->FindStates<CPoisonState>() : std::vector<CPoisonState*>{};
+    CPoisonState* existing = existing_states.empty() ? nullptr : existing_states[0];
 
-    if (existing)
+    if (!existing)
     {
-        bool shouldReplace = false;
-        if (GetLevel(rarity) > GetLevel(existing->m_Rarity))
-            shouldReplace = true;
-        else if (GetLevel(rarity) == GetLevel(existing->m_Rarity))
-        {
-            if (basicDmg > existing->m_BasicDmg)
-                shouldReplace = true;
-            else if (basicDmg == existing->m_BasicDmg)
-            {
-                if (timer > existing->m_Timer)
-                    shouldReplace = true;
-            }
-        }
-        if (shouldReplace)
-        {
-            owner->RemoveState(existing);
-            m_IsValid = true;
-        }
-        else
-        {
-            m_IsValid = false;
-        }
+        m_is_valid = true;
+        return;
     }
-    else
+
+    bool should_replace = false;
+    if (GetLevel(rarity) > GetLevel(existing->m_rarity))
     {
-        m_IsValid = true;
+        should_replace = true;
+    } else if (GetLevel(rarity) == GetLevel(existing->m_rarity)) {
+        if (basic_dmg > existing->m_basic_dmg) should_replace = true;
+        else if (basic_dmg == existing->m_basic_dmg && timer > existing->m_timer) should_replace = true;
+    }
+
+    if (should_replace)
+    {
+        owner->RemoveState(existing);
+        m_is_valid = true;
     }
 }
 
 void CPoisonState::Tick(float dt)
 {
-    if (!m_IsValid || !m_pOwner)
-        return;
-    m_pOwner->TakeDamage(m_BasicDmg * dt * std::pow(3, GetLevel(m_Rarity) - 1), m_pApplier, EDamageType::Poison);
-    m_Timer -= dt;
+    if (!m_is_valid || !m_p_owner) return;
+
+    m_p_owner->TakeDamage(m_basic_dmg * dt * std::pow(3.f, static_cast<float>(GetLevel(m_rarity) - 1)), m_p_applier,
+                          EDamageType::Poison);
+    m_timer -= dt;
 }
 
-// =========== BanSlot ===========
 CBanSlotState::CBanSlotState(CMobBase* owner, float timer, int slot, ERarity rarity)
-    : CState(owner, timer, rarity), m_SlotIdx(slot)
+    : CState(owner, timer, rarity), m_slot_index(slot)
 {
-    if (CFlower* flower = dynamic_cast<CFlower*>(owner))
+    if (auto* flower = dynamic_cast<CFlower*>(owner))
     {
         flower->SetBanned(true, slot);
-        m_pFlower = flower;
-    }
-    else
-    {
-        m_pFlower = nullptr;
+        m_p_flower = flower;
     }
 }
 
 CBanSlotState::~CBanSlotState()
 {
-    if (m_pFlower)
-        m_pFlower->SetBanned(false, m_SlotIdx);
+    if (m_p_flower) m_p_flower->SetBanned(false, m_slot_index);
 }
 
 void CBanSlotState::Tick(float dt)
 {
-    m_Timer -= dt;
+    m_timer -= dt;
 }

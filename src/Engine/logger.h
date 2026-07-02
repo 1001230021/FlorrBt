@@ -1,5 +1,4 @@
 #pragma once
-#define _CRT_SECURE_NO_WARNINGS
 #include <chrono>
 #include <ctime>
 #include <iomanip>
@@ -7,94 +6,98 @@
 #include <sstream>
 #include <string>
 
-enum class Priority
+enum class ELogPriority
 {
-    DEBUG,
-    INFO,
-    WARNING,
-    ERROR,
-    FATAL
+    Debug,
+    Info,
+    Warning,
+    Error,
+    Fatal
 };
 
 class CLogger
 {
-    std::string sender;
+  public:
+    explicit CLogger(const std::string& name) : m_sender(name) {}
 
-    std::string prioStr(Priority p) const
+    void Log(ELogPriority priority, const std::string& msg)
     {
-        switch (p)
+        std::cout << "[" << m_sender << "]"
+                  << "[" << PriorityToString(priority) << "] " << NowString() << ": " << msg << std::endl;
+    }
+
+    void Debug(const std::string& msg)
+    {
+        Log(ELogPriority::Debug, msg);
+        ++m_debug_msg;
+    }
+
+    void Info(const std::string& msg)
+    {
+        Log(ELogPriority::Info, msg);
+        ++m_info_msg;
+    }
+
+    void Warn(const std::string& msg)
+    {
+        Log(ELogPriority::Warning, msg);
+        ++m_warning_msg;
+    }
+
+    void Error(const std::string& msg)
+    {
+        Log(ELogPriority::Error, msg);
+        ++m_error_msg;
+    }
+
+    void Fatal(const std::string& msg)
+    {
+        Log(ELogPriority::Fatal, msg);
+        ++m_fatal_msg;
+    }
+
+    int m_debug_msg = 0;
+    int m_info_msg = 0;
+    int m_warning_msg = 0;
+    int m_error_msg = 0;
+    int m_fatal_msg = 0;
+
+  private:
+    std::string PriorityToString(ELogPriority priority) const
+    {
+        switch (priority)
         {
-        case Priority::DEBUG:
+        case ELogPriority::Debug:
             return "DEBUG";
-        case Priority::INFO:
+        case ELogPriority::Info:
             return "INFO";
-        case Priority::WARNING:
+        case ELogPriority::Warning:
             return "WARN";
-        case Priority::ERROR:
+        case ELogPriority::Error:
             return "ERROR";
-        case Priority::FATAL:
+        case ELogPriority::Fatal:
             return "FATAL";
         }
         return "UNKNOWN";
     }
 
-    std::string nowStr() const
+    std::string NowString() const
     {
         auto now = std::chrono::system_clock::now();
-        auto t = std::chrono::system_clock::to_time_t(now);
+        auto time = std::chrono::system_clock::to_time_t(now);
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
-        std::tm* tm = std::localtime(&t);
+        std::tm* local_time = std::localtime(&time);
+
         std::ostringstream oss;
-        oss << std::put_time(tm, "%Y-%m-%d %H:%M:%S") << '.' << std::setw(3) << std::setfill('0') << ms.count();
+        oss << std::put_time(local_time, "%Y-%m-%d %H:%M:%S") << '.' << std::setw(3) << std::setfill('0') << ms.count();
         return oss.str();
     }
 
-  public:
-    int m_DebugMsg{ 0 };
-    int m_InfoMsg{ 0 };
-    int m_WarningMsg{ 0 };
-    int m_ErrorMsg{ 0 };
-    int m_FatalMsg{ 0 };
-
-    explicit CLogger(const std::string& name) : sender(name)
-    {
-    }
-
-    void log(Priority p, const std::string& msg)
-    {
-        std::cout << "[" << sender << "]"
-                  << "[" << prioStr(p) << "] " << nowStr() << ": " << msg << std::endl;
-    }
-
-    void debug(const std::string& msg)
-    {
-        log(Priority::DEBUG, msg);
-        m_DebugMsg++;
-    }
-    void info(const std::string& msg)
-    {
-        log(Priority::INFO, msg);
-        m_InfoMsg++;
-    }
-    void warn(const std::string& msg)
-    {
-        log(Priority::WARNING, msg);
-        m_WarningMsg++;
-    }
-    void error(const std::string& msg)
-    {
-        log(Priority::ERROR, msg);
-        m_ErrorMsg++;
-    }
-    void fatal(const std::string& msg)
-    {
-        log(Priority::FATAL, msg);
-        m_FatalMsg++;
-    }
+    std::string m_sender;
 };
 
-#define LOG_DEBUG(sender, msg) CLogger(sender).debug(msg)
-#define LOG_INFO(sender, msg) CLogger(sender).info(msg)
-#define LOG_WARN(sender, msg) CLogger(sender).warn(msg)
-#define LOG_ERROR(sender, msg) CLogger(sender).error(msg)
-#define LOG_FATAL(sender, msg) CLogger(sender).fatal(msg)
+#define LOG_DEBUG(sender, msg) CLogger(sender).Debug(msg)
+#define LOG_INFO(sender, msg) CLogger(sender).Info(msg)
+#define LOG_WARN(sender, msg) CLogger(sender).Warn(msg)
+#define LOG_ERROR(sender, msg) CLogger(sender).Error(msg)
+#define LOG_FATAL(sender, msg) CLogger(sender).Fatal(msg)

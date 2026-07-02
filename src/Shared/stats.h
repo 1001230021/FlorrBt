@@ -2,9 +2,9 @@
 
 struct SMobStats
 {
-    float max_health = 1;
-    float armor = 0;
-    float damage = 0;
+    float max_health = 1.f;
+    float armor = 0.f;
+    float damage = 0.f;
     float radius = 10.0f;
     float mass = 0.f;
     float search_range = 1024.f;
@@ -19,7 +19,10 @@ struct SMobStats
         damage += other.damage;
         radius += other.radius;
         mass += other.mass;
+        search_range += other.search_range;
         detection_multiplier *= other.detection_multiplier;
+        max_velocity += other.max_velocity;
+        acceleration += other.acceleration;
     }
 };
 
@@ -48,11 +51,11 @@ struct SFlowerStats : public SMobStats
 };
 
 struct SPetalStats
-{ // 原則：不全初始化，但要用的一定要初始化！
-    float health = 10;
-    float damage = 10;
-    float armor = 0;
-    float medicine = 0;
+{
+    float health = 10.f;
+    float damage = 10.f;
+    float armor = 0.f;
+    float medicine = 0.f;
     float reload = 2.5f;
     float preload = 2.5f;
     float mass = 0.f;
@@ -63,8 +66,10 @@ struct SPetalStats
 
     void ActedOn(const SFlowerStats& other)
     {
-        health = health * other.petal_health_multiplier;
-        damage = damage * other.petal_dmg_multiplier;
-        medicine = medicine * other.petal_medicine_multiplier;
+        health *= other.petal_health_multiplier;
+        damage *= other.petal_dmg_multiplier;
+        medicine *= other.petal_medicine_multiplier;
+        reload *= other.petal_reload_multiplier;
+        preload *= other.petal_reload_multiplier;
     }
 };

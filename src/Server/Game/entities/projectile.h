@@ -5,15 +5,10 @@
 class CProjectile : public CEntity
 {
   public:
-    CProjectile(float x, float y, float r, CEntity* owner) : CEntity(owner->GameWorld(), x, y, r), m_pOwner(owner)
-    {
-    }
+    CProjectile(float x, float y, float r, CEntity* owner) : CEntity(owner->GameWorld(), x, y, r), m_p_owner(owner) {}
 
-    void Tick(float dt) override
-    {
-        m_Pos += m_Vel * dt;
-    }
+    void Tick(float dt) override { m_pos += m_vel * dt; }
 
-    CEntity* m_pOwner{ nullptr };
-    sf::Vector2f m_Vel{ 0.0f, 0.0f };
+    CEntity* m_p_owner = nullptr;
+    sf::Vector2f m_vel = {0.0f, 0.0f};
 };

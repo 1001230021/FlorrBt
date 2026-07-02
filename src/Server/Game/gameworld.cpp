@@ -1,124 +1,110 @@
 #include "gameworld.h"
-#include <limits>
 
-CGameWorld::CGameWorld() : m_SpatialGrid(this, 200.f) {}
+CGameWorld::CGameWorld() : m_spatial_grid(this, 200.f) {}
 
 CGameWorld::~CGameWorld()
 {
-    m_pEntities.clear();
+    m_p_entities.clear();
+    m_p_entity_refs.clear();
 }
 
 int CGameWorld::GetNewID()
 {
-    if (!m_FreeIDs.empty())
+    if (!m_free_ids.empty())
     {
-        int id = *m_FreeIDs.begin();
-        m_FreeIDs.erase(m_FreeIDs.begin());
+        int id = *m_free_ids.begin();
+        m_free_ids.erase(m_free_ids.begin());
         return id;
     }
-    else
-    {
-        return m_NextID++;
-    }
+    return m_next_id++;
 }
 
 void CGameWorld::FreeID(int id)
 {
-    if (m_FreeIDs.find(id) != m_FreeIDs.end())
+    if (m_free_ids.find(id) != m_free_ids.end())
     {
         LOG_FATAL("gameworld", "Free ID " + std::to_string(id) + " twice");
         return;
     }
 
-    m_FreeIDs.insert(id);
+    m_free_ids.insert(id);
 }
 
-void CGameWorld::InsertEntity(std::unique_ptr<CEntity> entity)
+CEntity* CGameWorld::InsertEntity(std::unique_ptr<CEntity> entity)
 {
-    if (!entity)
-        return;
+    if (!entity) return nullptr;
+    if (entity->m_id != -1)
+    {
+        LOG_FATAL("gameworld", "The entity already has ID " + std::to_string(entity->m_id) + ".");
+        return nullptr;
+    }
 
     int id = GetNewID();
+    if (id >= static_cast<int>(m_p_entities.size())) m_p_entities.resize(id + 1);
 
-    if (id >= static_cast<int>(m_pEntities.size()))
-        m_pEntities.resize(id + 1);
-
-    if (m_pEntities[id] != nullptr)
+    if (m_p_entities[id] != nullptr)
     {
-        LOG_FATAL("gameworld", "The ID " + std::to_string(id) + " already occupied.");
-        return;
-    }
-    else if (entity->m_ID != -1)
-    {
-        LOG_FATAL("gameworld", "The entity has already had a ID " + std::to_string(id) + ".");
-        return;
+        LOG_FATAL("gameworld", "The ID " + std::to_string(id) + " is already occupied.");
+        FreeID(id);
+        return nullptr;
     }
 
-    entity->m_ID = id;
-    m_pEntities[id] = std::move(entity);
+    CEntity* raw_entity = entity.get();
+    entity->m_id = id;
+    m_p_entities[id] = std::move(entity);
+    return raw_entity;
 }
 
-void CGameWorld::InsertEntity(CEntity* entity)
+CEntity* CGameWorld::InsertEntity(CEntity* entity)
 {
-    if (!entity)
-        return;
-    InsertEntity(std::unique_ptr<CEntity>(entity));
+    if (!entity) return nullptr;
+    return InsertEntity(std::unique_ptr<CEntity>(entity));
 }
 
-void CGameWorld::InsertNonOwningEntity(CEntity* entity)
+CEntity* CGameWorld::InsertNonOwningEntity(CEntity* entity)
 {
-    if (!entity)
-        return;
+    if (!entity) return nullptr;
+    if (entity->m_id != -1)
+    {
+        LOG_FATAL("gameworld", "The non-owning entity already has ID " + std::to_string(entity->m_id) + ".");
+        return nullptr;
+    }
 
     int id = GetNewID();
+    if (id >= static_cast<int>(m_p_entity_refs.size())) m_p_entity_refs.resize(id + 1, nullptr);
 
-    if (id >= static_cast<int>(m_pEntities.size()))
-        m_pEntities.resize(id + 1);
-
-    if (id >= static_cast<int>(m_pEntityRefs.size()))
-        m_pEntityRefs.resize(id + 1, nullptr);
-
-    if (m_pEntityRefs[id] != nullptr)
+    if (m_p_entity_refs[id] != nullptr)
     {
-        LOG_FATAL("gameworld", "Non-owning entity slot " + std::to_string(id) + " already occupied.");
-        return;
+        LOG_FATAL("gameworld", "Non-owning entity slot " + std::to_string(id) + " is already occupied.");
+        FreeID(id);
+        return nullptr;
     }
 
-    m_pEntityRefs[id] = entity;
-    entity->m_ID = id;
+    m_p_entity_refs[id] = entity;
+    entity->m_id = id;
+    return entity;
 }
 
 void CGameWorld::RemoveEntity(int id)
 {
-    if (id < 0 || id >= static_cast<int>(m_pEntities.size()))
+    CEntity* entity = GetEntity(id);
+    if (!entity)
     {
-        LOG_FATAL("gameworld", "Entity invalid ID " + std::to_string(id));
-        return;
-    }
-    if (!m_pEntities[id])
-    {
-        LOG_ERROR("gameworld", "Entity ID " + std::to_string(id) + " is already null");
+        LOG_ERROR("gameworld", "Entity ID " + std::to_string(id) + " is invalid or already null");
         return;
     }
 
-    m_pEntities[id]->m_IsMarkedForDes = true;
+    entity->m_is_marked_for_des = true;
 }
 
 void CGameWorld::Tick(float dt)
 {
-    std::vector<CEntity*> entities;
-    entities.reserve(m_pEntities.size() + m_pEntityRefs.size());
-    for (const auto& p : m_pEntities)
-        entities.push_back(p.get());
-    for (const auto& r : m_pEntityRefs)
-        entities.push_back(r);
-
-    m_SpatialGrid.Rebuild(entities);
+    std::vector<CEntity*> entities = GetAllEntities();
+    m_spatial_grid.Rebuild(entities);
 
     for (CEntity* entity : entities)
     {
-        if (entity != nullptr && !entity->m_SkipWorldTick)
-            entity->Tick(dt);
+        if (entity && !entity->m_skip_world_tick) entity->Tick(dt);
     }
 
     Cleanup();
@@ -126,47 +112,36 @@ void CGameWorld::Tick(float dt)
 
 CEntity* CGameWorld::GetEntity(int id) const
 {
-    if (id < 0)
-        return nullptr;
+    if (id < 0) return nullptr;
 
-    if (id < static_cast<int>(m_pEntities.size()))
-    {
-        if (m_pEntities[id])
-            return m_pEntities[id].get();
-    }
-
-    if (id < static_cast<int>(m_pEntityRefs.size()))
-        return m_pEntityRefs[id];
-
+    if (id < static_cast<int>(m_p_entities.size()) && m_p_entities[id]) return m_p_entities[id].get();
+    if (id < static_cast<int>(m_p_entity_refs.size())) return m_p_entity_refs[id];
     return nullptr;
 }
 
-CEntity* CGameWorld::FindClosestEntity(const sf::Vector2f& center, float maxRange,
+CEntity* CGameWorld::FindClosestEntity(const sf::Vector2f& center, float max_range,
                                        std::function<bool(const CEntity*)> filter) const
 {
-    return m_SpatialGrid.FindClosest(center, maxRange, filter);
+    return m_spatial_grid.FindClosest(center, max_range, filter);
 }
 
 void CGameWorld::Cleanup()
 {
-    for (size_t i = 0; i < m_pEntities.size(); ++i)
+    for (size_t i = 0; i < m_p_entities.size(); ++i)
     {
-        if (m_pEntities[i] && m_pEntities[i]->m_IsMarkedForDes)
+        if (m_p_entities[i] && m_p_entities[i]->m_is_marked_for_des)
         {
-            FreeID(m_pEntities[i]->m_ID);
-            m_pEntities[i].reset();
+            FreeID(m_p_entities[i]->m_id);
+            m_p_entities[i].reset();
         }
     }
 
-    for (auto it = m_pEntityRefs.begin(); it != m_pEntityRefs.end();)
+    for (CEntity*& entity : m_p_entity_refs)
     {
-        if (*it && (*it)->m_IsMarkedForDes)
+        if (entity && entity->m_is_marked_for_des)
         {
-            FreeID((*it)->m_ID);
-            *it = nullptr;
-            ++it;
+            FreeID(entity->m_id);
+            entity = nullptr;
         }
-        else
-            ++it;
     }
 }
