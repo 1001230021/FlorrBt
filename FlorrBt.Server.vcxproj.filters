@@ -1,129 +1,141 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Source Files">
-      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
-      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    <Filter Include="src">
+      <UniqueIdentifier>{C202D925-8342-8CAB-FBAC-54DFA101AD31}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files">
-      <UniqueIdentifier>{93995380-89BD-4B04-88EB-625FBE52EBFB}</UniqueIdentifier>
-      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    <Filter Include="src\Server">
+      <UniqueIdentifier>{70720C6E-67F8-E13C-9BC9-D87DE9F9DF56}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Resource Files">
-      <UniqueIdentifier>{67DA6AB6-F800-4C08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    <Filter Include="src\Server\Game">
+      <UniqueIdentifier>{C6BCA397-A2B6-6DB2-59B2-19CC7265E3F4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Server\Game\controllers">
+      <UniqueIdentifier>{509CF0F5-F6FD-8334-F309-411574B52575}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Server\Game\entities">
+      <UniqueIdentifier>{8B784A30-400E-1733-09A9-D90BBD9AA4A6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Server\Game\entities\petals">
+      <UniqueIdentifier>{10155E48-5561-0824-7AC7-0ECE830F5F52}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Server\Game\states">
+      <UniqueIdentifier>{9140B92F-2439-602B-B26F-31E19B3CA5B3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Server\Module">
+      <UniqueIdentifier>{7EA5AE3C-1420-1628-8510-AA185AA89781}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Server\Game\controller.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Game</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\controllers\melee_controller.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Game\controllers</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\controllers\player_controller.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Game\controllers</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\entities\flower.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Game\entities</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\entities\mob.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Game\entities</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\entities\petals\petal.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Game\entities\petals</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\entities\petals\petal_slot.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Game\entities\petals</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\entities\petals\petals_behavior.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Game\entities\petals</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\entities\projectile.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Game\entities</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\entity.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Game</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\gameworld.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Game</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\player.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Game</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\state.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Game</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\states\states.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Game\states</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Module\console_module.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Module</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Module\module.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Module</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Module\network_module.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Module</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Module\world_module.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server\Module</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\server.h">
-      <Filter>Header Files</Filter>
+      <Filter>src\Server</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Server\commands.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\controllers\melee_controller.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server\Game\controllers</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\controllers\player_controller.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server\Game\controllers</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\entities\flower.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server\Game\entities</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\entities\mob.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server\Game\entities</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\entities\mob_behavior.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server\Game\entities</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\entities\petals\petal.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server\Game\entities\petals</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\entities\petals\petal_behavior.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server\Game\entities\petals</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\entity.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server\Game</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\gameworld.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server\Game</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\player.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server\Game</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\states\states.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server\Game\states</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\main.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Module\console_module.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server\Module</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Module\network_module.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server\Module</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Module\world_module.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server\Module</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\server.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>src\Server</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>
