@@ -2,6 +2,7 @@
 #include "rarity.h"
 #include <SFML/System/Vector2.hpp>
 #include <algorithm>
+#include <cmath>
 #include <random>
 
 inline std::mt19937& GetRng()
