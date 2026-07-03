@@ -1,4 +1,3 @@
-#pragma once
 #include "console.h"
 #include "logger.h"
 #include "commands_registry.h"

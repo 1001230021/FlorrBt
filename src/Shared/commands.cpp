@@ -1,6 +1,6 @@
 #include "../Engine/console.h"
 #include "../Engine/commands_registry.h"
-#include "../Engine/logger.h" 
+#include "../Engine/logger.h"
 #include "game_config.h"
 #include "../Server/server.h"
 

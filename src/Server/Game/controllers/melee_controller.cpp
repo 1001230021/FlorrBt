@@ -32,7 +32,7 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
                         float mult = dynamic_cast<const CFlower*>(e)
                                          ? static_cast<const CFlower*>(e)->m_FinalStats.detection_multiplier
                                          : 1.f;
-                        if ((mob->m_Pos - e->m_Pos).length() <= mob->GetFinalStats()->search_range * mult)
+                        if (Distance(mob->m_Pos, e->m_Pos) <= mob->GetFinalStats()->search_range * mult)
                             return true;
                         else
                             return false;
@@ -41,15 +41,16 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
                     }
                 else
                     return false;
-            });
+            }
+        );
 
         float best_dist = std::numeric_limits<float>::max();
         CEntity* best_target = nullptr;
         for (auto* it : candidates)
         {
-            if ((mob->m_Pos - it->m_Pos).length() <= best_dist)
+            if (Distance(mob->m_Pos, it->m_Pos) <= best_dist)
             {
-                best_dist = (mob->m_Pos - it->m_Pos).length();
+                best_dist = Distance(mob->m_Pos, it->m_Pos);
                 best_target = it;
             }
         }

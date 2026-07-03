@@ -1,6 +1,10 @@
 #pragma once
 #include "rarity.h"
+
+#include <SFML/System/Vector2.hpp>
+
 #include <algorithm>
+#include <cmath>
 #include <random>
 
 inline std::mt19937& GetRng()
@@ -39,4 +43,14 @@ inline int GetLevel(ERarity rarity)
     if (level < 1)
         level = 1;
     return level;
+}
+
+inline float DistanceSq(sf::Vector2f v1, sf::Vector2f v2) {
+    float dx = v2.x - v1.x;
+    float dy = v2.y - v1.y;
+    return dx*dx + dy*dy;
+}
+
+inline float Distance(sf::Vector2f v1, sf::Vector2f v2) {
+    return std::sqrt(DistanceSq(v1, v2));
 }
