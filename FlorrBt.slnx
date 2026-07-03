@@ -1,8 +1,8 @@
 <Solution>
   <Configurations>
     <Platform Name="x64" />
-    <Platform Name="x86" />
   </Configurations>
-  <Project Path="../FlorrBClient/FlorrBClient.vcxproj" Id="f2df660f-8a6e-479d-96ec-4ceb0da6c131" />
-  <Project Path="FlorrBt.vcxproj" Id="a5863369-b891-4ce9-9fdf-fee6e58a565f" />
+  <Project Path="FlorrBt.EngineShared.vcxproj" Id="7f95a41d-b68c-40a8-8761-f7e0b3b2e3c1" />
+  <Project Path="FlorrBt.Server.vcxproj" Id="a5863369-b891-4ce9-9fdf-fee6e58a565f" />
+  <Project Path="FlorrBt.Client.vcxproj" Id="f2df660f-8a6e-479d-96ec-4ceb0da6c131" />
 </Solution>

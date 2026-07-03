@@ -1,8 +1,8 @@
 #include "../Engine/commands_registry.h"
 #include "../Engine/console.h"
 #include "../Engine/logger.h"
-#include "../Server/server.h"
-#include "game_config.h"
+#include "server.h"
+#include "../Shared/game_config.h"
 
 REGISTER_CONSOLE_COMMAND(quit, {
     if (auto* server = CServer::GetInstance())

@@ -1,6 +1,12 @@
 #include "gameworld.h"
 
-CGameWorld::CGameWorld() : m_spatial_grid(this, 200.f) {}
+CGameWorld::CGameWorld()
+    : m_spatial_grid(
+          200.f, [](const CEntity& entity) { return entity.m_pos; }, [](const CEntity& entity) { return entity.m_id; },
+          [this](int id) { return GetEntity(id); },
+          [](const CEntity& entity) { return entity.m_id >= 0 && !entity.m_is_marked_for_des; })
+{
+}
 
 CGameWorld::~CGameWorld()
 {

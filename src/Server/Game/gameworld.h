@@ -1,7 +1,7 @@
 #pragma once
+#include "../../Engine/spatial_hash_grid.h"
 #include "../../Engine/logger.h"
 #include "../../Shared/shared.h"
-#include "../../Shared/spatial_hash_grid.h"
 #include "entity.h"
 #include <memory>
 #include <set>
@@ -10,6 +10,8 @@
 class CGameWorld
 {
   public:
+    using entity_spatial_grid = CSpatialHashGrid<CEntity, int>;
+
     CGameWorld();
     ~CGameWorld();
 
@@ -43,7 +45,7 @@ class CGameWorld
         return result;
     }
 
-    const CSpatialHashGrid& GetSpatialGrid() const { return m_spatial_grid; }
+    const entity_spatial_grid& GetSpatialGrid() const { return m_spatial_grid; }
 
   private:
     void Cleanup();
@@ -51,7 +53,7 @@ class CGameWorld
     std::set<int> m_free_ids;
     int m_next_id = 0;
 
-    CSpatialHashGrid m_spatial_grid;
+    entity_spatial_grid m_spatial_grid;
 
     std::vector<std::unique_ptr<CEntity>> m_p_entities;
     std::vector<CEntity*> m_p_entity_refs;
