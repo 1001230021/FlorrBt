@@ -75,14 +75,16 @@ const CMobPrototype* FindMobPrototype(EMobType type)
     return it->second.get();
 }
 
-std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, float x, float y, ERarity rarity)
+std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, sf::Vector2f pos, ERarity rarity)
 {
     const CMobPrototype* prototype = FindMobPrototype(type);
     if (!prototype || !prototype->m_factory) return nullptr;
-    return prototype->m_factory(world, x, y, rarity);
+    return prototype->m_factory(world, pos, rarity);
 }
 
 void RegisterMobs()
 {
+    RegisterBeetle();
     RegisterNormalLadybug();
+    RegisterPlayerFlower();
 }

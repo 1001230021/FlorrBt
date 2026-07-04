@@ -13,7 +13,7 @@
 class CMobBase : public CEntity
 {
   public:
-    CMobBase(CGameWorld* pworld, float x, float y, float r) : CEntity(pworld, x, y, r) {}
+    CMobBase(CGameWorld* pworld, sf::Vector2f pos, float r) : CEntity(pworld, pos.x, pos.y, r) {}
 
     virtual ~CMobBase();
     CMobBase(const CMobBase&) = delete;
@@ -52,8 +52,10 @@ class CMobBase : public CEntity
 template <typename TStats = SMobStats> class CMob : public CMobBase
 {
   public:
-    CMob(CGameWorld* pworld, float x, float y, float r, ERarity rarity, const TStats& stats)
-        : CMobBase(pworld, x, y, r), m_base_stats(stats), m_final_stats(stats), m_rarity(rarity)
+    using stats_type = TStats;
+
+    CMob(CGameWorld* pworld, sf::Vector2f pos, float r, ERarity rarity, const TStats& stats)
+        : CMobBase(pworld, pos, r), m_base_stats(stats), m_final_stats(stats), m_rarity(rarity)
     {
         m_health = stats.max_health;
         m_mass = stats.mass;
@@ -94,7 +96,7 @@ class CMobPrototype
   public:
     using stats_factory = std::function<SMobStats(ERarity)>;
     using controller_factory = std::function<std::unique_ptr<IController>()>;
-    using mob_factory = std::function<std::unique_ptr<CMobBase>(CGameWorld*, float, float, ERarity)>;
+    using mob_factory = std::function<std::unique_ptr<CMobBase>(CGameWorld*, sf::Vector2f, ERarity)>;
 
     CMobPrototype() = default;
     CMobPrototype(const CMobPrototype&) = delete;
@@ -119,12 +121,13 @@ template <typename TMob> bool RegisterMobPrototype(EMobType type, CMobPrototype 
 {
     auto ptr = std::make_unique<CMobPrototype>(std::move(prototype));
     CMobPrototype* raw_ptr = ptr.get();
-    raw_ptr->m_factory = [raw_ptr](CGameWorld* world, float x, float y, ERarity rarity) -> std::unique_ptr<CMobBase>
+    raw_ptr->m_factory = [raw_ptr](CGameWorld* world, sf::Vector2f pos, ERarity rarity) -> std::unique_ptr<CMobBase>
     {
         if (!world) return nullptr;
 
-        SMobStats stats = raw_ptr->BuildStats(rarity);
-        auto mob = std::make_unique<TMob>(world, x, y, stats.radius, rarity, stats);
+        typename TMob::stats_type stats;
+        static_cast<SMobStats&>(stats) = raw_ptr->BuildStats(rarity);
+        auto mob = std::make_unique<TMob>(world, pos, stats.radius, rarity, stats);
         mob->m_team = raw_ptr->m_team;
         if (raw_ptr->m_controller_factory) mob->SetController(raw_ptr->m_controller_factory());
         return mob;
@@ -134,8 +137,10 @@ template <typename TMob> bool RegisterMobPrototype(EMobType type, CMobPrototype 
 }
 
 const CMobPrototype* FindMobPrototype(EMobType type);
-std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, float x, float y, ERarity rarity);
+std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, sf::Vector2f pos, ERarity rarity);
+void RegisterBeetle();
 void RegisterNormalLadybug();
+void RegisterPlayerFlower();
 void RegisterMobs();
 
 #define REGISTER_MOB(type, mob_class, proto) RegisterMobPrototype<mob_class>(type, std::move(proto))

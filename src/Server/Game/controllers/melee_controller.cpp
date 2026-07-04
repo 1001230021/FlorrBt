@@ -3,6 +3,16 @@
 #include "../gameworld.h"
 #include <limits>
 
+void CMeleeController::PickRandomTargetPos(CMobBase* mob, const SMobStats& stats)
+{
+    if (!mob) return;
+
+    float half_range = stats.search_range / 8.f;
+    sf::Vector2f min_pos = mob->m_pos - sf::Vector2f(half_range, half_range);
+    m_target_pos = min_pos + sf::Vector2f(GetLimitedRng(0.f, half_range * 2.f), GetLimitedRng(0.f, half_range * 2.f));
+    m_has_random_target_pos = true;
+}
+
 void CMeleeController::OnTick(CMobBase* mob, float dt)
 {
     if (!mob || !mob->GameWorld()) return;
@@ -10,11 +20,18 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
     const SMobStats* stats = mob->GetFinalStats();
     if (!stats) return;
 
-    bool target_invalid = !m_p_target || m_p_target->m_is_marked_for_des || CheckTeam(m_p_target->m_team, mob->m_team);
-    float retarget_chance = m_change_target_count / target_time;
-    if (target_invalid || CheckChance(retarget_chance))
+    m_change_target_count += dt;
+
+    bool target_invalid = m_p_target && (m_p_target->m_is_marked_for_des || CheckTeam(m_p_target->m_team, mob->m_team));
+    bool reached_random_target =
+        !m_p_target && m_has_random_target_pos && DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius;
+    float retarget_chance = 2.f * m_change_target_count * dt / (target_time * target_time);
+    bool should_retarget =
+        target_invalid || !m_has_random_target_pos || reached_random_target || CheckChance(retarget_chance);
+    if (should_retarget)
     {
         m_change_target_count = 0.f;
+        m_has_random_target_pos = false;
 
         auto candidates = mob->GameWorld()->GetSpatialGrid().QueryRange(
             mob->m_pos, stats->search_range,
@@ -48,15 +65,12 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
         if (m_p_target)
         {
             m_target_pos = m_p_target->m_pos;
+            m_has_random_target_pos = true;
         } else {
-            float half_range = stats->search_range / 8.f;
-            sf::Vector2f min_pos = mob->m_pos - sf::Vector2f(half_range, half_range);
-            m_target_pos = min_pos + sf::Vector2f(GetLimitedRng(0.f, half_range * 2.f), GetLimitedRng(0.f, half_range * 2.f));
+            PickRandomTargetPos(mob, *stats);
         }
-    } else {
-        m_change_target_count += dt;
-        if (m_p_target) m_target_pos = m_p_target->m_pos;
     }
 
+    if (m_p_target) m_target_pos = m_p_target->m_pos;
     mob->MoveTowards(m_target_pos, dt);
 }

@@ -5,6 +5,8 @@
 #include "Module/network_module.h"
 #include "Module/world_module.h"
 #include <stdexcept>
+#include <SFML/System/Clock.hpp>
+#include <SFML/System/Sleep.hpp>
 
 CServer* CServer::s_p_instance = nullptr;
 
@@ -48,12 +50,17 @@ void CServer::Init()
 void CServer::Run()
 {
     const float dt = 0.016f;
+    const sf::Time targetFrameTime = sf::seconds(dt);
+
     while (m_running)
     {
+        sf::Clock frameClock;
+
         for (auto& module : m_modules)
-        {
             module->Tick(dt);
-        }
+
+        sf::Time elapsed = frameClock.getElapsedTime();
+        if (elapsed < targetFrameTime) sf::sleep(targetFrameTime - elapsed);
     }
 }
 

@@ -43,16 +43,11 @@ void INetworkModule::AcceptConnections()
     auto player = std::make_unique<CPlayer>(std::move(new_socket), id, "Player" + std::to_string(id));
     CPlayer* p_player = player.get();
 
-    auto flower = std::make_unique<CFlower>(&m_lobby_world, 0.0f, 0.0f, 20.0f, ERarity::Common, SFlowerStats{});
-    flower->m_team = 1;
-    CFlower* p_flower = flower.get();
-    p_player->SetOwnedEntity(p_flower);
-
-    flower->SetController(std::make_unique<CPlayerController>());
-    m_lobby_world.InsertEntity(std::move(flower));
-
     m_players.push_back(std::move(player));
     LOG_INFO("network", "New player connected, ID: " + std::to_string(id));
+
+    if (auto* controller = m_lobby_world.GetController())
+        controller->OnPlayerConnect(m_lobby_world, p_player);
 }
 
 void INetworkModule::ProcessMessages()

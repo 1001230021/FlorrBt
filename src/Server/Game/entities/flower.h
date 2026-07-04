@@ -11,8 +11,8 @@ class CPetalSlot;
 class CFlower : public CMob<SFlowerStats>
 {
   public:
-    CFlower(CGameWorld* pworld, float x, float y, float r, ERarity rarity, const SFlowerStats& base = SFlowerStats{})
-        : CMob(pworld, x, y, r, rarity, base)
+    CFlower(CGameWorld* pworld, sf::Vector2f pos, float r, ERarity rarity, const SFlowerStats& base = SFlowerStats{})
+        : CMob(pworld, pos, r, rarity, base)
     {
         m_final_stats = base;
         m_health = base.max_health;

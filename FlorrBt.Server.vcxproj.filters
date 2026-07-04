@@ -19,6 +19,9 @@
     <Filter Include="src\Server\Game\entities\petals">
       <UniqueIdentifier>{10155E48-5561-0824-7AC7-0ECE830F5F52}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Server\Game\gamecontrollers">
+      <UniqueIdentifier>{EBB03C0C-0C0C-4A17-B97C-2A4AB6D1D3A9}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\Server\Game\states">
       <UniqueIdentifier>{9140B92F-2439-602B-B26F-31E19B3CA5B3}</UniqueIdentifier>
     </Filter>
@@ -28,6 +31,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Server\Game\controller.h">
+      <Filter>src\Server\Game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server\Game\gamecontroller.h">
       <Filter>src\Server\Game</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\controllers\melee_controller.h">
@@ -84,6 +90,9 @@
     <ClInclude Include="src\Server\server.h">
       <Filter>src\Server</Filter>
     </ClInclude>
+    <ClInclude Include="src\Server\Game\gamecontrollers\opencontroller.h">
+      <Filter>src\Server\Game\gamecontrollers</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Server\commands.cpp">
@@ -136,6 +145,9 @@
     </ClCompile>
     <ClCompile Include="src\Server\server.cpp">
       <Filter>src\Server</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Game\gamecontrollers\opencontroller.cpp">
+      <Filter>src\Server\Game\gamecontrollers</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

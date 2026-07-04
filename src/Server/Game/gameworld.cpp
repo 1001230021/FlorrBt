@@ -1,4 +1,5 @@
 #include "gameworld.h"
+#include "entities/mob.h"
 
 CGameWorld::CGameWorld()
     : m_spatial_grid(
@@ -113,6 +114,10 @@ void CGameWorld::Tick(float dt)
         if (entity && !entity->m_skip_world_tick) entity->Tick(dt);
     }
 
+    if (m_p_controller)
+        m_p_controller->OnTick(*this, dt);
+
+    ResolveCollisions(entities);
     Cleanup();
 }
 
@@ -129,6 +134,64 @@ CEntity* CGameWorld::FindClosestEntity(const sf::Vector2f& center, float max_ran
                                        std::function<bool(const CEntity*)> filter) const
 {
     return m_spatial_grid.FindClosest(center, max_range, filter);
+}
+
+std::vector<CEntity*> CGameWorld::GetAllEntities() const
+{
+    std::vector<CEntity*> result;
+    result.reserve(m_p_entities.size() + m_p_entity_refs.size());
+    for (const auto& entity : m_p_entities)
+    {
+        if (entity) result.push_back(entity.get());
+    }
+    for (CEntity* entity : m_p_entity_refs)
+    {
+        if (entity) result.push_back(entity);
+    }
+    return result;
+}
+
+void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities)
+{
+    float max_radius = 0.f;
+    for (const CEntity* entity : entities)
+    {
+        if (entity && !entity->m_is_marked_for_des) max_radius = std::max(max_radius, entity->m_radius);
+    }
+
+    for (CEntity* entity : entities)
+    {
+        if (!entity || entity->m_is_marked_for_des) continue;
+
+        auto candidates = m_spatial_grid.QueryRange(entity->m_pos, entity->m_radius + max_radius,
+                                                    [entity](const CEntity* other) -> bool
+                                                    {
+                                                        if (!other || other->m_is_marked_for_des) return false;
+                                                        if (other == entity) return false;
+                                                        return entity->m_id < other->m_id;
+                                                    });
+
+        for (CEntity* other : candidates)
+        {
+            if (!other || other->m_is_marked_for_des) continue;
+            if (!entity->IsCollision(*other)) continue;
+
+            entity->OnCollision(other);
+            other->OnCollision(entity);
+
+            bool same_team = CheckTeam(entity->m_team, other->m_team);
+            if (same_team) continue;
+
+            if (auto* mob = dynamic_cast<CMobBase*>(entity))
+            {
+                if (const SMobStats* stats = mob->GetFinalStats()) other->TakeDamage(stats->damage, entity, EDamageType::Normal);
+            }
+            if (auto* mob = dynamic_cast<CMobBase*>(other))
+            {
+                if (const SMobStats* stats = mob->GetFinalStats()) entity->TakeDamage(stats->damage, other, EDamageType::Normal);
+            }
+        }
+    }
 }
 
 void CGameWorld::Cleanup()
