@@ -1,4 +1,5 @@
 #include "mob.h"
+#include "../../../Shared/game_config.h"
 
 CMobBase::~CMobBase() = default;
 
@@ -35,8 +36,8 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
     float len = Length(delta);
     if (len <= m_radius)
     {
-        m_vel *= 0.9f;
-        if (LengthSq(m_vel) <= 1e-5f) m_vel = {0.f, 0.f};
+        m_vel *= game_config::mob_stop_damping;
+        if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = {0.f, 0.f};
         return;
     }
 
@@ -86,5 +87,7 @@ void RegisterMobs()
 {
     RegisterBeetle();
     RegisterNormalLadybug();
+    RegisterNormalFlower();
     RegisterPlayerFlower();
+    RegisterSummonedBeetle();
 }

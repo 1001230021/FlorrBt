@@ -7,6 +7,10 @@
 #include <vector>
 
 class CGameWorld;
+class CEntity;
+class CPlayer;
+struct ServerEntitySnap;
+struct ServerMessage;
 
 class INetworkModule : public IModule
 {
@@ -21,6 +25,15 @@ class INetworkModule : public IModule
   private:
     void AcceptConnections();
     void ProcessMessages();
+    void SendSnapshots();
+    void TickTimeouts(float dt);
+    bool FlushSendBuffer(CPlayer& player);
+    bool QueueMessage(CPlayer& player, const ServerMessage& msg);
+    bool ProcessPlayerBuffer(CPlayer& player);
+    void Respawn(CPlayer& player);
+    CPlayer* FindReconnectablePlayer() const;
+    void DropPlayer(size_t index, const std::string& reason);
+    ServerEntitySnap BuildEntitySnap(const CEntity& entity, const CEntity& owner) const;
 
     int GetNewPlayerId();
     void FreePlayerId(int id);
@@ -30,4 +43,5 @@ class INetworkModule : public IModule
     std::vector<std::unique_ptr<CPlayer>> m_players;
     std::set<int> m_free_player_ids;
     int m_next_player_id = 1;
+    uint32_t m_snapshot_id = 0;
 };

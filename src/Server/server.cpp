@@ -5,6 +5,7 @@
 #include "Module/network_module.h"
 #include "Module/server_gui_module.h"
 #include "Module/world_module.h"
+#include "../Shared/game_config.h"
 #include <stdexcept>
 #include <SFML/System/Clock.hpp>
 #include <SFML/System/Sleep.hpp>
@@ -47,7 +48,7 @@ void CServer::Init()
 
 void CServer::Run()
 {
-    const float dt = 0.016f;
+    const float dt = game_config::server_fixed_dt;
     const sf::Time targetFrameTime = sf::seconds(dt);
 
     while (m_running)

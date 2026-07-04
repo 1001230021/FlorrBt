@@ -9,12 +9,22 @@
 
 class CPetal;
 
+enum class EPetalBonusMode
+{
+    AliveOnly,
+    ReloadKeepsBonus
+};
+
+inline bool KeepsBonusDuringReload(EPetalBonusMode mode) { return mode == EPetalBonusMode::ReloadKeepsBonus; }
+inline bool LosesBonusDuringReload(EPetalBonusMode mode) { return mode == EPetalBonusMode::AliveOnly; }
+
 class CPetalBehavior
 {
   public:
     virtual ~CPetalBehavior() = default;
 
     virtual bool IsOpen() const { return false; }
+    virtual EPetalBonusMode GetBonusMode() const { return EPetalBonusMode::AliveOnly; }
 
     virtual SFlowerStats GetStats(ERarity rarity) const = 0;
     virtual SPetalStats GetPetalStats(ERarity rarity) const = 0;
@@ -23,7 +33,9 @@ class CPetalBehavior
     virtual void OnFlowerTakeDamage(CPetal* owner, ERarity rarity, CFlower* flower, float& dmg,
                                     EDamageType damage_type, CEntity* attacker) = 0;
     virtual void OnPetalSpawned(CPetal* owner, ERarity rarity, CFlower* flower) = 0;
+    virtual void OnPetalCleared(CPetal*, ERarity, CFlower*) {}
     virtual void OnPetalDestroyed(CPetal* owner, ERarity rarity, CFlower* flower) = 0;
+    virtual bool ShouldReloadAfterPetalDestroyed(CPetal*) const { return true; }
 };
 
 class CPetalPrototype
@@ -54,9 +66,21 @@ class CPetal : public CProjectile
 
     SPetalStats m_base_petal_stats;
     SPetalStats m_final_petal_stats;
+    EPetalType m_type = EPetalType::None;
     int m_max_slot_num = 0;
     int m_copy_index = 0;
     int m_slot_index = 0;
+};
+
+class CBeetleEggPetal : public CPetal
+{
+  public:
+    using CPetal::CPetal;
+
+    void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
+
+    int m_summon_id = -1;
+    bool m_has_spawned_summon = false;
 };
 
 inline std::unordered_map<EPetalType, std::unique_ptr<CPetalPrototype>> g_petal_registry;
@@ -71,6 +95,7 @@ template <typename TPetal> bool RegisterPetalPrototype(EPetalType type, CPetalPr
 
         SPetalStats petal_stats = raw_ptr->m_p_behavior->GetPetalStats(rarity);
         auto petal = std::make_unique<TPetal>(petal_stats.radius, flower, slot, petal_stats);
+        petal->m_type = raw_ptr->m_type;
         petal->m_slot_index = slot;
         return petal;
     };

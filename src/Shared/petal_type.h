@@ -4,6 +4,7 @@ enum class EPetalType : int
 {
     None = 0,
     Air,
+    Basic,
     BeetleEgg,
     Bone,
     Carrot,
@@ -11,5 +12,6 @@ enum class EPetalType : int
     Compass,
     Disc,
     Dust,
-    GoldenLeaf
+    GoldenLeaf,
+    YinYang
 };

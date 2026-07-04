@@ -1,4 +1,5 @@
 #include "entity.h"
+#include "../../Shared/game_config.h"
 #include <algorithm>
 #include <cmath>
 
@@ -30,7 +31,7 @@ void CEntity::OnCollision(CEntity* other)
     sf::Vector2f diff = m_pos - other->m_pos;
     float dist = std::sqrt(diff.x * diff.x + diff.y * diff.y);
     float overlap = (m_radius + other->m_radius) - dist;
-    if (overlap <= 0.0f || dist <= 0.001f) return;
+    if (overlap <= 0.0f || dist <= game_config::entity_collision_epsilon) return;
 
     sf::Vector2f normal = diff / dist;
 

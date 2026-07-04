@@ -29,6 +29,7 @@ class IServerGuiModule : public IModule
     void PushLine(std::string sender, ELogPriority priority, std::string text);
     void ExecuteInput();
     void CompleteCommand();
+    void ResetCompletion();
     void Render();
     void MoveCursorToMouseX(float x);
     void BeginOutputSelection(sf::Vector2i position);
@@ -55,7 +56,10 @@ class IServerGuiModule : public IModule
     std::vector<log_line> m_lines;
     CConsole& m_console;
     sf::String m_input;
+    sf::String m_completion_original_input;
+    std::vector<std::string> m_completion_matches;
     size_t m_cursor_index = 0;
+    size_t m_completion_index = 0;
     size_t m_selection_anchor = 0;
     size_t m_selection_cursor = 0;
     size_t m_log_sink_id = 0;
@@ -64,4 +68,5 @@ class IServerGuiModule : public IModule
     bool m_is_selecting_output = false;
     bool m_has_output_selection = false;
     bool m_is_dragging_scrollbar = false;
+    bool m_is_completing = false;
 };

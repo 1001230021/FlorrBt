@@ -12,7 +12,7 @@ int main()
 {
     sf::TcpSocket socket;
 
-    sf::Socket::Status status = socket.connect(sf::IpAddress::LocalHost, game_config::default_port, sf::seconds(5));
+    sf::Socket::Status status = socket.connect(sf::IpAddress::LocalHost, game_config::port, sf::seconds(5));
     if (status != sf::Socket::Status::Done)
     {
         std::cerr << "Failed to connect to server\n";
@@ -35,9 +35,9 @@ int main()
     std::cout << "Sent movement\n";
 
     ClientOperate attack_op;
-    attack_op.type = ClientOperate::Type::AttackDefend;
-    attack_op.isAttacking = true;
-    attack_op.isDefending = false;
+    attack_op.type = ClientOperate::Type::Chores;
+    attack_op.is_attacking = true;
+    attack_op.is_defending = false;
 
     len = ClientOperate::pack(attack_op, buffer);
     if (socket.send(buffer, len) != sf::Socket::Status::Done)

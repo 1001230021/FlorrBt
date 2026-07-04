@@ -1,9 +1,11 @@
 #include "gameworld.h"
 #include "entities/mob.h"
+#include "../../Shared/game_config.h"
 
 CGameWorld::CGameWorld()
     : m_spatial_grid(
-          200.f, [](const CEntity& entity) { return entity.m_pos; }, [](const CEntity& entity) { return entity.m_id; },
+          game_config::spatial_grid_cell_size, [](const CEntity& entity) { return entity.m_pos; },
+          [](const CEntity& entity) { return entity.m_id; },
           [this](int id) { return GetEntity(id); },
           [](const CEntity& entity) { return entity.m_id >= 0 && !entity.m_is_marked_for_des; })
 {

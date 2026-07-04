@@ -7,7 +7,9 @@ enum class EMobType : int
     Gambler,
     NormalLadybug,
     MechaFlower,
+    NormalFlower,
     PlayerFlower,
+    SummonedBeetle,
 };
 
 using MobType = EMobType;

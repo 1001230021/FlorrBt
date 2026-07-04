@@ -11,6 +11,7 @@ class CPlayerController : public IController
     void OnTick(CMobBase* mob, float dt) override;
 
     void PushOperate(const ClientOperate& op);
+    void ResetOperate();
 
   private:
     void ExecuteOperate(const ClientOperate& op, CMobBase* mob);

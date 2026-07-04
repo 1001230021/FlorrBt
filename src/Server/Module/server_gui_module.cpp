@@ -1,5 +1,6 @@
 #include "server_gui_module.h"
 #include "../server.h"
+#include "../../Shared/game_config.h"
 #include <SFML/Window/Clipboard.hpp>
 #include <algorithm>
 #include <cmath>
@@ -96,22 +97,29 @@ void IServerGuiModule::Tick(float)
                 ShutDown();
                 return;
             } else if (key->code == sf::Keyboard::Key::Enter) {
+                ResetCompletion();
                 ExecuteInput();
             } else if (key->code == sf::Keyboard::Key::Backspace) {
+                ResetCompletion();
                 if (m_cursor_index > 0)
                 {
                     m_input.erase(m_cursor_index - 1);
                     --m_cursor_index;
                 }
             } else if (key->code == sf::Keyboard::Key::Delete) {
+                ResetCompletion();
                 if (m_cursor_index < m_input.getSize()) m_input.erase(m_cursor_index);
             } else if (key->code == sf::Keyboard::Key::Left) {
+                ResetCompletion();
                 if (m_cursor_index > 0) --m_cursor_index;
             } else if (key->code == sf::Keyboard::Key::Right) {
+                ResetCompletion();
                 if (m_cursor_index < m_input.getSize()) ++m_cursor_index;
             } else if (key->code == sf::Keyboard::Key::Home) {
+                ResetCompletion();
                 m_cursor_index = 0;
             } else if (key->code == sf::Keyboard::Key::End) {
+                ResetCompletion();
                 m_cursor_index = m_input.getSize();
             } else if (key->code == sf::Keyboard::Key::Tab) {
                 CompleteCommand();
@@ -125,6 +133,7 @@ void IServerGuiModule::Tick(float)
             if (mouse->button == sf::Mouse::Button::Left && static_cast<float>(mouse->position.y) >= input_top &&
                 static_cast<float>(mouse->position.y) <= input_top + input_height)
             {
+                ResetCompletion();
                 m_has_output_selection = false;
                 m_is_selecting_output = false;
                 MoveCursorToMouseX(static_cast<float>(mouse->position.x));
@@ -160,6 +169,7 @@ void IServerGuiModule::Tick(float)
             char32_t unicode = text->unicode;
             if (unicode >= 32 && unicode != 127)
             {
+                ResetCompletion();
                 m_input.insert(m_cursor_index, sf::String(unicode));
                 ++m_cursor_index;
             }
@@ -210,52 +220,52 @@ void IServerGuiModule::ExecuteInput()
 
 void IServerGuiModule::CompleteCommand()
 {
-    const std::string input = ToUtf8(m_input);
-    const size_t token_end = input.find(' ');
-    std::string prefix = input.substr(0, token_end);
-    if (prefix.empty()) return;
+    const std::string input = ToUtf8(m_is_completing ? m_completion_original_input : m_input);
+    const size_t cursor_index = m_is_completing ? m_completion_original_input.getSize() : m_cursor_index;
+    const size_t token_begin = input.rfind(' ', cursor_index == 0 ? 0 : cursor_index - 1);
+    const size_t replace_begin = (token_begin == std::string::npos) ? 0 : token_begin + 1;
+    const size_t replace_end = input.find(' ', replace_begin);
+    const std::string prefix = input.substr(replace_begin, cursor_index - replace_begin);
+    if (prefix.empty() && replace_begin == 0) return;
 
-    std::vector<std::string> matches;
-    for (const std::string& name : m_console.CommandNames())
+    if (!m_is_completing)
     {
-        if (name.rfind(prefix, 0) == 0) matches.push_back(name);
+        std::vector<std::string> source;
+        const std::string command = input.substr(0, input.find(' '));
+        if ((command == "set" || command == "get") && replace_begin > 0)
+            source = game_config::ConfigNames();
+        else if (replace_begin == 0)
+            source = m_console.CommandNames();
+        else
+            return;
+
+        m_completion_matches.clear();
+        for (const std::string& candidate : source)
+        {
+            if (candidate.rfind(prefix, 0) == 0) m_completion_matches.push_back(candidate);
+        }
+        std::sort(m_completion_matches.begin(), m_completion_matches.end());
+        if (m_completion_matches.empty()) return;
+
+        m_completion_original_input = m_input;
+        m_completion_index = 0;
+        m_is_completing = true;
+    } else {
+        m_completion_index = (m_completion_index + 1) % m_completion_matches.size();
     }
 
-    if (matches.empty())
-    {
-        PushLine("graphical", ELogPriority::Warning, "No command matches \"" + prefix + "\".");
-        return;
-    }
+    const std::string& match = m_completion_matches[m_completion_index];
+    const std::string suffix = (replace_end == std::string::npos) ? "" : input.substr(replace_end);
+    m_input = FromUtf8(input.substr(0, replace_begin) + match + suffix);
+    m_cursor_index = replace_begin + match.size();
+}
 
-    if (matches.size() == 1)
-    {
-        const std::string completed = matches.front() + input.substr(prefix.size());
-        m_input = FromUtf8(completed);
-        m_cursor_index = matches.front().size();
-        return;
-    }
-
-    std::string common = matches.front();
-    for (const std::string& match : matches)
-    {
-        size_t i = 0;
-        while (i < common.size() && i < match.size() && common[i] == match[i]) ++i;
-        common.resize(i);
-    }
-
-    std::string joined;
-    for (const std::string& match : matches)
-    {
-        if (!joined.empty()) joined += ", ";
-        joined += match;
-    }
-    PushLine("graphical", ELogPriority::Info, "Matches: " + joined);
-
-    if (common.size() > prefix.size())
-    {
-        m_input = FromUtf8(common + input.substr(prefix.size()));
-        m_cursor_index = common.size();
-    }
+void IServerGuiModule::ResetCompletion()
+{
+    m_is_completing = false;
+    m_completion_original_input.clear();
+    m_completion_matches.clear();
+    m_completion_index = 0;
 }
 
 void IServerGuiModule::Render()

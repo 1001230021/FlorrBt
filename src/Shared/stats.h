@@ -1,5 +1,11 @@
 #pragma once
 
+enum class EPetalRotationMode
+{
+    Orbit,
+    YinYang
+};
+
 struct SMobStats
 {
     float max_health = 1.f;
@@ -7,7 +13,7 @@ struct SMobStats
     float damage = 0.f;
     float radius = 10.0f;
     float mass = 0.f;
-    float search_range = 1024.f;
+    float horizon = 1024.f;
     float detection_multiplier = 1.f;
     float max_velocity = 50.f;
     float acceleration = 100.f;
@@ -19,7 +25,7 @@ struct SMobStats
         damage += other.damage;
         radius += other.radius;
         mass += other.mass;
-        search_range += other.search_range;
+        horizon += other.horizon;
         detection_multiplier *= other.detection_multiplier;
         max_velocity += other.max_velocity;
         acceleration += other.acceleration;
@@ -35,6 +41,8 @@ struct SFlowerStats : public SMobStats
     float petal_reload_multiplier = 1.f;
     float petal_health_multiplier = 1.f;
     float petal_medicine_multiplier = 1.f;
+    float petal_rotation_speed = 1.5f;
+    EPetalRotationMode petal_rotation_mode = EPetalRotationMode::Orbit;
 
     void ActedOn(const SFlowerStats& other)
     {
@@ -47,6 +55,8 @@ struct SFlowerStats : public SMobStats
         petal_reload_multiplier *= other.petal_reload_multiplier;
         petal_health_multiplier *= other.petal_health_multiplier;
         petal_medicine_multiplier *= other.petal_medicine_multiplier;
+        petal_rotation_speed += other.petal_rotation_speed;
+        if (other.petal_rotation_mode != EPetalRotationMode::Orbit) petal_rotation_mode = other.petal_rotation_mode;
     }
 };
 

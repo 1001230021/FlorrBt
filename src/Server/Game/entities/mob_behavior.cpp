@@ -1,5 +1,6 @@
 #include "../controllers/melee_controller.h"
 #include "../controllers/player_controller.h"
+#include "flower.h"
 #include "mob.h"
 #include <cmath>
 #include <map>
@@ -11,7 +12,9 @@ using CBasicMob = CMob<SMobStats>;
 
 std::once_flag g_beetle_registered;
 std::once_flag g_normal_ladybug_registered;
+std::once_flag g_normal_flower_registered;
 std::once_flag g_playerflower_registered;
+std::once_flag g_summoned_beetle_registered;
 
 inline float GetHealthMult(int level)
 {
@@ -27,16 +30,34 @@ SMobStats ScaleMobStats(SMobStats stats, ERarity rarity)
 {
     int level = GetLevel(rarity);
     float health_scale = GetHealthMult(level);
-    float damage_scale = std::pow(3.0f, static_cast<float>(level - 1));
-    float radius_scale = std::pow(static_cast<float>(level), 1.5f);
-    float search_range_scale = std::pow(static_cast<float>(level), 1.25f);
-    float mass_scale = std::pow(2.5f, static_cast<float>(level - 1) * 0.6f);
+    float damage_scale = std::pow(game_config::mob_damage_scale_base, static_cast<float>(level - 1));
+    float radius_scale = std::pow(static_cast<float>(level), game_config::mob_radius_scale_exp);
+    float horizon_scale = std::pow(static_cast<float>(level), game_config::mob_horizon_scale_exp);
+    float mass_scale =
+        std::pow(game_config::mob_mass_scale_base, static_cast<float>(level - 1) * game_config::mob_mass_scale_exp_multiplier);
 
     stats.max_health *= health_scale;
     stats.damage *= damage_scale;
     stats.radius *= radius_scale;
-    stats.search_range *= search_range_scale;
+    stats.horizon *= horizon_scale;
     stats.mass *= mass_scale;
+    return stats;
+}
+
+SFlowerStats ScaleFlowerStats(SFlowerStats stats, ERarity rarity)
+{
+    static_cast<SMobStats&>(stats) = ScaleMobStats(stats, rarity);
+    return stats;
+}
+
+SMobStats ScaleSummonedMobStats(SMobStats stats, ERarity rarity)
+{
+    int level = GetLevel(rarity);
+    float scale = std::pow(static_cast<float>(std::max(1, level)), game_config::mob_summoned_beetle_scale_exp);
+    stats.max_health *= scale;
+    stats.damage *= scale;
+    stats.radius *= scale;
+    stats.mass *= scale;
     return stats;
 }
 } // namespace
@@ -47,13 +68,13 @@ void RegisterBeetle()
         CMobPrototype proto;
         proto.m_type = EMobType::Beetle;
         proto.m_name = "Beetle";
-        proto.m_team = 2;
-        proto.m_base_stats.max_health = 100.f;
-        proto.m_base_stats.armor = 1.f;
-        proto.m_base_stats.damage = 30.f;
-        proto.m_base_stats.radius = 18.f;
-        proto.m_base_stats.mass = 10.f;
-        proto.m_base_stats.search_range = game_config::default_search_range;
+        proto.m_team = game_config::mob_beetle_team;
+        proto.m_base_stats.max_health = game_config::mob_beetle_max_health;
+        proto.m_base_stats.armor = game_config::mob_beetle_armor;
+        proto.m_base_stats.damage = game_config::mob_beetle_damage;
+        proto.m_base_stats.radius = game_config::mob_beetle_radius;
+        proto.m_base_stats.mass = game_config::mob_beetle_mass;
+        proto.m_base_stats.horizon = game_config::default_horizon;
         proto.m_base_stats.max_velocity = game_config::default_max_velocity;
         proto.m_base_stats.acceleration = game_config::default_acceleration;
         proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
@@ -70,13 +91,13 @@ void RegisterNormalLadybug()
         CMobPrototype proto;
         proto.m_type = EMobType::NormalLadybug;
         proto.m_name = "NormalLadybug";
-        proto.m_team = 2;
-        proto.m_base_stats.max_health = 60.f;
-        proto.m_base_stats.armor = 0.8f;
-        proto.m_base_stats.damage = 10.f;
-        proto.m_base_stats.radius = 18.f;
-        proto.m_base_stats.mass = 5.f;
-        proto.m_base_stats.search_range = game_config::default_search_range;
+        proto.m_team = game_config::mob_normal_ladybug_team;
+        proto.m_base_stats.max_health = game_config::mob_normal_ladybug_max_health;
+        proto.m_base_stats.armor = game_config::mob_normal_ladybug_armor;
+        proto.m_base_stats.damage = game_config::mob_normal_ladybug_damage;
+        proto.m_base_stats.radius = game_config::mob_normal_ladybug_radius;
+        proto.m_base_stats.mass = game_config::mob_normal_ladybug_mass;
+        proto.m_base_stats.horizon = game_config::default_horizon;
         proto.m_base_stats.max_velocity = game_config::default_max_velocity;
         proto.m_base_stats.acceleration = game_config::default_acceleration;
         proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
@@ -93,19 +114,67 @@ void RegisterPlayerFlower()
         CMobPrototype proto;
         proto.m_type = EMobType::PlayerFlower;
         proto.m_name = "PlayerFlower";
-        proto.m_team = 1;
-        proto.m_base_stats.max_health = 100.f;
-        proto.m_base_stats.armor = 0.f;
-        proto.m_base_stats.damage = 10.f;
-        proto.m_base_stats.radius = 18.f;
-        proto.m_base_stats.mass = 5.f;
-        proto.m_base_stats.search_range = game_config::default_search_range;
+        proto.m_team = game_config::mob_player_flower_team;
+        proto.m_base_flower_stats.max_health = game_config::mob_player_flower_max_health;
+        proto.m_base_flower_stats.armor = game_config::mob_player_flower_armor;
+        proto.m_base_flower_stats.damage = game_config::mob_player_flower_damage;
+        proto.m_base_flower_stats.radius = game_config::mob_player_flower_radius;
+        proto.m_base_flower_stats.mass = game_config::mob_player_flower_mass;
+        proto.m_base_flower_stats.horizon = game_config::default_horizon;
+        proto.m_base_flower_stats.max_velocity = game_config::default_max_velocity;
+        proto.m_base_flower_stats.acceleration = game_config::default_acceleration;
+        proto.m_base_flower_stats.petal_rotation_speed = game_config::mob_player_flower_petal_rotation_speed;
+        proto.m_flower_stats_factory = [base_stats = proto.m_base_flower_stats](ERarity rarity) {
+            return ScaleFlowerStats(base_stats, rarity);
+        };
+        proto.m_controller_factory = []() { return std::make_unique<CPlayerController>(); };
+        REGISTER_MOB(EMobType::PlayerFlower, CPlayerFlower, proto);
+    });
+}
+
+void RegisterNormalFlower()
+{
+    std::call_once(g_normal_flower_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::NormalFlower;
+        proto.m_name = "NormalFlower";
+        proto.m_team = game_config::mob_normal_flower_team;
+        proto.m_base_flower_stats.max_health = game_config::mob_normal_flower_max_health;
+        proto.m_base_flower_stats.armor = game_config::mob_normal_flower_armor;
+        proto.m_base_flower_stats.damage = game_config::mob_normal_flower_damage;
+        proto.m_base_flower_stats.radius = game_config::default_flower_radius;
+        proto.m_base_flower_stats.mass = game_config::mob_normal_flower_mass;
+        proto.m_base_flower_stats.horizon = game_config::default_horizon;
+        proto.m_base_flower_stats.max_velocity = game_config::default_max_velocity;
+        proto.m_base_flower_stats.acceleration = game_config::default_acceleration;
+        proto.m_base_flower_stats.petal_rotation_speed = game_config::mob_normal_flower_petal_rotation_speed;
+        proto.m_flower_stats_factory = [base_stats = proto.m_base_flower_stats](ERarity rarity) {
+            return ScaleFlowerStats(base_stats, rarity);
+        };
+        proto.m_controller_factory = []() { return std::make_unique<CMeleeController>(); };
+        REGISTER_MOB(EMobType::NormalFlower, CNormalFlower, proto);
+    });
+}
+
+void RegisterSummonedBeetle()
+{
+    std::call_once(g_summoned_beetle_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::SummonedBeetle;
+        proto.m_name = "SummonedBeetle";
+        proto.m_team = game_config::mob_summoned_beetle_team;
+        proto.m_base_stats.max_health = game_config::mob_summoned_beetle_max_health;
+        proto.m_base_stats.armor = game_config::mob_summoned_beetle_armor;
+        proto.m_base_stats.damage = game_config::mob_summoned_beetle_damage;
+        proto.m_base_stats.radius = game_config::mob_summoned_beetle_radius;
+        proto.m_base_stats.mass = game_config::mob_summoned_beetle_mass;
+        proto.m_base_stats.horizon = game_config::mob_summoned_beetle_horizon;
         proto.m_base_stats.max_velocity = game_config::default_max_velocity;
         proto.m_base_stats.acceleration = game_config::default_acceleration;
         proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
-            return ScaleMobStats(base_stats, rarity);
+            return ScaleSummonedMobStats(base_stats, rarity);
         };
-        proto.m_controller_factory = []() { return std::make_unique<CPlayerController>(); };
-        REGISTER_MOB(EMobType::PlayerFlower, CFlower, proto);
+        REGISTER_MOB(EMobType::SummonedBeetle, CBasicMob, proto);
     });
 }
+

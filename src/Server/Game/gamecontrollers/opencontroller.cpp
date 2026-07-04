@@ -2,14 +2,18 @@
 #include "../player.h"
 #include "../gameworld.h"
 #include "../entities/flower.h"
+#include "../../../Shared/game_config.h"
 
 void COpenController::OnTick(CGameWorld& world, float dt)
 {
     if (m_count <= 0)
     {
-        auto mob = CreateMob(EMobType::NormalLadybug, &world, {500.f, 0.f}, ERarity::Primordial);
+        auto mob = CreateMob(EMobType::NormalLadybug, &world, {game_config::open_spawn_x, game_config::open_spawn_y},
+                             ERarity::Primordial);
+        if (!mob) return;
+
         world.InsertEntity(std::move(mob));
-        m_count = 9999.9f;
+        m_count = game_config::open_spawn_interval;
     } else {
         m_count -= dt;
     }
@@ -17,11 +21,15 @@ void COpenController::OnTick(CGameWorld& world, float dt)
 
 void COpenController::OnPlayerConnect(CGameWorld& world, CPlayer* player)
 {
-    auto entity = CreateMob(EMobType::PlayerFlower, &world, {0.f, 0.f}, ERarity::Common);
-    auto* raw_flower = dynamic_cast<CFlower*>(entity.get());
-    if (!player || !raw_flower) return;
+    if (!player) return;
 
-    auto flower = std::unique_ptr<CFlower>(static_cast<CFlower*>(entity.release()));
-    raw_flower = static_cast<CFlower*>(world.InsertEntity(std::move(flower)));
+    auto entity = CreateMob(EMobType::PlayerFlower, &world,
+                            {game_config::player_respawn_x, game_config::player_respawn_y}, ERarity::Common);
+    auto* raw_flower = dynamic_cast<CPlayerFlower*>(entity.get());
+    if (!raw_flower) return;
+
+    raw_flower->m_name = player->GetName();
+    raw_flower->m_level = 1;
+    raw_flower = dynamic_cast<CPlayerFlower*>(world.InsertEntity(std::move(entity)));
     if (raw_flower) player->SetOwnedEntity(raw_flower);
 }
