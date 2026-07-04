@@ -31,7 +31,6 @@ void CFlower::Tick(float dt)
         slot.Tick(dt, this);
     }
 }
-
 void CFlower::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
 {
     for (auto& slot : GetSlots())

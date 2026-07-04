@@ -1,4 +1,5 @@
 #include "../controllers/melee_controller.h"
+#include "../controllers/player_controller.h"
 #include "mob.h"
 #include <cmath>
 #include <map>
@@ -8,8 +9,9 @@ namespace
 {
 using CBasicMob = CMob<SMobStats>;
 
-std::once_flag g_normal_ladybug_registered;
 std::once_flag g_beetle_registered;
+std::once_flag g_normal_ladybug_registered;
+std::once_flag g_playerflower_registered;
 
 inline float GetHealthMult(int level)
 {
@@ -82,5 +84,28 @@ void RegisterNormalLadybug()
         };
         proto.m_controller_factory = []() { return std::make_unique<CMeleeController>(); };
         REGISTER_MOB(EMobType::NormalLadybug, CBasicMob, proto);
+    });
+}
+
+void RegisterPlayerFlower()
+{
+    std::call_once(g_playerflower_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::PlayerFlower;
+        proto.m_name = "PlayerFlower";
+        proto.m_team = 1;
+        proto.m_base_stats.max_health = 100.f;
+        proto.m_base_stats.armor = 0.f;
+        proto.m_base_stats.damage = 10.f;
+        proto.m_base_stats.radius = 18.f;
+        proto.m_base_stats.mass = 5.f;
+        proto.m_base_stats.search_range = game_config::default_search_range;
+        proto.m_base_stats.max_velocity = game_config::default_max_velocity;
+        proto.m_base_stats.acceleration = game_config::default_acceleration;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(base_stats, rarity);
+        };
+        proto.m_controller_factory = []() { return std::make_unique<CPlayerController>(); };
+        REGISTER_MOB(EMobType::PlayerFlower, CFlower, proto);
     });
 }

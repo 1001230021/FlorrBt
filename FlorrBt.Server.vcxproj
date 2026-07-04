@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
-    
-    
     <ProjectConfiguration Include="Debug|x64">
       <Configuration>Debug</Configuration>
       <Platform>x64</Platform>
@@ -21,8 +19,6 @@
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
-  
-  
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
@@ -39,8 +35,6 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings" />
   <ImportGroup Label="Shared" />
-  
-  
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
@@ -48,8 +42,6 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
-  
-  
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -90,6 +82,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\Server\Game\controller.h" />
+    <ClInclude Include="src\Server\Game\gamecontroller.h" />
     <ClInclude Include="src\Server\Game\controllers\melee_controller.h" />
     <ClInclude Include="src\Server\Game\controllers\player_controller.h" />
     <ClInclude Include="src\Server\Game\entities\flower.h" />
@@ -99,6 +92,7 @@
     <ClInclude Include="src\Server\Game\entities\petals\petals_behavior.h" />
     <ClInclude Include="src\Server\Game\entities\projectile.h" />
     <ClInclude Include="src\Server\Game\entity.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\opencontroller.h" />
     <ClInclude Include="src\Server\Game\gameworld.h" />
     <ClInclude Include="src\Server\Game\player.h" />
     <ClInclude Include="src\Server\Game\state.h" />
@@ -119,6 +113,7 @@
     <ClCompile Include="src\Server\Game\entities\petals\petal.cpp" />
     <ClCompile Include="src\Server\Game\entities\petals\petal_behavior.cpp" />
     <ClCompile Include="src\Server\Game\entity.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\opencontroller.cpp" />
     <ClCompile Include="src\Server\Game\gameworld.cpp" />
     <ClCompile Include="src\Server\Game\player.cpp" />
     <ClCompile Include="src\Server\Game\states\states.cpp" />

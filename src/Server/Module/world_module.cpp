@@ -1,8 +1,12 @@
 #include "world_module.h"
+#include "../Game/gamecontrollers/opencontroller.h"
 
 IWorldModule::IWorldModule()
 {
-    m_worlds.emplace_back(std::make_unique<CGameWorld>());
+    auto world = std::make_unique<CGameWorld>();
+    auto controller = std::make_unique<COpenController>();
+    world->SetController(std::move(controller));
+    m_worlds.emplace_back(std::move(world));
 }
 
 bool IWorldModule::Init()
