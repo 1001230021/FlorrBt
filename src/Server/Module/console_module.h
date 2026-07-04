@@ -6,6 +6,8 @@
 class IConsoleModule : public IModule
 {
   public:
+    explicit IConsoleModule(CConsole& console) : m_console(console) {}
+
     bool Init() override;
     void Tick(float dt) override;
     void ShutDown() override;
@@ -14,6 +16,6 @@ class IConsoleModule : public IModule
   private:
     bool TryReadLine(std::string& line);
 
-    CConsole m_console;
+    CConsole& m_console;
     std::string m_pending_line;
 };

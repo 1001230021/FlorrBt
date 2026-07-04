@@ -1,5 +1,4 @@
 #include "console_module.h"
-#include "../../Engine/commands_registry.h"
 #include <iostream>
 
 #ifdef _WIN32
@@ -8,10 +7,7 @@
 
 bool IConsoleModule::Init()
 {
-    for (const auto& [name, callback] : GetGlobalCommandRegistry())
-    {
-        m_console.RegisterCommand(name, callback);
-    }
+    m_console.InstallCommands();
     return true;
 }
 

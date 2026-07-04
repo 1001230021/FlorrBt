@@ -3,6 +3,7 @@
 #include "Game/entities/petals/petals_behavior.h"
 #include "Module/console_module.h"
 #include "Module/network_module.h"
+#include "Module/server_gui_module.h"
 #include "Module/world_module.h"
 #include <stdexcept>
 #include <SFML/System/Clock.hpp>
@@ -13,14 +14,11 @@ CServer* CServer::s_p_instance = nullptr;
 CServer::CServer()
 {
     s_p_instance = this;
-    m_modules.emplace_back(std::make_unique<IConsoleModule>());
+    m_modules.emplace_back(std::make_unique<IConsoleModule>(m_console));
+    m_modules.emplace_back(std::make_unique<IServerGuiModule>(m_console));
 
     auto world_mod = std::make_unique<IWorldModule>();
     auto& worlds = world_mod->GetWorlds();
-    if (worlds.empty())
-    {
-        throw std::runtime_error("IWorldModule returned no worlds");
-    }
 
     CGameWorld& world = *worlds[0];
     m_modules.emplace_back(std::move(world_mod));

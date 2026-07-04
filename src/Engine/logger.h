@@ -1,10 +1,13 @@
 #pragma once
+#include <algorithm>
 #include <chrono>
 #include <ctime>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 enum class ELogPriority
 {
@@ -18,12 +21,42 @@ enum class ELogPriority
 class CLogger
 {
   public:
+    using Sink = std::function<void(const std::string&, ELogPriority, const std::string&)>;
+
+    struct sink_entry
+    {
+        size_t id = 0;
+        Sink callback;
+
+        void operator()(const std::string& sender, ELogPriority priority, const std::string& msg) const { callback(sender, priority, msg); }
+    };
+
     explicit CLogger(const std::string& name) : m_sender(name) {}
 
     void Log(ELogPriority priority, const std::string& msg)
     {
-        std::cout << "[" << m_sender << "]"
-                  << "[" << PriorityToString(priority) << "] " << NowString() << ": " << msg << std::endl;
+        std::cout << FormatLine(m_sender, priority, msg) << std::endl;
+        for (const auto& sink : Sinks())
+        {
+            sink(m_sender, priority, msg);
+        }
+    }
+
+    static std::string FormatLine(const std::string& sender, ELogPriority priority, const std::string& msg)
+    {
+        return "[" + sender + "][" + PriorityToString(priority) + "] " + NowString() + ": " + msg;
+    }
+
+    static size_t AddSink(Sink sink)
+    {
+        Sinks().push_back({++s_next_sink_id, std::move(sink)});
+        return s_next_sink_id;
+    }
+
+    static void RemoveSink(size_t id)
+    {
+        auto& sinks = Sinks();
+        sinks.erase(std::remove_if(sinks.begin(), sinks.end(), [id](const sink_entry& entry) { return entry.id == id; }), sinks.end());
     }
 
     void Debug(const std::string& msg)
@@ -63,7 +96,13 @@ class CLogger
     int m_fatal_msg = 0;
 
   private:
-    std::string PriorityToString(ELogPriority priority) const
+    static std::vector<sink_entry>& Sinks()
+    {
+        static std::vector<sink_entry> g_sinks;
+        return g_sinks;
+    }
+
+    static std::string PriorityToString(ELogPriority priority)
     {
         switch (priority)
         {
@@ -81,7 +120,7 @@ class CLogger
         return "UNKNOWN";
     }
 
-    std::string NowString() const
+    static std::string NowString()
     {
         auto now = std::chrono::system_clock::now();
         auto time = std::chrono::system_clock::to_time_t(now);
@@ -94,6 +133,7 @@ class CLogger
     }
 
     std::string m_sender;
+    inline static size_t s_next_sink_id = 0;
 };
 
 #define LOG_DEBUG(sender, msg) CLogger(sender).Debug(msg)

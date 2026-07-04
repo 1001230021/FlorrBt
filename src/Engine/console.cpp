@@ -1,6 +1,7 @@
 #include "console.h"
 #include "commands_registry.h"
 #include "logger.h"
+#include <algorithm>
 #include <cctype>
 
 namespace
@@ -63,4 +64,27 @@ void CConsole::InstallCommands()
     {
         RegisterCommand(name, callback);
     }
+
+    RegisterCommand("help", [this](const std::vector<std::string>&) {
+        std::string text = "Commands:";
+        for (const std::string& name : CommandNames())
+        {
+            text += " ";
+            text += name;
+        }
+        LOG_INFO("console", text);
+    });
+}
+
+std::vector<std::string> CConsole::CommandNames() const
+{
+    std::vector<std::string> names;
+    names.reserve(m_cmds.size());
+    for (const auto& [name, callback] : m_cmds)
+    {
+        (void)callback;
+        names.push_back(name);
+    }
+    std::sort(names.begin(), names.end());
+    return names;
 }

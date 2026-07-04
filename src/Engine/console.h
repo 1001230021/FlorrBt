@@ -17,6 +17,7 @@ class CConsole
     void RegisterCommand(std::string name, CallBack callback);
     void ExecuteLine(std::string line);
     void InstallCommands();
+    std::vector<std::string> CommandNames() const;
 
   private:
     std::unordered_map<std::string, CallBack> m_cmds;

@@ -6,7 +6,7 @@
 
 REGISTER_CONSOLE_COMMAND(quit, {
     if (auto* server = CServer::GetInstance())
-        server->ShutDown();
+        server->RequestStop();
     else
         LOG_FATAL("server", "Can't find instance of the server");
 })

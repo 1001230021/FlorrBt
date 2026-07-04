@@ -84,6 +84,9 @@
     <ClInclude Include="src\Server\Module\network_module.h">
       <Filter>src\Server\Module</Filter>
     </ClInclude>
+    <ClInclude Include="src\Server\Module\server_gui_module.h">
+      <Filter>src\Server\Module</Filter>
+    </ClInclude>
     <ClInclude Include="src\Server\Module\world_module.h">
       <Filter>src\Server\Module</Filter>
     </ClInclude>
@@ -138,6 +141,9 @@
       <Filter>src\Server\Module</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Module\network_module.cpp">
+      <Filter>src\Server\Module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Module\server_gui_module.cpp">
       <Filter>src\Server\Module</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Module\world_module.cpp">
