@@ -4,15 +4,17 @@ project(FlorrBt)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
 if(MSVC)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
 endif()
 
-find_package(SFML 3 COMPONENTS Network System QUIET)
+find_package(SFML 3 COMPONENTS Graphics Network System QUIET)
 if(NOT SFML_FOUND)
     message(STATUS "SFML not found or version < 3.0. Fetching from GitHub...")
     include(FetchContent)
+    set(SFML_BUILD_AUDIO OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(
         SFML
         GIT_REPOSITORY https://github.com/SFML/SFML.git
@@ -32,4 +34,4 @@ target_link_libraries(${PROJECT_NAME}_Client PRIVATE SFML::Network SFML::System)
 
 add_executable(${PROJECT_NAME}_Server ${SERVER_SOURCES} ${SHARED_SOURCES})
 target_include_directories(${PROJECT_NAME}_Server PRIVATE src)
-target_link_libraries(${PROJECT_NAME}_Server PRIVATE SFML::Network SFML::System)
+target_link_libraries(${PROJECT_NAME}_Server PRIVATE SFML::Graphics SFML::Network SFML::System)
