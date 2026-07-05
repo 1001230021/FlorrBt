@@ -7,7 +7,7 @@ void COpenController::OnTick(CGameWorld& world, float dt)
 {
     if (m_count <= 0)
     {
-        auto mob = CreateMob(EMobType::NormalLadybug, &world, {500.f, 0.f}, ERarity::Primordial);
+        auto mob = CreateMob(EMobType::NormalLadybug, &world, {500.f, 0.f}, ERarity::Common);
         world.InsertEntity(std::move(mob));
         m_count = 9999.9f;
     } else {

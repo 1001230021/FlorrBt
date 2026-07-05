@@ -7,6 +7,7 @@
 #include <vector>
 
 class CGameWorld;
+struct ServerSnapshot;
 
 class INetworkModule : public IModule
 {
@@ -21,6 +22,10 @@ class INetworkModule : public IModule
   private:
     void AcceptConnections();
     void ProcessMessages();
+    void BroadcastSnapshots(float dt);
+    void QueueSnapshot(CPlayer& player, const ServerSnapshot& snapshot);
+    void FlushOutgoing();
+    ServerSnapshot BuildSnapshot(const CPlayer& player) const;
 
     int GetNewPlayerId();
     void FreePlayerId(int id);
@@ -30,4 +35,6 @@ class INetworkModule : public IModule
     std::vector<std::unique_ptr<CPlayer>> m_players;
     std::set<int> m_free_player_ids;
     int m_next_player_id = 1;
+    float m_snapshot_timer = 0.f;
+    uint32_t m_snapshot_sequence = 0;
 };

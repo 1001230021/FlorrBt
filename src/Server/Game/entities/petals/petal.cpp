@@ -67,7 +67,7 @@ void CPetalSlot::SetPetal(const CPetalPrototype* proto, int slot_index, ERarity 
     int copies = std::max(0, petal_stats.copy);
 
     m_p_petals.assign(copies, nullptr);
-    m_reload_timers.assign(copies, petal_stats.preload);
+    m_reload_timers.assign(copies, 0.f);
 }
 
 void CPetalSlot::ClearPetal()

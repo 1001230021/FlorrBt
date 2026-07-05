@@ -1,7 +1,11 @@
 #pragma once
 #include <SFML/System/Vector2.hpp>
+#include <algorithm>
+#include <cstring>
 #include <cstdint>
 #include <optional>
+#include <utility>
+#include <vector>
 
 // Client packets are intentionally compact:
 // Input:        [type:2 bits][move_x:1 byte][move_y:1 byte]
@@ -111,3 +115,151 @@ struct ClientOperate
         }
     }
 };
+
+enum class ServerMsgType : uint8_t
+{
+    Snapshot = 1,
+};
+
+enum class NetEntityKind : uint8_t
+{
+    Generic = 0,
+    Mob,
+    Flower,
+    Petal,
+    Projectile,
+};
+
+struct ServerEntitySnapshot
+{
+    int32_t id = -1;
+    NetEntityKind kind = NetEntityKind::Generic;
+    int32_t team = 0;
+    float x = 0.f;
+    float y = 0.f;
+    float radius = 0.f;
+    float health = 0.f;
+    uint8_t flags = 0;
+};
+
+struct ServerSnapshot
+{
+    uint32_t sequence = 0;
+    int32_t player_entity_id = -1;
+    std::vector<ServerEntitySnapshot> entities;
+};
+
+inline size_t ClientOperatePackedLength(uint8_t first)
+{
+    switch (static_cast<ClientOperate::Type>(first & 0x03))
+    {
+    case ClientOperate::Type::Input:
+    case ClientOperate::Type::Equip:
+        return 3;
+    case ClientOperate::Type::Unequip:
+    case ClientOperate::Type::AttackDefend:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+template <typename T> inline void AppendBytes(std::vector<uint8_t>& out, const T& value)
+{
+    const auto* bytes = reinterpret_cast<const uint8_t*>(&value);
+    out.insert(out.end(), bytes, bytes + sizeof(T));
+}
+
+inline void AppendU16(std::vector<uint8_t>& out, uint16_t value)
+{
+    out.push_back(static_cast<uint8_t>(value & 0xff));
+    out.push_back(static_cast<uint8_t>((value >> 8) & 0xff));
+}
+
+template <typename T> inline bool ReadBytes(const std::vector<uint8_t>& data, size_t& offset, T& value)
+{
+    if (offset + sizeof(T) > data.size()) return false;
+    std::memcpy(&value, data.data() + offset, sizeof(T));
+    offset += sizeof(T);
+    return true;
+}
+
+inline uint16_t ReadU16(const std::vector<uint8_t>& data, size_t offset)
+{
+    return static_cast<uint16_t>(data[offset]) | (static_cast<uint16_t>(data[offset + 1]) << 8);
+}
+
+inline std::vector<uint8_t> PackServerSnapshotFrame(const ServerSnapshot& snapshot)
+{
+    std::vector<uint8_t> payload;
+    payload.reserve(16 + snapshot.entities.size() * 24);
+
+    payload.push_back(static_cast<uint8_t>(ServerMsgType::Snapshot));
+    AppendBytes(payload, snapshot.sequence);
+    AppendBytes(payload, snapshot.player_entity_id);
+
+    uint16_t count = static_cast<uint16_t>(std::min<size_t>(snapshot.entities.size(), 1024));
+    AppendBytes(payload, count);
+
+    for (size_t i = 0; i < count; ++i)
+    {
+        const ServerEntitySnapshot& entity = snapshot.entities[i];
+        const uint8_t kind = static_cast<uint8_t>(entity.kind);
+        AppendBytes(payload, entity.id);
+        AppendBytes(payload, kind);
+        AppendBytes(payload, entity.team);
+        AppendBytes(payload, entity.x);
+        AppendBytes(payload, entity.y);
+        AppendBytes(payload, entity.radius);
+        AppendBytes(payload, entity.health);
+        AppendBytes(payload, entity.flags);
+    }
+
+    std::vector<uint8_t> frame;
+    if (payload.size() > 0xffff) return frame;
+    frame.reserve(payload.size() + 2);
+    AppendU16(frame, static_cast<uint16_t>(payload.size()));
+    frame.insert(frame.end(), payload.begin(), payload.end());
+    return frame;
+}
+
+inline bool TryPopServerSnapshotFrame(std::vector<uint8_t>& buffer, ServerSnapshot& snapshot)
+{
+    if (buffer.size() < 2) return false;
+
+    const uint16_t payload_size = ReadU16(buffer, 0);
+    if (buffer.size() < static_cast<size_t>(payload_size) + 2) return false;
+
+    std::vector<uint8_t> payload(buffer.begin() + 2, buffer.begin() + 2 + payload_size);
+    buffer.erase(buffer.begin(), buffer.begin() + 2 + payload_size);
+
+    size_t offset = 0;
+    uint8_t type = 0;
+    if (!ReadBytes(payload, offset, type) || type != static_cast<uint8_t>(ServerMsgType::Snapshot)) return false;
+
+    ServerSnapshot parsed;
+    uint16_t count = 0;
+    if (!ReadBytes(payload, offset, parsed.sequence)) return false;
+    if (!ReadBytes(payload, offset, parsed.player_entity_id)) return false;
+    if (!ReadBytes(payload, offset, count)) return false;
+
+    parsed.entities.reserve(count);
+    for (uint16_t i = 0; i < count; ++i)
+    {
+        ServerEntitySnapshot entity;
+        uint8_t kind = 0;
+        if (!ReadBytes(payload, offset, entity.id)) return false;
+        if (!ReadBytes(payload, offset, kind)) return false;
+        if (!ReadBytes(payload, offset, entity.team)) return false;
+        if (!ReadBytes(payload, offset, entity.x)) return false;
+        if (!ReadBytes(payload, offset, entity.y)) return false;
+        if (!ReadBytes(payload, offset, entity.radius)) return false;
+        if (!ReadBytes(payload, offset, entity.health)) return false;
+        if (!ReadBytes(payload, offset, entity.flags)) return false;
+        entity.kind = static_cast<NetEntityKind>(kind);
+        parsed.entities.push_back(entity);
+    }
+
+    snapshot = std::move(parsed);
+    return true;
+}

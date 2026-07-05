@@ -30,7 +30,7 @@ file(GLOB_RECURSE SERVER_SOURCES "src/Server/*.cpp")
 
 add_executable(${PROJECT_NAME}_Client ${CLIENT_SOURCES} ${SHARED_SOURCES})
 target_include_directories(${PROJECT_NAME}_Client PRIVATE src)
-target_link_libraries(${PROJECT_NAME}_Client PRIVATE SFML::Network SFML::System)
+target_link_libraries(${PROJECT_NAME}_Client PRIVATE SFML::Graphics SFML::Network SFML::System)
 
 add_executable(${PROJECT_NAME}_Server ${SERVER_SOURCES} ${SHARED_SOURCES})
 target_include_directories(${PROJECT_NAME}_Server PRIVATE src)
