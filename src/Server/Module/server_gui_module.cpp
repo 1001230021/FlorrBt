@@ -34,18 +34,7 @@ std::string ToUtf8(const sf::String& str)
 
 float CharacterX(const sf::Text& text, size_t index)
 {
-    const std::vector<sf::Text::ShapedGlyph>& glyphs = text.getShapedGlyphs();
-    const float origin_x = text.getPosition().x;
-    float end_x = origin_x;
-
-    for (const sf::Text::ShapedGlyph& glyph : glyphs)
-    {
-        const float glyph_x = origin_x + glyph.position.x;
-        if (glyph.cluster >= index) return glyph_x;
-        end_x = glyph_x + glyph.glyph.advance;
-    }
-
-    return end_x;
+    return text.findCharacterPos(index).x;
 }
 }
 
