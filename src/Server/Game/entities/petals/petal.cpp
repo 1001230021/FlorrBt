@@ -14,11 +14,14 @@ CPetal::CPetal(float r, CFlower* owner, int slot, SPetalStats petal_stats)
 
 void CPetal::Tick(float dt)
 {
-    auto* flower = static_cast<CFlower*>(m_p_owner);
+    auto* flower = dynamic_cast<CFlower*>(GetOwner());
     if (flower)
     {
         m_final_petal_stats = m_base_petal_stats;
         m_final_petal_stats.ActedOn(*flower->GetFinalStats());
+    } else {
+        m_is_marked_for_des = true;
+        return;
     }
     CProjectile::Tick(dt);
 }
@@ -36,6 +39,19 @@ void CPetal::TakeDamage(float dmg, CEntity*, EDamageType damage_type)
     }
 }
 
+void CBeetleEggPetal::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
+{
+    CEntity* summon = GameWorld() ? GameWorld()->GetEntity(m_summon_id) : nullptr;
+    if (m_has_spawned_summon && summon && !summon->m_is_marked_for_des)
+    {
+        summon->TakeDamage(dmg, attacker, damage_type);
+        m_health = std::max(1.f, summon->m_health);
+        return;
+    }
+
+    CPetal::TakeDamage(dmg, attacker, damage_type);
+}
+
 void CPetalSlot::SpawnCopy(int copy_index, CFlower* flower)
 {
     if (!flower || !m_p_proto || !m_p_proto->m_factory) return;
@@ -50,6 +66,7 @@ void CPetalSlot::SpawnCopy(int copy_index, CFlower* flower)
     if (!p_petal) return;
 
     m_p_petals[copy_index] = p_petal;
+    m_bonus_active[copy_index] = true;
     m_p_proto->m_p_behavior->OnPetalSpawned(p_petal, m_stored_rarity, flower);
 }
 
@@ -67,6 +84,7 @@ void CPetalSlot::SetPetal(const CPetalPrototype* proto, int slot_index, ERarity 
     int copies = std::max(0, petal_stats.copy);
 
     m_p_petals.assign(copies, nullptr);
+    m_bonus_active.assign(copies, false);
     m_reload_timers.assign(copies, 0.f);
 }
 
@@ -74,9 +92,16 @@ void CPetalSlot::ClearPetal()
 {
     for (CPetal* petal : m_p_petals)
     {
-        if (petal) petal->m_is_marked_for_des = true;
+        if (!petal) continue;
+        if (m_p_proto && m_p_proto->m_p_behavior)
+        {
+            auto* flower = dynamic_cast<CFlower*>(petal->GetOwner());
+            m_p_proto->m_p_behavior->OnPetalCleared(petal, m_stored_rarity, flower);
+        }
+        petal->m_is_marked_for_des = true;
     }
     m_p_petals.clear();
+    m_bonus_active.clear();
     m_reload_timers.clear();
 }
 
@@ -96,7 +121,8 @@ void CPetalSlot::Tick(float dt, CFlower* flower)
     {
         if (m_reload_timers[i] > 0.0f)
         {
-            float multiplier = std::max(0.001f, flower->GetFinalStats()->detection_multiplier);
+            float multiplier = std::max(game_config::default_petal_reload_multiplier_min,
+                                        flower->GetFinalStats()->detection_multiplier);
             m_reload_timers[i] -= dt / multiplier;
             if (m_reload_timers[i] <= 0.0f)
             {
@@ -120,10 +146,38 @@ void CPetalSlot::Tick(float dt, CFlower* flower)
         {
             petal->m_is_marked_for_des = true;
             m_p_proto->m_p_behavior->OnPetalDestroyed(petal, m_stored_rarity, flower);
-            m_p_petals[i] = nullptr;
-            m_reload_timers[i] = petal->m_final_petal_stats.reload;
+            if (m_p_proto->m_p_behavior->ShouldReloadAfterPetalDestroyed(petal))
+            {
+                m_p_petals[i] = nullptr;
+                m_reload_timers[i] = petal->m_final_petal_stats.reload;
+            } else {
+                petal->m_is_marked_for_des = false;
+                petal->m_health = std::max(1.f, petal->m_health);
+            }
         }
     }
+}
+
+int CPetalSlot::GetBonusCopyCount() const
+{
+    if (!m_p_proto || !m_p_proto->m_p_behavior) return 0;
+
+    if (LosesBonusDuringReload(m_p_proto->m_p_behavior->GetBonusMode()))
+    {
+        int count = 0;
+        for (const CPetal* petal : m_p_petals)
+        {
+            if (petal && !petal->m_is_marked_for_des && petal->m_health > 0.f) ++count;
+        }
+        return count;
+    }
+
+    int count = 0;
+    for (uint8_t active : m_bonus_active)
+    {
+        if (active != 0) ++count;
+    }
+    return count;
 }
 
 int CPetalSlot::GetCurrentCopyCount() const
@@ -140,12 +194,7 @@ void CPetalSlot::ApplyStatsTo(SFlowerStats& target) const
     if (!m_p_proto || !m_p_proto->m_p_behavior) return;
 
     SFlowerStats stats = m_p_proto->m_p_behavior->GetStats(m_stored_rarity);
-    int count = 0;
-    for (auto* petal : m_p_petals)
-    {
-        if (petal) ++count;
-    }
-
+    int count = GetBonusCopyCount();
     for (int i = 0; i < count; ++i)
     {
         target.ActedOn(stats);

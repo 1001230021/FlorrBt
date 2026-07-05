@@ -51,7 +51,7 @@ struct visual_petal
 
 struct client_entity
 {
-    ServerEntitySnapshot snapshot;
+    ServerEntitySnap snapshot;
     sf::Vector2f render_pos;
     bool initialized = false;
 };
@@ -59,7 +59,7 @@ struct client_entity
 struct delayed_snapshot
 {
     float release_time = 0.f;
-    ServerSnapshot snapshot;
+    ServerMessage snapshot;
 };
 
 struct latency_tool_state
@@ -93,9 +93,9 @@ sf::Vector2f Vec2(float x, float y)
     return {x, y};
 }
 
-sf::Vector2f SnapshotPos(const ServerEntitySnapshot& entity)
+sf::Vector2f SnapshotPos(const ServerEntitySnap& entity)
 {
-    return {entity.x, entity.y};
+    return entity.pos;
 }
 
 sf::Vector2f Lerp(sf::Vector2f a, sf::Vector2f b, float t)
@@ -223,7 +223,7 @@ bool TryConnect(connection_state& conn)
     conn.player_entity_id = -1;
     conn.message = "Connecting...";
 
-    const sf::Socket::Status status = conn.socket.connect(sf::IpAddress::LocalHost, game_config::default_port, sf::seconds(2));
+    const sf::Socket::Status status = conn.socket.connect(sf::IpAddress::LocalHost, game_config::port, sf::seconds(2));
     if (status != sf::Socket::Status::Done)
     {
         conn.message = "Offline preview: server not reachable";
@@ -232,7 +232,7 @@ bool TryConnect(connection_state& conn)
 
     conn.socket.setBlocking(false);
     conn.connected = true;
-    conn.message = "Connected to 127.0.0.1:" + std::to_string(game_config::default_port);
+    conn.message = "Connected to 127.0.0.1:" + std::to_string(game_config::port);
     return true;
 }
 
@@ -284,9 +284,9 @@ void SendMove(connection_state& conn, sf::Vector2f dir)
 void SendAttackDefend(connection_state& conn, bool attacking, bool defending)
 {
     ClientOperate op;
-    op.type = ClientOperate::Type::AttackDefend;
-    op.isAttacking = attacking;
-    op.isDefending = defending;
+    op.type = ClientOperate::Type::Chores;
+    op.is_attacking = attacking;
+    op.is_defending = defending;
     QueueOperate(conn, op);
 }
 
@@ -308,7 +308,19 @@ void SendUnequip(connection_state& conn, uint8_t slot)
     QueueOperate(conn, op);
 }
 
-void ApplySnapshot(connection_state& conn, const ServerSnapshot& snapshot, std::unordered_map<int32_t, client_entity>& entities,
+bool TryPopServerMessageFrame(std::vector<uint8_t>& buffer, ServerMessage& message)
+{
+    if (buffer.size() < packet_length_prefix_size) return false;
+
+    const uint16_t payload_size = static_cast<uint16_t>(buffer[0]) | (static_cast<uint16_t>(buffer[1]) << 8);
+    if (buffer.size() < packet_length_prefix_size + payload_size) return false;
+
+    message = ServerMessage::parse(buffer.data() + packet_length_prefix_size, payload_size);
+    buffer.erase(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(packet_length_prefix_size + payload_size));
+    return message.type != ServerMessage::Type::Unknown;
+}
+
+void ApplySnapshot(connection_state& conn, const ServerMessage& snapshot, std::unordered_map<int32_t, client_entity>& entities,
                    sf::Vector2f& predicted_pos, sf::Vector2f& predicted_vel, sf::Vector2f& prediction_error,
                    bool& has_prediction, latency_tool_state& latency, float now)
 {
@@ -318,22 +330,23 @@ void ApplySnapshot(connection_state& conn, const ServerSnapshot& snapshot, std::
         latency.average_snapshot_interval =
             latency.average_snapshot_interval <= 0.f ? interval : Lerp(latency.average_snapshot_interval, interval, 0.12f);
     }
-    if (latency.last_sequence != 0 && snapshot.sequence > latency.last_sequence + 1)
-        latency.missed_snapshots += snapshot.sequence - latency.last_sequence - 1;
-    latency.last_sequence = snapshot.sequence;
+    const uint32_t snapshot_id = snapshot.snapshot_id.value_or(latency.last_sequence);
+    if (latency.last_sequence != 0 && snapshot_id > latency.last_sequence + 1)
+        latency.missed_snapshots += snapshot_id - latency.last_sequence - 1;
+    latency.last_sequence = snapshot_id;
     latency.last_snapshot_time = now;
     latency.snapshot_age = 0.f;
 
-    conn.last_snapshot_sequence = snapshot.sequence;
-    conn.player_entity_id = snapshot.player_entity_id;
+    conn.last_snapshot_sequence = snapshot_id;
+    conn.player_entity_id = snapshot.owner_entity_id.value_or(0);
 
     std::unordered_set<int32_t> live_ids;
     live_ids.reserve(snapshot.entities.size());
 
-    for (const ServerEntitySnapshot& item : snapshot.entities)
+    for (const ServerEntitySnap& item : snapshot.entities)
     {
-        live_ids.insert(item.id);
-        client_entity& entity = entities[item.id];
+        live_ids.insert(item.entity_id);
+        client_entity& entity = entities[item.entity_id];
         entity.snapshot = item;
         if (!entity.initialized)
         {
@@ -350,7 +363,7 @@ void ApplySnapshot(connection_state& conn, const ServerSnapshot& snapshot, std::
             ++it;
     }
 
-    auto player_it = entities.find(snapshot.player_entity_id);
+    auto player_it = entities.find(conn.player_entity_id);
     if (player_it != entities.end())
     {
         const sf::Vector2f authoritative = SnapshotPos(player_it->second.snapshot);
@@ -403,17 +416,18 @@ void ProcessIncoming(connection_state& conn, std::unordered_map<int32_t, client_
             break;
         }
 
-        ServerSnapshot snapshot;
-        while (TryPopServerSnapshotFrame(conn.receive_buffer, snapshot))
+        ServerMessage message;
+        while (TryPopServerMessageFrame(conn.receive_buffer, message))
         {
+            if (message.type != ServerMessage::Type::Snapshot) continue;
             if (latency.artificial_snapshot_latency > 0.f)
             {
                 delayed_snapshot delayed;
                 delayed.release_time = now + latency.artificial_snapshot_latency;
-                delayed.snapshot = std::move(snapshot);
+                delayed.snapshot = std::move(message);
                 latency.pending_snapshots.push_back(std::move(delayed));
             } else {
-                ApplySnapshot(conn, snapshot, entities, predicted_pos, predicted_vel, prediction_error, has_prediction, latency, now);
+                ApplySnapshot(conn, message, entities, predicted_pos, predicted_vel, prediction_error, has_prediction, latency, now);
             }
         }
     }
@@ -490,25 +504,24 @@ sf::Vector2f WorldToScreen(sf::Vector2f world, sf::Vector2f camera)
     return world - camera + Vec2(window_width * 0.5f, window_height * 0.5f);
 }
 
-sf::Color EntityColor(const ServerEntitySnapshot& entity, bool local_player)
+bool IsPetalEntity(const ServerEntitySnap& entity)
 {
-    if (local_player) return sf::Color(255, 224, 231);
-    switch (entity.kind)
-    {
-    case NetEntityKind::Flower:
-        return sf::Color(255, 212, 224);
-    case NetEntityKind::Petal:
-        return sf::Color(232, 196, 82);
-    case NetEntityKind::Projectile:
-        return sf::Color(134, 182, 255);
-    case NetEntityKind::Mob:
-        return sf::Color(229, 118, 86);
-    default:
-        return sf::Color(160, 170, 184);
-    }
+    return entity.entity_type >= game_config::network_petal_type_offset;
 }
 
-void DrawEntity(sf::RenderWindow& window, const ServerEntitySnapshot& snapshot, sf::Vector2f position, sf::Vector2f camera,
+bool IsOwnerEntity(const ServerEntitySnap& entity)
+{
+    return HasFlag(static_cast<ServerEntityFlag>(entity.flags), ServerEntityFlag::Owner);
+}
+
+sf::Color EntityColor(const ServerEntitySnap& entity, bool local_player)
+{
+    if (local_player) return sf::Color(255, 224, 231);
+    if (IsPetalEntity(entity)) return sf::Color(232, 196, 82);
+    return sf::Color(229, 118, 86);
+}
+
+void DrawEntity(sf::RenderWindow& window, const ServerEntitySnap& snapshot, sf::Vector2f position, sf::Vector2f camera,
                 bool local_player, bool local_attacking, bool local_defending)
 {
     const sf::Vector2f screen = WorldToScreen(position, camera);
@@ -518,9 +531,9 @@ void DrawEntity(sf::RenderWindow& window, const ServerEntitySnapshot& snapshot, 
     body.setPosition(screen);
     body.setFillColor(EntityColor(snapshot, local_player));
 
-    const bool attacking = local_player ? local_attacking : ((snapshot.flags & (1 << 0)) != 0);
-    const bool defending = local_player ? local_defending : ((snapshot.flags & (1 << 1)) != 0);
-    if (snapshot.kind == NetEntityKind::Flower)
+    const bool attacking = local_player ? local_attacking : HasFlag(static_cast<ServerEntityFlag>(snapshot.flags), ServerEntityFlag::Attacking);
+    const bool defending = local_player ? local_defending : HasFlag(static_cast<ServerEntityFlag>(snapshot.flags), ServerEntityFlag::Defending);
+    if (local_player || IsOwnerEntity(snapshot))
     {
         body.setFillColor(attacking ? sf::Color(255, 179, 181) : EntityColor(snapshot, local_player));
         body.setOutlineColor(defending ? sf::Color(70, 122, 205) : sf::Color(190, 94, 122));
@@ -543,7 +556,7 @@ void DrawEntity(sf::RenderWindow& window, const ServerEntitySnapshot& snapshot, 
         window.draw(marker);
     }
 
-    if (snapshot.health > 0.f && snapshot.kind != NetEntityKind::Petal && snapshot.kind != NetEntityKind::Projectile)
+    if (snapshot.hp_percent > 0.f && !IsPetalEntity(snapshot))
     {
         const float bar_width = radius * 2.f;
         sf::RectangleShape back({bar_width, 4.f});
@@ -634,7 +647,7 @@ bool HasVisibleServerPetalNearPlayer(const std::unordered_map<int32_t, client_en
     for (const auto& [id, entity] : entities)
     {
         (void)id;
-        if (entity.snapshot.kind != NetEntityKind::Petal && entity.snapshot.kind != NetEntityKind::Projectile) continue;
+        if (!IsPetalEntity(entity.snapshot)) continue;
         const sf::Vector2f diff = entity.render_pos - player_pos;
         if (diff.x * diff.x + diff.y * diff.y <= 220.f * 220.f) return true;
     }
@@ -889,14 +902,12 @@ int main()
             for (const auto& [id, entity] : entities)
             {
                 if (id == conn.player_entity_id) continue;
-                if (entity.snapshot.kind == NetEntityKind::Petal || entity.snapshot.kind == NetEntityKind::Projectile)
-                    continue;
+                if (IsPetalEntity(entity.snapshot)) continue;
                 DrawEntity(window, entity.snapshot, entity.render_pos, camera, id == conn.player_entity_id, attacking, defending);
             }
             for (const auto& [id, entity] : entities)
             {
-                if (entity.snapshot.kind != NetEntityKind::Petal && entity.snapshot.kind != NetEntityKind::Projectile)
-                    continue;
+                if (!IsPetalEntity(entity.snapshot)) continue;
                 DrawEntity(window, entity.snapshot, entity.render_pos, camera, id == conn.player_entity_id, attacking, defending);
             }
             const auto player_it = entities.find(conn.player_entity_id);

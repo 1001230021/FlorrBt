@@ -1,5 +1,6 @@
 #pragma once
 #include "../gamecontroller.h"
+#include "../../../Shared/game_config.h"
 
 class COpenController : public IGameController
 {
@@ -9,5 +10,5 @@ class COpenController : public IGameController
     void OnPlayerConnect(CGameWorld& world, CPlayer* player) override;
 
   private:
-    float m_count = 5.f;
+    float m_count = game_config::open_initial_spawn_delay;
 };

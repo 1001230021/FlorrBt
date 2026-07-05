@@ -1,12 +1,45 @@
 #include "flower.h"
 #include "petals/petal.h"
+#include <algorithm>
+#include <cmath>
+
+namespace
+{
+struct yin_yang_layout
+{
+    int columns = 1;
+    float direction = 1.f;
+};
+
+yin_yang_layout GetYinYangLayout(int count)
+{
+    if (count <= 0) return {};
+
+    static constexpr yin_yang_layout layouts[] = {
+        {1, -1.f}, {6, 1.f}, {6, -1.f}, {4, 1.f}, {4, -1.f},
+        {3, 1.f}, {2, -1.f}, {2, 1.f}, {1, -1.f}, {1, 1.f},
+    };
+    return layouts[std::clamp(count, 1, 10) - 1];
+}
+
+int CountBonusCopies(const CPetalSlot& slot)
+{
+    return slot.GetBonusCopyCount();
+}
+}
 
 void CFlower::Tick(float dt)
 {
     CMob::Tick(dt);
     RebuildFinalStats();
 
+    float direction = 1.f;
+    if (m_final_stats.petal_rotation_mode == EPetalRotationMode::YinYang) direction = GetYinYangLayout(m_yinyang_count).direction;
+    m_petal_rotation_angle += m_final_stats.petal_rotation_speed * direction * dt;
+    m_petal_rotation_angle = std::fmod(m_petal_rotation_angle, 2.f * game_config::pi);
+
     m_total_copies = 0;
+    m_yinyang_count = 0;
     for (auto& slot : m_slots)
     {
         if (!slot.m_available || slot.m_banned)
@@ -21,6 +54,7 @@ void CFlower::Tick(float dt)
         }
 
         int copies = slot.GetCurrentCopyCount();
+        if (slot.m_p_proto && slot.m_p_proto->m_type == EPetalType::YinYang) m_yinyang_count += CountBonusCopies(slot);
         if (copies > 0)
         {
             slot.m_start_copy_index = m_total_copies;
@@ -161,4 +195,57 @@ void CFlower::InitSlots()
     {
         m_slots[i].m_slot_index = static_cast<int>(i);
     }
+}
+
+float CFlower::GetPetalLayerDistance() const
+{
+    if (m_final_stats.petal_rotation_mode != EPetalRotationMode::YinYang || m_yinyang_count <= 0) return 0.f;
+
+    int columns = GetYinYangColumnCount();
+    if (columns <= 0) return 0.f;
+
+    int max_column_size = (m_total_copies + columns - 1) / columns;
+    int layers = std::max(1, max_column_size);
+    return static_cast<float>(std::max(0, layers - 1)) * game_config::default_petal_orbit_radius;
+}
+
+int CFlower::GetYinYangColumnCount() const
+{
+    if (m_final_stats.petal_rotation_mode != EPetalRotationMode::YinYang || m_yinyang_count <= 0) return std::max(1, m_total_copies);
+    if (!HasNonYinYangPetals()) return 1;
+    return GetYinYangLayout(m_yinyang_count).columns;
+}
+
+int CFlower::GetPetalColumnIndex(const CPetal* petal) const
+{
+    if (!petal) return 0;
+
+    int start_index = GetStartCopyIndex(petal->m_slot_index);
+    if (start_index < 0) return 0;
+    int absolute_index = start_index + petal->m_copy_index;
+    int columns = GetYinYangColumnCount();
+    if (columns <= 0) return 0;
+    return absolute_index % columns;
+}
+
+int CFlower::GetPetalLayerIndex(const CPetal* petal) const
+{
+    if (!petal) return 0;
+
+    int start_index = GetStartCopyIndex(petal->m_slot_index);
+    if (start_index < 0) return 0;
+    int absolute_index = start_index + petal->m_copy_index;
+    int columns = GetYinYangColumnCount();
+    if (columns <= 0) return 0;
+    return absolute_index / columns;
+}
+
+bool CFlower::HasNonYinYangPetals() const
+{
+    for (const auto& slot : m_slots)
+    {
+        if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
+        if (slot.m_p_proto->m_type != EPetalType::YinYang && CountBonusCopies(slot) > 0) return true;
+    }
+    return false;
 }

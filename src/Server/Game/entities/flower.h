@@ -3,6 +3,7 @@
 #include "../../../Shared/shared.h"
 #include "mob.h"
 #include "petals/petal_slot.h"
+#include <string>
 #include <vector>
 
 class CPetal;
@@ -27,6 +28,13 @@ class CFlower : public CMob<SFlowerStats>
     const SFlowerStats* GetFinalStats() const override { return &m_final_stats; }
 
     int GetStartCopyIndex(int slot_index) const;
+    int GetYinYangCount() const { return m_yinyang_count; }
+    float GetPetalRotationAngle() const { return m_petal_rotation_angle; }
+    float GetPetalLayerDistance() const;
+    int GetYinYangColumnCount() const;
+    int GetPetalColumnIndex(const CPetal* petal) const;
+    int GetPetalLayerIndex(const CPetal* petal) const;
+    bool HasNonYinYangPetals() const;
 
     void RebuildFinalStats();
     void EquipPetal(int slot_index, const CPetalPrototype* proto, ERarity rarity);
@@ -45,6 +53,25 @@ class CFlower : public CMob<SFlowerStats>
   private:
     int m_petal_num_max = static_cast<int>(game_config::default_flower_petal_num_max);
     int m_shield = 0;
+    int m_yinyang_count = 0;
+    float m_petal_rotation_angle = 0.f;
 
     std::vector<CPetalSlot> m_slots;
+};
+
+class CNormalFlower : public CFlower
+{
+  public:
+    using stats_type = SFlowerStats;
+    using CFlower::CFlower;
+};
+
+class CPlayerFlower : public CFlower
+{
+  public:
+    using stats_type = SFlowerStats;
+    using CFlower::CFlower;
+
+    int m_level = 1;
+    std::string m_name = "Player";
 };

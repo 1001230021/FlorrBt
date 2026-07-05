@@ -1,24 +1,33 @@
 #pragma once
 #include <SFML/System/Vector2.hpp>
 #include <algorithm>
-#include <cstring>
+#include <cmath>
 #include <cstdint>
 #include <optional>
-#include <utility>
 #include <vector>
 
-// Client packets are intentionally compact:
+constexpr uint8_t bit_mask = 0x01;
+constexpr uint8_t client_type_mask = 0x03;
+constexpr uint8_t chore_agree_bit = 4;
+constexpr uint8_t chore_attack_bit = 2;
+constexpr uint8_t chore_defend_bit = 3;
+constexpr uint8_t chore_disconnect_bit = 5;
+constexpr size_t client_compact_packet_size = 1;
+constexpr size_t client_extended_packet_size = 3;
+constexpr size_t packet_length_prefix_size = 2;
+
+// Client packets:
 // Input:        [type:2 bits][move_x:1 byte][move_y:1 byte]
 // EquipPetal:   [type:2 bits][petal_type:1 byte][slot:4 bits][rarity:4 bits]
 // UnequipPetal: [type:2 bits][slot:4 bits]
-// AttackDefend: [type:2 bits][attack:1 bit][defend:1 bit]
+// Chores:       [type:2 bits][attack:1 bit][defend:1 bit][agree:1 bit][disconnect:1 bit]
 
 enum class ClientMsgType : uint8_t
 {
     PlayerInput = 0,
     EquipPetal,
     UnequipPetal,
-    AttackDefend,
+    Chores,
 };
 
 struct ClientOperate
@@ -28,7 +37,7 @@ struct ClientOperate
         Input = 0x00,
         Equip = 0x01,
         Unequip = 0x02,
-        AttackDefend = 0x03,
+        Chores = 0x03,
         Unknown = 0xff,
     } type = Type::Unknown;
 
@@ -39,8 +48,10 @@ struct ClientOperate
     std::optional<uint8_t> slot_index;
     std::optional<uint8_t> rarity;
 
-    std::optional<bool> isAttacking;
-    std::optional<bool> isDefending;
+    std::optional<bool> is_attacking;
+    std::optional<bool> is_defending;
+    std::optional<bool> agree;
+    std::optional<bool> disconnect;
 
     static ClientOperate parse(const uint8_t* data, size_t len)
     {
@@ -48,7 +59,7 @@ struct ClientOperate
         if (!data || len < 1) return op;
 
         uint8_t first = data[0];
-        uint8_t type_code = first & 0x03;
+        uint8_t type_code = first & client_type_mask;
         op.type = static_cast<Type>(type_code);
 
         switch (op.type)
@@ -75,9 +86,11 @@ struct ClientOperate
         case Type::Unequip:
             op.slot_index = (first >> 2) & 0x0F;
             break;
-        case Type::AttackDefend:
-            op.isAttacking = ((first >> 2) & 0x01) != 0;
-            op.isDefending = ((first >> 3) & 0x01) != 0;
+        case Type::Chores:
+            op.is_attacking = ((first >> chore_attack_bit) & bit_mask) != 0;
+            op.is_defending = ((first >> chore_defend_bit) & bit_mask) != 0;
+            op.agree = ((first >> chore_agree_bit) & bit_mask) != 0;
+            op.disconnect = ((first >> chore_disconnect_bit) & bit_mask) != 0;
             break;
         default:
             op.type = Type::Unknown;
@@ -105,10 +118,12 @@ struct ClientOperate
         case Type::Unequip:
             out[0] = 0x02 | ((op.slot_index.value_or(0) & 0x0F) << 2);
             return 1;
-        case Type::AttackDefend:
-            out[0] = 0x03;
-            if (op.isAttacking.value_or(false)) out[0] |= (1 << 2);
-            if (op.isDefending.value_or(false)) out[0] |= (1 << 3);
+        case Type::Chores:
+            out[0] = static_cast<uint8_t>(Type::Chores);
+            if (op.is_attacking.value_or(false)) out[0] |= (bit_mask << chore_attack_bit);
+            if (op.is_defending.value_or(false)) out[0] |= (bit_mask << chore_defend_bit);
+            if (op.agree.value_or(false)) out[0] |= (bit_mask << chore_agree_bit);
+            if (op.disconnect.value_or(false)) out[0] |= (bit_mask << chore_disconnect_bit);
             return 1;
         default:
             return 0;
@@ -116,150 +131,316 @@ struct ClientOperate
     }
 };
 
-enum class ServerMsgType : uint8_t
+// Server packets:
+// Welcome:    [type:1 byte][player_id:2 bytes][owner_entity_id:2 bytes][tick_rate:1 byte]
+// Snapshot:   [type:1 byte][snapshot_id:4 bytes][owner_entity_id:2 bytes][view_radius:4 bytes][count:2 bytes][entity_snap...]
+// EntitySnap: [entity_id:2 bytes][entity_type:1 byte][team:1 byte][x:4 bytes][y:4 bytes][radius:2 bytes][hp_percent:1 byte][flags:1 byte][angle:2 bytes]
+// OwnerState: [type:1 byte][level:1 byte][flags:1 byte][petal_slots:1 byte]
+
+using net_coord = int32_t;
+using net_entity_id = uint16_t;
+
+constexpr float net_coord_scale = 64.f;
+constexpr float net_radius_scale = 16.f;
+constexpr float net_angle_scale = 1000.f;
+
+inline net_coord PackCoord(float value)
 {
-    Snapshot = 1,
+    return static_cast<net_coord>(std::round(value * net_coord_scale));
+}
+
+inline float UnpackCoord(net_coord value)
+{
+    return static_cast<float>(value) / net_coord_scale;
+}
+
+inline net_coord PackViewRadius(float value)
+{
+    return PackCoord(value);
+}
+
+inline float UnpackViewRadius(net_coord value)
+{
+    return UnpackCoord(value);
+}
+
+inline uint16_t PackRadius(float value)
+{
+    return static_cast<uint16_t>(std::round(std::max(0.f, value) * net_radius_scale));
+}
+
+inline float UnpackRadius(uint16_t value)
+{
+    return static_cast<float>(value) / net_radius_scale;
+}
+
+inline uint8_t PackPercent(float value)
+{
+    return static_cast<uint8_t>(std::clamp(std::round(value * 255.f), 0.f, 255.f));
+}
+
+inline float UnpackPercent(uint8_t value)
+{
+    return static_cast<float>(value) / 255.f;
+}
+
+inline int16_t PackAngle(float radians)
+{
+    return static_cast<int16_t>(std::round(radians * net_angle_scale));
+}
+
+inline float UnpackAngle(int16_t value)
+{
+    return static_cast<float>(value) / net_angle_scale;
+}
+
+inline void WriteU16(uint8_t* out, size_t& offset, uint16_t value)
+{
+    out[offset++] = static_cast<uint8_t>(value & 0xff);
+    out[offset++] = static_cast<uint8_t>((value >> 8) & 0xff);
+}
+
+inline uint16_t ReadU16(const uint8_t* data, size_t& offset)
+{
+    uint16_t value = static_cast<uint16_t>(data[offset]) | (static_cast<uint16_t>(data[offset + 1]) << 8);
+    offset += 2;
+    return value;
+}
+
+inline void WriteU32(uint8_t* out, size_t& offset, uint32_t value)
+{
+    out[offset++] = static_cast<uint8_t>(value & 0xff);
+    out[offset++] = static_cast<uint8_t>((value >> 8) & 0xff);
+    out[offset++] = static_cast<uint8_t>((value >> 16) & 0xff);
+    out[offset++] = static_cast<uint8_t>((value >> 24) & 0xff);
+}
+
+inline uint32_t ReadU32(const uint8_t* data, size_t& offset)
+{
+    uint32_t value = static_cast<uint32_t>(data[offset]) | (static_cast<uint32_t>(data[offset + 1]) << 8) |
+                     (static_cast<uint32_t>(data[offset + 2]) << 16) | (static_cast<uint32_t>(data[offset + 3]) << 24);
+    offset += 4;
+    return value;
+}
+
+inline void WriteI32(uint8_t* out, size_t& offset, int32_t value)
+{
+    out[offset++] = static_cast<uint8_t>(value & 0xff);
+    out[offset++] = static_cast<uint8_t>((value >> 8) & 0xff);
+    out[offset++] = static_cast<uint8_t>((value >> 16) & 0xff);
+    out[offset++] = static_cast<uint8_t>((value >> 24) & 0xff);
+}
+
+inline int32_t ReadI32(const uint8_t* data, size_t& offset)
+{
+    uint32_t value = static_cast<uint32_t>(data[offset]) | (static_cast<uint32_t>(data[offset + 1]) << 8) |
+                     (static_cast<uint32_t>(data[offset + 2]) << 16) | (static_cast<uint32_t>(data[offset + 3]) << 24);
+    offset += 4;
+    return static_cast<int32_t>(value);
+}
+
+enum class ServerEntityFlag : uint8_t
+{
+    None = 0,
+    Attacking = 1 << 0,
+    Defending = 1 << 1,
+    Dead = 1 << 2,
+    Owner = 1 << 3,
 };
 
-enum class NetEntityKind : uint8_t
+inline ServerEntityFlag operator|(ServerEntityFlag lhs, ServerEntityFlag rhs)
 {
-    Generic = 0,
-    Mob,
-    Flower,
-    Petal,
-    Projectile,
-};
+    return static_cast<ServerEntityFlag>(static_cast<uint8_t>(lhs) | static_cast<uint8_t>(rhs));
+}
 
-struct ServerEntitySnapshot
+inline bool HasFlag(ServerEntityFlag flags, ServerEntityFlag flag)
 {
-    int32_t id = -1;
-    NetEntityKind kind = NetEntityKind::Generic;
-    int32_t team = 0;
-    float x = 0.f;
-    float y = 0.f;
+    return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(flag)) != 0;
+}
+
+struct ServerEntitySnap
+{
+    net_entity_id entity_id = 0;
+    uint8_t entity_type = 0;
+    uint8_t team = 0;
+    sf::Vector2f pos = {0.f, 0.f};
     float radius = 0.f;
-    float health = 0.f;
+    float hp_percent = 1.f;
     uint8_t flags = 0;
+    int16_t angle = 0;
+
+    static constexpr size_t packed_size = 18;
+
+    static bool parse(const uint8_t* data, size_t len, size_t& offset, ServerEntitySnap& snap)
+    {
+        if (!data || offset + packed_size > len) return false;
+
+        snap.entity_id = ReadU16(data, offset);
+        snap.entity_type = data[offset++];
+        snap.team = data[offset++];
+        snap.pos = sf::Vector2f(UnpackCoord(ReadI32(data, offset)), UnpackCoord(ReadI32(data, offset)));
+        snap.radius = UnpackRadius(ReadU16(data, offset));
+        snap.hp_percent = UnpackPercent(data[offset++]);
+        snap.flags = data[offset++];
+        snap.angle = static_cast<int16_t>(ReadU16(data, offset));
+        return true;
+    }
+
+    static void pack(const ServerEntitySnap& snap, uint8_t* out, size_t& offset)
+    {
+        WriteU16(out, offset, snap.entity_id);
+        out[offset++] = snap.entity_type;
+        out[offset++] = snap.team;
+        WriteI32(out, offset, PackCoord(snap.pos.x));
+        WriteI32(out, offset, PackCoord(snap.pos.y));
+        WriteU16(out, offset, PackRadius(snap.radius));
+        out[offset++] = PackPercent(snap.hp_percent);
+        out[offset++] = snap.flags;
+        WriteU16(out, offset, static_cast<uint16_t>(snap.angle));
+    }
 };
 
-struct ServerSnapshot
+struct ServerMessage
 {
-    uint32_t sequence = 0;
-    int32_t player_entity_id = -1;
-    std::vector<ServerEntitySnapshot> entities;
+    enum class Type : uint8_t
+    {
+        Welcome = 0x00,
+        Snapshot = 0x01,
+        OwnerState = 0x10,
+        Unknown = 0xff,
+    } type = Type::Unknown;
+
+    std::optional<uint16_t> player_id;
+    std::optional<net_entity_id> owner_entity_id;
+    std::optional<uint8_t> tick_rate;
+
+    std::optional<uint32_t> snapshot_id;
+    std::optional<float> view_radius;
+    std::vector<ServerEntitySnap> entities;
+
+    std::optional<uint8_t> flags;
+
+    std::optional<uint8_t> level;
+    std::optional<uint8_t> petal_slots;
+
+    static ServerMessage parse(const uint8_t* data, size_t len)
+    {
+        ServerMessage msg{};
+        if (!data || len < 1) return msg;
+
+        size_t offset = 0;
+        msg.type = static_cast<Type>(data[offset++]);
+
+        switch (msg.type)
+        {
+        case Type::Welcome:
+            if (len < 6)
+            {
+                msg.type = Type::Unknown;
+                break;
+            }
+            msg.player_id = ReadU16(data, offset);
+            msg.owner_entity_id = ReadU16(data, offset);
+            msg.tick_rate = data[offset++];
+            break;
+        case Type::Snapshot:
+        {
+            if (len < 14)
+            {
+                msg.type = Type::Unknown;
+                break;
+            }
+            msg.snapshot_id = ReadU32(data, offset);
+            msg.owner_entity_id = ReadU16(data, offset);
+            msg.view_radius = UnpackViewRadius(ReadI32(data, offset));
+
+            uint16_t count = ReadU16(data, offset);
+            if (offset + static_cast<size_t>(count) * ServerEntitySnap::packed_size > len)
+            {
+                msg.entities.clear();
+                msg.type = Type::Unknown;
+                break;
+            }
+
+            msg.entities.reserve(count);
+            for (uint16_t i = 0; i < count; ++i)
+            {
+                ServerEntitySnap snap;
+                if (!ServerEntitySnap::parse(data, len, offset, snap))
+                {
+                    msg.entities.clear();
+                    msg.type = Type::Unknown;
+                    break;
+                }
+                msg.entities.push_back(snap);
+            }
+            break;
+        }
+        case Type::OwnerState:
+            if (len < 4)
+            {
+                msg.type = Type::Unknown;
+                break;
+            }
+            msg.level = data[offset++];
+            msg.flags = data[offset++];
+            msg.petal_slots = data[offset++];
+            break;
+        default:
+            msg.type = Type::Unknown;
+            break;
+        }
+        return msg;
+    }
+
+    static size_t pack(const ServerMessage& msg, uint8_t* out)
+    {
+        if (!out) return 0;
+
+        size_t offset = 0;
+        out[offset++] = static_cast<uint8_t>(msg.type);
+
+        switch (msg.type)
+        {
+        case Type::Welcome:
+            WriteU16(out, offset, msg.player_id.value_or(0));
+            WriteU16(out, offset, msg.owner_entity_id.value_or(0));
+            out[offset++] = msg.tick_rate.value_or(60);
+            return offset;
+        case Type::Snapshot:
+        {
+            WriteU32(out, offset, msg.snapshot_id.value_or(0));
+            WriteU16(out, offset, msg.owner_entity_id.value_or(0));
+            WriteI32(out, offset, PackViewRadius(msg.view_radius.value_or(0.f)));
+            WriteU16(out, offset, static_cast<uint16_t>(msg.entities.size()));
+            for (const ServerEntitySnap& snap : msg.entities)
+            {
+                ServerEntitySnap::pack(snap, out, offset);
+            }
+            return offset;
+        }
+        case Type::OwnerState:
+            out[offset++] = msg.level.value_or(1);
+            out[offset++] = msg.flags.value_or(0);
+            out[offset++] = msg.petal_slots.value_or(0);
+            return offset;
+        default:
+            return 0;
+        }
+    }
+
+    static size_t GetPackedSize(const ServerMessage& msg)
+    {
+        switch (msg.type)
+        {
+        case Type::Welcome:
+            return 6;
+        case Type::Snapshot:
+            return 14 + msg.entities.size() * ServerEntitySnap::packed_size;
+        case Type::OwnerState:
+            return 4;
+        default:
+            return 0;
+        }
+    }
 };
-
-inline size_t ClientOperatePackedLength(uint8_t first)
-{
-    switch (static_cast<ClientOperate::Type>(first & 0x03))
-    {
-    case ClientOperate::Type::Input:
-    case ClientOperate::Type::Equip:
-        return 3;
-    case ClientOperate::Type::Unequip:
-    case ClientOperate::Type::AttackDefend:
-        return 1;
-    default:
-        return 0;
-    }
-}
-
-template <typename T> inline void AppendBytes(std::vector<uint8_t>& out, const T& value)
-{
-    const auto* bytes = reinterpret_cast<const uint8_t*>(&value);
-    out.insert(out.end(), bytes, bytes + sizeof(T));
-}
-
-inline void AppendU16(std::vector<uint8_t>& out, uint16_t value)
-{
-    out.push_back(static_cast<uint8_t>(value & 0xff));
-    out.push_back(static_cast<uint8_t>((value >> 8) & 0xff));
-}
-
-template <typename T> inline bool ReadBytes(const std::vector<uint8_t>& data, size_t& offset, T& value)
-{
-    if (offset + sizeof(T) > data.size()) return false;
-    std::memcpy(&value, data.data() + offset, sizeof(T));
-    offset += sizeof(T);
-    return true;
-}
-
-inline uint16_t ReadU16(const std::vector<uint8_t>& data, size_t offset)
-{
-    return static_cast<uint16_t>(data[offset]) | (static_cast<uint16_t>(data[offset + 1]) << 8);
-}
-
-inline std::vector<uint8_t> PackServerSnapshotFrame(const ServerSnapshot& snapshot)
-{
-    std::vector<uint8_t> payload;
-    payload.reserve(16 + snapshot.entities.size() * 24);
-
-    payload.push_back(static_cast<uint8_t>(ServerMsgType::Snapshot));
-    AppendBytes(payload, snapshot.sequence);
-    AppendBytes(payload, snapshot.player_entity_id);
-
-    uint16_t count = static_cast<uint16_t>(std::min<size_t>(snapshot.entities.size(), 1024));
-    AppendBytes(payload, count);
-
-    for (size_t i = 0; i < count; ++i)
-    {
-        const ServerEntitySnapshot& entity = snapshot.entities[i];
-        const uint8_t kind = static_cast<uint8_t>(entity.kind);
-        AppendBytes(payload, entity.id);
-        AppendBytes(payload, kind);
-        AppendBytes(payload, entity.team);
-        AppendBytes(payload, entity.x);
-        AppendBytes(payload, entity.y);
-        AppendBytes(payload, entity.radius);
-        AppendBytes(payload, entity.health);
-        AppendBytes(payload, entity.flags);
-    }
-
-    std::vector<uint8_t> frame;
-    if (payload.size() > 0xffff) return frame;
-    frame.reserve(payload.size() + 2);
-    AppendU16(frame, static_cast<uint16_t>(payload.size()));
-    frame.insert(frame.end(), payload.begin(), payload.end());
-    return frame;
-}
-
-inline bool TryPopServerSnapshotFrame(std::vector<uint8_t>& buffer, ServerSnapshot& snapshot)
-{
-    if (buffer.size() < 2) return false;
-
-    const uint16_t payload_size = ReadU16(buffer, 0);
-    if (buffer.size() < static_cast<size_t>(payload_size) + 2) return false;
-
-    std::vector<uint8_t> payload(buffer.begin() + 2, buffer.begin() + 2 + payload_size);
-    buffer.erase(buffer.begin(), buffer.begin() + 2 + payload_size);
-
-    size_t offset = 0;
-    uint8_t type = 0;
-    if (!ReadBytes(payload, offset, type) || type != static_cast<uint8_t>(ServerMsgType::Snapshot)) return false;
-
-    ServerSnapshot parsed;
-    uint16_t count = 0;
-    if (!ReadBytes(payload, offset, parsed.sequence)) return false;
-    if (!ReadBytes(payload, offset, parsed.player_entity_id)) return false;
-    if (!ReadBytes(payload, offset, count)) return false;
-
-    parsed.entities.reserve(count);
-    for (uint16_t i = 0; i < count; ++i)
-    {
-        ServerEntitySnapshot entity;
-        uint8_t kind = 0;
-        if (!ReadBytes(payload, offset, entity.id)) return false;
-        if (!ReadBytes(payload, offset, kind)) return false;
-        if (!ReadBytes(payload, offset, entity.team)) return false;
-        if (!ReadBytes(payload, offset, entity.x)) return false;
-        if (!ReadBytes(payload, offset, entity.y)) return false;
-        if (!ReadBytes(payload, offset, entity.radius)) return false;
-        if (!ReadBytes(payload, offset, entity.health)) return false;
-        if (!ReadBytes(payload, offset, entity.flags)) return false;
-        entity.kind = static_cast<NetEntityKind>(kind);
-        parsed.entities.push_back(entity);
-    }
-
-    snapshot = std::move(parsed);
-    return true;
-}

@@ -113,6 +113,7 @@
     <ClCompile Include="src\Server\Game\entities\mob_behavior.cpp" />
     <ClCompile Include="src\Server\Game\entities\petals\petal.cpp" />
     <ClCompile Include="src\Server\Game\entities\petals\petal_behavior.cpp" />
+    <ClCompile Include="src\Server\Game\entities\projectile.cpp" />
     <ClCompile Include="src\Server\Game\entity.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\opencontroller.cpp" />
     <ClCompile Include="src\Server\Game\gameworld.cpp" />
