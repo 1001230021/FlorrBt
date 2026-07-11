@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectName>FlorrBt.Server</ProjectName>
+    <ProjectGuid>{A5863369-B891-4CE9-9FDF-FEE6E58A565F}</ProjectGuid>
+    <RootNamespace>FlorrBtServer</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
+      <PreprocessorDefinitions>_DEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>D:\库\SFML-3.1.0\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>sfml-main-d.lib;sfml-graphics-d.lib;sfml-window-d.lib;sfml-network-d.lib;sfml-system-d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <Manifest>
+      <EnableSegmentHeap>true</EnableSegmentHeap>
+    </Manifest>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
+      <PreprocessorDefinitions>NDEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>D:\库\SFML-3.1.0\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>sfml-main.lib;sfml-graphics.lib;sfml-window.lib;sfml-network.lib;sfml-system.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <Manifest>
+      <EnableSegmentHeap>true</EnableSegmentHeap>
+    </Manifest>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="src\Server\Game\controller.h" />
+    <ClInclude Include="src\Server\Game\entities\blood_sacrifice_ritual.h" />
+    <ClInclude Include="src\Server\Game\entities\drop.h" />
+    <ClInclude Include="src\Server\Game\gamecontroller.h" />
+    <ClInclude Include="src\Server\Game\controllers\melee_controller.h" />
+    <ClInclude Include="src\Server\Game\controllers\player_controller.h" />
+    <ClInclude Include="src\Server\Game\entities\flower.h" />
+    <ClInclude Include="src\Server\Game\entities\mob.h" />
+    <ClInclude Include="src\Server\Game\entities\petals\petal.h" />
+    <ClInclude Include="src\Server\Game\entities\petals\petal_slot.h" />
+    <ClInclude Include="src\Server\Game\entities\petals\petals_behavior.h" />
+    <ClInclude Include="src\Server\Game\entities\projectile.h" />
+    <ClInclude Include="src\Server\Game\entity.h" />
+    <ClInclude Include="src\Server\Game\gamecontext.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\opencontroller.h" />
+    <ClInclude Include="src\Server\Game\gameworld.h" />
+    <ClInclude Include="src\Server\Game\player.h" />
+    <ClInclude Include="src\Server\Game\state.h" />
+    <ClInclude Include="src\Server\Game\state_zone.h" />
+    <ClInclude Include="src\Server\Game\states\states.h" />
+    <ClInclude Include="src\Server\Module\console_module.h" />
+    <ClInclude Include="src\Server\Module\module.h" />
+    <ClInclude Include="src\Server\Module\network_module.h" />
+    <ClInclude Include="src\Server\Module\server_gui_module.h" />
+    <ClInclude Include="src\Server\Module\world_module.h" />
+    <ClInclude Include="src\Server\report.h" />
+    <ClInclude Include="src\Server\server.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\Server\commands.cpp" />
+    <ClCompile Include="src\Server\Game\controllers\melee_controller.cpp" />
+    <ClCompile Include="src\Server\Game\controllers\player_controller.cpp" />
+    <ClCompile Include="src\Server\Game\entities\blood_sacrifice_ritual.cpp" />
+    <ClCompile Include="src\Server\Game\entities\drop.cpp" />
+    <ClCompile Include="src\Server\Game\entities\flower.cpp" />
+    <ClCompile Include="src\Server\Game\entities\mob.cpp" />
+    <ClCompile Include="src\Server\Game\entities\mob_behavior.cpp" />
+    <ClCompile Include="src\Server\Game\entities\petals\petal.cpp" />
+    <ClCompile Include="src\Server\Game\entities\petals\petal_behavior.cpp" />
+    <ClCompile Include="src\Server\Game\entities\projectile.cpp" />
+    <ClCompile Include="src\Server\Game\entity.cpp" />
+    <ClCompile Include="src\Server\Game\entity_tools.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontext.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\opencontroller.cpp" />
+    <ClCompile Include="src\Server\Game\gameworld.cpp" />
+    <ClCompile Include="src\Server\Game\player.cpp" />
+    <ClCompile Include="src\Server\Game\state_zone.cpp" />
+    <ClCompile Include="src\Server\Game\states\states.cpp" />
+    <ClCompile Include="src\Server\main.cpp" />
+    <ClCompile Include="src\Server\Module\console_module.cpp" />
+    <ClCompile Include="src\Server\Module\network_module.cpp" />
+    <ClCompile Include="src\Server\Module\server_gui_module.cpp" />
+    <ClCompile Include="src\Server\Module\world_module.cpp" />
+    <ClCompile Include="src\Server\report.cpp" />
+    <ClCompile Include="src\Server\server.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="FlorrBt.EngineShared.vcxproj">
+      <Project>{7F95A41D-B68C-40A8-8761-F7E0B3B2E3C1}</Project>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

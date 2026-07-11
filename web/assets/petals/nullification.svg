@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="110" height="110" viewBox="0 0 110 110">
+  <defs>
+    <clipPath id="flower-clip">
+      <circle cx="55" cy="45" r="28.5"/>
+    </clipPath>
+  </defs>
+  <circle cx="55" cy="45" r="28.5" fill="#eef4fb" fill-opacity=".13"/>
+  <circle cx="55" cy="45" r="28.5" fill="none" stroke="#2f3744" stroke-opacity=".15" stroke-width="6.4"/>
+  <g clip-path="url(#flower-clip)">
+    <path d="M29 35c15-6 35-6 52 1" fill="none" stroke="#2f3744" stroke-opacity=".12" stroke-width="10" stroke-linecap="round"/>
+    <path d="M29 35c15-6 35-6 52 1" fill="none" stroke="#fff" stroke-opacity=".68" stroke-width="7" stroke-linecap="round" stroke-dasharray="12 16"/>
+    <path d="M30 61c18 7 33 5 50-5" fill="none" stroke="#2f3744" stroke-opacity=".12" stroke-width="10" stroke-linecap="round"/>
+    <path d="M30 61c18 7 33 5 50-5" fill="none" stroke="#fff" stroke-opacity=".62" stroke-width="7" stroke-linecap="round" stroke-dasharray="13 17"/>
+    <path d="M41 23c-6 14-6 30 2 45" fill="none" stroke="#fff" stroke-opacity=".42" stroke-width="5.2" stroke-linecap="round" stroke-dasharray="10 18"/>
+  </g>
+  <circle cx="55" cy="45" r="28.5" fill="none" stroke="#fff" stroke-opacity=".78" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="9 13"/>
+  <text x="55" y="92" text-anchor="middle" font-family="Trebuchet MS,Segoe UI,sans-serif" font-size="10.5" font-weight="700" stroke="#333946" stroke-width="2.6" stroke-linejoin="round">Nullification</text>
+  <text x="55" y="92" text-anchor="middle" font-family="Trebuchet MS,Segoe UI,sans-serif" font-size="10.5" font-weight="700" fill="#f8fbff">Nullification</text>
+</svg>

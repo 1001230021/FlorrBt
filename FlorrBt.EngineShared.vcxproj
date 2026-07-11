@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectName>FlorrBt.EngineShared</ProjectName>
+    <ProjectGuid>{7F95A41D-B68C-40A8-8761-F7E0B3B2E3C1}</ProjectGuid>
+    <RootNamespace>FlorrBtEngineShared</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <IntDir>$(MSBuildProjectName)\$(Platform)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <PreprocessorDefinitions>_DEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;HAVE_CONFIG_H;LIBTMJ_VERSION_MAJOR=1;LIBTMJ_VERSION_MINOR=6;LIBTMJ_VERSION_PATCH=0;LIBTMJ_VERSION="1.6.0";%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Manifest>
+      <EnableSegmentHeap>true</EnableSegmentHeap>
+    </Manifest>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <PreprocessorDefinitions>NDEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;HAVE_CONFIG_H;LIBTMJ_VERSION_MAJOR=1;LIBTMJ_VERSION_MINOR=6;LIBTMJ_VERSION_PATCH=0;LIBTMJ_VERSION="1.6.0";%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Manifest>
+      <EnableSegmentHeap>true</EnableSegmentHeap>
+    </Manifest>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="src\Engine\account_data.h" />
+    <ClInclude Include="src\Engine\commands_registry.h" />
+    <ClInclude Include="src\Engine\console.h" />
+    <ClInclude Include="src\Engine\json_value.h" />
+    <ClInclude Include="src\Engine\logger.h" />
+    <ClInclude Include="src\Engine\map_tools.h" />
+    <ClInclude Include="src\Engine\spatial_hash_grid.h" />
+    <ClInclude Include="src\Shared\damage_type.h" />
+    <ClInclude Include="src\Shared\drop_rate.h" />
+    <ClInclude Include="src\Shared\game_config.h" />
+    <ClInclude Include="src\Shared\inventory.h" />
+    <ClInclude Include="src\Shared\mob_type.h" />
+    <ClInclude Include="src\Shared\network_msg.h" />
+    <ClInclude Include="src\Shared\petal_type.h" />
+    <ClInclude Include="src\Shared\rarity.h" />
+    <ClInclude Include="src\Shared\shared.h" />
+    <ClInclude Include="src\Shared\stats.h" />
+    <ClInclude Include="src\Shared\tools.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\Engine\account_data.cpp" />
+    <ClCompile Include="src\Engine\console.cpp" />
+    <ClCompile Include="src\Engine\json_value.cpp" />
+    <ClCompile Include="externals\argon2\src\argon2.c" />
+    <ClCompile Include="externals\argon2\src\blake2\blake2b.c" />
+    <ClCompile Include="externals\argon2\src\core.c" />
+    <ClCompile Include="externals\argon2\src\encoding.c" />
+    <ClCompile Include="externals\argon2\src\ref.c" />
+    <ClCompile Include="externals\argon2\src\thread.c" />
+    <ClCompile Include="externals\jansson\src\dump.c" />
+    <ClCompile Include="externals\jansson\src\error.c" />
+    <ClCompile Include="externals\jansson\src\hashtable.c">
+      <DisableSpecificWarnings>4334;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="externals\jansson\src\hashtable_seed.c" />
+    <ClCompile Include="externals\jansson\src\load.c" />
+    <ClCompile Include="externals\jansson\src\memory.c" />
+    <ClCompile Include="externals\jansson\src\pack_unpack.c" />
+    <ClCompile Include="externals\jansson\src\strbuffer.c" />
+    <ClCompile Include="externals\jansson\src\strconv.c" />
+    <ClCompile Include="externals\jansson\src\utf.c" />
+    <ClCompile Include="externals\jansson\src\value.c" />
+    <ClCompile Include="externals\jansson\src\version.c" />
+    <ClCompile Include="externals\libtmj\src\decode.c" />
+    <ClCompile Include="externals\libtmj\src\log.c" />
+    <ClCompile Include="externals\libtmj\src\map.c" />
+    <ClCompile Include="externals\libtmj\src\tileset.c" />
+    <ClCompile Include="externals\libtmj\src\util.c" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

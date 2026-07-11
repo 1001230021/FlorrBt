@@ -1,0 +1,492 @@
+:root {
+  color-scheme: light;
+  --ink: #263241;
+  --muted: #6c7785;
+  --panel: rgba(250, 252, 253, 0.93);
+  --panel-strong: rgba(255, 255, 255, 0.98);
+  --line: rgba(72, 88, 108, 0.2);
+  --blue: #3577d4;
+  --red: #dc5555;
+  --green: #308f5f;
+  --gold: #e8c452;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #edf3f7;
+  color: var(--ink);
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  height: 36px;
+  border: 1px solid rgba(20, 64, 118, 0.25);
+  border-radius: 8px;
+  background: var(--blue);
+  color: #fff;
+  cursor: pointer;
+}
+
+button:active {
+  transform: none;
+}
+
+.auth-panel button:active {
+  transform: translateY(1px);
+}
+
+#game {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+}
+
+.ui {
+  position: fixed;
+  z-index: 2;
+  user-select: none;
+}
+
+.auth-panel {
+  top: 50%;
+  left: 50%;
+  width: min(360px, calc(100vw - 32px));
+  transform: translate(-50%, -50%);
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  box-shadow: 0 20px 55px rgba(28, 42, 60, 0.18);
+}
+
+.auth-panel h1 {
+  margin: 0 0 14px;
+  font-size: 28px;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.auth-panel label {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.auth-panel input {
+  height: 34px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--ink);
+  background: #f8fafc;
+  user-select: text;
+}
+
+.checkbox-row {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 8px !important;
+  margin: 12px 0 !important;
+}
+
+.checkbox-row input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+
+.auth-panel button {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.auth-status {
+  min-height: 18px;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.hud {
+  top: 12px;
+  left: 12px;
+  display: grid;
+  gap: 4px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 13px;
+}
+
+#statusLine {
+  color: var(--green);
+  font-weight: 600;
+}
+
+#coordsLine {
+  color: var(--muted);
+}
+
+#fpsLine {
+  color: #4c5968;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-log {
+  left: 12px;
+  bottom: 120px;
+  width: min(520px, calc(100vw - 24px));
+  display: grid;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.chat-line {
+  width: fit-content;
+  max-width: 100%;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 2px 10px rgba(40, 54, 72, 0.08);
+  font-size: 13px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.chat-name {
+  color: #5b6775;
+  font-weight: 600;
+}
+
+.chat-input {
+  left: 12px;
+  bottom: 78px;
+  width: min(520px, calc(100vw - 24px));
+  height: 34px;
+  border: 1px solid rgba(50, 88, 138, 0.25);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--ink);
+  user-select: text;
+}
+
+.console-panel {
+  top: calc(-1 * min(310px, calc(100vh - 120px)) - 14px);
+  left: 50%;
+  width: min(760px, calc(100vw - 24px));
+  height: min(310px, calc(100vh - 120px));
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-rows: 1fr 38px;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(48, 68, 96, 0.18);
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+  background: rgba(248, 251, 253, 0.97);
+  box-shadow: 0 18px 48px rgba(28, 42, 60, 0.16);
+  transition: top 160ms ease;
+}
+
+.console-panel.open {
+  top: 0;
+}
+
+.console-log {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid rgba(48, 68, 96, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.76);
+  color: #344255;
+  font: 12px/1.4 Consolas, "Cascadia Mono", monospace;
+  user-select: text;
+}
+
+.console-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.console-line.command {
+  color: #1f5fa7;
+}
+
+.console-line.error {
+  color: #b24545;
+}
+
+.console-input {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  border: 1px solid rgba(50, 88, 138, 0.25);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: #fff;
+  color: var(--ink);
+  user-select: text;
+}
+
+.slots-panel {
+  left: 50%;
+  bottom: 12px;
+  width: fit-content;
+  max-width: calc(100vw - 24px);
+  transform: translateX(-50%);
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.backpack-panel {
+  left: calc(-1 * min(360px, calc(100vw - 24px)) - 12px);
+  bottom: 12px;
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(420px, calc(100vh - 132px));
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 18px 48px rgba(28, 42, 60, 0.14);
+  transition: left 160ms ease;
+}
+
+.backpack-panel.open {
+  left: 12px;
+}
+
+.backpack-panel.drag-target,
+.slot.drag-target {
+  border-color: rgba(40, 100, 190, 0.82);
+  box-shadow: inset 0 0 0 1px rgba(40, 100, 190, 0.32);
+}
+
+.slot-row {
+  display: grid;
+  grid-template-columns: repeat(var(--slot-count, 5), minmax(44px, 58px));
+  gap: 6px;
+  max-width: calc(100vw - 44px);
+  overflow-x: auto;
+  margin-bottom: 6px;
+  justify-content: center;
+}
+
+.slot,
+.inventory-item {
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.slot {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  padding: 0;
+  text-align: center;
+}
+
+.slot.selected {
+  filter: drop-shadow(0 0 5px rgba(40, 100, 190, 0.7));
+}
+
+.slot.dragging,
+.inventory-item.dragging {
+  opacity: 0.46;
+}
+
+.slot .index {
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  z-index: 2;
+  color: #8793a2;
+  font-size: 10px;
+}
+
+.slot .petal-name {
+  display: block;
+  max-width: calc(100% - 16px);
+  padding-right: 12px;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slot .rarity-name {
+  display: block;
+  margin-top: 4px;
+  max-width: calc(100% - 18px);
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.petal-stack {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 54px;
+  height: 54px;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.petal-bg,
+.petal-icon {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.petal-icon {
+  left: 50%;
+  top: 50%;
+  width: 92%;
+  height: 92%;
+  transform: translate(-50%, -50%);
+  object-fit: contain;
+}
+
+.secondary .slot {
+  width: 46px;
+  height: 46px;
+  opacity: 0.92;
+}
+
+.secondary .petal-stack {
+  width: 42px;
+  height: 42px;
+}
+
+.inventory-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 6px;
+  width: 100%;
+  max-height: calc(100vh - 154px);
+  overflow-y: auto;
+}
+
+.inventory-item {
+  position: relative;
+  min-height: 56px;
+  padding: 0;
+  text-align: center;
+}
+
+.inventory-item .petal-stack {
+  width: 52px;
+  height: 52px;
+}
+
+.inventory-item strong,
+.inventory-item span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inventory-item strong {
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.inventory-item span {
+  font-size: 10px;
+}
+
+.drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 20;
+  width: 116px;
+  min-height: 38px;
+  padding: 6px 8px;
+  border: 1px solid rgba(77, 91, 111, 0.26);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 16px 34px rgba(28, 42, 60, 0.2);
+  color: var(--ink);
+  pointer-events: none;
+}
+
+.drag-ghost strong,
+.drag-ghost span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drag-ghost strong {
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.drag-ghost span {
+  font-size: 10px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+@media (max-width: 720px) {
+  .slots-panel {
+    left: 12px;
+    right: 12px;
+    width: auto;
+    transform: none;
+  }
+
+  .backpack-panel {
+    width: min(330px, calc(100vw - 24px));
+  }
+
+  .chat-log {
+    bottom: 174px;
+  }
+
+  .chat-input {
+    bottom: 134px;
+  }
+}

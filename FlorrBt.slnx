@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="FlorrBt.EngineShared.vcxproj" Id="7f95a41d-b68c-40a8-8761-f7e0b3b2e3c1" />
+  <Project Path="FlorrBt.Server.vcxproj" Id="a5863369-b891-4ce9-9fdf-fee6e58a565f" />
+  <Project Path="FlorrBt.Web.vcxproj" Id="d875bc1f-91f4-45b8-b42d-4079958991be" />
+</Solution>

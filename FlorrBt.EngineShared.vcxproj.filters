@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="src">
+      <UniqueIdentifier>{C202D925-8342-8CAB-FBAC-54DFA101AD31}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Engine">
+      <UniqueIdentifier>{54638203-EAD3-9A75-ACB8-B3C8D2EAB27C}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Shared">
+      <UniqueIdentifier>{9E40BFAF-B0CC-253F-492F-3095026A72BC}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="externals">
+      <UniqueIdentifier>{DCE3F4E8-8AB0-4C77-A447-17BE9B47FA73}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="externals\argon2">
+      <UniqueIdentifier>{453FA720-7335-4B85-AF68-B8C39BB7A6A9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="externals\jansson">
+      <UniqueIdentifier>{C1C75D14-103B-4F8A-A40B-85B53A85B47E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="externals\libtmj">
+      <UniqueIdentifier>{2C7C83D2-148E-4B02-A409-43D95AF1E329}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\Engine\account_data.h">
+      <Filter>src\Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Engine\commands_registry.h">
+      <Filter>src\Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Engine\console.h">
+      <Filter>src\Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Engine\json_value.h">
+      <Filter>src\Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Engine\logger.h">
+      <Filter>src\Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Engine\map_tools.h">
+      <Filter>src\Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Engine\spatial_hash_grid.h">
+      <Filter>src\Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Shared\damage_type.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Shared\game_config.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Shared\inventory.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Shared\mob_type.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Shared\network_msg.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Shared\petal_type.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Shared\rarity.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Shared\shared.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Shared\stats.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Shared\tools.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Shared\drop_rate.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\Engine\account_data.cpp">
+      <Filter>src\Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Engine\console.cpp">
+      <Filter>src\Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Engine\json_value.cpp">
+      <Filter>src\Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\argon2\src\argon2.c">
+      <Filter>externals\argon2</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\argon2\src\blake2\blake2b.c">
+      <Filter>externals\argon2</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\argon2\src\core.c">
+      <Filter>externals\argon2</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\argon2\src\encoding.c">
+      <Filter>externals\argon2</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\argon2\src\ref.c">
+      <Filter>externals\argon2</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\argon2\src\thread.c">
+      <Filter>externals\argon2</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\jansson\src\dump.c">
+      <Filter>externals\jansson</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\jansson\src\error.c">
+      <Filter>externals\jansson</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\jansson\src\hashtable.c">
+      <Filter>externals\jansson</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\jansson\src\hashtable_seed.c">
+      <Filter>externals\jansson</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\jansson\src\load.c">
+      <Filter>externals\jansson</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\jansson\src\memory.c">
+      <Filter>externals\jansson</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\jansson\src\pack_unpack.c">
+      <Filter>externals\jansson</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\jansson\src\strbuffer.c">
+      <Filter>externals\jansson</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\jansson\src\strconv.c">
+      <Filter>externals\jansson</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\jansson\src\utf.c">
+      <Filter>externals\jansson</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\jansson\src\value.c">
+      <Filter>externals\jansson</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\jansson\src\version.c">
+      <Filter>externals\jansson</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\libtmj\src\decode.c">
+      <Filter>externals\libtmj</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\libtmj\src\log.c">
+      <Filter>externals\libtmj</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\libtmj\src\map.c">
+      <Filter>externals\libtmj</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\libtmj\src\tileset.c">
+      <Filter>externals\libtmj</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\libtmj\src\util.c">
+      <Filter>externals\libtmj</Filter>
+    </ClCompile>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,381 @@
+#include "petals_behavior.h"
+#include <mutex>
+
+std::once_flag g_air_registered;
+void RegisterAir()
+{
+    std::call_once(g_air_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Air;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = 0.f;
+        proto.m_p_behavior = std::make_unique<CAirBehavior>();
+        REGISTER_PETAL(EPetalType::Air, CPetal, proto);
+    });
+}
+
+std::once_flag g_ant_egg_registered;
+void RegisterAntEgg()
+{
+    std::call_once(g_ant_egg_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::AntEgg;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_antegg_base_radius;
+        proto.m_p_behavior = std::make_unique<CAntEggBehavior>();
+        REGISTER_PETAL(EPetalType::AntEgg, CBeetleEggPetal, proto);
+    });
+}
+
+std::once_flag g_antennae_registered;
+void RegisterAntennae()
+{
+    std::call_once(g_antennae_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Antennae;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = 0.f;
+        proto.m_p_behavior = std::make_unique<CAntennaeBehavior>();
+        REGISTER_PETAL(EPetalType::Antennae, CPetal, proto);
+    });
+}
+
+std::once_flag g_blood_sacrifice_registered;
+void RegisterBloodSacrifice()
+{
+    std::call_once(g_blood_sacrifice_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::BloodSacrifice;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_blood_sacrifice_base_radius;
+        proto.m_p_behavior = std::make_unique<CBloodSacrificeBehavior>();
+        REGISTER_PETAL(EPetalType::BloodSacrifice, CPetal, proto);
+    });
+}
+
+std::once_flag g_basic_registered;
+void RegisterBasic()
+{
+    std::call_once(g_basic_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Basic;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_basic_base_radius;
+        proto.m_p_behavior = std::make_unique<CBasicBehavior>();
+        REGISTER_PETAL(EPetalType::Basic, CPetal, proto);
+    });
+}
+
+std::once_flag g_bandage_registered;
+void RegisterBandage()
+{
+    std::call_once(g_bandage_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Bandage;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_bandage_base_radius;
+        proto.m_p_behavior = std::make_unique<CBandageBehavior>();
+        REGISTER_PETAL(EPetalType::Bandage, CPetal, proto);
+    });
+}
+
+std::once_flag g_beetle_egg_registered;
+void RegisterBeetleEgg()
+{
+    std::call_once(g_beetle_egg_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::BeetleEgg;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_beetleegg_base_radius;
+        proto.m_p_behavior = std::make_unique<CBeetleEggBehavior>();
+        REGISTER_PETAL(EPetalType::BeetleEgg, CBeetleEggPetal, proto);
+    });
+}
+
+std::once_flag g_bubble_registered;
+void RegisterBubble()
+{
+    std::call_once(g_bubble_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Bubble;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_bubble_base_radius;
+        proto.m_p_behavior = std::make_unique<CBubbleBehavior>();
+        REGISTER_PETAL(EPetalType::Bubble, CPetal, proto);
+    });
+}
+
+std::once_flag g_compass_registered;
+void RegisterCompass()
+{
+    std::call_once(g_compass_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Compass;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_compass_base_radius;
+        proto.m_p_behavior = std::make_unique<CCompassBehavior>();
+        REGISTER_PETAL(EPetalType::Compass, CCompassPetal, proto);
+    });
+}
+
+std::once_flag g_cogwheel_registered;
+void RegisterCogwheel()
+{
+    std::call_once(g_cogwheel_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Cogwheel;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_cogwheel_base_radius;
+        proto.m_p_behavior = std::make_unique<CCogwheelBehavior>();
+        REGISTER_PETAL(EPetalType::Cogwheel, CPetal, proto);
+    });
+}
+
+std::once_flag g_corruption_registered;
+void RegisterCorruption()
+{
+    std::call_once(g_corruption_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Corruption;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_corruption_base_radius;
+        proto.m_p_behavior = std::make_unique<CCorruptionBehavior>();
+        REGISTER_PETAL(EPetalType::Corruption, CPetal, proto);
+    });
+}
+
+std::once_flag g_dust_registered;
+void RegisterDust()
+{
+    std::call_once(g_dust_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Dust;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_dust_base_radius;
+        proto.m_p_behavior = std::make_unique<CDustBehavior>();
+        REGISTER_PETAL(EPetalType::Dust, CPetal, proto);
+    });
+}
+
+std::once_flag g_golden_leaf_registered;
+void RegisterGoldenLeaf()
+{
+    std::call_once(g_golden_leaf_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::GoldenLeaf;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_goldenleaf_base_radius;
+        proto.m_p_behavior = std::make_unique<CGoldenLeafBehavior>();
+        REGISTER_PETAL(EPetalType::GoldenLeaf, CPetal, proto);
+    });
+}
+
+std::once_flag g_heavy_registered;
+void RegisterHeavy()
+{
+    std::call_once(g_heavy_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Heavy;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_heavy_base_radius;
+        proto.m_p_behavior = std::make_unique<CHeavyBehavior>();
+        REGISTER_PETAL(EPetalType::Heavy, CPetal, proto);
+    });
+}
+
+std::once_flag g_iris_registered;
+void RegisterIris()
+{
+    std::call_once(g_iris_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Iris;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_iris_base_radius;
+        proto.m_p_behavior = std::make_unique<CIrisBehavior>();
+        REGISTER_PETAL(EPetalType::Iris, CPetal, proto);
+    });
+}
+
+std::once_flag g_faster_registered;
+void RegisterFaster()
+{
+    std::call_once(g_faster_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Faster;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_faster_base_radius;
+        proto.m_p_behavior = std::make_unique<CFasterBehavior>();
+        REGISTER_PETAL(EPetalType::Faster, CPetal, proto);
+    });
+}
+
+std::once_flag g_lentil_registered;
+void RegisterLentil()
+{
+    std::call_once(g_lentil_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Lentil;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_lentil_base_radius;
+        proto.m_p_behavior = std::make_unique<CLentilBehavior>();
+        REGISTER_PETAL(EPetalType::Lentil, CPetal, proto);
+    });
+}
+
+std::once_flag g_moon_registered;
+void RegisterMoon()
+{
+    std::call_once(g_moon_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Moon;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_flower_radius;
+        proto.m_p_behavior = std::make_unique<CMoonBehavior>();
+        REGISTER_PETAL(EPetalType::Moon, CPetal, proto);
+    });
+}
+
+std::once_flag g_nullification_registered;
+void RegisterNullification()
+{
+    std::call_once(g_nullification_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Nullification;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = 0.f;
+        proto.m_p_behavior = std::make_unique<CNullificationBehavior>();
+        REGISTER_PETAL(EPetalType::Nullification, CPetal, proto);
+    });
+}
+
+std::once_flag g_pincer_registered;
+void RegisterPincer()
+{
+    std::call_once(g_pincer_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Pincer;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_pincer_base_radius;
+        proto.m_p_behavior = std::make_unique<CPincerBehavior>();
+        REGISTER_PETAL(EPetalType::Pincer, CPetal, proto);
+    });
+}
+
+std::once_flag g_relic_registered;
+void RegisterRelic()
+{
+    std::call_once(g_relic_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Relic;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_relic_base_radius;
+        proto.m_p_behavior = std::make_unique<CRelicBehavior>();
+        REGISTER_PETAL(EPetalType::Relic, CRelicPetal, proto);
+    });
+}
+
+std::once_flag g_rose_registered;
+void RegisterRose()
+{
+    std::call_once(g_rose_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Rose;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_rose_base_radius;
+        proto.m_p_behavior = std::make_unique<CRoseBehavior>();
+        REGISTER_PETAL(EPetalType::Rose, CPetal, proto);
+    });
+}
+
+std::once_flag g_yin_yang_registered;
+void RegisterYinYang()
+{
+    std::call_once(g_yin_yang_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::YinYang;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_yinyang_base_radius;
+        proto.m_p_behavior = std::make_unique<CYinYangBehavior>();
+        REGISTER_PETAL(EPetalType::YinYang, CPetal, proto);
+    });
+}
+
+std::once_flag g_yggdrasil_registered;
+void RegisterYggdrasil()
+{
+    std::call_once(g_yggdrasil_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Yggdrasil;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_yggdrasil_base_radius;
+        proto.m_p_behavior = std::make_unique<CYggdrasilBehavior>();
+        REGISTER_PETAL(EPetalType::Yggdrasil, CYggdrasilPetal, proto);
+    });
+}
+
+std::once_flag g_missile_registered;
+void RegisterMissile()
+{
+    std::call_once(g_missile_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Missile;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_missile_base_radius;
+        proto.m_p_behavior = std::make_unique<CMissileBehavior>();
+        REGISTER_PETAL(EPetalType::Missile, CMissilePetal, proto);
+    });
+}
+
+void RegisterPetals()
+{
+    RegisterAir();
+    RegisterAntEgg();
+    RegisterAntennae();
+    RegisterBloodSacrifice();
+    RegisterBandage();
+    RegisterBasic();
+    RegisterBeetleEgg();
+    RegisterBubble();
+    RegisterCompass();
+    RegisterCogwheel();
+    RegisterCorruption();
+    RegisterDust();
+    RegisterFaster();
+    RegisterGoldenLeaf();
+    RegisterHeavy();
+    RegisterIris();
+    RegisterLentil();
+    RegisterMoon();
+    RegisterNullification();
+    RegisterPincer();
+    RegisterRelic();
+    RegisterRose();
+    RegisterYinYang();
+    RegisterYggdrasil();
+    RegisterMissile();
+}

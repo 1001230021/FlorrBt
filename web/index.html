@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FlorrBt Web Client</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <canvas id="game" aria-label="FlorrBt game"></canvas>
+
+  <main id="authPanel" class="auth-panel ui">
+    <h1>FlorrBt</h1>
+    <label>
+      <span>Socket</span>
+      <input id="wsUrl" autocomplete="url" spellcheck="false">
+    </label>
+    <label>
+      <span>Account</span>
+      <input id="account" autocomplete="username" spellcheck="false">
+    </label>
+    <label>
+      <span>Password</span>
+      <input id="password" type="password" autocomplete="current-password">
+    </label>
+    <label class="checkbox-row">
+      <input id="registerMode" type="checkbox">
+      <span>Register</span>
+    </label>
+    <button id="connectBtn" type="button">Connect</button>
+    <p id="authStatus" class="auth-status">Disconnected</p>
+  </main>
+
+  <section id="hud" class="hud ui">
+    <div id="statusLine">Disconnected</div>
+    <div id="coordsLine">0, 0</div>
+    <div id="fpsLine">0 fps</div>
+  </section>
+
+  <section id="chatLog" class="chat-log ui"></section>
+  <input id="chatInput" class="chat-input ui hidden" autocomplete="off" spellcheck="false" maxlength="180" placeholder="Chat">
+
+  <section id="consolePanel" class="console-panel ui">
+    <div id="consoleLog" class="console-log"></div>
+    <input id="consoleInput" class="console-input" autocomplete="off" spellcheck="false" maxlength="240" placeholder="Console">
+  </section>
+
+  <section id="slotsPanel" class="slots-panel ui">
+    <div id="primarySlots" class="slot-row"></div>
+    <div id="secondarySlots" class="slot-row secondary"></div>
+  </section>
+
+  <section id="backpackPanel" class="backpack-panel ui" data-drop-kind="backpack">
+    <div id="inventoryList" class="inventory-list"></div>
+  </section>
+
+  <script type="module" src="./src/game.js"></script>
+</body>
+</html>

@@ -1,0 +1,97 @@
+#misc
+*.swp
+bin/
+example/
+compile_commands.json
+todo.txt
+
+# Doxygen
+docs/
+CMakeDoxyfile.in
+CMakeDoxygenDefaults.cmake
+
+# VS
+ALL_BUILD.vcxproj
+ALL_BUILD.vcxproj.filters
+RUN_TESTS.vcxproj
+RUN_TESTS.vcxproj.filters
+ZERO_CHECK.vcxproj
+ZERO_CHECK.vcxproj.filters
+decode_tests.dir/
+decode_tests.vcxproj
+decode_tests.vcxproj.filters
+libtmj.sln
+map_tests.dir/
+map_tests.vcxproj
+map_tests.vcxproj.filters
+tileset_tests.dir/
+tileset_tests.vcxproj
+tileset_tests.vcxproj.filters
+tmj.dir/
+tmj.vcxproj
+tmj.vcxproj.filters
+x64/
+
+# scan-build
+map.plist/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+Testing/
+
+# Prerequisites
+*.d
+
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Linker output
+*.ilk
+*.map
+*.exp
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Kernel Module Compile Results
+*.mod*
+*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+Mkfile.old
+dkms.conf

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="web">
+      <UniqueIdentifier>{3F30EFA1-2748-41F3-9B7B-B23932D90117}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="web\src">
+      <UniqueIdentifier>{A1D777C3-94B3-4EAF-987D-3AB97686548B}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="tools">
+      <UniqueIdentifier>{BA23406E-B5AB-44B4-BB59-7DA979C5ABCB}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="web\index.html">
+      <Filter>web</Filter>
+    </None>
+    <None Include="web\styles.css">
+      <Filter>web</Filter>
+    </None>
+    <None Include="web\README.md">
+      <Filter>web</Filter>
+    </None>
+    <None Include="web\src\game.js">
+      <Filter>web\src</Filter>
+    </None>
+    <None Include="web\src\protocol.js">
+      <Filter>web\src</Filter>
+    </None>
+    <None Include="tools\web_client_server.js">
+      <Filter>tools</Filter>
+    </None>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,172 @@
+name: Build and Ship
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+
+jobs:
+  clang-format:
+    runs-on: ubuntu-22.04
+    steps:
+      - name : Checkout Source
+        uses: actions/checkout@v4
+      
+      - name: Install Dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+
+      - name: Run Formatting
+        run: clang-format -i include/* src/*.h src/*.c
+
+      - name: Check Formatting
+        run: git diff --exit-code
+
+  clang-tidy:
+    runs-on: ubuntu-22.04
+    steps:
+      - name : Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang-tidy libjansson-dev zlib1g-dev libzstd-dev
+
+      - name: Configure CMake
+        run: cmake -DCMAKE_BUILD_TYPE=Debug -DLIBTMJ_ZSTD=ON -DLIBTMJ_ZLIB=ON .
+
+      - name: Tidy
+        run: clang-tidy include/* src/*.h src/*.c
+
+  build-linux:
+    name: build-${{ matrix.os }}-${{ matrix.cc }}
+    runs-on: ${{ matrix.os }}
+    env:
+      CC: ${{ matrix.cc }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: ["gcc", "clang"]
+        os: ["ubuntu-latest"]
+
+    steps:
+    - name: Checkout Source
+      uses: actions/checkout@v4
+      with:
+        submodules: 'true'
+
+    - name: Install Dependencies
+      run: sudo apt-get install -y libjansson-dev zlib1g-dev libzstd-dev
+
+    - name: Configure CMake
+      run: cmake -DCMAKE_BUILD_TYPE=Debug -DLIBTMJ_TEST=ON -DLIBTMJ_ZSTD=ON -DLIBTMJ_ZLIB=ON .
+
+    - name: Build
+      run: cmake --build .
+
+    - name: Test
+      run: ctest
+
+    - name: Create libtmj Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.os }}-${{ matrix.cc }}-libtmj-master
+        path: lib/*
+        if-no-files-found: error
+        retention-days: 1
+
+  build-macos-latest-clang:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
+
+      - name: Install Dependencies
+        run: brew install jansson zlib zstd
+
+      - name: Configure CMake
+        run: cmake -DCMAKE_BUILD_TYPE=Debug -DLIBTMJ_TEST=ON -DLIBTMJ_ZSTD=ON -DLIBTMJ_ZLIB=ON .
+
+      - name: Build
+        run: cmake --build .
+
+      - name: Test
+        run: ctest
+
+      - name: Create libtmj Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-latest-clang-libtmj-master
+          path: lib/*
+          if-no-files-found: error
+          retention-days: 1
+
+  build-windows-latest-msvc:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
+
+      - name: Install dependencies
+        run: vcpkg install jansson:x64-windows zstd:x64-windows zlib:x64-windows
+
+      - name: Configure CMake
+        run: cmake -DCMAKE_BUILD_TYPE=Debug -DLIBTMJ_TEST=ON -DLIBTMJ_ZSTD=ON -DLIBTMJ_ZLIB=ON -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake .
+
+      - name: Build
+        run: cmake --build . --config Debug
+
+      - name: Test
+        run: ctest -C Debug
+
+      - name: Create libtmj Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-latest-msvc-libtmj-master
+          path: lib/*
+          if-no-files-found: error
+          retention-days: 1
+
+  Pages:
+    needs: [build-linux, build-windows-latest-msvc] #, build-macos-clang]
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      #url: ${{ steps.deployment.outputs.page_url }}
+      url: https://zer0-one.github.io/libtmj/
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Dependencies
+        run: sudo apt-get install -y graphviz doxygen libjansson-dev zlib1g-dev libzstd-dev
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -DCMAKE_BUILD_TYPE=Release -DLIBTMJ_DOCS=ON -DLIBTMJ_ZSTD=ON -DLIBTMJ_ZLIB=ON .
+
+      - name: Build Docs
+        run: cmake --build .
+
+      - name: Create Docs Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/html/
+
+      - name: Publish Documentation
+        uses: actions/deploy-pages@v4

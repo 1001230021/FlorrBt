@@ -1,0 +1,284 @@
+#include "opencontroller.h"
+#include "../entities/drop.h"
+#include "../player.h"
+#include "../gameworld.h"
+#include "../entities/flower.h"
+#include "../zone_mob_tools.h"
+#include "../../../Engine/map_tools.h"
+#include "../../../Shared/game_config.h"
+#include "../../../Shared/drop_rate.h"
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <random>
+#include <unordered_map>
+
+namespace
+{
+constexpr float spawn_query_radius = 512.f;
+constexpr float min_spawn_distance = 128.f;
+constexpr size_t max_spawn_num = 12;
+constexpr int spawn_position_attempts = 32;
+constexpr float rarity_difficulty_scale = 10.f;
+constexpr float rarity_gaussian_sigma = 0.36f;
+
+struct lootable_player
+{
+    CPlayer* player = nullptr;
+    float damage = 0.f;
+};
+
+bool IsAboveUltra(ERarity rarity)
+{
+    return GetLevel(rarity) > GetLevel(ERarity::Ultra);
+}
+
+std::mt19937& SpawnRng()
+{
+    static std::mt19937 rng{std::random_device{}()};
+    return rng;
+}
+
+ERarity PickRarityForDifficulty(float difficulty)
+{
+    struct rarity_weight
+    {
+        ERarity rarity = ERarity::Null;
+        float weight = 0.f;
+    };
+
+    constexpr ERarity naturally_spawned_rarities[] = {
+        ERarity::Common,
+        ERarity::Unusual,
+        ERarity::Rare,
+        ERarity::Epic,
+        ERarity::Legendary,
+        ERarity::Mythic,
+        ERarity::Ultra,
+        ERarity::Super,
+        ERarity::Eternal,
+        ERarity::Primordial,
+    };
+
+    if (difficulty <= 0) return ERarity::Common;
+
+    const float center_level = std::clamp(difficulty / rarity_difficulty_scale,
+                                          static_cast<float>(GetLevel(ERarity::Common)),
+                                          static_cast<float>(GetLevel(ERarity::Primordial)));
+    const float two_sigma_sq = 2.f * rarity_gaussian_sigma * rarity_gaussian_sigma;
+
+    std::vector<rarity_weight> weights;
+    weights.reserve(std::size(naturally_spawned_rarities));
+
+    float total_weight = 0.f;
+    for (ERarity rarity : naturally_spawned_rarities)
+    {
+        const float delta = static_cast<float>(GetLevel(rarity)) - center_level;
+        const float weight = std::exp(-(delta * delta) / two_sigma_sq);
+        if (weight <= 0.f) continue;
+
+        weights.push_back({rarity, weight});
+        total_weight += weight;
+    }
+
+    if (weights.empty() || total_weight <= 0.f) return ERarity::Common;
+
+    std::uniform_real_distribution<float> dist(0.f, total_weight);
+    float roll = dist(SpawnRng());
+    for (const rarity_weight& entry : weights)
+    {
+        if (roll <= entry.weight) return entry.rarity;
+        roll -= entry.weight;
+    }
+
+    return weights.back().rarity;
+}
+
+bool RandomPointInZone(const FlorrBtMap::Zone& zone, sf::Vector2f& out_pos)
+{
+    if (zone.vertices.empty()) return false;
+
+    float min_x = std::numeric_limits<float>::max();
+    float min_y = std::numeric_limits<float>::max();
+    float max_x = std::numeric_limits<float>::lowest();
+    float max_y = std::numeric_limits<float>::lowest();
+    for (const auto& vertex : zone.vertices)
+    {
+        min_x = std::min(min_x, vertex.x);
+        min_y = std::min(min_y, vertex.y);
+        max_x = std::max(max_x, vertex.x);
+        max_y = std::max(max_y, vertex.y);
+    }
+
+    if (min_x >= max_x || min_y >= max_y) return false;
+
+    std::uniform_real_distribution<float> random_x(min_x, max_x);
+    std::uniform_real_distribution<float> random_y(min_y, max_y);
+    for (int attempt = 0; attempt < spawn_position_attempts; ++attempt)
+    {
+        sf::Vector2f candidate = {random_x(SpawnRng()), random_y(SpawnRng())};
+        if (!IsPointInZone(zone, candidate)) continue;
+
+        out_pos = candidate;
+        return true;
+    }
+
+    return false;
+}
+
+bool CanSpawnAt(CGameWorld& world, const sf::Vector2f& pos)
+{
+    int nearby_mobs = 0;
+    CEntity* closest_mob = world.FindClosestEntity(pos, spawn_query_radius, [&nearby_mobs](const CEntity* entity)
+    {
+        const auto* mob = dynamic_cast<const CMobBase*>(entity);
+        if (!mob || mob->m_is_marked_for_des || mob->IsDead()) return false;
+        if (mob->m_mob_type == EMobType::PlayerFlower) return false;
+        ++nearby_mobs;
+        return true;
+    });
+
+    if (nearby_mobs >= static_cast<int>(max_spawn_num)) return false;
+    if (!closest_mob) return true;
+    return Length(closest_mob->m_pos - pos) > min_spawn_distance;
+}
+
+std::vector<lootable_player> FindLootablePlayers(const CMobBase& mob)
+{
+    const bool above_ultra = IsAboveUltra(mob.GetRarity());
+    const size_t max_lootable =
+        above_ultra ? game_config::max_lootable_player_above_ultra : game_config::max_lootable_players;
+    const float min_damage_rate = above_ultra ? 0.01f : 0.05f;
+
+    float total_damage = 0.f;
+    std::unordered_map<CPlayer*, float> damage_by_player;
+    for (const CDamageData& damage_data : mob.GetDamageData())
+    {
+        if (!damage_data.m_player || damage_data.m_total_dmg <= 0.f) continue;
+        total_damage += damage_data.m_total_dmg;
+        damage_by_player[damage_data.m_player] += damage_data.m_total_dmg;
+    }
+
+    const SMobStats* stats = mob.GetFinalStats();
+    const float max_health = stats ? stats->max_health : 0.f;
+    const float min_damage = std::min(total_damage, max_health) * min_damage_rate;
+
+    std::vector<lootable_player> candidates;
+    candidates.reserve(damage_by_player.size());
+    for (const auto& [player, damage] : damage_by_player)
+    {
+        if (damage >= min_damage) candidates.push_back({player, damage});
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [](const lootable_player& lhs, const lootable_player& rhs)
+    {
+        return lhs.damage > rhs.damage;
+    });
+    if (candidates.size() > max_lootable) candidates.resize(max_lootable);
+    return candidates;
+}
+}
+
+void COpenController::OnTick(CGameWorld& world, float dt)
+{
+    if (m_count <= 0)
+    {
+        SpawnMobs(world);
+        m_count = game_config::open_spawn_interval;
+    } else {
+        m_count -= dt;
+    }
+}
+
+void COpenController::SpawnMobs(CGameWorld& world)
+{
+    const FlorrBtMap* map = world.GetMap();
+    if (!map)
+    {
+        LOG_WARN("opencontroller", "Spawn skipped: world has no map");
+        return;
+    }
+
+    int spawned = 0;
+    int skipped_density = 0;
+    int skipped_position = 0;
+    int skipped_spacing = 0;
+    int skipped_pool = 0;
+    int skipped_create = 0;
+    for (const FlorrBtMap::Zone& zone : map->zones)
+    {
+        if (zone.density <= 0.f)
+        {
+            ++skipped_density;
+            continue;
+        }
+
+        sf::Vector2f pos;
+        if (!RandomPointInZone(zone, pos))
+        {
+            ++skipped_position;
+            continue;
+        }
+        if (!CanSpawnAt(world, pos))
+        {
+            ++skipped_spacing;
+            continue;
+        }
+
+        std::vector<EMobType> mob_types = ParseZoneMobs(zone.mobs);
+        EMobType mob_type = PickZoneMobType(mob_types);
+        if (mob_type == EMobType::None)
+        {
+            ++skipped_pool;
+            LOG_WARN("opencontroller", "Spawn zone skipped: no mob type for pool '" + zone.mobs + "'");
+            continue;
+        }
+
+        auto mob = CreateMob(mob_type, &world, pos, PickRarityForDifficulty(zone.difficulty));
+        if (mob)
+        {
+            world.InsertEntity(std::move(mob));
+            ++spawned;
+        } else {
+            ++skipped_create;
+        }
+    }
+}
+
+void COpenController::OnPlayerConnect(CGameWorld& world, CPlayer* player)
+{
+    if (!player) return;
+
+    auto entity = CreateMob(EMobType::PlayerFlower, &world,
+                            {game_config::player_respawn_x, game_config::player_respawn_y}, ERarity::Common);
+    auto* raw_flower = dynamic_cast<CPlayerFlower*>(entity.get());
+    if (!raw_flower) return;
+
+    raw_flower->m_name = player->GetName();
+    raw_flower->m_level = 1;
+    raw_flower = dynamic_cast<CPlayerFlower*>(world.InsertEntity(std::move(entity)));
+    if (raw_flower)
+    {
+        player->SetOwnedEntity(raw_flower);
+        player->ApplySavedSlots();
+    }
+}
+
+void COpenController::OnEntityDie(CGameWorld& world, CEntity* entity)
+{
+    auto* mob = dynamic_cast<CMobBase*>(entity);
+    if (!mob) return;
+
+    std::vector<SDropRate> drops = RollDrops(mob->m_mob_type, mob->GetRarity());
+    std::vector<lootable_player> lootable_players = FindLootablePlayers(*mob);
+    for (const lootable_player& lootable : lootable_players)
+    {
+        if (!lootable.player) continue;
+        for (const SDropRate& drop : drops)
+        {
+            auto drop_entity =
+                std::make_unique<CDrop>(&world, mob->m_pos, drop.type, drop.rarity, lootable.player->GetId());
+            world.InsertEntity(std::move(drop_entity));
+        }
+    }
+}

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>MakeFileProj</Keyword>
+    <ProjectName>FlorrBt.Web</ProjectName>
+    <ProjectGuid>{D875BC1F-91F4-45B8-B42D-4079958991BE}</ProjectGuid>
+    <RootNamespace>FlorrBtWeb</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <NodeExe Condition="Exists('C:\Program Files\Microsoft Visual Studio\18\Insiders\MSBuild\Microsoft\VisualStudio\NodeJs\node.exe')">C:\Program Files\Microsoft Visual Studio\18\Insiders\MSBuild\Microsoft\VisualStudio\NodeJs\node.exe</NodeExe>
+    <NodeExe Condition="'$(NodeExe)'==''">node.exe</NodeExe>
+    <WebPort>8080</WebPort>
+    <GameHost>127.0.0.1</GameHost>
+    <GamePort>10012</GamePort>
+    <NMakeOutput>$(ProjectDir)web\index.html</NMakeOutput>
+    <NMakeBuildCommandLine>echo FlorrBt.Web is ready. Start debugging this project to run the web client bridge.</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>echo FlorrBt.Web is ready. Start debugging this project to run the web client bridge.</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>echo Nothing to clean for FlorrBt.Web.</NMakeCleanCommandLine>
+    <LocalDebuggerCommand>$(NodeExe)</LocalDebuggerCommand>
+    <LocalDebuggerCommandArguments>tools\web_client_server.js</LocalDebuggerCommandArguments>
+    <LocalDebuggerWorkingDirectory>$(ProjectDir)</LocalDebuggerWorkingDirectory>
+    <LocalDebuggerEnvironment>WEB_PORT=$(WebPort)
+GAME_HOST=$(GameHost)
+GAME_PORT=$(GamePort)</LocalDebuggerEnvironment>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="web\index.html" />
+    <None Include="web\styles.css" />
+    <None Include="web\README.md" />
+    <None Include="web\src\game.js" />
+    <None Include="web\src\ladybug_sprite.js" />
+    <None Include="web\src\protocol.js" />
+    <None Include="web\src\soldier_ant_sprite.js" />
+    <None Include="web\assets\normal_ladybug_base.svg" />
+    <None Include="web\assets\normal_ladybug_outline.svg" />
+    <None Include="web\assets\soldier_ant_base.svg" />
+    <None Include="web\assets\soldier_ant_abdomen.svg" />
+    <None Include="web\assets\soldier_ant_head.svg" />
+    <None Include="tools\web_client_server.js" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>
