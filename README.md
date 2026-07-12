@@ -10,6 +10,8 @@ Build the server with Visual Studio:
 & 'C:\Program Files\Microsoft Visual Studio\18\Insiders\MSBuild\Current\Bin\MSBuild.exe' .\FlorrBt.Server.vcxproj /p:Configuration=Debug /p:Platform=x64
 ```
 
+*For more, see [Build](#build)*
+
 Run the server, then start the web client bridge:
 
 ```powershell
@@ -20,6 +22,29 @@ Open:
 
 ```text
 http://127.0.0.1:8080
+```
+
+## Build
+
+### Dependencies
+
+For **Debian/Ubuntu**, use `sudo apt install build-essential cmake ninja-build`
+
+### Building
+
+#### On Linux
+
+```sh
+mkdir build
+cd build
+cmake .. -GNinja
+cmake --build .
+```
+
+#### On Windows
+
+```powershell
+& 'C:\Program Files\Microsoft Visual Studio\18\Insiders\MSBuild\Current\Bin\MSBuild.exe' .\FlorrBt.Server.vcxproj /p:Configuration=Debug /p:Platform=x64
 ```
 
 ## Layout
