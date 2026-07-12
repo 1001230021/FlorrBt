@@ -24,6 +24,17 @@ if(NOT SFML_FOUND)
     FetchContent_MakeAvailable(SFML)
 endif()
 
+set(JANSSON_WITHOUT_TESTS ON CACHE BOOL "Disable tests" FORCE)
+set(JANSSON_BUILD_DOCS OFF CACHE BOOL "Disable docs" FORCE)
+
+add_subdirectory(externals/jansson)
+if(UNIX)
+    target_compile_definitions(jansson PRIVATE
+        HAVE_UNISTD_H=1
+        _strtoi64=strtoll
+    )
+endif()
+
 add_subdirectory(externals/libtmj)
 add_subdirectory(externals/argon2)
 
@@ -32,4 +43,4 @@ file(GLOB_RECURSE SERVER_SOURCES "src/Server/*.cpp")
 
 add_executable(${PROJECT_NAME}_Server ${SERVER_SOURCES} ${SHARED_SOURCES})
 target_include_directories(${PROJECT_NAME}_Server PRIVATE src)
-target_link_libraries(${PROJECT_NAME}_Server PRIVATE SFML::Graphics SFML::Network SFML::System tmj argon2)
+target_link_libraries(${PROJECT_NAME}_Server PRIVATE SFML::Graphics SFML::Network SFML::System jansson tmj argon2)
