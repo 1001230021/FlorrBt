@@ -1,5 +1,5 @@
 #include "player_controller.h"
-#include "../entities/flower.h"
+#include "../entities/mob.h"
 #include "../entities/petals/petal.h"
 #include "../../../Shared/game_config.h"
 #include <algorithm>
@@ -37,7 +37,7 @@ void CPlayerController::ResetOperate()
 
 void CPlayerController::ExecuteOperate(const ClientOperate& op, CMobBase* mob)
 {
-    auto* flower = dynamic_cast<CFlower*>(mob);
+    auto* attackable = dynamic_cast<IAttackableMob*>(mob);
     switch (op.type)
     {
     case ClientOperate::Type::Input:
@@ -49,10 +49,10 @@ void CPlayerController::ExecuteOperate(const ClientOperate& op, CMobBase* mob)
         }
         break;
     case ClientOperate::Type::Chores:
-        if (flower)
+        if (attackable)
         {
-            if (op.is_attacking.has_value()) flower->m_attacking = *op.is_attacking;
-            if (op.is_defending.has_value()) flower->m_defending = *op.is_defending;
+            if (op.is_attacking.has_value()) attackable->SetAttacking(*op.is_attacking);
+            if (op.is_defending.has_value()) attackable->SetDefending(*op.is_defending);
         }
         break;
     case ClientOperate::Type::Equip:

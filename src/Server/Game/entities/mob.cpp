@@ -1,6 +1,8 @@
 #include "mob.h"
 #include "drop.h"
+#include "projectile.h"
 #include "petals/petal.h"
+#include "../controllers/melee_controller.h"
 #include "../gamecontext.h"
 #include "../gameworld.h"
 #include "../player.h"
@@ -8,6 +10,7 @@
 #include "../../../Shared/game_config.h"
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 CMobBase::~CMobBase() = default;
 
@@ -15,6 +18,42 @@ template <typename TStats> CMob<TStats>::~CMob() = default;
 
 template class CMob<SMobStats>;
 template class CMob<SFlowerStats>;
+
+namespace
+{
+bool IsUndeadDamageSource(CEntity* entity)
+{
+    std::unordered_set<int> visited_ids;
+
+    while (entity)
+    {
+        if (entity->m_id >= 0 && !visited_ids.insert(entity->m_id).second) return false;
+
+        if (auto* mob = dynamic_cast<CMobBase*>(entity))
+        {
+            if (!mob->FindStates<CUndeadState>().empty()) return true;
+
+            auto* controller = dynamic_cast<CSummonedMeleeController*>(mob->GetController());
+            CGameWorld* world = mob->GameWorld();
+            if (controller && world)
+            {
+                entity = world->GetEntity(controller->GetOwnerId());
+                continue;
+            }
+        }
+
+        if (auto* projectile = dynamic_cast<CProjectile*>(entity))
+        {
+            entity = projectile->GetOwner();
+            continue;
+        }
+
+        return false;
+    }
+
+    return false;
+}
+}
 
 void CMobBase::AddState(std::unique_ptr<CState> state)
 {
@@ -107,7 +146,7 @@ void CMobBase::ApplyDamageDirect(float dmg, CEntity* attacker)
     }
 
     CGameContext* context = GameContext();
-    CPlayer* player = context ? context->FindPlayerFromEntity(attacker) : nullptr;
+    CPlayer* player = context && !IsUndeadDamageSource(attacker) ? context->FindPlayerFromEntity(attacker) : nullptr;
     if (player)
     {
         auto it = std::find_if(m_damage_data.begin(), m_damage_data.end(),
@@ -139,7 +178,7 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
     const SMobStats* stats = GetFinalStats();
     if (!stats) return;
 
-    float speed_multiplier = GetPincerSpeedMultiplier(this);
+    float speed_multiplier = GetPincerSpeedMultiplier(this) * game_config::mob_velocity_multiplier;
     float max_velocity = stats->max_velocity * speed_multiplier;
     float acceleration = stats->acceleration * speed_multiplier;
 
@@ -163,9 +202,10 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
     }
 
     float target_angle = std::atan2(delta.y, delta.x);
+    bool facing_locked = IsFacingLocked();
     if (stats->turn_speed > 0.f)
     {
-        if (!m_has_facing)
+        if (!m_has_facing && !facing_locked)
         {
             if (LengthSq(m_vel) > game_config::entity_collision_epsilon)
                 m_facing_angle = std::atan2(m_vel.y, m_vel.x);
@@ -174,10 +214,13 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
             m_has_facing = true;
         }
 
-        float angle_delta = std::atan2(std::sin(target_angle - m_facing_angle), std::cos(target_angle - m_facing_angle));
-        float max_turn = stats->turn_speed * dt;
-        angle_delta = std::clamp(angle_delta, -max_turn, max_turn);
-        m_facing_angle += angle_delta;
+        if (!facing_locked)
+        {
+            float angle_delta = std::atan2(std::sin(target_angle - m_facing_angle), std::cos(target_angle - m_facing_angle));
+            float max_turn = stats->turn_speed * dt;
+            angle_delta = std::clamp(angle_delta, -max_turn, max_turn);
+            m_facing_angle += angle_delta;
+        }
 
         sf::Vector2f forward(std::cos(m_facing_angle), std::sin(m_facing_angle));
         float speed = Length(m_vel);
@@ -186,8 +229,11 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
         return;
     }
 
-    m_facing_angle = target_angle;
-    m_has_facing = true;
+    if (!facing_locked)
+    {
+        m_facing_angle = target_angle;
+        m_has_facing = true;
+    }
 
     sf::Vector2f desired_vel = delta / len * max_velocity;
     sf::Vector2f diff = desired_vel - m_vel;
@@ -243,4 +289,6 @@ void RegisterMobs()
     RegisterSoldierTermite();
     RegisterSummonedBeetle();
     RegisterSummonedSoldierAnt();
+    RegisterBee();
+    RegisterHornet();
 }

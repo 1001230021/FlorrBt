@@ -1,10 +1,12 @@
 #include "gameworld.h"
 #include "controllers/melee_controller.h"
+#include "entities/drop.h"
 #include "entities/mob.h"
 #include "entities/petals/petal.h"
 #include "entities/projectile.h"
 #include "states/states.h"
 #include "../../Shared/game_config.h"
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -167,6 +169,66 @@ bool BounceFiredCarrotFromEntity(CPetal* petal, const CEntity* target)
     return true;
 }
 
+float EffectivePetalReload(const CPetal* petal)
+{
+    if (!petal) return 0.f;
+
+    float reload = petal->m_final_petal_stats.reload;
+    auto* flower = dynamic_cast<CFlower*>(petal->GetOwner());
+    if (flower && flower->GetFinalStats())
+    {
+        float multiplier = std::max(game_config::default_petal_reload_multiplier_min,
+                                    flower->GetFinalStats()->petal_reload_multiplier);
+        reload = petal->m_base_petal_stats.reload * multiplier;
+    }
+    return std::max(0.f, reload);
+}
+
+int PetalHitCountForTick(CPetal* petal, const CEntity* target, float dt)
+{
+    if (!petal || !target || dt <= 0.f) return 1;
+    if (const auto* missile = dynamic_cast<const CMissilePetal*>(petal);
+        missile && missile->m_fired)
+        return 1;
+
+    float reload = EffectivePetalReload(petal);
+    if (reload <= game_config::entity_collision_epsilon || reload >= dt) return 1;
+
+    constexpr int max_hits_per_tick = 64;
+    float& credit = petal->m_hit_credits[target->m_id];
+    float total = credit + dt / reload;
+    int hits = static_cast<int>(std::floor(total));
+    credit = total - static_cast<float>(hits);
+    return std::clamp(hits, 1, max_hits_per_tick);
+}
+
+void ApplyPetalHits(CPetal* petal, CMobBase* target, float dt)
+{
+    if (!petal || !target) return;
+
+    int hit_count = PetalHitCountForTick(petal, target, dt);
+    const CPetalPrototype* proto = FindPetalPrototype(petal->m_type);
+    for (int hit = 0; hit < hit_count; ++hit)
+    {
+        if (hit > 0 && (petal->m_is_marked_for_des || petal->m_health <= 0.f)) break;
+        if (target->m_is_marked_for_des) break;
+
+        float damage = petal->m_final_petal_stats.damage;
+        if (proto && proto->m_p_behavior)
+            proto->m_p_behavior->OnPetalHit(petal, petal->m_rarity, target, damage);
+        if (damage <= 0.f) break;
+        if (damage > 0.f)
+            target->TakeDamage(damage, petal->GetOwner(), EDamageType::Normal);
+    }
+}
+
+bool ApplyMissileHit(CMissile* missile, CEntity* target)
+{
+    if (!missile || !target || dynamic_cast<CDrop*>(target)) return false;
+    if (!dynamic_cast<CMobBase*>(target) && !dynamic_cast<CPetal*>(target)) return false;
+    return missile->ApplyHit(target);
+}
+
 sf::Vector2f ClosestPointOnSegment(sf::Vector2f point, sf::Vector2f a, sf::Vector2f b)
 {
     sf::Vector2f ab = b - a;
@@ -319,6 +381,12 @@ sf::Vector2f ChooseWallNormal(const FlorrBtMap::Wall& wall, int segment_index, s
 bool HandleFiredMissileWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, int segment_index,
                                sf::Vector2f start, sf::Vector2f end)
 {
+    if (auto* raw_missile = dynamic_cast<CMissile*>(&entity))
+    {
+        raw_missile->m_is_marked_for_des = true;
+        return true;
+    }
+
     auto* missile = dynamic_cast<CMissilePetal*>(&entity);
     if (!missile || !missile->m_fired) return false;
 
@@ -548,7 +616,7 @@ void CGameWorld::Tick(float dt)
 
     ResolveWallCollisions(entities);
     m_spatial_grid.Rebuild(entities);
-    ResolveCollisions(entities);
+    ResolveCollisions(entities, dt);
     Cleanup();
 }
 
@@ -702,7 +770,7 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
     }
 }
 
-void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities)
+void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float dt)
 {
     float max_radius = 0.f;
     for (const CEntity* entity : entities)
@@ -740,10 +808,12 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities)
             if (BlocksNullifiedInteraction(entity, other) && !rose_team_heal_collision) continue;
             auto* entity_petal = dynamic_cast<CPetal*>(entity);
             auto* other_petal = dynamic_cast<CPetal*>(other);
+            auto* entity_missile = dynamic_cast<CMissile*>(entity);
+            auto* other_missile = dynamic_cast<CMissile*>(other);
             if (entity_petal && other_petal) continue;
             if (!entity->IsCollision(*other)) continue;
 
-            if (!rose_team_heal_collision)
+            if (!rose_team_heal_collision && !entity_missile && !other_missile)
             {
                 entity->OnCollision(other);
                 other->OnCollision(entity);
@@ -755,6 +825,18 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities)
             bool same_team = CheckTeam(entity->m_team, other->m_team);
             if (same_team && !rose_team_heal_collision) continue;
 
+            if (entity_missile)
+            {
+                ApplyMissileHit(entity_missile, other);
+                continue;
+            }
+
+            if (other_missile)
+            {
+                ApplyMissileHit(other_missile, entity);
+                continue;
+            }
+
             if (entity_petal && other_mob)
             {
                 if (entity_petal->m_type == EPetalType::Yggdrasil)
@@ -763,11 +845,7 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities)
                     continue;
                 }
 
-                float damage = entity_petal->m_final_petal_stats.damage;
-                if (const CPetalPrototype* proto = FindPetalPrototype(entity_petal->m_type);
-                    proto && proto->m_p_behavior)
-                    proto->m_p_behavior->OnPetalHit(entity_petal, entity_petal->m_rarity, other, damage);
-                other->TakeDamage(damage, entity_petal->GetOwner(), EDamageType::Normal);
+                ApplyPetalHits(entity_petal, other_mob, dt);
                 BounceFiredCarrotFromEntity(entity_petal, other);
                 continue;
             }
@@ -780,11 +858,7 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities)
                     continue;
                 }
 
-                float damage = other_petal->m_final_petal_stats.damage;
-                if (const CPetalPrototype* proto = FindPetalPrototype(other_petal->m_type);
-                    proto && proto->m_p_behavior)
-                    proto->m_p_behavior->OnPetalHit(other_petal, other_petal->m_rarity, entity, damage);
-                entity->TakeDamage(damage, other_petal->GetOwner(), EDamageType::Normal);
+                ApplyPetalHits(other_petal, entity_mob, dt);
                 BounceFiredCarrotFromEntity(other_petal, entity);
                 continue;
             }

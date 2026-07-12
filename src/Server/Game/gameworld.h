@@ -55,7 +55,7 @@ class CGameWorld
     FlorrBtMap::Wall* GetWall(int id) const;
     void BuildWallGrid();
     void ResolveWallCollisions(const std::vector<CEntity*>& entities);
-    void ResolveCollisions(const std::vector<CEntity*>& entities);
+    void ResolveCollisions(const std::vector<CEntity*>& entities, float dt);
     void Cleanup();
 
     std::set<int> m_free_ids;

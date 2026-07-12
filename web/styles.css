@@ -728,6 +728,18 @@ button:active {
   object-fit: contain;
 }
 
+.petal-mimic-label {
+  position: absolute;
+  left: 50%;
+  bottom: 7%;
+  z-index: 3;
+  width: 62%;
+  height: 22%;
+  object-fit: contain;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
 .petal-count {
   position: absolute;
   top: 1px;

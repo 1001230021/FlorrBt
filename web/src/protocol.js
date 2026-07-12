@@ -30,13 +30,13 @@ export const PetalNames = [
   "Coin", "Compass", "Cogwheel", "Disc", "Dust", "GoldenLeaf", "Iris", "Lentil", "Moon",
   "Nullification", "Pincer", "Relic", "Rose", "YinYang", "Missile", "BloodSacrifice",
   "Corruption", "Bandage", "Heavy", "Faster", "Yggdrasil", "Dahlia", "Wing", "Triangle",
-  "Sawblade", "Fragment", "Mimic", "Glass",
+  "Sawblade", "Fragment", "Mimic", "Glass", "Stinger",
 ];
 
 export const MobNames = [
   "None", "Beetle", "Gambler", "NormalLadybug", "MechaFlower", "NormalFlower", "PlayerFlower",
   "SoldierAnt", "SoldierFireAnt", "SoldierTermite", "SummonedBeetle", "SummonedSoldierAnt",
-  "BandageBeetle",
+  "BandageBeetle", "Bee", "Hornet",
 ];
 
 export const RarityNames = [

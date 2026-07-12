@@ -45,10 +45,10 @@ inline float GetLimitedRng(float start, float end)
     return dist(rng);
 }
 
-inline bool CheckChance(float chance)
+inline bool CheckChance(double chance)
 {
-    chance = std::clamp(chance, 0.0f, 1.0f);
-    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+    chance = std::clamp(chance, 0.0, 1.0);
+    std::uniform_real_distribution<double> dist(0.0, 1.0);
     return dist(GetRng()) < chance;
 }
 

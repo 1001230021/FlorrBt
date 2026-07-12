@@ -223,7 +223,7 @@ inline CEntity* PetalFindTarget(CPetal* owner, CFlower* flower)
         return IsValidPetalEnemyTarget(owner, flower, entity);
     };
 
-    return PetalFindClosestTarget(owner, flower, flower->m_pos, range, filter);
+    return PetalFindClosestTarget(owner, flower, owner->m_pos, range, filter);
 }
 
 inline void PetalAttractToTarget(CPetal* owner, const CEntity* target, float dt, float acceleration)
@@ -254,6 +254,11 @@ inline float PetalTargetAcceleration(const CFlower* flower, float multiplier = 4
     return acceleration * multiplier * range_scale * 2.f;
 }
 
+inline float PetalLockedTargetAcceleration(const CFlower* flower, float multiplier = 4.f)
+{
+    return PetalTargetAcceleration(flower, multiplier) * 0.8f;
+}
+
 inline void PetalClearTarget(CPetal* owner)
 {
     if (!owner) return;
@@ -273,7 +278,7 @@ inline void PetalOrbitMoveAndAttract(CPetal* owner, CFlower* flower, float orbit
 
     owner->m_target_entity_id = target->m_id;
     owner->m_vel = {0.f, 0.f};
-    PetalAttractToTarget(owner, target, dt, PetalTargetAcceleration(flower, acceleration_multiplier));
+    PetalAttractToTarget(owner, target, dt, PetalLockedTargetAcceleration(flower, acceleration_multiplier));
 
     std::optional<sf::Vector2f> global = PetalOrbitGlobal(owner, flower, orbit_distance, is_open);
     if (global)
@@ -328,6 +333,7 @@ void RegisterSawblade();
 void RegisterFragment();
 void RegisterMimic();
 void RegisterGlass();
+void RegisterStinger();
 void RegisterPetals();
 
 class CAirBehavior : public CPetalBehavior
@@ -753,6 +759,40 @@ class CGlassBehavior : public CPetalBehavior
     void OnPetalDestroyed(CPetal*, ERarity, CFlower*) override {}
 };
 
+class CStingerBehavior : public CPetalBehavior
+{
+  public:
+    bool IsOpen() const override { return true; }
+
+    SFlowerStats GetStats(ERarity) const override { return EmptyFlowerStats(); }
+
+    SPetalStats GetPetalStats(ERarity rarity) const override
+    {
+        int copy = GetLevel(rarity) > GetLevel(ERarity::Legendary) ? 3 : 1;
+
+        SPetalStats stats;
+        stats.damage = game_config::default_stinger_base_damage * PetalRarityScale(rarity) /
+                       static_cast<float>(copy);
+        stats.health = game_config::default_stinger_base_health;
+        stats.reload = game_config::default_stinger_reload;
+        stats.preload = game_config::default_stinger_reload;
+        stats.copy = copy;
+        stats.mass = game_config::default_stinger_mass;
+        stats.radius = game_config::default_stinger_base_radius;
+        return stats;
+    }
+
+    void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
+    {
+        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower),
+                                 game_config::default_petal_orbit_k, true, dt);
+    }
+
+    void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
+    void OnPetalSpawned(CPetal*, ERarity, CFlower*) override {}
+    void OnPetalDestroyed(CPetal*, ERarity, CFlower*) override {}
+};
+
 inline float BeetleEggReload(ERarity rarity)
 {
     switch (rarity)
@@ -892,7 +932,7 @@ class CSummonEggBehavior : public CPetalBehavior
         }
 
         summon->m_team = flower->m_team;
-        summon->SetController(std::make_unique<CSummonedMeleeController>(owner->m_id));
+        summon->SetController(std::make_unique<CSummonedMeleeController>(flower->m_id));
         CMobBase* raw_summon = dynamic_cast<CMobBase*>(flower->GameWorld()->InsertEntity(std::move(summon)));
         if (!raw_summon)
         {
@@ -1329,7 +1369,7 @@ class CYggdrasilBehavior : public CPetalBehavior
 
         owner->m_target_entity_id = target->m_id;
         owner->m_vel = {0.f, 0.f};
-        PetalAttractToTarget(owner, target, dt, PetalTargetAcceleration(flower));
+        PetalAttractToTarget(owner, target, dt, PetalLockedTargetAcceleration(flower));
         PetalTetherWhileTargeting(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
 
         float revive_dist = owner->m_radius + target->m_radius;
@@ -1410,7 +1450,7 @@ class CRoseBehavior : public CPetalBehavior
         {
             owner->m_target_entity_id = target->m_id;
             owner->m_vel = {0.f, 0.f};
-            PetalAttractToTarget(owner, target, dt, PetalTargetAcceleration(flower));
+            PetalAttractToTarget(owner, target, dt, PetalLockedTargetAcceleration(flower));
             PetalTetherWhileTargeting(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
             return;
         }
@@ -1475,7 +1515,7 @@ class CDahliaBehavior : public CPetalBehavior
         {
             owner->m_target_entity_id = target->m_id;
             owner->m_vel = {0.f, 0.f};
-            PetalAttractToTarget(owner, target, dt, PetalTargetAcceleration(flower));
+            PetalAttractToTarget(owner, target, dt, PetalLockedTargetAcceleration(flower));
             PetalTetherWhileTargeting(owner, flower, PetalOrbitDistance(owner, flower),
                                       game_config::default_petal_orbit_k, true);
             return;
@@ -1549,6 +1589,8 @@ class CWingBehavior : public CPetalBehavior
     void OnPetalDestroyed(CPetal*, ERarity, CFlower*) override {}
 };
 
+inline const CPetalPrototype* MimicTargetPrototype(const CPetalSlot* slot, const CFlower* flower);
+
 class CTriangleBehavior : public CPetalBehavior
 {
   public:
@@ -1584,8 +1626,15 @@ class CTriangleBehavior : public CPetalBehavior
             triangle_count = 0;
             for (const auto& slot : flower->GetSlots())
             {
-                if (!slot.m_p_proto || slot.m_p_proto->m_type != EPetalType::Triangle) continue;
-                triangle_count += std::max(0, slot.GetCurrentCopyCount());
+                if (!slot.m_p_proto) continue;
+                bool is_triangle = slot.m_p_proto->m_type == EPetalType::Triangle;
+                if (!is_triangle && slot.m_p_proto->m_type == EPetalType::Mimic)
+                {
+                    const CPetalPrototype* mimic_target = MimicTargetPrototype(&slot, flower);
+                    is_triangle = mimic_target && mimic_target->m_type == EPetalType::Triangle;
+                }
+                if (!is_triangle) continue;
+                triangle_count += std::max(0, slot.GetCurrentCopyCount(flower));
             }
             triangle_count = std::max(1, triangle_count);
         }
@@ -1676,19 +1725,29 @@ class CFragmentBehavior : public CPetalBehavior
     void OnPetalDestroyed(CPetal*, ERarity, CFlower*) override {}
 };
 
-inline const CPetalPrototype* MimicTargetPrototype(CPetal* owner, CFlower* flower)
+inline const CPetalPrototype* MimicTargetPrototype(int slot_index, const CFlower* flower)
 {
-    if (!owner || !flower) return nullptr;
-    auto& slots = flower->GetSlots();
+    if (!flower) return nullptr;
+    const auto& slots = flower->GetSlots();
     if (slots.empty()) return nullptr;
 
     int slot_count = static_cast<int>(slots.size());
-    int target_index = owner->m_slot_index <= 0 ? slot_count - 1 : owner->m_slot_index - 1;
+    int target_index = slot_index <= 0 ? slot_count - 1 : slot_index - 1;
     if (target_index < 0 || target_index >= slot_count) return nullptr;
 
     const CPetalPrototype* proto = slots[target_index].m_p_proto;
     if (!proto || proto->m_type == EPetalType::Mimic || proto->m_type == EPetalType::None) return nullptr;
     return proto;
+}
+
+inline const CPetalPrototype* MimicTargetPrototype(CPetal* owner, CFlower* flower)
+{
+    return owner ? MimicTargetPrototype(owner->m_slot_index, flower) : nullptr;
+}
+
+inline const CPetalPrototype* MimicTargetPrototype(const CPetalSlot* slot, const CFlower* flower)
+{
+    return slot ? MimicTargetPrototype(slot->m_slot_index, flower) : nullptr;
 }
 
 class CMimicBehavior : public CPetalBehavior
@@ -1706,10 +1765,37 @@ class CMimicBehavior : public CPetalBehavior
         stats.health = 10.f;
         stats.reload = 2.5f;
         stats.preload = 2.5f;
-        stats.copy = 1;
+        stats.copy = 0;
         stats.mass = game_config::default_basic_mass;
         stats.radius = game_config::default_basic_base_radius;
         return stats;
+    }
+
+    SFlowerStats GetStatsForSlot(ERarity rarity, const CPetalSlot* slot, const CFlower* flower) const override
+    {
+        const CPetalPrototype* proto = MimicTargetPrototype(slot, flower);
+        if (!proto || !proto->m_p_behavior) return EmptyFlowerStats();
+        return proto->m_p_behavior->GetStats(rarity);
+    }
+
+    SPetalStats GetPetalStatsForSlot(ERarity rarity, const CPetalSlot* slot, const CFlower* flower) const override
+    {
+        const CPetalPrototype* proto = MimicTargetPrototype(slot, flower);
+        if (!proto || !proto->m_p_behavior) return GetPetalStats(rarity);
+        return proto->m_p_behavior->GetPetalStats(rarity);
+    }
+
+    const CPetalPrototype* GetRuntimePrototypeForSlot(ERarity, const CPetalSlot* slot,
+                                                      const CFlower* flower) const override
+    {
+        return MimicTargetPrototype(slot, flower);
+    }
+
+    EPetalBonusMode GetBonusModeForSlot(ERarity, const CPetalSlot* slot, const CFlower* flower) const override
+    {
+        const CPetalPrototype* proto = MimicTargetPrototype(slot, flower);
+        if (!proto || !proto->m_p_behavior) return EPetalBonusMode::AliveOnly;
+        return proto->m_p_behavior->GetBonusMode();
     }
 
     void OnTick(CPetal* owner, ERarity rarity, CFlower* flower, float dt) override
@@ -1728,21 +1814,45 @@ class CMimicBehavior : public CPetalBehavior
     void OnFlowerTakeDamage(CPetal* owner, ERarity rarity, CFlower* flower, float& dmg,
                             EDamageType damage_type, CEntity* attacker) override
     {
-        const CPetalPrototype* proto = MimicTargetPrototype(owner, flower);
-        if (proto && proto->m_p_behavior)
+        const CPetalPrototype* proto = owner ? FindPetalPrototype(owner->m_type) : MimicTargetPrototype(owner, flower);
+        if (proto && proto->m_type != EPetalType::Mimic && proto->m_p_behavior)
             proto->m_p_behavior->OnFlowerTakeDamage(owner, rarity, flower, dmg, damage_type, attacker);
+    }
+
+    void OnPetalHit(CPetal* owner, ERarity rarity, CEntity* target, float& damage) override
+    {
+        const CPetalPrototype* proto = owner ? FindPetalPrototype(owner->m_type) : nullptr;
+        if (proto && proto->m_type != EPetalType::Mimic && proto->m_p_behavior)
+            proto->m_p_behavior->OnPetalHit(owner, rarity, target, damage);
     }
 
     void OnPetalSpawned(CPetal* owner, ERarity rarity, CFlower* flower) override
     {
         const CPetalPrototype* proto = MimicTargetPrototype(owner, flower);
-        if (proto) ApplyMimicStats(owner, rarity, proto, flower);
+        if (!proto || !proto->m_p_behavior) return;
+        ApplyMimicStats(owner, rarity, proto, flower);
+        proto->m_p_behavior->OnPetalSpawned(owner, rarity, flower);
+    }
+
+    void OnPetalCleared(CPetal* owner, ERarity rarity, CFlower* flower) override
+    {
+        const CPetalPrototype* proto = owner ? FindPetalPrototype(owner->m_type) : MimicTargetPrototype(owner, flower);
+        if (proto && proto->m_type != EPetalType::Mimic && proto->m_p_behavior)
+            proto->m_p_behavior->OnPetalCleared(owner, rarity, flower);
     }
 
     void OnPetalDestroyed(CPetal* owner, ERarity rarity, CFlower* flower) override
     {
-        const CPetalPrototype* proto = MimicTargetPrototype(owner, flower);
-        if (proto && proto->m_p_behavior) proto->m_p_behavior->OnPetalDestroyed(owner, rarity, flower);
+        const CPetalPrototype* proto = owner ? FindPetalPrototype(owner->m_type) : MimicTargetPrototype(owner, flower);
+        if (proto && proto->m_type != EPetalType::Mimic && proto->m_p_behavior)
+            proto->m_p_behavior->OnPetalDestroyed(owner, rarity, flower);
+    }
+
+    bool ShouldReloadAfterPetalDestroyed(CPetal* owner) const override
+    {
+        const CPetalPrototype* proto = owner ? FindPetalPrototype(owner->m_type) : nullptr;
+        if (!proto || proto->m_type == EPetalType::Mimic || !proto->m_p_behavior) return true;
+        return proto->m_p_behavior->ShouldReloadAfterPetalDestroyed(owner);
     }
 
   private:
@@ -1751,7 +1861,6 @@ class CMimicBehavior : public CPetalBehavior
         if (!owner || !proto || !proto->m_p_behavior) return;
 
         SPetalStats stats = proto->m_p_behavior->GetPetalStats(rarity);
-        stats.copy = owner->m_base_petal_stats.copy;
         stats.radius *= 0.5f;
         owner->m_type = proto->m_type;
         owner->m_base_petal_stats = stats;
@@ -1846,8 +1955,8 @@ class CLentilBehavior : public CPetalBehavior
             return IsValidPetalEnemyTarget(owner, flower, entity);
         };
 
-        CEntity* raw = PetalGetCachedTarget(owner, flower, flower->m_pos, range, filter);
-        if (!raw) raw = PetalFindClosestTarget(owner, flower, flower->m_pos, range, filter);
+        CEntity* raw = PetalGetCachedTarget(owner, flower, owner->m_pos, range, filter);
+        if (!raw) raw = PetalFindClosestTarget(owner, flower, owner->m_pos, range, filter);
         return raw;
     }
 
@@ -1859,7 +1968,7 @@ class CLentilBehavior : public CPetalBehavior
         {
             owner->m_target_entity_id = target->m_id;
             owner->m_vel = {0.f, 0.f};
-            PetalAttractToTarget(owner, target, dt, PetalTargetAcceleration(flower));
+            PetalAttractToTarget(owner, target, dt, PetalLockedTargetAcceleration(flower));
             PetalTetherWhileTargeting(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
             return;
         }

@@ -8,6 +8,8 @@
 #include <unordered_map>
 
 class CPetal;
+class CPetalPrototype;
+class CPetalSlot;
 
 enum class EPetalBonusMode
 {
@@ -33,6 +35,25 @@ class CPetalBehavior
 
     virtual SFlowerStats GetStats(ERarity rarity) const = 0;
     virtual SPetalStats GetPetalStats(ERarity rarity) const = 0;
+    virtual SFlowerStats GetStatsForSlot(ERarity rarity, const CPetalSlot*, const CFlower*) const
+    {
+        return GetStats(rarity);
+    }
+    virtual SPetalStats GetPetalStatsForSlot(ERarity rarity, const CPetalSlot*, const CFlower*) const
+    {
+        return GetPetalStats(rarity);
+    }
+    virtual const CPetalPrototype* GetRuntimePrototypeForSlot(ERarity, const CPetalSlot*, const CFlower*) const
+    {
+        return nullptr;
+    }
+    virtual EPetalBonusMode GetBonusModeForSlot(ERarity rarity, const CPetalSlot* slot, const CFlower* flower) const
+    {
+        (void)rarity;
+        (void)slot;
+        (void)flower;
+        return GetBonusMode();
+    }
 
     virtual void OnTick(CPetal* owner, ERarity rarity, CFlower* flower, float dt) = 0;
     virtual void OnFlowerTakeDamage(CPetal* owner, ERarity rarity, CFlower* flower, float& dmg,
@@ -86,6 +107,7 @@ class CPetal : public CProjectile
     bool m_hidden = false;
     bool m_detach_from_slot = false;
     bool m_spawn_flight_boost = false;
+    std::unordered_map<int, float> m_hit_credits;
 };
 
 class CBeetleEggPetal : public CPetal
