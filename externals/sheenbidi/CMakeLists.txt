@@ -1,0 +1,356 @@
+cmake_minimum_required(VERSION 3.16)
+
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/Headers/SheenBidi/SBVersion.h" VERSION_MACRO_LINE
+  REGEX "SHEENBIDI_VERSION_STRING[ \\t]+\"([^\"]+)\""
+)
+string(REGEX REPLACE ".*\"([^\"]+)\".*" "\\1"
+  VERSION_STRING ${VERSION_MACRO_LINE}
+)
+project(SheenBidi
+  VERSION ${VERSION_STRING}
+  LANGUAGES C CXX
+)
+
+# ------------------------------------------------------------------------------
+# Options
+# ------------------------------------------------------------------------------
+
+option(SB_CONFIG_EXPERIMENTAL_TEXT_API "Builds the optional text editing and analysis API" OFF)
+option(SB_CONFIG_UNITY "Build with a single unity source file" ON)
+option(BUILD_GENERATOR "Build the Unicode data generator tool" OFF)
+option(ENABLE_COVERAGE "Enable code coverage instrumentation (only enabled with BUILD_TESTING)" OFF)
+option(ENABLE_ASAN "Enable address sanitizer" OFF)
+option(ENABLE_UBSAN "Enable undefined behavior sanitizer" OFF)
+
+include(CTest)
+
+# C++ is only needed for tools
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_STANDARD_REQUIRED OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON) # for clang-tidy
+
+if(SB_CONFIG_EXPERIMENTAL_TEXT_API)
+  set(BUILD_TEXT_API ON)
+else()
+  set(BUILD_TEXT_API OFF)
+endif()
+
+if(WIN32 AND BUILD_SHARED_LIBS)
+  set(BUILDING_DLL ON)
+else()
+  set(BUILDING_DLL OFF)
+endif()
+
+if(BUILD_TESTING AND NOT BUILDING_DLL AND NOT SB_CONFIG_UNITY)
+  set(BUILD_TESTS ON)
+else()
+  set(BUILD_TESTS OFF)
+endif()
+
+# ------------------------------------------------------------------------------
+# MSVC Configuration
+# ------------------------------------------------------------------------------
+
+# https://learn.microsoft.com/en-us/cpp/build/reference/utf-8-set-source-and-executable-character-sets-to-utf-8?view=msvc-170
+# https://learn.microsoft.com/en-us/cpp/build/reference/zc-cplusplus?view=msvc-170
+add_compile_options("$<$<COMPILE_LANG_AND_ID:C,MSVC>:/utf-8>")
+add_compile_options("$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/utf-8;/Zc:__cplusplus>")
+
+# ------------------------------------------------------------------------------
+# Sanitizer Support
+# ------------------------------------------------------------------------------
+
+function(add_sanitizers TARGET)
+  if(NOT MSVC)
+    if(ENABLE_ASAN)
+      target_compile_options(${TARGET} PUBLIC -fsanitize=address -fsanitize-recover=address)
+      target_link_libraries(${TARGET} PUBLIC -fsanitize=address -fsanitize-recover=address)
+    endif()
+    if(ENABLE_UBSAN)
+      target_compile_options(${TARGET} PUBLIC -fsanitize=undefined)
+      target_link_libraries(${TARGET} PUBLIC -fsanitize=undefined)
+    endif()
+  endif()
+endfunction()
+
+# ------------------------------------------------------------------------------
+# SheenBidi Library
+# ------------------------------------------------------------------------------
+
+set(SHEENBIDI_HEADERS
+  Headers/SheenBidi/SheenBidi.h
+  Headers/SheenBidi/SBAlgorithm.h
+  Headers/SheenBidi/SBAllocator.h
+  Headers/SheenBidi/SBAttributeInfo.h
+  Headers/SheenBidi/SBAttributeList.h
+  Headers/SheenBidi/SBAttributeRegistry.h
+  Headers/SheenBidi/SBBase.h
+  Headers/SheenBidi/SBBidiType.h
+  Headers/SheenBidi/SBCodepoint.h
+  Headers/SheenBidi/SBCodepointSequence.h
+  Headers/SheenBidi/SBGeneralCategory.h
+  Headers/SheenBidi/SBLine.h
+  Headers/SheenBidi/SBMirrorLocator.h
+  Headers/SheenBidi/SBParagraph.h
+  Headers/SheenBidi/SBRun.h
+  Headers/SheenBidi/SBScript.h
+  Headers/SheenBidi/SBScriptLocator.h
+  Headers/SheenBidi/SBText.h
+  Headers/SheenBidi/SBTextConfig.h
+  Headers/SheenBidi/SBTextIterators.h
+  Headers/SheenBidi/SBTextType.h
+  Headers/SheenBidi/SBVersion.h
+)
+file(GLOB_RECURSE INTERNAL_HEADERS "Source/*.h")
+
+if(SB_CONFIG_UNITY)
+  add_definitions(-DSB_CONFIG_UNITY)
+  set(SHEENBIDI_SOURCES Source/SheenBidi.c)
+else()
+  file(GLOB_RECURSE SHEENBIDI_SOURCES Source/*.c)
+endif()
+
+set(SHEENBIDI_PRIVATE_DEFINITIONS)
+set(SHEENBIDI_INTERFACE_DEFINITIONS)
+set(SHEENBIDI_PKGCONFIG_CFLAGS "")
+
+if(BUILD_TEXT_API)
+  list(APPEND SHEENBIDI_PRIVATE_DEFINITIONS "SB_CONFIG_EXPERIMENTAL_TEXT_API")
+  list(APPEND SHEENBIDI_INTERFACE_DEFINITIONS "SB_CONFIG_EXPERIMENTAL_TEXT_API")
+  set(SHEENBIDI_PKGCONFIG_CFLAGS "${SHEENBIDI_PKGCONFIG_CFLAGS} -DSB_CONFIG_EXPERIMENTAL_TEXT_API")
+endif()
+if(BUILDING_DLL)
+  list(APPEND SHEENBIDI_PRIVATE_DEFINITIONS "SB_CONFIG_DLL_EXPORT")
+  list(APPEND SHEENBIDI_INTERFACE_DEFINITIONS "SB_CONFIG_DLL_IMPORT")
+  set(SHEENBIDI_PKGCONFIG_CFLAGS "${SHEENBIDI_PKGCONFIG_CFLAGS} -DSB_CONFIG_DLL_IMPORT")
+endif()
+
+add_library(SheenBidi OBJECT
+  ${SHEENBIDI_HEADERS}
+  ${INTERNAL_HEADERS}
+  ${SHEENBIDI_SOURCES}
+)
+target_compile_definitions(SheenBidi PRIVATE ${SHEENBIDI_PRIVATE_DEFINITIONS})
+target_compile_definitions(SheenBidi INTERFACE ${SHEENBIDI_INTERFACE_DEFINITIONS})
+target_include_directories(SheenBidi
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Headers>
+    $<INSTALL_INTERFACE:include>
+  PRIVATE
+    Source
+)
+set_target_properties(SheenBidi PROPERTIES
+  VERSION ${PROJECT_VERSION}
+  SOVERSION ${PROJECT_VERSION_MAJOR}
+  PUBLIC_HEADER "${SHEENBIDI_HEADERS}"
+)
+add_library(SheenBidi::SheenBidi ALIAS SheenBidi)
+add_sanitizers(SheenBidi)
+
+# ------------------------------------------------------------------------------
+# Parser Library (Required for Generator/Tests)
+# ------------------------------------------------------------------------------
+
+if(BUILD_GENERATOR OR BUILD_TESTS)
+  file(GLOB_RECURSE PARSER_FILES
+    Tools/Parser/*.h
+    Tools/Parser/*.cpp
+  )
+  add_library(Parser STATIC ${PARSER_FILES})
+  add_sanitizers(Parser)
+endif()
+
+# ------------------------------------------------------------------------------
+# Generator Tool (Optional)
+# ------------------------------------------------------------------------------
+
+if(BUILD_GENERATOR)
+  file(GLOB_RECURSE GENERATOR_FILES
+    Tools/Generator/*.h
+    Tools/Generator/*.cpp
+  )
+  add_executable(Generator ${GENERATOR_FILES})
+  target_include_directories(Generator
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/Headers
+      ${CMAKE_CURRENT_SOURCE_DIR}/Source
+      ${CMAKE_CURRENT_SOURCE_DIR}/Tools
+  )
+  target_link_libraries(Generator PRIVATE Parser)
+  add_sanitizers(Generator)
+endif()
+
+# ------------------------------------------------------------------------------
+# Testing (Only non-unity mode)
+# ------------------------------------------------------------------------------
+
+if(BUILD_TESTS)
+  file(GLOB TEST_COMMON_FILES
+    Tests/Utilities/*.h
+    Tests/Utilities/*.cpp
+  )
+
+  set(TEST_TARGETS
+    AlgorithmTests
+    AllocatorTests
+    AtomicTests
+    BidiTypeLookupTests
+    BracketLookupTests
+    BracketQueueTests
+    CodepointSequenceTests
+    CodepointTests
+    GeneralCategoryLookupTests
+    MirrorLookupTests
+    OnceTests
+    RunQueueTests
+    ScriptLocatorTests
+    ScriptLookupTests
+    ScriptTests
+    ThreadLocalStorageTests
+  )
+
+  if(BUILD_TEXT_API)
+    list(APPEND TEST_TARGETS
+      AttributeManagerTests
+      AttributeRunIteratorTests
+      LogicalRunIteratorTests
+      ParagraphIteratorTests
+      ScriptRunIteratorTests
+      TextTests
+      VisualRunIteratorTests
+    )
+  endif()
+
+  set(AlgorithmTests
+    Tests/AlgorithmTests.h
+    Tests/AlgorithmTests.cpp
+  )
+  set(AllocatorTests
+    Tests/AllocatorTests.h
+    Tests/AllocatorTests.cpp
+  )
+  set(AtomicTests
+    Tests/AtomicTests.h
+    Tests/AtomicTests.cpp
+  )
+  set(AttributeManagerTests
+    Tests/AttributeManagerTests.h
+    Tests/AttributeManagerTests.cpp
+  )
+  set(AttributeRunIteratorTests
+    Tests/AttributeRunIteratorTests.h
+    Tests/AttributeRunIteratorTests.cpp
+  )
+  set(BidiTypeLookupTests
+    Tests/BidiTypeLookupTests.h
+    Tests/BidiTypeLookupTests.cpp
+  )
+  set(BracketLookupTests
+    Tests/BracketLookupTests.h
+    Tests/BracketLookupTests.cpp
+  )
+  set(BracketQueueTests
+    Tests/BracketQueueTests.h
+    Tests/BracketQueueTests.cpp
+  )
+  set(CodepointSequenceTests
+    Tests/CodepointSequenceTests.h
+    Tests/CodepointSequenceTests.cpp
+  )
+  set(CodepointTests
+    Tests/CodepointTests.h
+    Tests/CodepointTests.cpp
+  )
+  set(GeneralCategoryLookupTests
+    Tests/GeneralCategoryLookupTests.h
+    Tests/GeneralCategoryLookupTests.cpp
+  )
+  set(LogicalRunIteratorTests
+    Tests/LogicalRunIteratorTests.h
+    Tests/LogicalRunIteratorTests.cpp
+  )
+  set(MirrorLookupTests
+    Tests/MirrorLookupTests.h
+    Tests/MirrorLookupTests.cpp
+  )
+  set(OnceTests
+    Tests/OnceTests.h
+    Tests/OnceTests.cpp
+  )
+  set(ParagraphIteratorTests
+    Tests/ParagraphIteratorTests.h
+    Tests/ParagraphIteratorTests.cpp
+  )
+  set(RunQueueTests
+    Tests/RunQueueTests.h
+    Tests/RunQueueTests.cpp
+  )
+  set(ScriptLocatorTests
+    Tests/ScriptLocatorTests.h
+    Tests/ScriptLocatorTests.cpp
+  )
+  set(ScriptLookupTests
+    Tests/ScriptLookupTests.h
+    Tests/ScriptLookupTests.cpp
+  )
+  set(ScriptRunIteratorTests
+    Tests/ScriptRunIteratorTests.h
+    Tests/ScriptRunIteratorTests.cpp
+  )
+  set(ScriptTests
+    Tests/ScriptTests.h
+    Tests/ScriptTests.cpp
+  )
+  set(TextTests
+    Tests/TextTests.h
+    Tests/TextTests.cpp
+  )
+  set(ThreadLocalStorageTests
+    Tests/ThreadLocalStorageTests.h
+    Tests/ThreadLocalStorageTests.cpp
+  )
+  set(VisualRunIteratorTests
+    Tests/VisualRunIteratorTests.h
+    Tests/VisualRunIteratorTests.cpp
+  )
+
+  foreach(TEST_NAME IN LISTS TEST_TARGETS)
+    add_executable(${TEST_NAME}
+      ${${TEST_NAME}}
+      ${TEST_COMMON_FILES}
+    )
+    target_include_directories(${TEST_NAME}
+      PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Headers
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_SOURCE_DIR}/Tools
+    )
+    target_compile_definitions(${TEST_NAME} PRIVATE STANDALONE_TESTING)
+    target_link_libraries(${TEST_NAME} PRIVATE Parser SheenBidi)
+    add_sanitizers(${TEST_NAME})
+
+    add_test(
+      NAME ${TEST_NAME}
+      COMMAND ${TEST_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/Tools/Unicode
+    )
+    set_tests_properties(${TEST_NAME} PROPERTIES
+      TIMEOUT 60
+      FAIL_REGULAR_EXPRESSION "[1-9][0-9]* error"
+    )
+  endforeach()
+
+  if(ENABLE_COVERAGE)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+      message(WARNING "Code coverage is not supported with MSVC")
+    else()
+      target_compile_options(SheenBidi PUBLIC --coverage -fprofile-update=atomic)
+      target_link_options(SheenBidi PUBLIC --coverage)
+    endif()
+  endif()
+endif()
+
+# ------------------------------------------------------------------------------
+# Install Configuration
+# ------------------------------------------------------------------------------
+

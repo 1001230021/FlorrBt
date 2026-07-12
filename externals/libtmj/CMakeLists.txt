@@ -20,10 +20,12 @@ option(LIBTMJ_ZLIB "Enable zlib/gzip decompression for tile layers" OFF)
 option(BUILD_SHARED_LIBS "Build as a shared library" ON)
 # To enable debug builds, use -DCMAKE_BUILD_TYPE=Debug
 
-if(WIN32)
-    find_package(jansson CONFIG REQUIRED)
-else()
-    find_package(Jansson REQUIRED)
+if(NOT TARGET jansson::jansson)
+    if(WIN32)
+        find_package(jansson CONFIG REQUIRED)
+    else()
+        find_package(Jansson REQUIRED)
+    endif()
 endif()
 
 if(LIBTMJ_ZSTD)
@@ -81,10 +83,7 @@ endif()
 # Set compiler/language options
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_EXTENSIONS OFF)
-set(CMAKE_C_FLAGS_RELEASE "-O2")
-if(WIN32)
-    set(CMAKE_C_FLAGS_DEBUG "-Od -Z7")
-else()
+if(NOT WIN32)
     set(CMAKE_C_FLAGS_DEBUG "-O0 -g3 -fsanitize=address -fsanitize=undefined") 
 endif()
 

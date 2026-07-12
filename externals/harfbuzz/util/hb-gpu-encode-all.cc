@@ -1,0 +1,183 @@
+/*
+ * Copyright (C) 2026  Behdad Esfahbod
+ *
+ *  This is part of HarfBuzz, a text shaping library.
+ *
+ * Permission is hereby granted, without written agreement and without
+ * license or royalty fees, to use, copy, modify, and distribute this
+ * software and its documentation for any purpose, provided that the
+ * above copyright notice and the following two paragraphs appear in
+ * all copies of this software.
+ *
+ * IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE TO ANY PARTY FOR
+ * DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES
+ * ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS DOCUMENTATION, EVEN
+ * IF THE COPYRIGHT HOLDER HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH
+ * DAMAGE.
+ *
+ * THE COPYRIGHT HOLDER SPECIFICALLY DISCLAIMS ANY WARRANTIES, INCLUDING,
+ * BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS
+ * ON AN "AS IS" BASIS, AND THE COPYRIGHT HOLDER HAS NO OBLIGATION TO
+ * PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
+ *
+ * Author(s): Behdad Esfahbod
+ */
+
+#include <hb.h>
+#include <hb-gpu.h>
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cinttypes>
+#include <chrono>
+
+int
+main (int argc, char **argv)
+{
+  const char *font_path = nullptr;
+  unsigned num_iters = 1;
+
+  for (int i = 1; i < argc; i++)
+  {
+    if (!strcmp (argv[i], "-h") || !strcmp (argv[i], "--help"))
+    {
+      fprintf (stderr, "Usage: %s [-n iterations] FONTFILE\n", argv[0]);
+      return 0;
+    }
+    if (!strcmp (argv[i], "-n") && i + 1 < argc)
+    {
+      num_iters = atoi (argv[++i]);
+      if (!num_iters) num_iters = 1;
+      continue;
+    }
+    font_path = argv[i];
+  }
+
+  if (!font_path)
+  {
+    fprintf (stderr, "Usage: %s [-n iterations] FONTFILE\n", argv[0]);
+    return 1;
+  }
+
+  hb_blob_t *blob = hb_blob_create_from_file_or_fail (font_path);
+  if (!blob)
+  {
+    fprintf (stderr, "Failed to open font file: %s\n", font_path);
+    return 1;
+  }
+
+  hb_face_t *face = hb_face_create (blob, 0);
+  hb_font_t *font = hb_font_create (face);
+  unsigned glyph_count = hb_face_get_glyph_count (face);
+
+  if (!glyph_count)
+  {
+    fprintf (stderr, "Font has no glyphs.\n");
+    hb_font_destroy (font);
+    hb_face_destroy (face);
+    hb_blob_destroy (blob);
+    return 1;
+  }
+
+  hb_gpu_draw_t *draw = hb_gpu_draw_create_or_fail ();
+  if (!draw)
+  {
+    fprintf (stderr, "Failed to create GPU draw.\n");
+    hb_font_destroy (font);
+    hb_face_destroy (face);
+    hb_blob_destroy (blob);
+    return 1;
+  }
+
+  unsigned num_encoded = 0;
+  unsigned num_empty = 0;
+  unsigned num_failed = 0;
+  uint64_t total_bytes = 0;
+  unsigned max_bytes = 0;
+  unsigned max_gid = 0;
+  uint64_t outline_ns = 0;
+  uint64_t encode_ns = 0;
+
+  typedef std::chrono::steady_clock clock;
+  clock::time_point wall_start = clock::now ();
+
+  for (unsigned iter = 0; iter < num_iters; iter++)
+  for (unsigned gid = 0; gid < glyph_count; gid++)
+  {
+    hb_gpu_draw_reset (draw);
+
+    clock::time_point t0 = clock::now ();
+    hb_gpu_draw_glyph (draw, font, gid);
+    clock::time_point t1 = clock::now ();
+
+    hb_blob_t *encoded = hb_gpu_draw_encode (draw);
+    clock::time_point t2 = clock::now ();
+
+    outline_ns += std::chrono::duration_cast<std::chrono::nanoseconds> (t1 - t0).count ();
+    encode_ns  += std::chrono::duration_cast<std::chrono::nanoseconds> (t2 - t1).count ();
+
+    if (!encoded)
+    {
+      if (iter == 0)
+      {
+	fprintf (stderr, "gid %u: encode failed\n", gid);
+	num_failed++;
+      }
+      continue;
+    }
+
+    if (iter == 0)
+    {
+      unsigned len = hb_blob_get_length (encoded);
+      if (len == 0)
+	num_empty++;
+      else
+      {
+	num_encoded++;
+	if (len > max_bytes)
+	{
+	  max_bytes = len;
+	  max_gid = gid;
+	}
+      }
+      total_bytes += len;
+    }
+    hb_gpu_draw_recycle_blob (draw, encoded);
+  }
+
+  uint64_t wall_ns = std::chrono::duration_cast<std::chrono::nanoseconds> (clock::now () - wall_start).count ();
+
+  printf ("font:     %s\n", font_path);
+  printf ("glyphs:   %u\n", glyph_count);
+  printf ("encoded:  %u\n", num_encoded);
+  printf ("empty:    %u\n", num_empty);
+  if (num_failed)
+    printf ("FAILED:   %u\n", num_failed);
+  printf ("total:    %.2f KiB\n", total_bytes / 1024.);
+  if (num_encoded)
+  {
+    printf ("avg:      %.2f KiB/glyph (non-empty)\n",
+	    total_bytes / 1024. / num_encoded);
+    printf ("max:      %.2f KiB (gid %u)\n",
+	    max_bytes / 1024., max_gid);
+  }
+  uint64_t total_glyphs = (uint64_t) glyph_count * num_iters;
+  printf ("outline:  %.3fms (%.1fus/glyph)\n",
+	  outline_ns / 1e6 / num_iters,
+	  total_glyphs ? outline_ns / 1e3 / total_glyphs : 0.);
+  printf ("encode:   %.3fms (%.1fus/glyph)\n",
+	  encode_ns / 1e6 / num_iters,
+	  total_glyphs ? encode_ns / 1e3 / total_glyphs : 0.);
+  printf ("wall:     %.3fms (%.0f glyphs/s)\n",
+	  wall_ns / 1e6 / num_iters,
+	  wall_ns ? total_glyphs * 1e9 / wall_ns : 0.);
+
+  hb_gpu_draw_destroy (draw);
+  hb_font_destroy (font);
+  hb_face_destroy (face);
+  hb_blob_destroy (blob);
+
+  return num_failed ? 1 : 0;
+}
