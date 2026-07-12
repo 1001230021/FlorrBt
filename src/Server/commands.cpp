@@ -240,6 +240,90 @@ REGISTER_CONSOLE_COMMAND(who, {
                             std::to_string(entity ? entity->m_id : -1));
 })
 
+REGISTER_CONSOLE_COMMAND(query_player_id, {
+    if (args.empty())
+    {
+        LOG_INFO("console", "Usage: query_player_id [player name]");
+        return;
+    }
+
+    auto* server = CServer::GetInstance();
+    CGameContext* context = server ? server->GameContext() : nullptr;
+    CPlayer* player = FindPlayerByName(context, args[0]);
+    if (!player)
+    {
+        LOG_WARN("console", "Player not found: " + args[0]);
+        return;
+    }
+
+    LOG_INFO("console", "name=" + player->GetName() + " account=" + player->GetAccountName() +
+                            " player_id=" + std::to_string(player->GetId()));
+})
+
+REGISTER_CONSOLE_COMMAND(query_entity_id, {
+    if (args.empty())
+    {
+        LOG_INFO("console", "Usage: query_entity_id [player id]");
+        return;
+    }
+
+    auto player_id = ParseInt(args[0]);
+    if (!player_id || *player_id < 0)
+    {
+        LOG_WARN("console", "Invalid player id: " + args[0]);
+        return;
+    }
+
+    auto* server = CServer::GetInstance();
+    CGameContext* context = server ? server->GameContext() : nullptr;
+    auto* network = context ? &context->Network() : nullptr;
+    CPlayer* player = network ? network->FindPlayerById(static_cast<uint32_t>(*player_id)) : nullptr;
+    if (!player)
+    {
+        LOG_WARN("console", "Player not found: " + args[0]);
+        return;
+    }
+
+    CEntity* entity = player->GetEntity();
+    LOG_INFO("console", "player_id=" + std::to_string(player->GetId()) + " name=" + player->GetName() +
+                            " entity_id=" + std::to_string(entity ? entity->m_id : -1));
+})
+
+REGISTER_CONSOLE_COMMAND(set_team, {
+    if (args.size() < 2)
+    {
+        LOG_INFO("console", "Usage: set_team [entity id] [team]");
+        return;
+    }
+
+    auto entity_id = ParseInt(args[0]);
+    auto team = ParseInt(args[1]);
+    if (!entity_id || *entity_id < 0)
+    {
+        LOG_WARN("console", "Invalid entity id: " + args[0]);
+        return;
+    }
+    if (!team)
+    {
+        LOG_WARN("console", "Invalid team: " + args[1]);
+        return;
+    }
+
+    auto* server = CServer::GetInstance();
+    CGameContext* context = server ? server->GameContext() : nullptr;
+    CEntity* entity = context ? context->World().GetEntity(*entity_id) : nullptr;
+    if (!entity)
+    {
+        LOG_WARN("console", "Entity not found: " + args[0]);
+        return;
+    }
+
+    int old_team = entity->m_team;
+    entity->m_team = *team;
+    LOG_INFO("console", "Entity " + std::to_string(*entity_id) + " team " + std::to_string(old_team) + " -> " +
+                            std::to_string(entity->m_team));
+})
+
 REGISTER_CONSOLE_COMMAND(set, {
     if (args.size() < 2) return;
 
