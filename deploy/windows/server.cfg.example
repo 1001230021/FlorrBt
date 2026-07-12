@@ -1,0 +1,10 @@
+// FlorrBt deployment startup commands.
+// Copy to data/server.cfg or let deploy.ps1 create it on first server start.
+
+set port 10012
+gui_console 0
+set account_data_path data/accounts.json
+
+// Optional report AI config:
+// set report_deepseek_api_key YOUR_KEY
+// set report_deepseek_api_url https://api.deepseek.com/chat/completions
