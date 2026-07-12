@@ -50,6 +50,8 @@ class IServerGuiModule : public IModule
     void ScrollToBottom();
     void ClampScroll();
     void UpdateScrollBarDrag(float y);
+    bool OpenGui();
+    void CloseGui();
 
     sf::Color PriorityColor(ELogPriority priority) const;
     sf::Text CreatePromptText() const;
