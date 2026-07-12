@@ -127,29 +127,37 @@ button:active {
 }
 
 .hud {
-  top: 12px;
-  left: 12px;
+  display: none;
+}
+
+.death-overlay {
+  inset: 0;
+  z-index: 7;
   display: grid;
-  gap: 4px;
-  padding: 9px 11px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-  font-size: 13px;
+  place-items: center;
+  padding-top: 22vh;
+  background: rgba(58, 62, 68, 0.62);
 }
 
-#statusLine {
-  color: var(--green);
-  font-weight: 600;
+.revive-button {
+  width: 190px;
+  height: 58px;
+  border: 5px solid #26292e;
+  border-radius: 9px;
+  background: #5fc85a;
+  color: #fff;
+  font-size: 27px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-shadow:
+    -1px -1px 0 #22252a,
+    1px -1px 0 #22252a,
+    -1px 1px 0 #22252a,
+    1px 1px 0 #22252a;
 }
 
-#coordsLine {
-  color: var(--muted);
-}
-
-#fpsLine {
-  color: #4c5968;
-  font-variant-numeric: tabular-nums;
+.revive-button:active {
+  transform: none;
 }
 
 .chat-log {
@@ -256,27 +264,349 @@ button:active {
   width: fit-content;
   max-width: calc(100vw - 24px);
   transform: translateX(-50%);
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .backpack-panel {
-  left: calc(-1 * min(360px, calc(100vw - 24px)) - 12px);
+  left: calc(-1 * min(430px, calc(100vw - 24px)) - 12px);
   bottom: 12px;
-  width: min(360px, calc(100vw - 24px));
-  max-height: min(420px, calc(100vh - 132px));
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-  box-shadow: 0 18px 48px rgba(28, 42, 60, 0.14);
+  width: min(430px, calc(100vw - 24px));
+  max-height: min(620px, calc(100vh - 132px));
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 5px solid #238b67;
+  border-radius: 2px;
+  background: #5ba7de;
+  box-shadow: 0 18px 46px rgba(25, 66, 96, 0.22);
   transition: left 160ms ease;
 }
 
 .backpack-panel.open {
   left: 12px;
+}
+
+.craft-panel {
+  left: calc(-1 * min(640px, calc(100vw - 24px)) - 12px);
+  bottom: 12px;
+  width: min(640px, calc(100vw - 24px));
+  max-height: min(720px, calc(100vh - 72px));
+  display: grid;
+  grid-template-rows: auto auto auto 1fr;
+  gap: 8px;
+  padding: 12px 18px 14px;
+  border: 5px solid #8c8146;
+  border-radius: 2px;
+  background: #dfa25a;
+  box-shadow: 0 18px 48px rgba(55, 35, 20, 0.22);
+  transition: left 160ms ease;
+}
+
+.craft-panel.open {
+  left: 12px;
+}
+
+.panel-title {
+  position: relative;
+  min-height: 28px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1;
+  text-shadow:
+    -1px -1px 0 #1d2630,
+    1px -1px 0 #1d2630,
+    -1px 1px 0 #1d2630,
+    1px 1px 0 #1d2630,
+    0 2px 0 rgba(0, 0, 0, 0.28);
+}
+
+.panel-close {
+  position: absolute;
+  right: -4px;
+  top: -5px;
+  width: 30px;
+  height: 30px;
+  min-width: 0;
+  padding: 0 0 2px;
+  border: 3px solid rgba(156, 77, 77, 0.78);
+  border-radius: 6px;
+  background: #ca5959;
+  color: #f8eeee;
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 20px;
+}
+
+.inventory-subtitle,
+.craft-selection,
+.craft-chance {
+  color: #fff;
+  font-size: 15px;
+  font-weight: 850;
+  text-align: center;
+  text-shadow:
+    -1px -1px 0 #253241,
+    1px -1px 0 #253241,
+    -1px 1px 0 #253241,
+    1px 1px 0 #253241;
+}
+
+.craft-stage {
+  position: relative;
+  width: min(360px, 100%);
+  height: 250px;
+  margin: 0 auto;
+}
+
+.craft-stage-slot,
+.craft-result-slot {
+  position: absolute;
+  left: calc(50% + var(--slot-x, 0px));
+  top: calc(50% + var(--slot-y, 0px));
+  width: 64px;
+  height: 64px;
+  min-width: 0;
+  padding: 0;
+  border: 1px solid rgba(95, 61, 28, 0.15);
+  border-radius: 4px;
+  background: rgba(116, 73, 31, 0.34);
+  transform: translate(-50%, -50%);
+  transition: filter 120ms ease, transform 120ms ease;
+}
+
+.craft-stage-slot.filled {
+  background: transparent;
+  border-color: transparent;
+}
+
+.craft-stage-slot .petal-stack {
+  width: 58px;
+  height: 58px;
+}
+
+.craft-stage-slot.slot-0 { --slot-x: 0px; --slot-y: -82px; --slot-in-x: 0px; --slot-in-y: -28px; }
+.craft-stage-slot.slot-1 { --slot-x: 86px; --slot-y: -20px; --slot-in-x: 29px; --slot-in-y: -7px; }
+.craft-stage-slot.slot-2 { --slot-x: 54px; --slot-y: 78px; --slot-in-x: 18px; --slot-in-y: 26px; }
+.craft-stage-slot.slot-3 { --slot-x: -54px; --slot-y: 78px; --slot-in-x: -18px; --slot-in-y: 26px; }
+.craft-stage-slot.slot-4 { --slot-x: -86px; --slot-y: -20px; --slot-in-x: -29px; --slot-in-y: -7px; }
+
+.craft-stage.spinning .craft-stage-slot {
+  left: 50%;
+  top: 50%;
+  animation: craft-orbit-in 760ms linear infinite;
+  pointer-events: none;
+}
+
+.craft-stage.burst .craft-stage-slot {
+  animation: craft-burst 420ms cubic-bezier(.22, .74, .26, 1);
+}
+
+.craft-result-slot {
+  left: 50%;
+  top: 50%;
+  width: 96px;
+  height: 96px;
+  border: 0;
+  background: transparent;
+}
+
+.craft-result-slot .petal-stack {
+  width: 92px;
+  height: 92px;
+}
+
+.craft-action {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  grid-template-areas:
+    "button text"
+    "button chance";
+  gap: 2px 10px;
+  align-items: center;
+  max-width: 390px;
+  margin: -10px auto 0;
+}
+
+.craft-action button {
+  grid-area: button;
+  width: 86px;
+  height: 38px;
+  border: 4px solid #777c82;
+  border-radius: 10px;
+  background: #5f666f;
+  font-weight: 850;
+  text-shadow:
+    -1px -1px 0 #1d2630,
+    1px -1px 0 #1d2630,
+    -1px 1px 0 #1d2630,
+    1px 1px 0 #1d2630;
+}
+
+.craft-action button:disabled {
+  opacity: 0.54;
+  cursor: default;
+}
+
+.craft-selection {
+  grid-area: text;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.craft-chance {
+  grid-area: chance;
+  min-height: 18px;
+  font-size: 13px;
+}
+
+.craft-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 2px 0;
+}
+
+.craft-matrix {
+  display: grid;
+  grid-template-columns: 108px repeat(11, 58px);
+  gap: 5px;
+  align-items: center;
+  width: max-content;
+  min-width: 100%;
+}
+
+.craft-matrix-corner,
+.craft-matrix-rarity,
+.craft-matrix-type {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  text-shadow:
+    -1px -1px 0 rgba(35, 28, 23, 0.82),
+    1px -1px 0 rgba(35, 28, 23, 0.82),
+    -1px 1px 0 rgba(35, 28, 23, 0.82),
+    1px 1px 0 rgba(35, 28, 23, 0.82);
+}
+
+.craft-matrix-corner,
+.craft-matrix-rarity {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  min-height: 24px;
+  background: #dfa25a;
+}
+
+.craft-matrix-corner {
+  left: 0;
+  z-index: 3;
+}
+
+.craft-matrix-type {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  width: 108px;
+  min-height: 58px;
+  padding-right: 6px;
+  overflow: hidden;
+  background: #dfa25a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.craft-matrix-cell {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgba(116, 73, 31, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(91, 58, 29, 0.12);
+  touch-action: manipulation;
+  transition: filter 100ms ease, opacity 100ms ease;
+}
+
+.craft-matrix-cell .petal-stack {
+  width: 56px;
+  height: 56px;
+}
+
+.craft-matrix-cell.empty {
+  pointer-events: none;
+}
+
+.craft-matrix-cell.locked {
+  opacity: 0.34;
+  cursor: default;
+  filter: grayscale(0.35);
+}
+
+.craft-matrix-cell.lit {
+  filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.56));
+}
+
+.craft-matrix-cell.lit:hover,
+.craft-matrix-cell.selected {
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.82));
+}
+
+@keyframes craft-orbit-in {
+  0% {
+    transform:
+      translate(-50%, -50%)
+      rotate(0deg)
+      translate(var(--slot-x, 0px), var(--slot-y, 0px))
+      rotate(0deg)
+      scale(1);
+  }
+  70% {
+    transform:
+      translate(-50%, -50%)
+      rotate(720deg)
+      translate(var(--slot-in-x, 0px), var(--slot-in-y, 0px))
+      rotate(-720deg)
+      scale(0.72);
+  }
+  100% {
+    transform:
+      translate(-50%, -50%)
+      rotate(1080deg)
+      translate(0, 0)
+      rotate(-1080deg)
+      scale(0.52);
+  }
+}
+
+@keyframes craft-burst {
+  0% {
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%) scale(0.4);
+    opacity: 0.25;
+  }
+  100% {
+    left: calc(50% + var(--slot-x, 0px));
+    top: calc(50% + var(--slot-y, 0px));
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
 }
 
 .backpack-panel.drag-target,
@@ -287,12 +617,21 @@ button:active {
 
 .slot-row {
   display: grid;
-  grid-template-columns: repeat(var(--slot-count, 5), minmax(44px, 58px));
+  grid-template-columns: repeat(var(--slot-count, 5), 56px);
   gap: 6px;
+  width: max-content;
   max-width: calc(100vw - 44px);
-  overflow-x: auto;
+  overflow: visible;
   margin-bottom: 6px;
+  margin-left: auto;
+  margin-right: auto;
   justify-content: center;
+  justify-items: center;
+}
+
+.slot-row.secondary {
+  grid-template-columns: repeat(var(--slot-count, 5), 44px);
+  gap: 5px;
 }
 
 .slot,
@@ -308,10 +647,23 @@ button:active {
 
 .slot {
   position: relative;
-  width: 58px;
-  height: 58px;
+  width: 56px;
+  height: 56px;
   padding: 0;
   text-align: center;
+}
+
+.slot::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: url("./assets/slot_base.svg") center / contain no-repeat;
+  pointer-events: none;
+}
+
+.slot:not(.empty)::before {
+  opacity: 0;
 }
 
 .slot.selected {
@@ -321,15 +673,6 @@ button:active {
 .slot.dragging,
 .inventory-item.dragging {
   opacity: 0.46;
-}
-
-.slot .index {
-  position: absolute;
-  top: 1px;
-  right: 2px;
-  z-index: 2;
-  color: #8793a2;
-  font-size: 10px;
 }
 
 .slot .petal-name {
@@ -359,6 +702,7 @@ button:active {
   position: absolute;
   left: 50%;
   top: 50%;
+  z-index: 1;
   width: 54px;
   height: 54px;
   pointer-events: none;
@@ -384,10 +728,33 @@ button:active {
   object-fit: contain;
 }
 
+.petal-count {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  z-index: 3;
+  max-width: 42px;
+  padding: 1px 4px 2px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.82);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .secondary .slot {
-  width: 46px;
-  height: 46px;
+  width: 44px;
+  height: 44px;
   opacity: 0.92;
+}
+
+.slot:not(.empty) .petal-stack {
+  width: 58px;
+  height: 58px;
 }
 
 .secondary .petal-stack {
@@ -395,42 +762,86 @@ button:active {
   height: 42px;
 }
 
+.secondary .slot:not(.empty) .petal-stack {
+  width: 46px;
+  height: 46px;
+}
+
 .inventory-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
-  gap: 6px;
   width: 100%;
-  max-height: calc(100vh - 154px);
+  min-height: 0;
   overflow-y: auto;
+  padding: 2px 2px 0;
+}
+
+.inventory-group {
+  margin: 0 0 10px;
+}
+
+.inventory-group-title {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin: 2px 6px 8px;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  text-align: center;
+  text-shadow:
+    -1px -1px 0 rgba(28, 35, 45, 0.78),
+    1px -1px 0 rgba(28, 35, 45, 0.78),
+    -1px 1px 0 rgba(28, 35, 45, 0.78),
+    1px 1px 0 rgba(28, 35, 45, 0.78);
+}
+
+.inventory-group-title::before,
+.inventory-group-title::after {
+  content: "";
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(36, 84, 123, 0.22);
+}
+
+.craft-list .inventory-group-title::before,
+.craft-list .inventory-group-title::after {
+  background: rgba(117, 75, 36, 0.28);
+}
+
+.inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 64px);
+  gap: 6px;
+  justify-content: start;
 }
 
 .inventory-item {
   position: relative;
-  min-height: 56px;
+  width: 64px;
+  height: 64px;
+  min-height: 0;
   padding: 0;
   text-align: center;
+  transition: filter 120ms ease, opacity 120ms ease, transform 120ms ease;
 }
 
 .inventory-item .petal-stack {
-  width: 52px;
-  height: 52px;
+  width: 62px;
+  height: 62px;
 }
 
-.inventory-item strong,
-.inventory-item span {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.craft-inventory-item.locked {
+  opacity: 0.34;
+  filter: grayscale(0.45);
+  cursor: default;
 }
 
-.inventory-item strong {
-  font-size: 11px;
-  font-weight: 650;
+.craft-inventory-item:not(.locked) {
+  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.55));
 }
 
-.inventory-item span {
-  font-size: 10px;
+.craft-inventory-item:not(.locked):hover {
+  filter: drop-shadow(0 0 7px rgba(255, 255, 255, 0.74));
 }
 
 .drag-ghost {

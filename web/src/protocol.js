@@ -2,6 +2,7 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 export const NETWORK_PETAL_TYPE_OFFSET = 100;
+export const NETWORK_DROP_TYPE_OFFSET = 150;
 export const MAX_CHAT_MESSAGE_SIZE = 180;
 export const NET_COORD_SCALE = 64;
 export const NET_RADIUS_SCALE = 16;
@@ -21,13 +22,15 @@ export const ServerType = Object.freeze({
   OwnerState: 0x10,
   Inventory: 0x11,
   Chat: 0x12,
+  CraftResult: 0x13,
 });
 
 export const PetalNames = [
   "None", "Air", "AntEgg", "Antennae", "Basic", "BeetleEgg", "Bone", "Bubble", "Carrot",
   "Coin", "Compass", "Cogwheel", "Disc", "Dust", "GoldenLeaf", "Iris", "Lentil", "Moon",
   "Nullification", "Pincer", "Relic", "Rose", "YinYang", "Missile", "BloodSacrifice",
-  "Corruption", "Bandage", "Heavy", "Faster", "Yggdrasil",
+  "Corruption", "Bandage", "Heavy", "Faster", "Yggdrasil", "Dahlia", "Wing", "Triangle",
+  "Sawblade", "Fragment", "Mimic", "Glass",
 ];
 
 export const MobNames = [
@@ -74,11 +77,17 @@ export function rarityName(rarity) {
 }
 
 export function isPetalEntity(entityType) {
-  return entityType >= NETWORK_PETAL_TYPE_OFFSET;
+  return entityType >= NETWORK_PETAL_TYPE_OFFSET && entityType < NETWORK_DROP_TYPE_OFFSET;
+}
+
+export function isDropEntity(entityType) {
+  return entityType >= NETWORK_DROP_TYPE_OFFSET;
 }
 
 export function petalTypeFromEntity(entityType) {
-  return entityType - NETWORK_PETAL_TYPE_OFFSET;
+  return entityType >= NETWORK_DROP_TYPE_OFFSET
+    ? entityType - NETWORK_DROP_TYPE_OFFSET
+    : entityType - NETWORK_PETAL_TYPE_OFFSET;
 }
 
 export function clamp(value, low, high) {
@@ -227,6 +236,14 @@ export function parseServerMessage(payload) {
       msg.flags = reader.u8();
       const primaryCount = reader.u8();
       const secondaryCount = reader.u8();
+      const slotBytes = (primaryCount + secondaryCount) * 2;
+      if (reader.has(8 + slotBytes)) {
+        msg.exp = reader.u32();
+        msg.expRequired = reader.u32();
+      } else {
+        msg.exp = 0;
+        msg.expRequired = 0;
+      }
       msg.ownerSlots = [];
       msg.secondarySlots = [];
       for (let i = 0; i < primaryCount; i += 1) {
@@ -242,7 +259,7 @@ export function parseServerMessage(payload) {
       const count = reader.u16();
       msg.inventory = [];
       for (let i = 0; i < count; i += 1) {
-        msg.inventory.push({ petalType: reader.u8(), rarity: reader.u8(), count: reader.u16() });
+        msg.inventory.push({ petalType: reader.u8(), rarity: reader.u8(), count: reader.u32() });
       }
       return msg;
     }
@@ -256,6 +273,19 @@ export function parseServerMessage(payload) {
       const messageLength = reader.u8();
       msg.chat.playerName = reader.string(nameLength);
       msg.chat.message = reader.string(messageLength);
+      return msg;
+    }
+
+    if (type === ServerType.CraftResult) {
+      msg.success = reader.u8() !== 0;
+      msg.petalType = reader.u8();
+      msg.rarity = reader.u8();
+      msg.consumed = reader.u32();
+      const count = reader.u16();
+      msg.items = [];
+      for (let i = 0; i < count; i += 1) {
+        msg.items.push({ petalType: reader.u8(), rarity: reader.u8(), count: reader.u32() });
+      }
       return msg;
     }
 
@@ -308,6 +338,17 @@ export function packUnequip(slotIndex) {
 
 export function packSecondarySlot(slotIndex, petalType, rarity) {
   return new Uint8Array([0xf2, slotIndex & 0xff, petalType & 0xff, rarity & 0xff]);
+}
+
+export function packCraft(petalType, rarity, count) {
+  const out = new Uint8Array(7);
+  const safeCount = Math.max(0, Math.min(0xffffffff, Math.floor(count || 0)));
+  out[0] = 0xf3;
+  out[1] = petalType & 0xff;
+  out[2] = rarity & 0xff;
+  const view = new DataView(out.buffer);
+  view.setUint32(3, safeCount, true);
+  return out;
 }
 
 export function packChat(flag, message) {

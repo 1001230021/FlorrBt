@@ -7,6 +7,7 @@
 #include "controllers/player_controller.h"
 #include "gameworld.h"
 #include "../../Shared/game_config.h"
+#include <algorithm>
 
 CPlayer::CPlayer(sf::TcpSocket&& socket, uint32_t id, const std::string& name)
     : m_socket(std::move(socket)), m_player_id(id), m_name(name)
@@ -148,6 +149,24 @@ void CPlayer::UnequipAllPetals()
     }
 }
 
+void CPlayer::ApplySavedProgress()
+{
+    if (!m_authenticated) return;
+
+    auto* flower = dynamic_cast<CPlayerFlower*>(GetEntity());
+    if (!flower) return;
+
+    int level = 1;
+    int exp = 0;
+    if (!CAccountDataStore::GetProgress(m_account_name, level, exp)) return;
+
+    flower->m_level = std::max(1, level);
+    flower->m_exp = std::max(0, exp);
+    flower->RebuildFinalStats();
+    if (const SFlowerStats* stats = flower->GetFinalStats())
+        flower->m_health = stats->max_health;
+}
+
 void CPlayer::ApplySavedSlots()
 {
     if (!m_authenticated) return;
@@ -166,6 +185,7 @@ void CPlayer::ApplySavedSlots()
         if (!proto || !proto->m_p_behavior) continue;
         flower->LoadPetalSlot(static_cast<int>(i), proto, static_cast<ERarity>(item.rarity));
     }
+    flower->RebuildFinalStats();
 }
 
 bool CPlayer::TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rarity)
@@ -218,6 +238,16 @@ bool CPlayer::TryUnequipPetal(uint8_t slot_index)
     CAccountDataStore::AddItem(m_account_name, old_type, old_rarity, 1);
     CAccountDataStore::ClearSlot(m_account_name, slot_index);
     return true;
+}
+
+bool CPlayer::TryCraftPetal(uint8_t petal_type, uint8_t rarity, uint32_t count, SCraftResult* result)
+{
+    if (!m_authenticated) return false;
+    if (petal_type == 0 || !FindPetalPrototype(static_cast<EPetalType>(petal_type))) return false;
+    if (rarity < static_cast<uint8_t>(ERarity::Common) || rarity > static_cast<uint8_t>(ERarity::Eternal)) return false;
+    if (count < 5) return false;
+
+    return CAccountDataStore::CraftItem(m_account_name, petal_type, rarity, count, result);
 }
 
 void CPlayer::SetOwnedEntity(CEntity* entity)

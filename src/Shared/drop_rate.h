@@ -67,7 +67,15 @@ inline void RegisterDropRates()
 {
     ClearDropRateTable();
 
-    RegisterDropRate(EMobType::NormalLadybug, ERarity::Common, EPetalType::Basic, ERarity::Common, 1.f);
+    RegisterDropRate(EMobType::SoldierAnt, ERarity::Common, EPetalType::Wing, ERarity::Common, 0.875f);
+    RegisterDropRate(EMobType::SoldierAnt, ERarity::Common, EPetalType::Wing, ERarity::Unusual, 0.125f);
+    RegisterDropRate(EMobType::SoldierAnt, ERarity::Common, EPetalType::Glass, ERarity::Common, 0.667f);
+    RegisterDropRate(EMobType::SoldierAnt, ERarity::Common, EPetalType::Glass, ERarity::Unusual, 0.333f);
+
+    RegisterDropRate(EMobType::NormalLadybug, ERarity::Common, EPetalType::Basic, ERarity::Common, 0.56f);
+    RegisterDropRate(EMobType::NormalLadybug, ERarity::Common, EPetalType::Basic, ERarity::Unusual, 0.44f);
+    RegisterDropRate(EMobType::NormalLadybug, ERarity::Common, EPetalType::Rose, ERarity::Common, 0.667f);
+    RegisterDropRate(EMobType::NormalLadybug, ERarity::Common, EPetalType::Rose, ERarity::Unusual, 0.333f);
 }
 
 inline const std::vector<SDropRate>& QueryDropRates(EMobType mob_type, ERarity rarity)

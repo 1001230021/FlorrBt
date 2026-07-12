@@ -9,6 +9,7 @@
 #include "../../../Engine/account_data.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace
 {
@@ -55,6 +56,13 @@ SFlowerStats BuildPlayerFlowerLevelStats(SFlowerStats stats, int level)
     stats.max_health *= GetPlayerFlowerLevelMultiplier(level, game_config::mob_player_flower_level_health_growth);
     stats.damage *= GetPlayerFlowerLevelMultiplier(level, game_config::mob_player_flower_level_damage_growth);
     return stats;
+}
+
+int PlayerFlowerExpRequired(int level)
+{
+    if (level <= 1) return 10;
+    if (level >= 29) return std::numeric_limits<int>::max();
+    return 10 * (1 << (level - 1));
 }
 
 }
@@ -511,6 +519,34 @@ void CPlayerFlower::RebuildFinalStats()
     float new_max = m_final_stats.max_health;
     if (old_max > 0.f && new_max > 0.f && new_max != old_max) m_health = m_health * new_max / old_max;
     if (new_max > 0.f) m_health = std::clamp(m_health, 0.f, new_max);
+}
+
+void CPlayerFlower::TakeExp(int exp)
+{
+    if (exp <= 0 || m_is_dead) return;
+
+    m_exp = std::max(0, m_exp + exp);
+    bool leveled = false;
+    for (;;)
+    {
+        int required = PlayerFlowerExpRequired(m_level);
+        if (required <= 0 || m_exp < required) break;
+        m_exp -= required;
+        ++m_level;
+        leveled = true;
+    }
+
+    if (leveled) RebuildFinalStats();
+
+    CGameContext* context = GameContext();
+    CPlayer* player = context ? context->FindPlayerFromEntity(this) : nullptr;
+    if (player && player->IsAuthenticated())
+        CAccountDataStore::SetProgress(player->GetAccountName(), m_level, m_exp);
+}
+
+int CPlayerFlower::ExpRequired() const
+{
+    return PlayerFlowerExpRequired(m_level);
 }
 
 void CPlayerFlower::Tick(float dt)

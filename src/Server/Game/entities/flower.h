@@ -48,6 +48,7 @@ class CFlower : public CMob<SFlowerStats>
     void RefreshNullificationState();
     void RefreshCorruptionState();
     std::vector<CPetalSlot>& GetSlots() { return m_slots; }
+    const std::vector<CPetalSlot>& GetSlots() const { return m_slots; }
     void SetBanned(bool banned, int slot_index);
 
     void InitSlots();
@@ -90,8 +91,11 @@ class CPlayerFlower : public CFlower
     void EnterDeathState();
     void PrepareRespawnDestroy();
     void ReviveFromYggdrasil(float health_fraction);
+    void TakeExp(int exp);
+    int ExpRequired() const;
 
     int m_level = 1;
+    int m_exp = 0;
     std::string m_name = "Player";
     bool m_is_dead = false;
 

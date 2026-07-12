@@ -106,7 +106,9 @@ std::vector<SInventoryItem> ParseInventory(const CJsonValue* value)
         SInventoryItem item;
         if (const CJsonValue* type = item_value.Find("type")) item.petal_type = static_cast<uint8_t>(type->AsInt());
         if (const CJsonValue* rarity = item_value.Find("rarity")) item.rarity = static_cast<uint8_t>(rarity->AsInt());
-        if (const CJsonValue* count = item_value.Find("count")) item.count = static_cast<uint16_t>((std::max)(0, count->AsInt()));
+        if (const CJsonValue* count = item_value.Find("count"))
+            item.count = std::min<uint32_t>(static_cast<uint32_t>((std::max)(0, count->AsInt())),
+                                            max_inventory_item_count);
         if (item.petal_type != 0 && item.rarity != 0 && item.count > 0) inventory.push_back(item);
     }
     return inventory;
@@ -124,7 +126,9 @@ std::vector<SInventoryItem> ParseSlots(const CJsonValue* value)
         {
             if (const CJsonValue* type = item_value.Find("type")) item.petal_type = static_cast<uint8_t>(type->AsInt());
             if (const CJsonValue* rarity = item_value.Find("rarity")) item.rarity = static_cast<uint8_t>(rarity->AsInt());
-            if (const CJsonValue* count = item_value.Find("count")) item.count = static_cast<uint16_t>((std::max)(0, count->AsInt()));
+            if (const CJsonValue* count = item_value.Find("count"))
+                item.count = std::min<uint32_t>(static_cast<uint32_t>((std::max)(0, count->AsInt())),
+                                                max_inventory_item_count);
         }
         slots.push_back(item);
     }
@@ -138,6 +142,46 @@ std::vector<SInventoryItem> DefaultSlots()
         slots[i] = {static_cast<uint8_t>(EPetalType::Basic), static_cast<uint8_t>(ERarity::Common), 1};
     slots[4] = {static_cast<uint8_t>(EPetalType::Rose), static_cast<uint8_t>(ERarity::Common), 1};
     return slots;
+}
+
+uint8_t CraftResultRarity(uint8_t rarity)
+{
+    if (rarity == static_cast<uint8_t>(ERarity::Super)) return static_cast<uint8_t>(ERarity::Eternal);
+    if (rarity == static_cast<uint8_t>(ERarity::Eternal)) return static_cast<uint8_t>(ERarity::Primordial);
+    if (rarity >= static_cast<uint8_t>(ERarity::Common) && rarity < static_cast<uint8_t>(ERarity::Super))
+        return static_cast<uint8_t>(rarity + 1);
+    return 0;
+}
+
+float CraftSuccessChance(uint8_t rarity)
+{
+    if (rarity == static_cast<uint8_t>(ERarity::Super)) return 0.0033f;
+    if (rarity == static_cast<uint8_t>(ERarity::Eternal)) return 0.001f;
+    if (rarity >= static_cast<uint8_t>(ERarity::Common) && rarity < static_cast<uint8_t>(ERarity::Super))
+    {
+        int level = GetLevel(static_cast<ERarity>(rarity));
+        return 0.64f / std::pow(2.f, static_cast<float>(level - 1));
+    }
+    return 0.f;
+}
+
+void AddInventoryStack(std::vector<SInventoryItem>& inventory, uint8_t petal_type, uint8_t rarity, uint32_t count)
+{
+    if (petal_type == 0 || rarity == 0 || count == 0) return;
+
+    auto it = std::find_if(inventory.begin(), inventory.end(),
+                           [petal_type, rarity](const SInventoryItem& item)
+                           {
+                               return item.petal_type == petal_type && item.rarity == rarity;
+                           });
+    if (it == inventory.end())
+    {
+        inventory.push_back({petal_type, rarity, std::min(count, max_inventory_item_count)});
+        return;
+    }
+
+    uint64_t total = static_cast<uint64_t>(it->count) + count;
+    it->count = static_cast<uint32_t>(std::min<uint64_t>(total, max_inventory_item_count));
 }
 
 void WriteItemsJson(std::ofstream& file, const std::vector<SInventoryItem>& items)
@@ -171,8 +215,8 @@ void NormalizeInventory(std::vector<SInventoryItem>& inventory)
             continue;
         }
 
-        uint32_t total = static_cast<uint32_t>(it->count) + item.count;
-        it->count = static_cast<uint16_t>(std::min<uint32_t>(total, UINT16_MAX));
+        uint64_t total = static_cast<uint64_t>(it->count) + item.count;
+        it->count = static_cast<uint32_t>(std::min<uint64_t>(total, max_inventory_item_count));
     }
     inventory = std::move(normalized);
 }
@@ -202,6 +246,8 @@ bool CAccountDataStore::Load(const std::filesystem::path& path, std::string* err
         SPlayerAccount account;
         if (const CJsonValue* name = account_value.Find("name")) account.name = name->AsString();
         if (const CJsonValue* password = account_value.Find("password")) account.password = password->AsString();
+        if (const CJsonValue* level = account_value.Find("level")) account.level = std::max(1, level->AsInt(1));
+        if (const CJsonValue* exp = account_value.Find("exp")) account.exp = std::max(0, exp->AsInt(0));
         if (const CJsonValue* extra = account_value.Find("extra")) account.extra_json = JsonToString(*extra);
         account.inventory = ParseInventory(account_value.Find("inventory"));
         account.slots = ParseSlots(account_value.Find("slots"));
@@ -237,6 +283,8 @@ bool CAccountDataStore::Save(std::string* error)
         file << "    {\n";
         file << "      \"name\": \"" << EscapeJsonString(account.name) << "\",\n";
         file << "      \"password\": \"" << EscapeJsonString(account.password) << "\",\n";
+        file << "      \"level\": " << std::max(1, account.level) << ",\n";
+        file << "      \"exp\": " << std::max(0, account.exp) << ",\n";
         file << "      \"inventory\": ";
         WriteItemsJson(file, account.inventory);
         file << ",\n";
@@ -301,7 +349,7 @@ bool CAccountDataStore::LoginOrRegister(const std::string& name, const std::stri
             return false;
         }
 
-        g_accounts.push_back({name, std::string(hash), {}, DefaultSlots(), {}, "{}"});
+        g_accounts.push_back({name, std::string(hash), 1, 0, {}, DefaultSlots(), {}, "{}"});
         Save(error);
         return true;
     }
@@ -335,6 +383,26 @@ std::vector<SInventoryItem> CAccountDataStore::GetSecondarySlots(const std::stri
 {
     const SPlayerAccount* account = FindAccountConst(name);
     return account ? account->secondary_slots : std::vector<SInventoryItem>{};
+}
+
+bool CAccountDataStore::GetProgress(const std::string& name, int& level, int& exp)
+{
+    const SPlayerAccount* account = FindAccountConst(name);
+    if (!account) return false;
+
+    level = std::max(1, account->level);
+    exp = std::max(0, account->exp);
+    return true;
+}
+
+void CAccountDataStore::SetProgress(const std::string& name, int level, int exp)
+{
+    SPlayerAccount* account = FindAccount(name);
+    if (!account) return;
+
+    account->level = std::max(1, level);
+    account->exp = std::max(0, exp);
+    Save();
 }
 
 void CAccountDataStore::SetSlot(const std::string& name, uint8_t slot_index, uint8_t petal_type, uint8_t rarity)
@@ -373,7 +441,7 @@ bool CAccountDataStore::SetSecondarySlot(const std::string& name, uint8_t slot_i
     if (account->secondary_slots.size() <= slot_index) account->secondary_slots.resize(static_cast<size_t>(slot_index) + 1);
     SInventoryItem old_item = account->secondary_slots[slot_index];
 
-    inventory_it->count = static_cast<uint16_t>(inventory_it->count - 1);
+    inventory_it->count -= 1;
     if (inventory_it->count == 0) account->inventory.erase(inventory_it);
     if (old_item.petal_type != 0 && old_item.rarity != 0) AddItem(name, old_item.petal_type, old_item.rarity, 1);
 
@@ -397,7 +465,7 @@ bool CAccountDataStore::ClearSecondarySlot(const std::string& name, uint8_t slot
     return true;
 }
 
-bool CAccountDataStore::TakeItem(const std::string& name, uint8_t petal_type, uint8_t rarity, uint16_t count)
+bool CAccountDataStore::TakeItem(const std::string& name, uint8_t petal_type, uint8_t rarity, uint32_t count)
 {
     if (count == 0) return true;
 
@@ -411,13 +479,13 @@ bool CAccountDataStore::TakeItem(const std::string& name, uint8_t petal_type, ui
                            });
     if (it == account->inventory.end() || it->count < count) return false;
 
-    it->count = static_cast<uint16_t>(it->count - count);
+    it->count -= count;
     if (it->count == 0) account->inventory.erase(it);
     Save();
     return true;
 }
 
-void CAccountDataStore::AddItem(const std::string& name, uint8_t petal_type, uint8_t rarity, uint16_t count)
+void CAccountDataStore::AddItem(const std::string& name, uint8_t petal_type, uint8_t rarity, uint32_t count)
 {
     if (count == 0 || petal_type == 0 || rarity == 0) return;
 
@@ -431,15 +499,15 @@ void CAccountDataStore::AddItem(const std::string& name, uint8_t petal_type, uin
                            });
     if (it == account->inventory.end())
     {
-        account->inventory.push_back({petal_type, rarity, count});
+        account->inventory.push_back({petal_type, rarity, std::min(count, max_inventory_item_count)});
     } else {
-        uint32_t total = static_cast<uint32_t>(it->count) + count;
-        it->count = static_cast<uint16_t>(std::min<uint32_t>(total, UINT16_MAX));
+        uint64_t total = static_cast<uint64_t>(it->count) + count;
+        it->count = static_cast<uint32_t>(std::min<uint64_t>(total, max_inventory_item_count));
     }
     Save();
 }
 
-bool CAccountDataStore::HasItem(const std::string& name, uint8_t petal_type, uint8_t rarity, uint16_t count)
+bool CAccountDataStore::HasItem(const std::string& name, uint8_t petal_type, uint8_t rarity, uint32_t count)
 {
     const SPlayerAccount* account = FindAccountConst(name);
     if (!account) return false;
@@ -450,6 +518,69 @@ bool CAccountDataStore::HasItem(const std::string& name, uint8_t petal_type, uin
                                return item.petal_type == petal_type && item.rarity == rarity;
                            });
     return it != account->inventory.end() && it->count >= count;
+}
+
+bool CAccountDataStore::CraftItem(const std::string& name, uint8_t petal_type, uint8_t rarity, uint32_t count,
+                                  SCraftResult* result)
+{
+    if (result) *result = {};
+    if (petal_type == 0 || rarity == 0 || count < 5) return false;
+
+    uint8_t result_rarity = CraftResultRarity(rarity);
+    float success_chance = CraftSuccessChance(rarity);
+    if (result_rarity == 0 || success_chance <= 0.f) return false;
+
+    SPlayerAccount* account = FindAccount(name);
+    if (!account) return false;
+
+    auto source_it = std::find_if(account->inventory.begin(), account->inventory.end(),
+                                  [petal_type, rarity](const SInventoryItem& item)
+                                  {
+                                      return item.petal_type == petal_type && item.rarity == rarity;
+                                  });
+    if (source_it == account->inventory.end() || source_it->count < count) return false;
+
+    source_it->count -= count;
+    if (source_it->count == 0) account->inventory.erase(source_it);
+
+    constexpr uint32_t max_craft_attempts_per_request = 10000;
+    SCraftResult craft_result;
+    craft_result.changed = true;
+    craft_result.petal_type = petal_type;
+    craft_result.rarity = rarity;
+    craft_result.consumed = count;
+
+    uint32_t source_pool = count;
+    std::uniform_int_distribution<int> return_dist(1, 4);
+
+    while (source_pool >= 5 && craft_result.attempts < max_craft_attempts_per_request)
+    {
+        source_pool -= 5;
+        craft_result.attempts += 1;
+
+        if (CheckChance(success_chance))
+        {
+            AddInventoryStack(account->inventory, petal_type, result_rarity, 1);
+            AddInventoryStack(craft_result.items, petal_type, result_rarity, 1);
+            craft_result.successes += 1;
+        }
+        else
+        {
+            source_pool += static_cast<uint32_t>(return_dist(GetRng()));
+        }
+    }
+
+    if (source_pool > 0)
+    {
+        AddInventoryStack(account->inventory, petal_type, rarity, source_pool);
+        AddInventoryStack(craft_result.items, petal_type, rarity, source_pool);
+    }
+
+    NormalizeInventory(account->inventory);
+    NormalizeInventory(craft_result.items);
+    Save();
+    if (result) *result = craft_result;
+    return true;
 }
 
 SPlayerAccount* CAccountDataStore::FindAccount(const std::string& name)

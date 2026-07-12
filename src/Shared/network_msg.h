@@ -17,17 +17,21 @@ constexpr uint8_t chore_disconnect_bit = 5;
 constexpr uint8_t client_auth_packet_type = 0xf0;
 constexpr uint8_t client_chat_packet_type = 0xf1;
 constexpr uint8_t client_secondary_slot_packet_type = 0xf2;
+constexpr uint8_t client_craft_packet_type = 0xf3;
 constexpr size_t client_compact_packet_size = 1;
 constexpr size_t client_extended_packet_size = 3;
 constexpr size_t client_auth_header_size = 4;
 constexpr size_t client_chat_header_size = 3;
 constexpr size_t client_secondary_slot_packet_size = 4;
-constexpr size_t inventory_item_packet_size = 4;
+constexpr size_t client_craft_packet_size = 7;
+constexpr size_t inventory_item_packet_size = 6;
 constexpr size_t owner_slot_packet_size = 2;
 constexpr size_t max_auth_name_size = 32;
 constexpr size_t max_auth_password_size = 64;
 constexpr size_t max_chat_message_size = 180;
 constexpr size_t packet_length_prefix_size = 2;
+constexpr uint8_t server_petal_entity_type_offset = 100;
+constexpr uint8_t server_drop_entity_type_offset = 150;
 
 // Client packets:
 // Input:        [type:2 bits][move_x:1 byte][move_y:1 byte]
@@ -37,6 +41,7 @@ constexpr size_t packet_length_prefix_size = 2;
 // Auth:         [0xf0][mode:1 byte][name_len:1 byte][password_len:1 byte][name][password]
 // Chat:         [0xf1][flag:1 byte][message_len:1 byte][message]
 // SecondarySlot:[0xf2][slot:1 byte][petal_type:1 byte][rarity:1 byte]
+// Craft:        [0xf3][petal_type:1 byte][rarity:1 byte][count:4 bytes]
 
 enum class EChatFlag : uint8_t
 {
@@ -323,14 +328,64 @@ struct ClientSecondarySlotRequest
     }
 };
 
+struct ClientCraftRequest
+{
+    uint8_t petal_type = 0;
+    uint8_t rarity = 0;
+    uint32_t count = 0;
+
+    static bool IsPacketStart(uint8_t value) { return value == client_craft_packet_type; }
+
+    static size_t GetPacketSize(const uint8_t* data, size_t len)
+    {
+        if (!data || len < client_craft_packet_size) return 0;
+        if (!IsPacketStart(data[0])) return 0;
+        return client_craft_packet_size;
+    }
+
+    static ClientCraftRequest parse(const uint8_t* data, size_t len, bool* ok = nullptr)
+    {
+        ClientCraftRequest request;
+        if (ok) *ok = false;
+        if (!data || len < client_craft_packet_size) return request;
+        if (!IsPacketStart(data[0])) return request;
+
+        size_t offset = 1;
+        request.petal_type = data[offset++];
+        request.rarity = data[offset++];
+        request.count = static_cast<uint32_t>(data[offset]) |
+                        (static_cast<uint32_t>(data[offset + 1]) << 8) |
+                        (static_cast<uint32_t>(data[offset + 2]) << 16) |
+                        (static_cast<uint32_t>(data[offset + 3]) << 24);
+        if (ok) *ok = true;
+        return request;
+    }
+
+    static size_t pack(const ClientCraftRequest& request, uint8_t* out)
+    {
+        if (!out) return 0;
+        size_t offset = 0;
+        out[offset++] = client_craft_packet_type;
+        out[offset++] = request.petal_type;
+        out[offset++] = request.rarity;
+        out[offset++] = static_cast<uint8_t>(request.count & 0xFF);
+        out[offset++] = static_cast<uint8_t>((request.count >> 8) & 0xFF);
+        out[offset++] = static_cast<uint8_t>((request.count >> 16) & 0xFF);
+        out[offset++] = static_cast<uint8_t>((request.count >> 24) & 0xFF);
+        return client_craft_packet_size;
+    }
+};
+
 // Server packets:
 // Welcome:    [type:1 byte][player_id:2 bytes][owner_entity_id:2 bytes][tick_rate:1 byte][map_len:1 byte][map_name]
 // Snapshot:   [type:1 byte][snapshot_id:4 bytes][owner_entity_id:2 bytes][view_radius:4 bytes][count:2 bytes][entity_snap...]
 // EntitySnap: [entity_id:2 bytes][entity_type:1 byte][team:1 byte][x:4 bytes][y:4 bytes][radius:2 bytes][hp_percent:1 byte][flags:1 byte][angle:2 bytes][rarity:1 byte][name_len:1 byte][name]
-// OwnerState: [type:1 byte][level:1 byte][flags:1 byte][petal_slots:1 byte][secondary_slots:1 byte][petal_type:1 byte][rarity:1 byte]...
-// Inventory:  [type:1 byte][count:2 bytes][petal_type:1 byte][rarity:1 byte][count:2 bytes]...
+//             live petal entity_type = 100 + petal_type, drop entity_type = 150 + petal_type.
+// OwnerState: [type:1 byte][level:1 byte][flags:1 byte][petal_slots:1 byte][secondary_slots:1 byte][exp:4 bytes][exp_required:4 bytes][petal_type:1 byte][rarity:1 byte]...
+// Inventory:  [type:1 byte][count:2 bytes][petal_type:1 byte][rarity:1 byte][count:4 bytes]...
 // AuthResult: [type:1 byte][success:1 byte][message_len:1 byte][message]
 // Chat:       [type:1 byte][flag:1 byte][player_id:2 bytes][time:4 bytes][name_len:1 byte][message_len:1 byte][name][message]
+// CraftResult:[type:1 byte][success:1 byte][petal_type:1 byte][rarity:1 byte][consumed:4 bytes][count:2 bytes][item...]
 
 using net_coord = int32_t;
 using net_entity_id = uint16_t;
@@ -442,6 +497,10 @@ enum class ServerEntityFlag : uint8_t
     Defending = 1 << 1,
     Dead = 1 << 2,
     Owner = 1 << 3,
+    Undead = 1 << 4,
+    Corrupted = 1 << 5,
+    Relic = 1 << 6,
+    Antennae = 1 << 7,
 };
 
 inline ServerEntityFlag operator|(ServerEntityFlag lhs, ServerEntityFlag rhs)
@@ -537,6 +596,7 @@ struct ServerMessage
         OwnerState = 0x10,
         Inventory = 0x11,
         Chat = 0x12,
+        CraftResult = 0x13,
         Unknown = 0xff,
     } type = Type::Unknown;
 
@@ -552,6 +612,8 @@ struct ServerMessage
     std::optional<uint8_t> flags;
 
     std::optional<uint8_t> level;
+    std::optional<uint32_t> exp;
+    std::optional<uint32_t> exp_required;
     std::optional<uint8_t> petal_slots;
     std::vector<SOwnerPetalSlot> owner_slots;
     std::optional<uint8_t> secondary_slots_count;
@@ -560,6 +622,11 @@ struct ServerMessage
     std::string auth_message;
     std::vector<SInventoryItem> inventory;
     SChatMessage chat;
+    std::optional<bool> craft_success;
+    uint8_t craft_petal_type = 0;
+    uint8_t craft_rarity = 0;
+    uint32_t craft_consumed = 0;
+    std::vector<SInventoryItem> craft_items;
 
     static ServerMessage parse(const uint8_t* data, size_t len)
     {
@@ -648,11 +715,28 @@ struct ServerMessage
             msg.flags = data[offset++];
             msg.petal_slots = data[offset++];
             msg.secondary_slots_count = data[offset++];
-            if (offset + (static_cast<size_t>(*msg.petal_slots) + static_cast<size_t>(*msg.secondary_slots_count)) *
-                             owner_slot_packet_size >
-                len)
             {
-                msg.type = Type::Unknown;
+                const size_t slot_bytes = (static_cast<size_t>(*msg.petal_slots) +
+                                           static_cast<size_t>(*msg.secondary_slots_count)) *
+                                          owner_slot_packet_size;
+                if (offset + 8 + slot_bytes <= len)
+                {
+                    msg.exp = ReadU32(data, offset);
+                    msg.exp_required = ReadU32(data, offset);
+                }
+                else
+                {
+                    msg.exp = 0;
+                    msg.exp_required = 0;
+                }
+                if (offset + slot_bytes > len)
+                {
+                    msg.type = Type::Unknown;
+                    break;
+                }
+            }
+            if (msg.type == Type::Unknown)
+            {
                 break;
             }
             msg.owner_slots.reserve(*msg.petal_slots);
@@ -691,7 +775,7 @@ struct ServerMessage
                 SInventoryItem item;
                 item.petal_type = data[offset++];
                 item.rarity = data[offset++];
-                item.count = ReadU16(data, offset);
+                item.count = ReadU32(data, offset);
                 msg.inventory.push_back(item);
             }
             break;
@@ -725,6 +809,34 @@ struct ServerMessage
             msg.chat.message.assign(reinterpret_cast<const char*>(data + offset),
                                     reinterpret_cast<const char*>(data + offset + message_len));
             offset += message_len;
+            break;
+        }
+        case Type::CraftResult:
+        {
+            if (len < 10)
+            {
+                msg.type = Type::Unknown;
+                break;
+            }
+            msg.craft_success = data[offset++] != 0;
+            msg.craft_petal_type = data[offset++];
+            msg.craft_rarity = data[offset++];
+            msg.craft_consumed = ReadU32(data, offset);
+            uint16_t count = ReadU16(data, offset);
+            if (offset + static_cast<size_t>(count) * inventory_item_packet_size > len)
+            {
+                msg.type = Type::Unknown;
+                break;
+            }
+            msg.craft_items.reserve(count);
+            for (uint16_t i = 0; i < count; ++i)
+            {
+                SInventoryItem item;
+                item.petal_type = data[offset++];
+                item.rarity = data[offset++];
+                item.count = ReadU32(data, offset);
+                msg.craft_items.push_back(item);
+            }
             break;
         }
         default:
@@ -783,6 +895,8 @@ struct ServerMessage
             out[offset++] = msg.flags.value_or(0);
             out[offset++] = slot_count;
             out[offset++] = secondary_slot_count;
+            WriteU32(out, offset, msg.exp.value_or(0));
+            WriteU32(out, offset, msg.exp_required.value_or(0));
             for (uint8_t i = 0; i < slot_count; ++i)
             {
                 out[offset++] = msg.owner_slots[i].petal_type;
@@ -801,7 +915,7 @@ struct ServerMessage
             {
                 out[offset++] = item.petal_type;
                 out[offset++] = item.rarity;
-                WriteU16(out, offset, item.count);
+                WriteU32(out, offset, std::min(item.count, max_inventory_item_count));
             }
             return offset;
         case Type::Chat:
@@ -819,6 +933,19 @@ struct ServerMessage
             offset += message_len;
             return offset;
         }
+        case Type::CraftResult:
+            out[offset++] = msg.craft_success.value_or(false) ? 1 : 0;
+            out[offset++] = msg.craft_petal_type;
+            out[offset++] = msg.craft_rarity;
+            WriteU32(out, offset, msg.craft_consumed);
+            WriteU16(out, offset, static_cast<uint16_t>(msg.craft_items.size()));
+            for (const SInventoryItem& item : msg.craft_items)
+            {
+                out[offset++] = item.petal_type;
+                out[offset++] = item.rarity;
+                WriteU32(out, offset, std::min(item.count, max_inventory_item_count));
+            }
+            return offset;
         default:
             return 0;
         }
@@ -842,14 +969,16 @@ struct ServerMessage
         case Type::AuthResult:
             return 3 + std::min<size_t>(msg.auth_message.size(), UINT8_MAX);
         case Type::OwnerState:
-            return 5 + (std::min<size_t>(msg.owner_slots.size(), UINT8_MAX) +
-                        std::min<size_t>(msg.secondary_slots.size(), UINT8_MAX)) *
-                           owner_slot_packet_size;
+            return 13 + (std::min<size_t>(msg.owner_slots.size(), UINT8_MAX) +
+                         std::min<size_t>(msg.secondary_slots.size(), UINT8_MAX)) *
+                            owner_slot_packet_size;
         case Type::Inventory:
             return 3 + msg.inventory.size() * inventory_item_packet_size;
         case Type::Chat:
             return 10 + std::min<size_t>(msg.chat.player_name.size(), UINT8_MAX) +
                    std::min<size_t>(msg.chat.message.size(), max_chat_message_size);
+        case Type::CraftResult:
+            return 10 + msg.craft_items.size() * inventory_item_packet_size;
         default:
             return 0;
         }

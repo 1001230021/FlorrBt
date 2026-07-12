@@ -14,7 +14,9 @@ class CEntity;
 class CPlayer;
 struct ClientAuthRequest;
 struct ClientChatRequest;
+struct ClientCraftRequest;
 struct ClientSecondarySlotRequest;
+struct SCraftResult;
 struct ServerEntitySnap;
 struct ServerMessage;
 
@@ -36,6 +38,7 @@ class INetworkModule : public IModule
     CGameContext* GameContext() const;
     void BroadcastChat(const CServer::SChatEntry& chat);
     bool SendChatToPlayer(CPlayer& player, const CServer::SChatEntry& chat);
+    bool QueueOwnerStateUpdate(CPlayer& player);
 
   private:
     enum class EPlayerBufferResult
@@ -59,11 +62,13 @@ class INetworkModule : public IModule
     bool QueueWelcome(CPlayer& player);
     bool QueueOwnerState(CPlayer& player);
     bool QueueInventory(CPlayer& player);
+    bool QueueCraftResult(CPlayer& player, const SCraftResult& result);
     bool QueueChat(CPlayer& player, const CServer::SChatEntry& chat);
     void RespawnDeadControlledEntities();
     EPlayerBufferResult ProcessPlayerBuffer(CPlayer& player);
     EPlayerBufferResult HandleAuthRequest(CPlayer& player, const ClientAuthRequest& request);
     void HandleChatRequest(CPlayer& player, const ClientChatRequest& request);
+    void HandleCraftRequest(CPlayer& player, const ClientCraftRequest& request);
     void HandleSecondarySlotRequest(CPlayer& player, const ClientSecondarySlotRequest& request);
     void Respawn(CPlayer& player);
     CPlayer* FindReconnectablePlayer(const std::string& account_name, const CPlayer* pending_player = nullptr) const;
