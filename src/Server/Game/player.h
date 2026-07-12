@@ -7,6 +7,7 @@
 class CEntity;
 class CGameContext;
 class CGameWorld;
+struct SCraftResult;
 struct ClientOperate;
 
 class CPlayer
@@ -31,9 +32,11 @@ class CPlayer
     bool TickDropPickup();
     void ResetControlledMob();
     void UnequipAllPetals();
+    void ApplySavedProgress();
     void ApplySavedSlots();
     bool TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rarity);
     bool TryUnequipPetal(uint8_t slot_index);
+    bool TryCraftPetal(uint8_t petal_type, uint8_t rarity, uint32_t count, SCraftResult* result = nullptr);
 
     void SetOwnedEntity(CEntity* entity);
     CEntity* GetEntity() const;

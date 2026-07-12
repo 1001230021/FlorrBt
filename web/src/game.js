@@ -1,14 +1,17 @@
 import {
   ChatFlag,
   NETWORK_PETAL_TYPE_OFFSET,
+  PetalNames,
   ServerType,
   appendBytes,
   clamp,
+  isDropEntity,
   isPetalEntity,
   mobTypeName,
   packAuth,
   packChat,
   packChores,
+  packCraft,
   packEquip,
   packInput,
   packSecondarySlot,
@@ -21,6 +24,7 @@ import {
   rarityName,
 } from "./protocol.js";
 import { clearLadybugPattern, drawNormalLadybug } from "./ladybug_sprite.js";
+import { drawBeetle } from "./beetle_sprite.js";
 import { drawSoldierAnt } from "./soldier_ant_sprite.js";
 
 const canvas = document.getElementById("game");
@@ -32,15 +36,23 @@ const passwordInput = document.getElementById("password");
 const registerModeInput = document.getElementById("registerMode");
 const connectBtn = document.getElementById("connectBtn");
 const authStatus = document.getElementById("authStatus");
-const statusLine = document.getElementById("statusLine");
-const coordsLine = document.getElementById("coordsLine");
-const fpsLine = document.getElementById("fpsLine");
+const deathOverlay = document.getElementById("deathOverlay");
+const reviveBtn = document.getElementById("reviveBtn");
 const chatLog = document.getElementById("chatLog");
 const chatInput = document.getElementById("chatInput");
 const consolePanel = document.getElementById("consolePanel");
 const consoleLog = document.getElementById("consoleLog");
 const consoleInput = document.getElementById("consoleInput");
 const backpackPanel = document.getElementById("backpackPanel");
+const backpackCloseBtn = document.getElementById("backpackCloseBtn");
+const craftPanel = document.getElementById("craftPanel");
+const craftCloseBtn = document.getElementById("craftCloseBtn");
+const craftStage = document.getElementById("craftStage");
+const craftResultSlot = document.getElementById("craftResultSlot");
+const craftList = document.getElementById("craftList");
+const craftSelection = document.getElementById("craftSelection");
+const craftChance = document.getElementById("craftChance");
+const craftOnceBtn = document.getElementById("craftOnceBtn");
 const primarySlots = document.getElementById("primarySlots");
 const secondarySlots = document.getElementById("secondarySlots");
 const inventoryList = document.getElementById("inventoryList");
@@ -53,6 +65,9 @@ const state = {
   entities: new Map(),
   playerId: 0,
   ownerEntityId: 0,
+  ownerLevel: 1,
+  ownerExp: 0,
+  ownerExpRequired: 10,
   snapshotId: 0,
   viewRadius: 0,
   map: null,
@@ -66,6 +81,8 @@ const state = {
   selectedSlot: 0,
   camera: { x: 0, y: 0 },
   keys: new Set(),
+  mouse: { x: 0, y: 0, seen: false, inUi: false },
+  keyboardControl: false,
   attacking: false,
   defending: false,
   lastInput: { x: 99, y: 99, attacking: false, defending: false },
@@ -75,6 +92,13 @@ const state = {
   consoleOpen: false,
   debugGrid: false,
   backpackOpen: false,
+  craftOpen: false,
+  craftSlots: Array.from({ length: 5 }, () => null),
+  craftSource: null,
+  craftPhase: "idle",
+  craftResult: null,
+  craftBurstUntil: 0,
+  craftSpinStarted: 0,
   drag: null,
   suppressClickUntil: 0,
   canvasWidth: 0,
@@ -93,17 +117,39 @@ const flagAttacking = 1 << 0;
 const flagDefending = 1 << 1;
 const flagDead = 1 << 2;
 const flagOwner = 1 << 3;
+const flagUndead = 1 << 4;
+const flagCorrupted = 1 << 5;
+const flagRelic = 1 << 6;
+const flagAntennae = 1 << 7;
+const beetleType = 1;
 const normalLadybugType = 3;
 const soldierAntType = 7;
+const summonedBeetleType = 10;
 const summonedSoldierAntType = 11;
+const bandageBeetleType = 12;
 const playerFlowerType = 6;
 const bossRarity = 8;
 const maxBossBars = 3;
+const petalAntennaeType = 3;
+const petalCompassType = 10;
+const petalNullificationType = 18;
+const petalRelicType = 20;
+const petalBandageType = 26;
+const flowerTextureVersion = "20260712a";
 const PetalIconIds = [
   0, 48, 51, 17, 1, 16, 58, 13, 57, 74, 71, 98, 72, 111, 97, 7, 113, 77,
-  "nullification", 27, 53, 5, 19, 9, 108, 80, 103, 18, 12, 30,
+  "nullification", 27, 53, 5, 19, 9, 108, 80, 103, 18, 12, 30, 38, 8, 106,
+  109, 94, 93, "glass",
 ];
+const worldPetalSizeScale = 6;
+const worldDropSizeScale = 3.25;
+const petalCardIconScale = 0.92;
+const mobSpriteEffectiveBox = 91.667;
+const mobSpriteViewBox = 110;
+const mobSpriteCoverScale = mobSpriteViewBox / mobSpriteEffectiveBox;
+const PetalNameToType = new Map(PetalNames.map((name, index) => [normalizePetalName(name), index]));
 const assetImages = new Map();
+const livePetalImages = new Map();
 
 function emptySlot() {
   return { petalType: 0, rarity: 0 };
@@ -123,6 +169,7 @@ function loadSettings() {
   wsUrlInput.value = saved.wsUrl || `ws://${location.host || "127.0.0.1:8080"}/ws`;
   accountInput.value = saved.account || "";
   passwordInput.value = saved.password || "";
+  state.keyboardControl = saved.keyboardControl === true;
 }
 
 function saveSettings() {
@@ -130,12 +177,11 @@ function saveSettings() {
     wsUrl: wsUrlInput.value.trim(),
     account: accountInput.value,
     password: passwordInput.value,
+    keyboardControl: state.keyboardControl,
   }));
 }
 
 function setStatus(text, good = false) {
-  statusLine.textContent = text;
-  statusLine.style.color = good ? "#308f5f" : "#a84e45";
   authStatus.textContent = text;
 }
 
@@ -164,7 +210,19 @@ function toggleConsole(force) {
 
 function toggleBackpack(force) {
   state.backpackOpen = typeof force === "boolean" ? force : !state.backpackOpen;
+  if (state.backpackOpen) toggleCraft(false);
   backpackPanel.classList.toggle("open", state.backpackOpen);
+}
+
+function toggleCraft(force) {
+  state.craftOpen = typeof force === "boolean" ? force : !state.craftOpen;
+  if (state.craftOpen) {
+    toggleBackpack(false);
+    renderCraftPanel();
+  } else {
+    clearCraftDisplay();
+  }
+  craftPanel.classList.toggle("open", state.craftOpen);
 }
 
 function submitConsole() {
@@ -283,17 +341,27 @@ function handleServerMessage(msg) {
   }
 
   if (msg.type === ServerType.OwnerState) {
+    state.ownerLevel = Math.max(1, msg.level || 1);
+    state.ownerExp = Math.max(0, msg.exp || 0);
+    state.ownerExpRequired = Math.max(1, msg.expRequired || 10);
     const primaryCount = Math.max(1, (msg.ownerSlots || []).length || state.ownerSlots.length || 5);
     state.ownerSlots = normalizeSlots(msg.ownerSlots, primaryCount);
     state.secondarySlots = normalizeSlots(msg.secondarySlots, primaryCount);
     state.selectedSlot = clamp(state.selectedSlot, 0, state.ownerSlots.length - 1);
     renderInventoryPanel();
+    renderCraftPanel();
     return;
   }
 
   if (msg.type === ServerType.Inventory) {
     state.inventory = msg.inventory || [];
     renderInventoryPanel();
+    renderCraftPanel();
+    return;
+  }
+
+  if (msg.type === ServerType.CraftResult) {
+    handleCraftResult(msg);
     return;
   }
 
@@ -432,11 +500,16 @@ function applySnapshot(msg) {
     live.add(snap.entityId);
     const existing = state.entities.get(snap.entityId);
     if (existing) {
+      const wasDead = (existing.snapshot.flags & flagDead) !== 0;
+      const isDead = (snap.flags & flagDead) !== 0;
       existing.snapshotMove = Math.hypot(snap.pos.x - existing.snapshot.pos.x, snap.pos.y - existing.snapshot.pos.y);
       existing.snapshot = snap;
       existing.dying = false;
       existing.deathAge = 0;
+      if (isDead && !wasDead) existing.deathAngle = Math.random() * Math.PI * 2;
+      if (!isDead) existing.deathAngle = null;
     } else {
+      const isDead = (snap.flags & flagDead) !== 0;
       state.entities.set(snap.entityId, {
         snapshot: snap,
         renderPos: { x: snap.pos.x, y: snap.pos.y },
@@ -445,6 +518,7 @@ function applySnapshot(msg) {
         motionBlend: 0,
         dying: false,
         deathAge: 0,
+        deathAngle: isDead ? Math.random() * Math.PI * 2 : null,
       });
     }
   }
@@ -465,14 +539,20 @@ function applySnapshot(msg) {
 
 function shouldFadeMissingEntity(entity) {
   const owner = state.entities.get(state.ownerEntityId);
-  if (!owner || !state.viewRadius) return true;
+  if (!owner || !state.viewRadius) return false;
   const dx = entity.renderPos.x - owner.renderPos.x;
   const dy = entity.renderPos.y - owner.renderPos.y;
   const visibleEdge = state.viewRadius + Math.max(0, entity.snapshot.radius || 0);
-  return dx * dx + dy * dy <= visibleEdge * visibleEdge;
+  return isNullVisualEntity(entity) && dx * dx + dy * dy <= visibleEdge * visibleEdge;
 }
 
-function readMoveInput() {
+function isNullVisualEntity(entity) {
+  if (!entity || !entity.snapshot) return false;
+  const isOwner = (entity.snapshot.flags & flagOwner) !== 0 || entity.snapshot.entityId === state.ownerEntityId;
+  return isOwner && ownerHasPetal(petalNullificationType);
+}
+
+function readKeyboardMoveInput() {
   let x = 0;
   let y = 0;
   if (state.keys.has("a") || state.keys.has("arrowleft")) x -= 1;
@@ -488,8 +568,35 @@ function readMoveInput() {
   return { x, y };
 }
 
+function readMouseMoveInput() {
+  if (!state.mouse.seen || state.mouse.inUi) return { x: 0, y: 0 };
+
+  const owner = state.entities.get(state.ownerEntityId);
+  const center = owner ? worldToScreen(owner.renderPos) : { x: state.canvasWidth * 0.5, y: state.canvasHeight * 0.5 };
+  let x = state.mouse.x - center.x;
+  let y = state.mouse.y - center.y;
+  const length = Math.hypot(x, y);
+  if (length <= 2) return { x: 0, y: 0 };
+
+  const fullSpeedDistance = Math.max(80, Math.min(state.canvasWidth, state.canvasHeight) * 0.18);
+  const scale = Math.min(1, length / fullSpeedDistance) / length;
+  return { x: x * scale, y: y * scale };
+}
+
+function readMoveInput() {
+  return state.keyboardControl ? readKeyboardMoveInput() : readMouseMoveInput();
+}
+
+function updateMousePointer(event) {
+  state.mouse.x = event.clientX;
+  state.mouse.y = event.clientY;
+  state.mouse.seen = true;
+  state.mouse.inUi = !!isUiTarget(event.target);
+}
+
 function flushInput(dt) {
   if (!state.connected || !state.authenticated || isTyping()) return;
+  if (isOwnerDead()) return;
 
   state.sendTimer += dt;
   const move = readMoveInput();
@@ -510,6 +617,23 @@ function flushInput(dt) {
     state.lastInput.attacking = state.attacking;
     state.lastInput.defending = state.defending;
   }
+}
+
+function isOwnerDead() {
+  const owner = state.authenticated ? state.entities.get(state.ownerEntityId) : null;
+  return !!owner && ((owner.snapshot.flags & flagDead) !== 0);
+}
+
+function updateDeathOverlay() {
+  deathOverlay.classList.toggle("hidden", !isOwnerDead());
+}
+
+function requestRevive() {
+  if (!state.connected || !state.authenticated || !isOwnerDead()) return;
+  state.attacking = false;
+  state.defending = false;
+  state.keys.clear();
+  sendBytes(packChores(false, false, true));
 }
 
 function isTyping() {
@@ -576,6 +700,15 @@ function executeClientCommand(line) {
   if (name === "grid") {
     state.debugGrid = args.length ? args[0] !== "0" && args[0].toLowerCase() !== "off" : !state.debugGrid;
     addConsoleLine(`Debug grid ${state.debugGrid ? "on" : "off"}`);
+    return;
+  }
+  if (name === "keyboard_control") {
+    if (args.length) {
+      const value = String(args[0]).toLowerCase();
+      state.keyboardControl = !(value === "0" || value === "off" || value === "false");
+      saveSettings();
+    }
+    addConsoleLine(`Keyboard control ${state.keyboardControl ? "on" : "off"}`);
     return;
   }
 
@@ -670,7 +803,6 @@ function renderInventoryPanel() {
   inventoryList.replaceChildren();
   primarySlots.style.setProperty("--slot-count", state.ownerSlots.length);
   secondarySlots.style.setProperty("--slot-count", state.ownerSlots.length);
-  inventoryList.classList.toggle("hidden", state.inventory.length === 0);
 
   state.ownerSlots.forEach((slot, index) => {
     primarySlots.appendChild(makeSlotButton(slot, index, "primary"));
@@ -679,20 +811,347 @@ function renderInventoryPanel() {
     secondarySlots.appendChild(makeSlotButton(slot, index, "secondary"));
   });
 
+  renderInventoryGroups(inventoryList, state.inventory, "inventory");
+}
+
+function renderCraftPanel() {
+  craftList.replaceChildren();
+  renderCraftStage();
+  renderCraftMatrix();
+}
+
+function selectCraftPetal(petalType, rarity) {
+  if (state.craftPhase === "spinning") return;
+  if (!canCraftRarity(rarity)) return;
+  if (state.craftPhase === "success" || state.craftPhase === "returned") clearCraftDisplay();
+  const stagedSame = getCraftSlotCount(petalType, rarity);
+  const available = getInventoryCount(petalType, rarity) - getCraftHeldCount(petalType, rarity);
+  const total = Math.max(0, available) + stagedSame;
+  if (total < 5) return;
+
+  state.craftPhase = "staged";
+  state.craftSource = { petalType, rarity };
+  state.craftResult = null;
+  state.craftSlots = Array.from({ length: 5 }, () => null);
+
+  const fillCount = Math.min(5, total);
+  const order = [0, 1, 2, 3, 4];
+  for (let i = 0; i < fillCount; i += 1) {
+    state.craftSlots[order[i]] = { petalType, rarity, count: 1 };
+  }
+  renderCraftPanel();
+}
+
+function renderInventoryGroups(container, items, mode) {
+  const groups = groupInventoryItems(items);
+  container.classList.toggle("hidden", groups.length === 0);
+
+  for (const group of groups) {
+    const section = document.createElement("section");
+    section.className = "inventory-group";
+
+    const header = document.createElement("div");
+    header.className = "inventory-group-title";
+    header.style.color = rarityColor(group.rarity, 1);
+    header.textContent = rarityName(group.rarity);
+    section.appendChild(header);
+
+    const grid = document.createElement("div");
+    grid.className = "inventory-grid";
+    for (const item of group.items) {
+      const button = document.createElement("button");
+      const lit = mode !== "craft" || canLightCraftItem(item.petalType, item.rarity);
+      button.className = `inventory-item${mode === "craft" ? " craft-inventory-item" : ""}${lit ? "" : " locked"}`;
+      button.type = "button";
+      button.title = `${petalTypeName(item.petalType)} ${rarityName(item.rarity)} x${formatShortCount(item.count)}`;
+      button.appendChild(makePetalStack(item.petalType, item.rarity, item.count));
+
+      if (mode === "inventory") {
+        button.addEventListener("pointerdown", (event) => beginDrag(event, button, "inventory", -1, item));
+        button.addEventListener("click", () => {
+          if (shouldSuppressClick()) return;
+          equipFromInventory(item);
+        });
+      } else {
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (lit) selectCraftPetal(item.petalType, item.rarity);
+        });
+      }
+      grid.appendChild(button);
+    }
+    section.appendChild(grid);
+    container.appendChild(section);
+  }
+}
+
+function renderCraftMatrix() {
+  const rows = buildCraftRows();
+  craftList.classList.toggle("hidden", rows.length === 0);
+  if (rows.length === 0) return;
+
+  const matrix = document.createElement("div");
+  matrix.className = "craft-matrix";
+
+  const corner = document.createElement("div");
+  corner.className = "craft-matrix-corner";
+  corner.textContent = "type ↓  rarity →";
+  matrix.appendChild(corner);
+
+  for (let rarity = 1; rarity <= 11; rarity += 1) {
+    const header = document.createElement("div");
+    header.className = "craft-matrix-rarity";
+    header.style.color = rarityColor(rarity, 1);
+    header.textContent = rarityName(rarity).slice(0, 2);
+    header.title = rarityName(rarity);
+    matrix.appendChild(header);
+  }
+
+  for (const row of rows) {
+    const label = document.createElement("div");
+    label.className = "craft-matrix-type";
+    label.textContent = petalTypeName(row.petalType);
+    matrix.appendChild(label);
+
+    for (let rarity = 1; rarity <= 11; rarity += 1) {
+      const baseCount = row.counts.get(rarity) || 0;
+      const heldCount = getCraftHeldCount(row.petalType, rarity);
+      const count = Math.max(0, baseCount - heldCount);
+      const displayCount = count > 0 ? count : baseCount;
+      const lit = canLightCraftItem(row.petalType, rarity);
+      const selected = state.craftSource &&
+        state.craftSource.petalType === row.petalType &&
+        state.craftSource.rarity === rarity;
+
+      const cell = document.createElement(baseCount > 0 ? "button" : "div");
+      cell.className = `craft-matrix-cell${baseCount > 0 ? "" : " empty"}${lit ? " lit" : " locked"}${selected ? " selected" : ""}`;
+      if (baseCount > 0) {
+        cell.type = "button";
+        cell.title = `${petalTypeName(row.petalType)} ${rarityName(rarity)} x${formatShortCount(displayCount)}`;
+        cell.appendChild(makePetalStack(row.petalType, rarity, displayCount));
+        cell.addEventListener("pointerdown", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (lit) selectCraftPetal(row.petalType, rarity);
+        });
+      }
+      matrix.appendChild(cell);
+    }
+  }
+
+  craftList.appendChild(matrix);
+}
+
+function buildCraftRows() {
+  const rows = new Map();
   for (const item of state.inventory) {
     if (!slotHasItem(item) || item.count <= 0) continue;
-    const button = document.createElement("button");
-    button.className = "inventory-item";
-    button.type = "button";
-    button.title = `${petalTypeName(item.petalType)} ${rarityName(item.rarity)} x${item.count}`;
-    button.appendChild(makePetalStack(item.petalType, item.rarity));
-    button.addEventListener("pointerdown", (event) => beginDrag(event, button, "inventory", -1, item));
-    button.addEventListener("click", () => {
-      if (shouldSuppressClick()) return;
-      equipFromInventory(item);
-    });
-    inventoryList.appendChild(button);
+    if (!rows.has(item.petalType)) rows.set(item.petalType, new Map());
+    rows.get(item.petalType).set(item.rarity, item.count);
   }
+  return Array.from(rows, ([petalType, counts]) => ({ petalType, counts }))
+    .sort((a, b) => petalTypeName(a.petalType).localeCompare(petalTypeName(b.petalType), "en") || a.petalType - b.petalType);
+}
+
+function groupInventoryItems(items) {
+  const groups = new Map();
+  for (const item of items) {
+    if (!slotHasItem(item) || item.count <= 0) continue;
+    if (!groups.has(item.rarity)) groups.set(item.rarity, []);
+    groups.get(item.rarity).push({ ...item });
+  }
+  return Array.from(groups, ([rarity, groupItems]) => ({
+    rarity,
+    items: groupItems.sort((a, b) => {
+      const byName = petalTypeName(a.petalType).localeCompare(petalTypeName(b.petalType), "en");
+      return byName || a.petalType - b.petalType;
+    }),
+  })).sort((a, b) => b.rarity - a.rarity);
+}
+
+function getCraftInventoryItems() {
+  return state.inventory
+    .map((item) => ({
+      ...item,
+      count: Math.max(0, (item.count || 0) - getCraftHeldCount(item.petalType, item.rarity)),
+    }))
+    .filter((item) => item.count > 0);
+}
+
+function getInventoryCount(petalType, rarity) {
+  const item = state.inventory.find((entry) => entry.petalType === petalType && entry.rarity === rarity);
+  return item ? item.count || 0 : 0;
+}
+
+function getCraftSlotCount(petalType, rarity) {
+  return state.craftSlots.reduce((sum, slot) => (
+    slotHasItem(slot) && slot.petalType === petalType && slot.rarity === rarity
+      ? sum + Math.max(1, slot.count || 1)
+      : sum
+  ), 0);
+}
+
+function getActiveCraftStagedCount(petalType, rarity) {
+  if (state.craftPhase !== "staged" && state.craftPhase !== "spinning") return 0;
+  return getCraftSlotCount(petalType, rarity);
+}
+
+function getCraftHeldCount(petalType, rarity) {
+  if (state.craftPhase === "idle") return 0;
+  if (state.craftPhase === "success") {
+    return slotHasItem(state.craftResult) &&
+      state.craftResult.petalType === petalType &&
+      state.craftResult.rarity === rarity
+      ? Math.max(1, state.craftResult.count || 1)
+      : 0;
+  }
+  return getCraftSlotCount(petalType, rarity);
+}
+
+function canLightCraftItem(petalType, rarity) {
+  if (state.craftPhase === "spinning") return false;
+  if (!canCraftRarity(rarity)) return false;
+  const visible = Math.max(0, getInventoryCount(petalType, rarity) - getCraftHeldCount(petalType, rarity));
+  return visible + getCraftSlotCount(petalType, rarity) >= 5;
+}
+
+function canCraftRarity(rarity) {
+  return rarity >= 1 && rarity <= 9;
+}
+
+function renderCraftStage() {
+  craftStage.classList.toggle("spinning", state.craftPhase === "spinning");
+  craftStage.classList.toggle("success", state.craftPhase === "success");
+  craftStage.classList.toggle("burst", state.craftPhase === "returned" && performance.now() < state.craftBurstUntil);
+
+  const showRing = state.craftPhase !== "success";
+  craftStage.querySelectorAll("[data-craft-slot]").forEach((button) => {
+    const index = Number(button.dataset.craftSlot || 0);
+    const slot = state.craftSlots[index];
+    button.replaceChildren();
+    button.classList.toggle("hidden", !showRing);
+    button.classList.toggle("filled", slotHasItem(slot));
+    button.disabled = state.craftPhase === "spinning";
+    button.title = slotHasItem(slot)
+      ? `${petalTypeName(slot.petalType)} ${rarityName(slot.rarity)} x${formatShortCount(slot.count || 1)}`
+      : "Craft slot";
+    if (slotHasItem(slot)) button.appendChild(makePetalStack(slot.petalType, slot.rarity, slot.count || 1));
+    button.onclick = (event) => {
+      event.preventDefault();
+      clearCraftDisplay();
+      renderCraftPanel();
+    };
+  });
+
+  craftResultSlot.replaceChildren();
+  craftResultSlot.classList.toggle("hidden", state.craftPhase !== "success" || !slotHasItem(state.craftResult));
+  if (state.craftPhase === "success" && slotHasItem(state.craftResult)) {
+    craftResultSlot.title = `${petalTypeName(state.craftResult.petalType)} ${rarityName(state.craftResult.rarity)} x${formatShortCount(state.craftResult.count || 1)}`;
+    craftResultSlot.appendChild(makePetalStack(state.craftResult.petalType, state.craftResult.rarity, state.craftResult.count || 1));
+  }
+  craftResultSlot.onclick = (event) => {
+    event.preventDefault();
+    clearCraftDisplay();
+    renderCraftPanel();
+  };
+
+  const stagedCount = state.craftSource ? getCraftSlotCount(state.craftSource.petalType, state.craftSource.rarity) : 0;
+  craftOnceBtn.disabled = !(state.authenticated && state.craftPhase === "staged" && stagedCount >= 5);
+  craftChance.textContent = state.craftSource ? `${formatCraftChance(state.craftSource.rarity)} success chance` : "";
+  if (state.craftPhase === "spinning") {
+    craftSelection.textContent = "Crafting...";
+  } else if (state.craftPhase === "success") {
+    craftSelection.textContent = "Craft success";
+  } else if (state.craftPhase === "returned") {
+    craftSelection.textContent = "Craft failed";
+  } else if (state.craftSource) {
+    craftSelection.textContent = `${petalTypeName(state.craftSource.petalType)} ${rarityName(state.craftSource.rarity)} x${stagedCount}`;
+  } else {
+    craftSelection.textContent = "Combine 5 of the same petal to craft an upgrade";
+  }
+}
+
+function formatCraftChance(rarity) {
+  if (rarity === 8) return "0.33%";
+  if (rarity === 9) return "0.1%";
+  if (rarity >= 1 && rarity < 8) {
+    const chance = 64 / (2 ** (rarity - 1));
+    return `${chance.toFixed(chance >= 1 ? 0 : 2)}%`;
+  }
+  return "0%";
+}
+
+function submitCraft() {
+  if (!state.authenticated || state.craftPhase !== "staged" || !state.craftSource) return;
+  const { petalType, rarity } = state.craftSource;
+  if (!canCraftRarity(rarity)) return;
+  const count = getCraftSlotCount(petalType, rarity);
+  if (count < 5 || count > getInventoryCount(petalType, rarity)) return;
+  state.craftPhase = "spinning";
+  state.craftSpinStarted = performance.now();
+  renderCraftPanel();
+  sendBytes(packCraft(petalType, rarity, count));
+}
+
+function handleCraftResult(msg) {
+  const finish = () => {
+    const items = compactCraftItems(msg.items || []);
+    if (msg.success) {
+      state.craftPhase = "success";
+      state.craftSlots = Array.from({ length: 5 }, () => null);
+      state.craftResult = pickCraftSuccessItem(items, msg) || items[0] || null;
+    } else {
+      state.craftPhase = "returned";
+      state.craftResult = null;
+      state.craftSlots = distributeCraftItems(items);
+      state.craftBurstUntil = performance.now() + 420;
+    }
+    state.craftSource = null;
+    renderCraftPanel();
+  };
+
+  const elapsed = performance.now() - (state.craftSpinStarted || 0);
+  window.setTimeout(finish, Math.max(0, 700 - elapsed));
+}
+
+function compactCraftItems(items) {
+  const compacted = [];
+  for (const item of items) {
+    if (!slotHasItem(item) || item.count <= 0) continue;
+    const existing = compacted.find((entry) => entry.petalType === item.petalType && entry.rarity === item.rarity);
+    if (existing) existing.count = clamp(existing.count + item.count, 0, 1000000000);
+    else compacted.push({ petalType: item.petalType, rarity: item.rarity, count: item.count });
+  }
+  return compacted.sort((a, b) => b.rarity - a.rarity || petalTypeName(a.petalType).localeCompare(petalTypeName(b.petalType), "en"));
+}
+
+function pickCraftSuccessItem(items, msg) {
+  return items.find((item) => item.petalType === msg.petalType && item.rarity !== msg.rarity) || null;
+}
+
+function distributeCraftItems(items) {
+  const slots = Array.from({ length: 5 }, () => null);
+  let slotIndex = 0;
+  for (const item of items) {
+    let remaining = Math.max(0, item.count || 0);
+    while (remaining > 0 && slotIndex < slots.length) {
+      const count = slotIndex === slots.length - 1 ? remaining : 1;
+      slots[slotIndex] = { petalType: item.petalType, rarity: item.rarity, count };
+      remaining -= count;
+      slotIndex += 1;
+    }
+  }
+  return slots;
+}
+
+function clearCraftDisplay() {
+  if (state.craftPhase === "spinning") return;
+  state.craftSlots = Array.from({ length: 5 }, () => null);
+  state.craftSource = null;
+  state.craftResult = null;
+  state.craftPhase = "idle";
+  state.craftBurstUntil = 0;
 }
 
 function makeSlotButton(slot, index, kind) {
@@ -701,7 +1160,6 @@ function makeSlotButton(slot, index, kind) {
   button.type = "button";
   button.dataset.dropKind = kind;
   button.dataset.dropIndex = String(index);
-  button.innerHTML = `<span class="index">${index + 1}</span>`;
 
   if (slotHasItem(slot)) {
     button.title = `${petalTypeName(slot.petalType)} ${rarityName(slot.rarity)}`;
@@ -732,7 +1190,7 @@ function makeSlotButton(slot, index, kind) {
   return button;
 }
 
-function makePetalStack(petalType, rarity) {
+function makePetalStack(petalType, rarity, count = 0) {
   const stack = document.createElement("span");
   stack.className = "petal-stack";
 
@@ -745,7 +1203,27 @@ function makePetalStack(petalType, rarity) {
 
   const icon = makePetalIcon(petalType);
   if (icon) stack.appendChild(icon);
+  if (count > 1) {
+    const badge = document.createElement("span");
+    badge.className = "petal-count";
+    badge.textContent = `x${formatShortCount(count)}`;
+    stack.appendChild(badge);
+  }
   return stack;
+}
+
+function formatShortCount(value) {
+  const count = Math.max(0, Math.min(1000000000, Math.floor(Number(value) || 0)));
+  if (count >= 1000000000) return "1b";
+  if (count >= 1000000) return `${formatCompact(count / 1000000)}m`;
+  if (count >= 1000) return `${formatCompact(count / 1000)}k`;
+  return String(count);
+}
+
+function formatCompact(value) {
+  if (value >= 100) return String(Math.floor(value));
+  if (value >= 10) return (Math.floor(value * 10) / 10).toFixed(1).replace(/\.0$/, "");
+  return (Math.floor(value * 10) / 10).toFixed(1).replace(/\.0$/, "");
 }
 
 function makePetalIcon(petalType) {
@@ -774,12 +1252,29 @@ function petalIconPath(petalType) {
   return `./assets/petals/${iconId}.svg`;
 }
 
+function normalizePetalName(name) {
+  return String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function petalTypeFromSnap(snap) {
+  const fromEntity = petalTypeFromEntity(snap.entityType);
+  if (fromEntity > 0 && fromEntity < PetalIconIds.length) return fromEntity;
+
+  const fromName = PetalNameToType.get(normalizePetalName(snap.name));
+  return fromName || fromEntity;
+}
+
 function assetImage(src) {
   if (!src) return null;
   let image = assetImages.get(src);
   if (!image) {
     image = new Image();
     image.decoding = "async";
+    image.addEventListener("load", () => requestAnimationFrame(drawScene), { once: true });
+    image.addEventListener("error", () => {
+      image.failed = true;
+      requestAnimationFrame(drawScene);
+    }, { once: true });
     image.src = src;
     assetImages.set(src, image);
   }
@@ -787,7 +1282,11 @@ function assetImage(src) {
 }
 
 function imageReady(image) {
-  return image && image.complete && image.naturalWidth > 0;
+  return image && !image.failed && image.complete && image.naturalWidth > 0;
+}
+
+function ownerHasPetal(petalType) {
+  return state.ownerSlots.some((slot) => slotHasItem(slot) && slot.petalType === petalType);
 }
 
 function equipFromInventory(item) {
@@ -854,11 +1353,11 @@ function adjustInventory(petalType, rarity, delta) {
   if (!petalType || !rarity || delta === 0) return;
   const existing = state.inventory.find((item) => item.petalType === petalType && item.rarity === rarity);
   if (existing) {
-    existing.count = Math.max(0, (existing.count || 0) + delta);
+    existing.count = clamp(Math.max(0, (existing.count || 0) + delta), 0, 1000000000);
     if (existing.count <= 0) state.inventory = state.inventory.filter((item) => item !== existing);
     return;
   }
-  if (delta > 0) state.inventory.push({ petalType, rarity, count: delta });
+  if (delta > 0) state.inventory.push({ petalType, rarity, count: clamp(delta, 0, 1000000000) });
 }
 
 function movePrimaryToPrimary(fromIndex, toIndex) {
@@ -887,10 +1386,10 @@ function movePrimaryToSecondary(fromIndex, toIndex) {
   const oldSecondary = copySlot(state.secondarySlots[toIndex]);
   sendBytes(packUnequip(fromIndex));
   sendBytes(packSecondarySlot(toIndex, source.petalType, source.rarity));
+  if (slotHasItem(oldSecondary)) sendBytes(packEquip(fromIndex, oldSecondary.petalType, oldSecondary.rarity));
 
-  state.ownerSlots[fromIndex] = emptySlot();
+  state.ownerSlots[fromIndex] = oldSecondary;
   state.secondarySlots[toIndex] = source;
-  if (slotHasItem(oldSecondary)) adjustInventory(oldSecondary.petalType, oldSecondary.rarity, 1);
   renderInventoryPanel();
 }
 
@@ -920,10 +1419,10 @@ function moveSecondaryToSecondary(fromIndex, toIndex) {
   const target = copySlot(state.secondarySlots[toIndex]);
   sendBytes(packSecondarySlot(fromIndex, 0, 0));
   sendBytes(packSecondarySlot(toIndex, source.petalType, source.rarity));
+  if (slotHasItem(target)) sendBytes(packSecondarySlot(fromIndex, target.petalType, target.rarity));
 
-  state.secondarySlots[fromIndex] = emptySlot();
+  state.secondarySlots[fromIndex] = target;
   state.secondarySlots[toIndex] = source;
-  if (slotHasItem(target)) adjustInventory(target.petalType, target.rarity, 1);
   renderInventoryPanel();
 }
 
@@ -1069,7 +1568,6 @@ function updateRenderPositions(dt) {
     owner.renderAngle = smoothAngle(owner.renderAngle, owner.snapshot.angle, 14, dt);
     state.camera.x += (owner.renderPos.x - state.camera.x) * smoothFactor(12, dt);
     state.camera.y += (owner.renderPos.y - state.camera.y) * smoothFactor(12, dt);
-    coordsLine.textContent = `${owner.snapshot.pos.x.toFixed(1)}, ${owner.snapshot.pos.y.toFixed(1)}`;
   }
 
   const dead = [];
@@ -1166,7 +1664,8 @@ function drawTileImage(image, pos, width, height, raw) {
       origin.y,
     );
   }
-  ctx.drawImage(image, 0, 0, width, height);
+  const bleed = 0.75;
+  ctx.drawImage(image, -bleed, -bleed, width + bleed * 2, height + bleed * 2);
   ctx.restore();
 }
 
@@ -1185,13 +1684,20 @@ function drawMapTiles() {
   const worldBottom = state.camera.y + state.canvasHeight * 0.5 / scale + tileH;
 
   for (const layer of map.layers) {
-    const minX = Math.max(0, Math.floor(worldLeft / tileW));
-    const minY = Math.max(0, Math.floor(worldTop / tileH));
-    const maxX = Math.min(layer.width - 1, Math.ceil(worldRight / tileW));
-    const maxY = Math.min(layer.height - 1, Math.ceil(worldBottom / tileH));
+    if (!layer.width || !layer.height || !layer.tiles || layer.tiles.length <= 0) continue;
+
+    const minX = Math.floor(worldLeft / tileW);
+    const minY = Math.floor(worldTop / tileH);
+    const maxX = Math.ceil(worldRight / tileW);
+    const maxY = Math.ceil(worldBottom / tileH);
+    const maxTileX = Math.max(0, layer.width - 1);
+    const maxTileY = Math.max(0, layer.height - 1);
+
     for (let y = minY; y <= maxY; y += 1) {
+      const sampleY = clamp(y, 0, maxTileY);
       for (let x = minX; x <= maxX; x += 1) {
-        const raw = layer.tiles[y * layer.width + x] >>> 0;
+        const sampleX = clamp(x, 0, maxTileX);
+        const raw = layer.tiles[sampleY * layer.width + sampleX] >>> 0;
         const gid = canonicalTileGid(raw);
         if (!gid) continue;
         const image = map.tileImages.get(gid);
@@ -1224,6 +1730,8 @@ function drawGrid() {
   if (!state.debugGrid) return;
 
   const scale = worldScale();
+  drawTileDebugGrid(scale);
+
   let spacingWorld = 64;
   while (spacingWorld * scale < 42) spacingWorld *= 2;
   while (spacingWorld * scale > 130 && spacingWorld > 8) spacingWorld *= 0.5;
@@ -1253,19 +1761,67 @@ function drawGrid() {
   ctx.stroke();
 }
 
+function drawTileDebugGrid(scale) {
+  const map = state.map;
+  if (!map || !map.layers) return;
+
+  const tileW = map.tileWidth;
+  const tileH = map.tileHeight;
+  if (tileW <= 0 || tileH <= 0) return;
+
+  const width = (map.width || map.layers[0]?.width || 0) * tileW;
+  const height = (map.height || map.layers[0]?.height || 0) * tileH;
+  if (width <= 0 || height <= 0) return;
+
+  const worldLeft = state.camera.x - state.canvasWidth * 0.5 / scale;
+  const worldTop = state.camera.y - state.canvasHeight * 0.5 / scale;
+  const worldRight = state.camera.x + state.canvasWidth * 0.5 / scale;
+  const worldBottom = state.camera.y + state.canvasHeight * 0.5 / scale;
+  const minX = Math.max(0, Math.floor(worldLeft / tileW));
+  const minY = Math.max(0, Math.floor(worldTop / tileH));
+  const maxX = Math.min(Math.ceil(width / tileW), Math.ceil(worldRight / tileW));
+  const maxY = Math.min(Math.ceil(height / tileH), Math.ceil(worldBottom / tileH));
+
+  ctx.save();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = "rgba(98, 116, 138, 0.28)";
+  ctx.beginPath();
+  for (let x = minX; x <= maxX; x += 1) {
+    const sx = worldToScreen({ x: x * tileW, y: 0 }).x;
+    ctx.moveTo(sx, 0);
+    ctx.lineTo(sx, state.canvasHeight);
+  }
+  for (let y = minY; y <= maxY; y += 1) {
+    const sy = worldToScreen({ x: 0, y: y * tileH }).y;
+    ctx.moveTo(0, sy);
+    ctx.lineTo(state.canvasWidth, sy);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawEntity(entity) {
   const snap = entity.snapshot;
   const pos = worldToScreen(entity.renderPos);
   const radius = Math.max(3, worldLengthToScreen(snap.radius));
   const isOwner = (snap.flags & flagOwner) !== 0 || snap.entityId === state.ownerEntityId;
   const isPetal = isPetalEntity(snap.entityType);
+  const isDrop = isDropEntity(snap.entityType);
   const dead = (snap.flags & flagDead) !== 0;
   const deathProgress = entity.dying ? clamp((entity.deathAge || 0) / deathFadeDuration, 0, 1) : 0;
   const deathScale = entity.dying ? 1 + deathProgress * 0.45 : 1;
   const deathAlpha = entity.dying ? 1 - deathProgress : 1;
 
   ctx.save();
-  ctx.globalAlpha = (dead ? 0.45 : 1) * deathAlpha;
+  ctx.globalAlpha = deathAlpha;
+
+  if (!isPetal && (snap.entityType === beetleType || snap.entityType === summonedBeetleType)) {
+    drawBeetle(ctx, "./assets/beetle.svg", pos, radius * deathScale, snap.entityId,
+               entity.renderAngle ?? snap.angle, entity.motionBlend || 0, performance.now() / 1000);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
 
   if (!isPetal && snap.entityType === normalLadybugType) {
     drawNormalLadybug(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle);
@@ -1282,55 +1838,451 @@ function drawEntity(entity) {
     return;
   }
 
+  if (!isPetal && snap.entityType === bandageBeetleType) {
+    drawBeetle(ctx, "./assets/bandage_beetle.svg", pos, radius * deathScale, snap.entityId,
+               entity.renderAngle ?? snap.angle, entity.motionBlend || 0, performance.now() / 1000);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === playerFlowerType) {
+    const flowerAngle = dead ? (entity.deathAngle ?? entity.renderAngle ?? snap.angle) : (entity.renderAngle ?? snap.angle);
+    drawPlayerFlower(snap, pos, radius * deathScale, flowerAngle, isOwner);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (isDrop) {
+    drawDropPetalCard(petalTypeFromSnap(snap), snap.rarity, pos, radius * deathScale);
+    ctx.restore();
+    return;
+  }
+
   if (isPetal) {
-    if (drawPetalComposite(petalTypeFromEntity(snap.entityType), snap.rarity, pos, radius * deathScale,
-                           entity.renderAngle ?? snap.angle)) {
-      if (petalTypeFromEntity(snap.entityType) === 10)
-        drawCompassNeedle(pos, radius * deathScale, entity.renderAngle ?? snap.angle);
-      ctx.restore();
-      return;
-    }
+    const petalType = petalTypeFromSnap(snap);
+    drawLivePetal(petalType, snap.rarity, pos, radius * deathScale, entity.renderAngle ?? snap.angle);
+    if (petalType === petalCompassType) drawCompassNeedle(pos, radius * deathScale, entity.renderAngle ?? snap.angle);
+    ctx.restore();
+    return;
   }
 
   ctx.beginPath();
   ctx.arc(pos.x, pos.y, radius * deathScale, 0, Math.PI * 2);
 
   if (isOwner) ctx.fillStyle = "#ffe0e7";
-  else if (isPetal) ctx.fillStyle = rarityColor(snap.rarity, 0.82);
+  else if (isPetal || isDrop) ctx.fillStyle = rarityColor(snap.rarity, 0.82);
   else ctx.fillStyle = rarityColor(snap.rarity, 0.72);
   ctx.fill();
 
   ctx.lineWidth = (isOwner ? 3 : 1.5) * deathScale;
   if (isOwner && (snap.flags & flagDefending)) ctx.strokeStyle = "#467acd";
   else if (isOwner && (snap.flags & flagAttacking)) ctx.strokeStyle = "#be5e7a";
-  else ctx.strokeStyle = isPetal ? "#4f6680" : "rgba(48, 62, 82, 0.52)";
+  else ctx.strokeStyle = (isPetal || isDrop) ? "#4f6680" : "rgba(48, 62, 82, 0.52)";
   ctx.stroke();
 
-  if (isPetal && petalTypeFromEntity(snap.entityType) === 10)
+  if (isPetal && petalTypeFromSnap(snap) === petalCompassType)
     drawCompassNeedle(pos, radius * deathScale, entity.renderAngle ?? snap.angle);
-  if (!isPetal && !entity.dying) drawMobFrame(snap, pos, radius);
+  if (!isPetal && !isDrop && !entity.dying) drawMobFrame(snap, pos, radius);
   ctx.restore();
 }
 
-function drawPetalComposite(petalType, rarity, pos, radius, angle) {
-  const base = assetImage(petalBasePath(rarity));
-  const icon = assetImage(petalIconPath(petalType));
-  if (!imageReady(base)) return false;
+function drawPlayerFlower(snap, pos, radius, angle, isOwner) {
+  const flags = snap.flags || 0;
+  const hasAntennae = (flags & flagAntennae) !== 0 || (isOwner && ownerHasPetal(petalAntennaeType));
+  const hasBandage = isOwner && ownerHasPetal(petalBandageType);
+  const hasRelic = (flags & flagRelic) !== 0 || (isOwner && ownerHasPetal(petalRelicType));
+  const nullified = isOwner && ownerHasPetal(petalNullificationType);
+  const corrupted = (flags & flagCorrupted) !== 0;
+  const undead = (flags & flagUndead) !== 0;
+  const dead = (flags & flagDead) !== 0;
 
-  const size = Math.max(12, radius * 2.25);
+  if (hasAntennae) drawAntennaeUnderlay(pos, radius, angle);
+
+  let texture = "normal";
+  if (corrupted) texture = "gambler";
+  else if (undead) texture = "undead";
+  else if (hasBandage) texture = "bandaged";
+
+  const image = assetImage(playerFlowerTexturePath(texture));
+  const size = Math.max(18, radius * 2.36);
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  if (dead && Number.isFinite(angle)) ctx.rotate(angle);
+  if (nullified) ctx.globalAlpha *= 0.58;
+  if (imageReady(image)) {
+    ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
+  } else {
+    drawPlayerFlowerFallback(radius, texture);
+  }
+
+  if (hasRelic && !corrupted && !undead) {
+    ctx.globalCompositeOperation = "source-atop";
+    ctx.fillStyle = "rgba(20, 24, 32, 0.38)";
+    ctx.fillRect(-size * 0.5, -size * 0.5, size, size);
+  }
+  ctx.globalCompositeOperation = "source-over";
+  const attacking = (flags & flagAttacking) !== 0;
+  const defending = !attacking && (flags & flagDefending) !== 0;
+  drawPlayerFlowerFace(radius, angle, texture, dead ? "dead" : (attacking ? "attack" : (defending ? "defend" : "normal")));
+  ctx.restore();
+}
+
+function drawMobSvg(src, pos, radius, angle) {
+  const image = assetImage(src);
+  const size = Math.max(1, radius * 2 * mobSpriteCoverScale);
+
   ctx.save();
   ctx.translate(pos.x, pos.y);
   if (Number.isFinite(angle)) ctx.rotate(angle);
-  ctx.drawImage(base, -size * 0.5, -size * 0.5, size, size);
 
+  if (imageReady(image)) {
+    ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
+  } else {
+    ctx.fillStyle = "#7f678f";
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = Math.max(1.5, radius * 0.12);
+    ctx.strokeStyle = "rgba(35, 44, 54, 0.45)";
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function playerFlowerTexturePath(texture) {
+  switch (texture) {
+    case "bandaged":
+      return `./assets/player_flower_bandaged.svg?v=${flowerTextureVersion}`;
+    case "undead":
+      return `./assets/player_flower_undead.svg?v=${flowerTextureVersion}`;
+    case "gambler":
+      return `./assets/player_flower_gambler.svg?v=${flowerTextureVersion}`;
+    default:
+      return `./assets/player_flower.svg?v=${flowerTextureVersion}`;
+  }
+}
+
+function drawAntennaeUnderlay(pos, radius, angle) {
+  const icon = assetImage(petalIconPath(petalAntennaeType));
+  const size = Math.max(18, radius * 2.65);
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  if (Number.isFinite(angle)) ctx.rotate(angle + Math.PI * 0.5);
+  ctx.globalAlpha *= 0.9;
   if (imageReady(icon)) {
     const sourceWidth = icon.naturalWidth || 110;
     const sourceHeight = icon.naturalHeight || 110;
-    const iconSize = size * 0.9;
-    ctx.drawImage(icon, 0, 0, sourceWidth, sourceHeight, -iconSize * 0.5, -iconSize * 0.5, iconSize, iconSize);
+    const cropHeight = sourceHeight * 0.64;
+    ctx.drawImage(icon, 0, 0, sourceWidth, cropHeight,
+                  -size * 0.5, -size * 0.58, size, size * 0.66);
+  } else {
+    ctx.strokeStyle = "#111";
+    ctx.lineWidth = Math.max(2, radius * 0.14);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(-radius * 0.22, -radius * 0.08);
+    ctx.quadraticCurveTo(-radius * 0.66, -radius * 0.9, -radius * 1.08, -radius * 1.24);
+    ctx.moveTo(radius * 0.22, -radius * 0.08);
+    ctx.quadraticCurveTo(radius * 0.66, -radius * 0.9, radius * 1.08, -radius * 1.24);
+    ctx.stroke();
   }
   ctx.restore();
-  return true;
+}
+
+function drawPlayerFlowerFallback(radius, texture) {
+  const centerFill = texture === "undead" ? "#a7c66f" :
+                     texture === "gambler" ? "#c64136" :
+                     "#f2cc42";
+  const stroke = texture === "undead" ? "#73934c" :
+                 texture === "gambler" ? "#782821" :
+                 "#d9b638";
+  ctx.fillStyle = centerFill;
+  ctx.beginPath();
+  ctx.arc(0, 0, radius * 0.88, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = Math.max(2.2, radius * 0.18);
+  ctx.strokeStyle = stroke;
+  ctx.stroke();
+}
+
+function drawPlayerFlowerFace(radius, angle, texture, expression = "normal") {
+  const look = Number.isFinite(angle) ? { x: Math.cos(angle), y: Math.sin(angle) } : { x: 0, y: 0 };
+  const eyeFill = texture === "undead" ? "#27351f" : "#333127";
+  const smileFill = texture === "undead" ? "#35472a" : "#5a4a26";
+
+  ctx.save();
+  ctx.translate(0, radius * 0.06);
+  ctx.scale(0.86, 0.86);
+  if (expression === "dead") drawPlayerFlowerDeadEyes(radius, eyeFill);
+  else if (expression === "attack") drawPlayerFlowerAngryEyes(radius, look, eyeFill);
+  else drawPlayerFlowerNormalEyes(radius, look, eyeFill);
+
+  if (expression === "dead")
+    drawPlayerFlowerDeadMouth(radius, smileFill);
+  else if (expression === "attack" || expression === "defend")
+    drawPlayerFlowerAngryMouth(radius, smileFill);
+  else
+    drawPlayerFlowerSmile(radius, texture, smileFill);
+  ctx.restore();
+}
+
+function drawPlayerFlowerNormalEyes(radius, look, eyeFill) {
+  const eyeOffset = radius * 0.055;
+  const leftEye = { x: -radius * 0.23, y: -radius * 0.31 };
+  const rightEye = { x: radius * 0.23, y: -radius * 0.31 };
+
+  ctx.fillStyle = eyeFill;
+  ctx.beginPath();
+  ctx.ellipse(leftEye.x, leftEye.y, radius * 0.105, radius * 0.27, 0, 0, Math.PI * 2);
+  ctx.ellipse(rightEye.x, rightEye.y, radius * 0.105, radius * 0.27, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(255, 255, 222, 0.92)";
+  ctx.beginPath();
+  ctx.ellipse(leftEye.x - radius * 0.035 + look.x * eyeOffset,
+              leftEye.y - radius * 0.09 + look.y * eyeOffset, radius * 0.032, radius * 0.065, 0, 0, Math.PI * 2);
+  ctx.ellipse(rightEye.x - radius * 0.035 + look.x * eyeOffset,
+              rightEye.y - radius * 0.09 + look.y * eyeOffset, radius * 0.032, radius * 0.065, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawPlayerFlowerAngryEyes(radius, look, eyeFill) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(-radius * 0.48, -radius * 0.62);
+  ctx.lineTo(0, -radius * 0.29);
+  ctx.lineTo(radius * 0.48, -radius * 0.62);
+  ctx.lineTo(radius * 0.48, radius * 0.16);
+  ctx.lineTo(-radius * 0.48, radius * 0.16);
+  ctx.closePath();
+  ctx.clip();
+
+  drawPlayerFlowerNormalEyes(radius, look, eyeFill);
+  ctx.restore();
+}
+
+function drawPlayerFlowerDeadEyes(radius, eyeFill) {
+  const centers = [
+    { x: -radius * 0.23, y: -radius * 0.31 },
+    { x: radius * 0.23, y: -radius * 0.31 },
+  ];
+  ctx.strokeStyle = eyeFill;
+  ctx.lineWidth = Math.max(2, radius * 0.115);
+  ctx.lineCap = "round";
+  for (const eye of centers) {
+    const dx = radius * 0.12;
+    const dy = radius * 0.16;
+    ctx.beginPath();
+    ctx.moveTo(eye.x - dx, eye.y - dy);
+    ctx.lineTo(eye.x + dx, eye.y + dy);
+    ctx.moveTo(eye.x + dx, eye.y - dy);
+    ctx.lineTo(eye.x - dx, eye.y + dy);
+    ctx.stroke();
+  }
+}
+
+function drawPlayerFlowerSmile(radius, texture, smileFill) {
+  ctx.strokeStyle = smileFill;
+  ctx.lineWidth = Math.max(1.5, radius * 0.075);
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  if (texture === "undead") {
+    ctx.arc(0, radius * 0.37, radius * 0.2, Math.PI * 1.16, Math.PI * 1.84);
+  } else {
+    ctx.arc(0, radius * 0.02, radius * 0.29, 0.22 * Math.PI, 0.78 * Math.PI);
+  }
+  ctx.stroke();
+}
+
+function drawPlayerFlowerAngryMouth(radius, smileFill) {
+  ctx.strokeStyle = smileFill;
+  ctx.lineWidth = Math.max(1.5, radius * 0.075);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(-radius * 0.22, radius * 0.27);
+  ctx.quadraticCurveTo(0, radius * 0.16, radius * 0.22, radius * 0.27);
+  ctx.stroke();
+}
+
+function drawPlayerFlowerDeadMouth(radius, smileFill) {
+  ctx.strokeStyle = smileFill;
+  ctx.lineWidth = Math.max(1.5, radius * 0.075);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(-radius * 0.24, radius * 0.34);
+  ctx.quadraticCurveTo(0, radius * 0.17, radius * 0.24, radius * 0.34);
+  ctx.stroke();
+}
+
+function drawLivePetal(petalType, rarity, pos, radius, angle) {
+  const size = Math.max(1, radius * worldPetalSizeScale);
+  const icon = livePetalIconImage(petalType);
+
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  if (Number.isFinite(angle)) ctx.rotate(angle);
+
+  if (imageReady(icon)) {
+    drawCenteredImage(icon, size, 1);
+  } else {
+    drawPetalSilhouette(size, rarity);
+  }
+
+  ctx.restore();
+}
+
+function drawDropPetalCard(petalType, rarity, pos, radius) {
+  const size = Math.max(1, radius * worldDropSizeScale);
+  const base = petalBaseImage(rarity);
+  const icon = petalIconImage(petalType);
+
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  drawPetalCardShadow(size);
+
+  if (imageReady(base)) {
+    drawCenteredImage(base, size, 1);
+  } else {
+    drawPetalCardFallback(size, rarity);
+  }
+
+  if (imageReady(icon)) {
+    drawCenteredImage(icon, size, petalCardIconScale);
+  } else {
+    drawPetalSilhouette(size * petalCardIconScale, rarity);
+  }
+
+  ctx.restore();
+}
+
+function petalIconImage(petalType) {
+  return assetImage(petalIconPath(petalType));
+}
+
+function livePetalIconImage(petalType) {
+  const src = petalIconPath(petalType);
+  if (!src) return null;
+
+  let entry = livePetalImages.get(src);
+  if (entry) return entry.image;
+
+  const image = new Image();
+  image.decoding = "async";
+  entry = { image, url: "" };
+  livePetalImages.set(src, entry);
+
+  fetch(src)
+    .then((response) => {
+      if (!response.ok) throw new Error(`Petal SVG failed: ${src}`);
+      return response.text();
+    })
+    .then((svgText) => {
+      const blob = new Blob([stripLivePetalLabel(svgText)], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      entry.url = url;
+      image.addEventListener("load", () => requestAnimationFrame(drawScene), { once: true });
+      image.addEventListener("error", () => {
+        image.failed = true;
+        if (entry.url) URL.revokeObjectURL(entry.url);
+        requestAnimationFrame(drawScene);
+      }, { once: true });
+      image.src = url;
+    })
+    .catch(() => {
+      image.failed = true;
+      requestAnimationFrame(drawScene);
+    });
+
+  return image;
+}
+
+function stripLivePetalLabel(svgText) {
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgText;
+
+  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+  const root = doc.documentElement;
+  if (!root || root.tagName.toLowerCase() !== "svg") return svgText;
+
+  root.querySelectorAll("text").forEach((node) => node.remove());
+
+  const paths = Array.from(root.querySelectorAll("path"));
+  const remove = new Set();
+  for (let i = 0; i < paths.length - 1; i += 1) {
+    const outline = paths[i];
+    const fill = paths[i + 1];
+    if (isLabelOutlinePath(outline) && isMatchingLabelFillPath(outline, fill)) {
+      remove.add(outline);
+      remove.add(fill);
+      i += 1;
+    }
+  }
+  remove.forEach((node) => node.remove());
+
+  return new XMLSerializer().serializeToString(root);
+}
+
+function isLabelOutlinePath(path) {
+  const stroke = normalizeColorAttr(path.getAttribute("stroke"));
+  const fill = normalizeColorAttr(path.getAttribute("fill"));
+  const strokeWidth = Number.parseFloat(path.getAttribute("stroke-width") || "0");
+  return (stroke === "#000" || stroke === "#000000") && (!fill || fill === "none") && strokeWidth >= 1.5;
+}
+
+function isMatchingLabelFillPath(outline, fill) {
+  if (!fill) return false;
+  const color = normalizeColorAttr(fill.getAttribute("fill"));
+  return (color === "#fff" || color === "#ffffff") && outline.getAttribute("d") === fill.getAttribute("d");
+}
+
+function normalizeColorAttr(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function petalBaseImage(rarity) {
+  return assetImage(petalBasePath(rarity));
+}
+
+function drawCenteredImage(image, size, scale) {
+  const drawSize = size * scale;
+  ctx.drawImage(image, -drawSize * 0.5, -drawSize * 0.5, drawSize, drawSize);
+}
+
+function drawPetalCardShadow(size) {
+  const half = size * 0.5;
+  ctx.save();
+  ctx.globalAlpha *= 0.18;
+  ctx.fillStyle = "#142033";
+  ctx.fillRect(-half + size * 0.05, -half + size * 0.07, size, size);
+  ctx.restore();
+}
+
+function drawPetalCardFallback(size, rarity) {
+  const half = size * 0.5;
+  ctx.fillStyle = rarityColor(rarity || 1, 0.95);
+  ctx.fillRect(-half, -half, size, size);
+  ctx.lineWidth = Math.max(2, size * 0.08);
+  ctx.strokeStyle = "rgba(45, 55, 68, 0.42)";
+  ctx.strokeRect(-half, -half, size, size);
+}
+
+function drawPetalSilhouette(size, rarity) {
+  const scale = size / 110;
+  ctx.save();
+  ctx.scale(scale, scale);
+  ctx.fillStyle = rarityColor(rarity || 1, 0.82);
+  ctx.strokeStyle = "rgba(35, 44, 54, 0.52)";
+  ctx.lineWidth = 4.5;
+  ctx.beginPath();
+  ctx.ellipse(-12, -2, 15, 30, -0.64, 0, Math.PI * 2);
+  ctx.ellipse(12, -2, 15, 30, 0.64, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawCompassNeedle(pos, radius, angle) {
@@ -1355,11 +2307,12 @@ function drawCompassNeedle(pos, radius, angle) {
 }
 
 function isMobSnap(snap) {
-  return snap && !isPetalEntity(snap.entityType) && snap.entityType !== playerFlowerType;
+  return snap && !isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType) &&
+         snap.entityType !== playerFlowerType;
 }
 
 function hasHealthFrame(snap) {
-  return snap && !isPetalEntity(snap.entityType);
+  return snap && !isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType);
 }
 
 function mobDisplayName(snap) {
@@ -1371,44 +2324,133 @@ function rarityOrLevelLabel(snap) {
   return rarityName(snap.rarity);
 }
 
+function roundedRectPath(x, y, width, height, radius = height * 0.5) {
+  const r = Math.max(0, Math.min(radius, width * 0.5, height * 0.5));
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.arcTo(x + width, y, x + width, y + r, r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.arcTo(x + width, y + height, x + width - r, y + height, r);
+  ctx.lineTo(x + r, y + height);
+  ctx.arcTo(x, y + height, x, y + height - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+function drawCapsuleBar(x, y, width, height, progress, fill, border = 4, track = "#09090b") {
+  const safeWidth = Math.max(1, width);
+  const safeHeight = Math.max(1, height);
+  const inset = Math.min(border, safeWidth * 0.35, safeHeight * 0.35);
+  const innerX = x + inset;
+  const innerY = y + inset;
+  const innerW = Math.max(0, safeWidth - inset * 2);
+  const innerH = Math.max(0, safeHeight - inset * 2);
+  const amount = clamp(progress || 0, 0, 1);
+
+  ctx.fillStyle = "#050506";
+  roundedRectPath(x, y, safeWidth, safeHeight);
+  ctx.fill();
+
+  if (innerW <= 0 || innerH <= 0) return;
+
+  ctx.save();
+  roundedRectPath(innerX, innerY, innerW, innerH);
+  ctx.clip();
+  ctx.fillStyle = track;
+  ctx.fillRect(innerX, innerY, innerW, innerH);
+  if (amount > 0) {
+    ctx.fillStyle = fill;
+    ctx.fillRect(innerX, innerY, innerW * amount, innerH);
+  }
+  ctx.restore();
+}
+
+function drawSegmentedCapsuleBar(x, y, width, height, members, fill, border = 5) {
+  const safeMembers = members.length > 0 ? members : [{ hp: 0 }];
+  const inset = Math.min(border, width * 0.35, height * 0.35);
+  const innerX = x + inset;
+  const innerY = y + inset;
+  const innerW = Math.max(0, width - inset * 2);
+  const innerH = Math.max(0, height - inset * 2);
+  const segment = safeMembers.length > 0 ? innerW / safeMembers.length : innerW;
+
+  ctx.fillStyle = "#050506";
+  roundedRectPath(x, y, width, height);
+  ctx.fill();
+
+  if (innerW <= 0 || innerH <= 0) return;
+
+  ctx.save();
+  roundedRectPath(innerX, innerY, innerW, innerH);
+  ctx.clip();
+  ctx.fillStyle = "#111115";
+  ctx.fillRect(innerX, innerY, innerW, innerH);
+  safeMembers
+    .sort((a, b) => b.hp - a.hp || a.distance - b.distance)
+    .forEach((member, index) => {
+      ctx.fillStyle = fill;
+      ctx.globalAlpha = 0.98;
+      ctx.fillRect(innerX + index * segment, innerY, segment * clamp(member.hp, 0, 1), innerH);
+    });
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function drawOutlinedText(text, x, y, {
+  font = "700 14px Segoe UI, Microsoft YaHei, sans-serif",
+  fill = "#fff",
+  stroke = "#050506",
+  lineWidth = 4,
+  align = "center",
+  baseline = "middle",
+} = {}) {
+  ctx.font = font;
+  ctx.textAlign = align;
+  ctx.textBaseline = baseline;
+  ctx.lineJoin = "round";
+  ctx.lineWidth = lineWidth;
+  ctx.strokeStyle = stroke;
+  ctx.fillStyle = fill;
+  ctx.strokeText(text, x, y);
+  ctx.fillText(text, x, y);
+}
+
 function drawMobFrame(snap, pos, radius) {
   if (!hasHealthFrame(snap)) {
     drawEntityLabel(snap, pos, radius);
     return;
   }
 
-  const width = Math.max(42, radius * 2.25);
-  const barHeight = Math.max(5, Math.min(8, radius * 0.22));
-  const y = pos.y + radius + 8;
+  const width = Math.max(10, radius * 2.08);
+  const barHeight = Math.max(3, radius * 0.14);
+  const y = pos.y + radius + Math.max(4, radius * 0.2);
   const x = pos.x - width * 0.5;
   const hp = clamp(snap.hpPercent, 0, 1);
-  const color = rarityColor(snap.rarity, 1);
-  const textSize = Math.max(4, Math.round(11 / 3));
-  const strokeColor = "rgba(5, 8, 14, 0.78)";
+  const labelColor = snap.entityType === playerFlowerType ? "#19e6d2" : rarityColor(snap.rarity, 1);
+  const textSize = Math.max(4, radius * 0.2);
+  const strokeColor = "#050506";
 
-  ctx.font = `700 ${textSize}px Segoe UI, Microsoft YaHei, sans-serif`;
-  ctx.lineWidth = 1.6;
-  ctx.textBaseline = "bottom";
-  ctx.textAlign = "left";
-  ctx.strokeStyle = strokeColor;
-  ctx.fillStyle = "rgba(235, 242, 250, 0.92)";
-  ctx.strokeText(mobDisplayName(snap), x, y - 2);
-  ctx.fillText(mobDisplayName(snap), x, y - 2);
+  drawOutlinedText(mobDisplayName(snap), x, y - Math.max(1, radius * 0.05), {
+    font: `800 ${textSize}px Segoe UI, Microsoft YaHei, sans-serif`,
+    fill: "#f7f7f7",
+    stroke: strokeColor,
+    lineWidth: Math.max(1.1, textSize * 0.42),
+    align: "left",
+    baseline: "bottom",
+  });
 
-  ctx.textBaseline = "top";
-  ctx.textAlign = "right";
-  ctx.strokeStyle = strokeColor;
-  ctx.fillStyle = color;
-  ctx.strokeText(rarityOrLevelLabel(snap), x + width, y + barHeight + 2);
-  ctx.fillText(rarityOrLevelLabel(snap), x + width, y + barHeight + 2);
+  drawCapsuleBar(x, y, width, barHeight, hp, "#68d443", Math.max(1, barHeight * 0.28));
 
-  ctx.fillStyle = "rgba(18, 24, 34, 0.28)";
-  ctx.fillRect(x, y, width, barHeight);
-  ctx.fillStyle = color;
-  ctx.fillRect(x, y, width * hp, barHeight);
-  ctx.strokeStyle = "rgba(20, 28, 40, 0.55)";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x + 0.5, y + 0.5, width - 1, barHeight - 1);
+  drawOutlinedText(rarityOrLevelLabel(snap), x + width, y + barHeight + Math.max(1, radius * 0.05), {
+    font: `800 ${textSize}px Segoe UI, Microsoft YaHei, sans-serif`,
+    fill: labelColor,
+    stroke: strokeColor,
+    lineWidth: Math.max(1.1, textSize * 0.42),
+    align: "right",
+    baseline: "top",
+  });
 }
 
 function drawEntityLabel(snap, pos, radius) {
@@ -1456,50 +2498,83 @@ function drawBossBars(entities) {
   const groups = bossBarCandidates(entities);
   if (groups.length === 0) return;
 
-  const width = Math.min(620, Math.max(300, state.canvasWidth * 0.48));
-  const height = 18;
-  const gap = 20;
-  const startY = 18;
+  const width = Math.min(500, Math.max(310, state.canvasWidth * 0.31));
+  const height = 60;
+  const gap = 92;
+  const startY = 104;
   const x = (state.canvasWidth - width) * 0.5;
 
   groups.forEach((group, index) => {
     const y = startY + index * (height + gap);
-    const color = rarityColor(group.rarity, 1);
+    const rarityFill = rarityColor(group.rarity, 1);
     const count = Math.max(1, group.members.length);
-    const segment = width / count;
+    const title = count > 1 ? `${group.name} x${count}` : group.name;
 
     ctx.save();
-    ctx.font = "14px Segoe UI, Microsoft YaHei, sans-serif";
-    ctx.textBaseline = "bottom";
-    ctx.textAlign = "left";
-    ctx.fillStyle = "rgba(18, 24, 34, 0.92)";
-    ctx.fillText(`${group.name} ${rarityName(group.rarity)}${count > 1 ? ` x${count}` : ""}`, x, y - 4);
-
-    ctx.fillStyle = "rgba(12, 17, 24, 0.36)";
-    ctx.fillRect(x, y, width, height);
-
-    group.members
-      .sort((a, b) => b.hp - a.hp || a.distance - b.distance)
-      .forEach((member, memberIndex) => {
-        const sx = x + memberIndex * segment;
-        ctx.fillStyle = color;
-        ctx.globalAlpha = 0.96;
-        ctx.fillRect(sx, y, segment * member.hp, height);
-        ctx.globalAlpha = 1;
-        if (memberIndex > 0) {
-          ctx.strokeStyle = "rgba(255, 255, 255, 0.38)";
-          ctx.beginPath();
-          ctx.moveTo(sx + 0.5, y + 2);
-          ctx.lineTo(sx + 0.5, y + height - 2);
-          ctx.stroke();
-        }
-      });
-
-    ctx.strokeStyle = "rgba(12, 17, 24, 0.72)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x, y, width, height);
+    drawOutlinedText(title, x + width * 0.5, y - 8, {
+      font: "900 34px Segoe UI, Microsoft YaHei, sans-serif",
+      fill: "#f7f7f7",
+      lineWidth: 7,
+      baseline: "bottom",
+    });
+    drawSegmentedCapsuleBar(x, y, width, height, group.members, "#69d33e", 8);
+    drawOutlinedText(rarityName(group.rarity), x + width * 0.5, y + height + 8, {
+      font: "900 27px Segoe UI, Microsoft YaHei, sans-serif",
+      fill: rarityFill,
+      lineWidth: 6,
+      baseline: "top",
+    });
     ctx.restore();
   });
+}
+
+function drawSelfHud() {
+  const owner = state.authenticated ? state.entities.get(state.ownerEntityId) : null;
+  if (!owner) return;
+
+  const health = owner ? clamp(owner.snapshot.hpPercent || 0, 0, 1) : 0;
+  const expProgress = clamp(state.ownerExp / Math.max(1, state.ownerExpRequired), 0, 1);
+  const name = owner.snapshot?.name || "Player";
+  const level = Math.max(1, state.ownerLevel || owner?.snapshot?.rarity || 1);
+  const fadeProgress = owner.dying ? clamp((owner.deathAge || 0) / deathFadeDuration, 0, 1) : 0;
+  const fadeAlpha = owner.dying ? 1 - fadeProgress : 1;
+  const fadeScale = owner.dying ? 1 + fadeProgress * 0.45 : 1;
+  const ownerDead = (owner.snapshot.flags & flagDead) !== 0;
+  const scale = Math.min(1, Math.max(0.7, state.canvasWidth / 320));
+  const flowerPos = { x: 55 * scale, y: 60 * scale };
+  const flowerRadius = 30 * scale;
+  const healthX = 94 * scale;
+  const healthY = 43 * scale;
+  const healthW = 220 * scale;
+  const healthH = 36 * scale;
+  const healthBackX = 57 * scale;
+  const healthBackW = healthX + healthW - healthBackX;
+  const expX = 112 * scale;
+  const expY = 85 * scale;
+  const expW = 184 * scale;
+  const expH = 20 * scale;
+
+  ctx.save();
+  ctx.globalAlpha *= fadeAlpha;
+  drawCapsuleBar(healthBackX, healthY, healthBackW, healthH, 0, "#69d348", 6 * scale);
+  drawCapsuleBar(healthX, healthY, healthW, healthH, health, "#69d348", 6 * scale);
+  drawCapsuleBar(expX, expY, expW, expH, expProgress, "#e8e95a", 4 * scale);
+  drawPlayerFlower(owner.snapshot, flowerPos, flowerRadius * fadeScale,
+                   ownerDead ? (owner.deathAngle ?? owner.renderAngle ?? owner.snapshot.angle) :
+                               (owner.renderAngle ?? owner.snapshot.angle),
+                   true);
+  drawOutlinedText(name, healthX + healthW * 0.5, healthY + healthH * 0.5, {
+    font: `900 ${24 * scale}px Segoe UI, Microsoft YaHei, sans-serif`,
+    fill: "#f7f7f7",
+    lineWidth: 5 * scale,
+  });
+
+  drawOutlinedText(`Lvl ${level}`, expX + expW * 0.5, expY + expH * 0.5, {
+    font: `900 ${12.5 * scale}px Segoe UI, Microsoft YaHei, sans-serif`,
+    fill: "#f7f7f7",
+    lineWidth: 3.4 * scale,
+  });
+  ctx.restore();
 }
 
 function drawScene() {
@@ -1515,13 +2590,8 @@ function drawScene() {
   const owner = state.entities.get(state.ownerEntityId);
   if (owner) drawEntity(owner);
   drawBossBars(entities);
-
-  const visible = entities.length;
-  const mapLabel = state.map ? `  Map ${state.mapDisplayName || state.mapName}` : "  Map loading";
-  const label = state.authenticated ? `Snapshot ${state.snapshotId}  Entities ${visible}${mapLabel}` :
-                state.connected ? `Connected${mapLabel}` : `Disconnected${mapLabel}`;
-  statusLine.textContent = label;
-  statusLine.style.color = state.connected ? "#308f5f" : "#a84e45";
+  drawSelfHud();
+  updateDeathOverlay();
 }
 
 function tick(now) {
@@ -1530,7 +2600,6 @@ function tick(now) {
   if (dt > 0) {
     const instantFps = 1 / dt;
     state.fps = state.fps <= 0 ? instantFps : state.fps + (instantFps - state.fps) * 0.08;
-    fpsLine.textContent = `${Math.round(state.fps)} fps`;
   }
   flushInput(dt);
   updateRenderPositions(dt);
@@ -1545,6 +2614,10 @@ function isUiTarget(target) {
 function setupEvents() {
   window.addEventListener("resize", resizeCanvas);
   connectBtn.addEventListener("click", connectAndAuth);
+  reviveBtn.addEventListener("click", requestRevive);
+  backpackCloseBtn.addEventListener("click", () => toggleBackpack(false));
+  craftCloseBtn.addEventListener("click", () => toggleCraft(false));
+  craftOnceBtn.addEventListener("click", () => submitCraft());
   for (const input of [wsUrlInput, accountInput, passwordInput]) {
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") connectAndAuth();
@@ -1584,6 +2657,11 @@ function setupEvents() {
       toggleBackpack();
       return;
     }
+    if (key === "c") {
+      event.preventDefault();
+      toggleCraft();
+      return;
+    }
     if (key === "enter") {
       event.preventDefault();
       openChat("");
@@ -1612,7 +2690,10 @@ function setupEvents() {
     state.keys.delete(event.key.toLowerCase());
   });
 
-  window.addEventListener("pointermove", updateDrag, { passive: false });
+  window.addEventListener("pointermove", (event) => {
+    updateMousePointer(event);
+    updateDrag(event);
+  }, { passive: false });
   window.addEventListener("pointerup", finishDrag);
   window.addEventListener("pointercancel", clearDrag);
 
@@ -1625,6 +2706,7 @@ function setupEvents() {
   });
 
   window.addEventListener("mousedown", (event) => {
+    updateMousePointer(event);
     if (isUiTarget(event.target)) return;
     if (event.button === 0) state.attacking = true;
     if (event.button === 2) state.defending = true;

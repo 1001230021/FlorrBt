@@ -31,10 +31,10 @@
     <p id="authStatus" class="auth-status">Disconnected</p>
   </main>
 
-  <section id="hud" class="hud ui">
-    <div id="statusLine">Disconnected</div>
-    <div id="coordsLine">0, 0</div>
-    <div id="fpsLine">0 fps</div>
+  <section id="hud" class="hud ui" aria-hidden="true"></section>
+
+  <section id="deathOverlay" class="death-overlay ui hidden" aria-label="Death screen">
+    <button id="reviveBtn" class="revive-button" type="button">Revive</button>
   </section>
 
   <section id="chatLog" class="chat-log ui"></section>
@@ -51,7 +51,33 @@
   </section>
 
   <section id="backpackPanel" class="backpack-panel ui" data-drop-kind="backpack">
+    <div class="panel-title">
+      <span>Inventory</span>
+      <button id="backpackCloseBtn" class="panel-close" type="button" aria-label="Close inventory">×</button>
+    </div>
+    <div class="inventory-subtitle">Drag a petal to equip it</div>
     <div id="inventoryList" class="inventory-list"></div>
+  </section>
+
+  <section id="craftPanel" class="craft-panel ui">
+    <div class="panel-title">
+      <span>Craft</span>
+      <button id="craftCloseBtn" class="panel-close" type="button" aria-label="Close craft">×</button>
+    </div>
+    <div id="craftStage" class="craft-stage" aria-label="Craft slots">
+      <button class="craft-stage-slot slot-0" type="button" data-craft-slot="0"></button>
+      <button class="craft-stage-slot slot-1" type="button" data-craft-slot="1"></button>
+      <button class="craft-stage-slot slot-2" type="button" data-craft-slot="2"></button>
+      <button class="craft-stage-slot slot-3" type="button" data-craft-slot="3"></button>
+      <button class="craft-stage-slot slot-4" type="button" data-craft-slot="4"></button>
+      <button id="craftResultSlot" class="craft-result-slot hidden" type="button"></button>
+    </div>
+    <div class="craft-action">
+      <button id="craftOnceBtn" type="button">Craft</button>
+      <div id="craftSelection" class="craft-selection">Combine 5 of the same petal to craft an upgrade</div>
+      <div id="craftChance" class="craft-chance"></div>
+    </div>
+    <div id="craftList" class="craft-list"></div>
   </section>
 
   <script type="module" src="./src/game.js"></script>

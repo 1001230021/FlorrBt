@@ -2,8 +2,10 @@
 #include "../entities/drop.h"
 #include "../player.h"
 #include "../gameworld.h"
+#include "../gamecontext.h"
 #include "../entities/flower.h"
 #include "../zone_mob_tools.h"
+#include "../../Module/network_module.h"
 #include "../../../Engine/map_tools.h"
 #include "../../../Shared/game_config.h"
 #include "../../../Shared/drop_rate.h"
@@ -21,6 +23,7 @@ constexpr size_t max_spawn_num = 12;
 constexpr int spawn_position_attempts = 32;
 constexpr float rarity_difficulty_scale = 10.f;
 constexpr float rarity_gaussian_sigma = 0.36f;
+constexpr float drop_spread_radius = 32.f;
 
 struct lootable_player
 {
@@ -31,6 +34,19 @@ struct lootable_player
 bool IsAboveUltra(ERarity rarity)
 {
     return GetLevel(rarity) > GetLevel(ERarity::Ultra);
+}
+
+int ExpForDropRarity(ERarity rarity)
+{
+    int level = std::clamp(GetLevel(rarity), 0, 30);
+    return 1 << level;
+}
+
+sf::Vector2f DropSpreadOffset(size_t index, size_t count)
+{
+    if (count <= 1) return {0.f, 0.f};
+    float angle = 2.f * game_config::pi * static_cast<float>(index) / static_cast<float>(count);
+    return {std::cos(angle) * drop_spread_radius, std::sin(angle) * drop_spread_radius};
 }
 
 std::mt19937& SpawnRng()
@@ -255,11 +271,11 @@ void COpenController::OnPlayerConnect(CGameWorld& world, CPlayer* player)
     if (!raw_flower) return;
 
     raw_flower->m_name = player->GetName();
-    raw_flower->m_level = 1;
     raw_flower = dynamic_cast<CPlayerFlower*>(world.InsertEntity(std::move(entity)));
     if (raw_flower)
     {
         player->SetOwnedEntity(raw_flower);
+        player->ApplySavedProgress();
         player->ApplySavedSlots();
     }
 }
@@ -271,14 +287,22 @@ void COpenController::OnEntityDie(CGameWorld& world, CEntity* entity)
 
     std::vector<SDropRate> drops = RollDrops(mob->m_mob_type, mob->GetRarity());
     std::vector<lootable_player> lootable_players = FindLootablePlayers(*mob);
+    const size_t total_drop_count = drops.size() * lootable_players.size();
+    size_t drop_index = 0;
     for (const lootable_player& lootable : lootable_players)
     {
         if (!lootable.player) continue;
+        auto* player_flower = dynamic_cast<CPlayerFlower*>(lootable.player->GetEntity());
         for (const SDropRate& drop : drops)
         {
-            auto drop_entity =
-                std::make_unique<CDrop>(&world, mob->m_pos, drop.type, drop.rarity, lootable.player->GetId());
+            sf::Vector2f drop_pos = mob->m_pos + DropSpreadOffset(drop_index++, total_drop_count);
+            auto drop_entity = std::make_unique<CDrop>(&world, drop_pos, drop.type, drop.rarity, lootable.player->GetId());
             world.InsertEntity(std::move(drop_entity));
+            if (player_flower) player_flower->TakeExp(ExpForDropRarity(drop.rarity));
+        }
+        if (player_flower)
+        {
+            if (CGameContext* context = world.GameContext()) context->Network().QueueOwnerStateUpdate(*lootable.player);
         }
     }
 }

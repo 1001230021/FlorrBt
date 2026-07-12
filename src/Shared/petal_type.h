@@ -34,12 +34,19 @@ enum class EPetalType : int
     Bandage,
     Heavy,
     Faster,
-    Yggdrasil
+    Yggdrasil,
+    Dahlia,
+    Wing,
+    Triangle,
+    Sawblade,
+    Fragment,
+    Mimic,
+    Glass
 };
 
 using PetalType = EPetalType;
 
-inline constexpr std::array<std::string_view, 30> petal_type_names = {
+inline constexpr std::array<std::string_view, 37> petal_type_names = {
     "None",
     "Air",
     "AntEgg",
@@ -70,6 +77,13 @@ inline constexpr std::array<std::string_view, 30> petal_type_names = {
     "Heavy",
     "Faster",
     "Yggdrasil",
+    "Dahlia",
+    "Wing",
+    "Triangle",
+    "Sawblade",
+    "Fragment",
+    "Mimic",
+    "Glass",
 };
 
 inline std::string_view GetPetalTypeName(EPetalType type)
@@ -91,6 +105,8 @@ inline bool MatchPetalTypeAlias(std::string_view text, EPetalType type)
         return text == "agg";
     case EPetalType::BeetleEgg:
         return text == "bgg";
+    case EPetalType::Carrot:
+        return text == "carrot";
     case EPetalType::Cogwheel:
         return text == "cog";
     case EPetalType::Lentil:
@@ -117,6 +133,20 @@ inline bool MatchPetalTypeAlias(std::string_view text, EPetalType type)
         return text == "faster";
     case EPetalType::Yggdrasil:
         return text == "yggdrasil" || text == "ygg";
+    case EPetalType::Dahlia:
+        return text == "dahlia";
+    case EPetalType::Wing:
+        return text == "wing";
+    case EPetalType::Triangle:
+        return text == "triangle";
+    case EPetalType::Sawblade:
+        return text == "sawblade";
+    case EPetalType::Fragment:
+        return text == "fragment";
+    case EPetalType::Mimic:
+        return text == "mimic";
+    case EPetalType::Glass:
+        return text == "glass";
     default:
         return false;
     }

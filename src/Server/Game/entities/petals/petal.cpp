@@ -101,7 +101,10 @@ void CMissilePetal::Tick(float dt)
     if (!m_fired) return;
 
     m_fired_lifetime += dt;
-    if (m_fired_lifetime >= game_config::default_missile_lifetime || m_health <= 0.f)
+    float lifetime = game_config::default_missile_lifetime;
+    if (m_type == EPetalType::Carrot)
+        lifetime *= game_config::default_carrot_lifetime_multiplier;
+    if (m_fired_lifetime >= lifetime || m_health <= 0.f)
         m_is_marked_for_des = true;
 }
 

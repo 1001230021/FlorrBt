@@ -7,12 +7,16 @@
 #include "../Game/gamecontext.h"
 #include "../Game/gameworld.h"
 #include "../Game/player.h"
+#include "../Game/states/states.h"
+#include "../Game/zone_mob_tools.h"
 #include "../report.h"
 #include <SFML/Network.hpp>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cctype>
+#include <limits>
+#include <random>
 #include <vector>
 
 namespace
@@ -21,9 +25,9 @@ uint8_t GetEntityType(const CEntity& entity)
 {
     if (const auto* mob = dynamic_cast<const CMobBase*>(&entity)) return static_cast<uint8_t>(mob->m_mob_type);
     if (const auto* drop = dynamic_cast<const CDrop*>(&entity))
-        return game_config::network_petal_type_offset + static_cast<uint8_t>(drop->GetType());
+        return server_drop_entity_type_offset + static_cast<uint8_t>(drop->GetType());
     if (const auto* petal = dynamic_cast<const CPetal*>(&entity))
-        return game_config::network_petal_type_offset + static_cast<uint8_t>(petal->m_type);
+        return server_petal_entity_type_offset + static_cast<uint8_t>(petal->m_type);
     return 0;
 }
 
@@ -63,6 +67,96 @@ std::string ToLower(std::string text)
     std::transform(text.begin(), text.end(), text.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return text;
+}
+
+bool FlowerHasAvailablePetal(const CFlower& flower, EPetalType type)
+{
+    for (const auto& slot : flower.GetSlots())
+    {
+        if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
+        if (slot.m_p_proto->m_type == type) return true;
+    }
+    return false;
+}
+
+std::mt19937& RespawnRng()
+{
+    static std::mt19937 rng{std::random_device{}()};
+    return rng;
+}
+
+bool RandomPointInCheckpoint(const FlorrBtMap::Checkpoint& checkpoint, sf::Vector2f& out_pos)
+{
+    if (checkpoint.w <= 0.f || checkpoint.h <= 0.f) return false;
+    std::uniform_real_distribution<float> random_x(checkpoint.x, checkpoint.x + checkpoint.w);
+    std::uniform_real_distribution<float> random_y(checkpoint.y, checkpoint.y + checkpoint.h);
+    out_pos = {random_x(RespawnRng()), random_y(RespawnRng())};
+    return true;
+}
+
+bool RandomPointInSpawnZone(const FlorrBtMap::Zone& zone, sf::Vector2f& out_pos)
+{
+    if (zone.vertices.empty()) return false;
+
+    float min_x = std::numeric_limits<float>::max();
+    float min_y = std::numeric_limits<float>::max();
+    float max_x = std::numeric_limits<float>::lowest();
+    float max_y = std::numeric_limits<float>::lowest();
+    for (const auto& vertex : zone.vertices)
+    {
+        min_x = std::min(min_x, vertex.x);
+        min_y = std::min(min_y, vertex.y);
+        max_x = std::max(max_x, vertex.x);
+        max_y = std::max(max_y, vertex.y);
+    }
+    if (min_x >= max_x || min_y >= max_y) return false;
+
+    std::uniform_real_distribution<float> random_x(min_x, max_x);
+    std::uniform_real_distribution<float> random_y(min_y, max_y);
+    for (int attempt = 0; attempt < 32; ++attempt)
+    {
+        sf::Vector2f candidate = {random_x(RespawnRng()), random_y(RespawnRng())};
+        if (!IsPointInZone(zone, candidate)) continue;
+        out_pos = candidate;
+        return true;
+    }
+    return false;
+}
+
+sf::Vector2f PickRespawnPosition(CGameWorld& world)
+{
+    const FlorrBtMap* map = world.GetMap();
+    if (map)
+    {
+        std::vector<size_t> checkpoints;
+        for (size_t i = 0; i < map->checkpoints.size(); ++i)
+        {
+            if (map->checkpoints[i].w > 0.f && map->checkpoints[i].h > 0.f) checkpoints.push_back(i);
+        }
+        if (!checkpoints.empty())
+        {
+            std::uniform_int_distribution<size_t> dist(0, checkpoints.size() - 1);
+            sf::Vector2f pos;
+            if (RandomPointInCheckpoint(map->checkpoints[checkpoints[dist(RespawnRng())]], pos)) return pos;
+        }
+
+        std::vector<size_t> zones;
+        for (size_t i = 0; i < map->zones.size(); ++i)
+        {
+            if (map->zones[i].vertices.size() >= 3) zones.push_back(i);
+        }
+        if (!zones.empty())
+        {
+            std::uniform_int_distribution<size_t> dist(0, zones.size() - 1);
+            for (size_t attempt = 0; attempt < zones.size(); ++attempt)
+            {
+                sf::Vector2f pos;
+                if (RandomPointInSpawnZone(map->zones[zones[dist(RespawnRng())]], pos)) return pos;
+            }
+        }
+    }
+
+    return {game_config::player_respawn_x, game_config::player_respawn_y};
 }
 }
 
@@ -354,9 +448,16 @@ bool INetworkModule::QueueOwnerState(CPlayer& player)
     msg.type = ServerMessage::Type::OwnerState;
     msg.level = 1;
     msg.flags = 0;
+    msg.exp = 0;
+    msg.exp_required = 10;
 
     auto* player_flower = dynamic_cast<CPlayerFlower*>(player.GetEntity());
-    if (player_flower) msg.level = static_cast<uint8_t>(std::clamp(player_flower->m_level, 0, 255));
+    if (player_flower)
+    {
+        msg.level = static_cast<uint8_t>(std::clamp(player_flower->m_level, 0, 255));
+        msg.exp = static_cast<uint32_t>(std::max(0, player_flower->m_exp));
+        msg.exp_required = static_cast<uint32_t>(std::max(1, player_flower->ExpRequired()));
+    }
 
     auto* flower = dynamic_cast<CFlower*>(player.GetEntity());
     if (flower)
@@ -393,11 +494,28 @@ bool INetworkModule::QueueOwnerState(CPlayer& player)
     return QueueMessage(player, msg);
 }
 
+bool INetworkModule::QueueOwnerStateUpdate(CPlayer& player)
+{
+    return QueueOwnerState(player);
+}
+
 bool INetworkModule::QueueInventory(CPlayer& player)
 {
     ServerMessage msg;
     msg.type = ServerMessage::Type::Inventory;
     msg.inventory = CAccountDataStore::GetInventory(player.GetAccountName());
+    return QueueMessage(player, msg);
+}
+
+bool INetworkModule::QueueCraftResult(CPlayer& player, const SCraftResult& result)
+{
+    ServerMessage msg;
+    msg.type = ServerMessage::Type::CraftResult;
+    msg.craft_success = result.successes > 0;
+    msg.craft_petal_type = result.petal_type;
+    msg.craft_rarity = result.rarity;
+    msg.craft_consumed = result.consumed;
+    msg.craft_items = result.items;
     return QueueMessage(player, msg);
 }
 
@@ -513,6 +631,23 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
             continue;
         }
 
+        if (ClientCraftRequest::IsPacketStart(player.m_receive_buffer[0]))
+        {
+            size_t packet_size = ClientCraftRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
+            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return EPlayerBufferResult::Continue;
+
+            bool ok = false;
+            ClientCraftRequest request = ClientCraftRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
+            player.m_receive_buffer.erase(player.m_receive_buffer.begin(), player.m_receive_buffer.begin() + packet_size);
+            if (!player.IsAuthenticated())
+            {
+                QueueAuthResult(player, false, "Please login first");
+                return EPlayerBufferResult::RequestedDisconnect;
+            }
+            if (ok) HandleCraftRequest(player, request);
+            continue;
+        }
+
         if (!player.IsAuthenticated())
         {
             QueueAuthResult(player, false, "Please login first");
@@ -592,6 +727,16 @@ void INetworkModule::HandleSecondarySlotRequest(CPlayer& player, const ClientSec
     QueueOwnerState(player);
 }
 
+void INetworkModule::HandleCraftRequest(CPlayer& player, const ClientCraftRequest& request)
+{
+    SCraftResult result;
+    if (player.TryCraftPetal(request.petal_type, request.rarity, request.count, &result))
+    {
+        QueueCraftResult(player, result);
+        QueueInventory(player);
+    }
+}
+
 INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& player, const ClientAuthRequest& request)
 {
     if (player.IsAuthenticated())
@@ -662,17 +807,16 @@ void INetworkModule::Respawn(CPlayer& player)
         player.SetOwnedEntity(nullptr);
     }
 
-    auto entity = CreateMob(EMobType::PlayerFlower, &m_lobby_world,
-                            {game_config::player_respawn_x, game_config::player_respawn_y}, ERarity::Common);
+    auto entity = CreateMob(EMobType::PlayerFlower, &m_lobby_world, PickRespawnPosition(m_lobby_world), ERarity::Common);
     auto* raw_flower = dynamic_cast<CPlayerFlower*>(entity.get());
     if (!raw_flower) return;
 
     raw_flower->m_name = player.GetName();
-    raw_flower->m_level = 1;
     raw_flower = dynamic_cast<CPlayerFlower*>(m_lobby_world.InsertEntity(std::move(entity)));
     if (!raw_flower) return;
 
     player.SetOwnedEntity(raw_flower);
+    player.ApplySavedProgress();
     player.ApplySavedSlots();
     player.m_logged_missing_entity = false;
     LOG_INFO("network", "Player " + std::to_string(player.GetId()) + " respawned");
@@ -892,6 +1036,18 @@ ServerEntitySnap INetworkModule::BuildEntitySnap(const CEntity& entity, const CE
     {
         if (flower->m_attacking) snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Attacking);
         if (flower->m_defending) snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Defending);
+        if (FlowerHasAvailablePetal(*flower, EPetalType::Relic))
+            snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Relic);
+        if (FlowerHasAvailablePetal(*flower, EPetalType::Antennae))
+            snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Antennae);
+    }
+    if (const auto* mob = dynamic_cast<const CMobBase*>(&entity))
+    {
+        auto& mutable_mob = *const_cast<CMobBase*>(mob);
+        if (!mutable_mob.FindStates<CUndeadState>().empty())
+            snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Undead);
+        if (!mutable_mob.FindStates<CCorruptionState>().empty())
+            snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Corrupted);
     }
     return snap;
 }

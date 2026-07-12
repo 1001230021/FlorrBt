@@ -113,6 +113,48 @@ void RegisterBubble()
     });
 }
 
+std::once_flag g_bone_registered;
+void RegisterBone()
+{
+    std::call_once(g_bone_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Bone;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_basic_base_radius;
+        proto.m_p_behavior = std::make_unique<CBoneBehavior>();
+        REGISTER_PETAL(EPetalType::Bone, CPetal, proto);
+    });
+}
+
+std::once_flag g_coin_registered;
+void RegisterCarrot()
+{
+    static std::once_flag g_carrot_registered;
+    std::call_once(g_carrot_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Carrot;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_carrot_base_radius;
+        proto.m_p_behavior = std::make_unique<CCarrotBehavior>();
+        REGISTER_PETAL(EPetalType::Carrot, CMissilePetal, proto);
+    });
+}
+
+void RegisterCoin()
+{
+    std::call_once(g_coin_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Coin;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_basic_base_radius;
+        proto.m_p_behavior = std::make_unique<CCoinBehavior>();
+        REGISTER_PETAL(EPetalType::Coin, CPetal, proto);
+    });
+}
+
 std::once_flag g_compass_registered;
 void RegisterCompass()
 {
@@ -155,6 +197,20 @@ void RegisterCorruption()
     });
 }
 
+std::once_flag g_dahlia_registered;
+void RegisterDahlia()
+{
+    std::call_once(g_dahlia_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Dahlia;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_rose_base_radius;
+        proto.m_p_behavior = std::make_unique<CDahliaBehavior>();
+        REGISTER_PETAL(EPetalType::Dahlia, CPetal, proto);
+    });
+}
+
 std::once_flag g_dust_registered;
 void RegisterDust()
 {
@@ -169,6 +225,20 @@ void RegisterDust()
     });
 }
 
+std::once_flag g_fragment_registered;
+void RegisterFragment()
+{
+    std::call_once(g_fragment_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Fragment;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_basic_base_radius;
+        proto.m_p_behavior = std::make_unique<CFragmentBehavior>();
+        REGISTER_PETAL(EPetalType::Fragment, CPetal, proto);
+    });
+}
+
 std::once_flag g_golden_leaf_registered;
 void RegisterGoldenLeaf()
 {
@@ -180,6 +250,20 @@ void RegisterGoldenLeaf()
         proto.m_base_radius = game_config::default_goldenleaf_base_radius;
         proto.m_p_behavior = std::make_unique<CGoldenLeafBehavior>();
         REGISTER_PETAL(EPetalType::GoldenLeaf, CPetal, proto);
+    });
+}
+
+std::once_flag g_glass_registered;
+void RegisterGlass()
+{
+    std::call_once(g_glass_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Glass;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_basic_base_radius;
+        proto.m_p_behavior = std::make_unique<CGlassBehavior>();
+        REGISTER_PETAL(EPetalType::Glass, CGlassPetal, proto);
     });
 }
 
@@ -236,6 +320,20 @@ void RegisterLentil()
         proto.m_base_radius = game_config::default_lentil_base_radius;
         proto.m_p_behavior = std::make_unique<CLentilBehavior>();
         REGISTER_PETAL(EPetalType::Lentil, CPetal, proto);
+    });
+}
+
+std::once_flag g_mimic_registered;
+void RegisterMimic()
+{
+    std::call_once(g_mimic_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Mimic;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_basic_base_radius;
+        proto.m_p_behavior = std::make_unique<CMimicBehavior>();
+        REGISTER_PETAL(EPetalType::Mimic, CPetal, proto);
     });
 }
 
@@ -351,6 +449,48 @@ void RegisterMissile()
     });
 }
 
+std::once_flag g_sawblade_registered;
+void RegisterSawblade()
+{
+    std::call_once(g_sawblade_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Sawblade;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_basic_base_radius;
+        proto.m_p_behavior = std::make_unique<CSawbladeBehavior>();
+        REGISTER_PETAL(EPetalType::Sawblade, CPetal, proto);
+    });
+}
+
+std::once_flag g_triangle_registered;
+void RegisterTriangle()
+{
+    std::call_once(g_triangle_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Triangle;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_basic_base_radius;
+        proto.m_p_behavior = std::make_unique<CTriangleBehavior>();
+        REGISTER_PETAL(EPetalType::Triangle, CPetal, proto);
+    });
+}
+
+std::once_flag g_wing_registered;
+void RegisterWing()
+{
+    std::call_once(g_wing_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Wing;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_basic_base_radius;
+        proto.m_p_behavior = std::make_unique<CWingBehavior>();
+        REGISTER_PETAL(EPetalType::Wing, CPetal, proto);
+    });
+}
+
 void RegisterPetals()
 {
     RegisterAir();
@@ -360,21 +500,31 @@ void RegisterPetals()
     RegisterBandage();
     RegisterBasic();
     RegisterBeetleEgg();
+    RegisterBone();
     RegisterBubble();
+    RegisterCarrot();
+    RegisterCoin();
     RegisterCompass();
     RegisterCogwheel();
     RegisterCorruption();
+    RegisterDahlia();
     RegisterDust();
     RegisterFaster();
+    RegisterFragment();
+    RegisterGlass();
     RegisterGoldenLeaf();
     RegisterHeavy();
     RegisterIris();
     RegisterLentil();
+    RegisterMimic();
     RegisterMoon();
     RegisterNullification();
     RegisterPincer();
     RegisterRelic();
     RegisterRose();
+    RegisterSawblade();
+    RegisterTriangle();
+    RegisterWing();
     RegisterYinYang();
     RegisterYggdrasil();
     RegisterMissile();

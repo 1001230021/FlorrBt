@@ -102,6 +102,13 @@ inline float default_bubble_reload_super = 0.1f;
 inline float default_bubble_reload_ultra = 0.2f;
 inline float default_bubble_reload_unique = 0.05f;
 inline float default_bubble_reload_unusual = 0.8f;
+inline float default_carrot_base_damage = 18.0f;
+inline float default_carrot_base_health = 18.0f;
+inline float default_carrot_base_radius = 10.0f;
+inline float default_carrot_copy = 1.0f;
+inline float default_carrot_lifetime_multiplier = 0.6666667f;
+inline float default_carrot_mass = 2.0f;
+inline float default_carrot_reload = 1.0f;
 inline float default_compass_base_damage = 1.0f;
 inline float default_compass_base_health = 40.0f;
 inline float default_compass_base_radius = 10.0f;
@@ -378,6 +385,7 @@ inline float report_scan_window_seconds = 60.0f;
 inline float server_fixed_dt = 0.016f;
 inline float spatial_grid_cell_size = 200.0f;
 inline float timeout_protection_seconds = 30.0f;
+inline bool gui_console_enabled = false;
 
 template <typename T> inline void SetConfigValue(T& variable, const std::string& value)
 {
@@ -418,6 +426,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
     static std::unordered_map<std::string, config_entry> entries = {
         REGISTER_CONFIG("account_data_path", account_data_path),
         REGISTER_CONFIG("startup_commands_path", startup_commands_path),
+        REGISTER_CONFIG("gui_console", gui_console_enabled),
         REGISTER_CONFIG("acceleration", default_acceleration),
         REGISTER_CONFIG("air_base_mass", default_air_base_mass),
         REGISTER_CONFIG("air_base_radius", default_air_base_radius),
@@ -501,6 +510,13 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("bubble_reload_ultra", default_bubble_reload_ultra),
         REGISTER_CONFIG("bubble_reload_unique", default_bubble_reload_unique),
         REGISTER_CONFIG("bubble_reload_unusual", default_bubble_reload_unusual),
+        REGISTER_CONFIG("carrot_base_damage", default_carrot_base_damage),
+        REGISTER_CONFIG("carrot_base_health", default_carrot_base_health),
+        REGISTER_CONFIG("carrot_base_radius", default_carrot_base_radius),
+        REGISTER_CONFIG("carrot_copy", default_carrot_copy),
+        REGISTER_CONFIG("carrot_lifetime_multiplier", default_carrot_lifetime_multiplier),
+        REGISTER_CONFIG("carrot_mass", default_carrot_mass),
+        REGISTER_CONFIG("carrot_reload", default_carrot_reload),
         REGISTER_CONFIG("compass_base_damage", default_compass_base_damage),
         REGISTER_CONFIG("compass_base_health", default_compass_base_health),
         REGISTER_CONFIG("compass_base_radius", default_compass_base_radius),

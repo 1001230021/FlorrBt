@@ -19,6 +19,18 @@ bool IsInvalidMeleeTarget(const CMobBase* mob, const CEntity* target, int ignore
     if (dynamic_cast<const CProjectile*>(target)) return true;
     return false;
 }
+
+bool IsMeleeTargetBlockedByWall(CMobBase* mob, const CEntity* target)
+{
+    if (!mob || !target || !mob->GameWorld()) return false;
+    return mob->GameWorld()->SegmentBlockedByWall(mob->m_pos, target->m_pos);
+}
+
+bool IsUnavailableMeleeTarget(CMobBase* mob, const CEntity* target, int ignored_id = -1, int ignored_owner_id = -1)
+{
+    return IsInvalidMeleeTarget(mob, target, ignored_id, ignored_owner_id) ||
+           IsMeleeTargetBlockedByWall(mob, target);
+}
 }
 
 void CMeleeController::PickRandomTargetPos(CMobBase* mob, const SMobStats& stats)
@@ -65,7 +77,7 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
 
     m_change_target_count += dt;
 
-    bool target_invalid = m_p_target && IsInvalidMeleeTarget(mob, m_p_target);
+    bool target_invalid = m_p_target && IsUnavailableMeleeTarget(mob, m_p_target);
     bool reached_random_target = !m_p_target && m_has_random_target_pos &&
                                  (m_random_idle ? IsRandomIdleDone(dt) :
                                   DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
@@ -86,7 +98,7 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
             mob->m_pos, stats->horizon,
             [mob, stats](const CEntity* entity) -> bool
             {
-                if (IsInvalidMeleeTarget(mob, entity)) return false;
+                if (IsUnavailableMeleeTarget(mob, entity)) return false;
 
                 float detection_multiplier = 1.f;
                 if (auto* flower = dynamic_cast<const CFlower*>(entity)) detection_multiplier = flower->m_final_stats.detection_multiplier;
@@ -169,7 +181,7 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
     int owner_owner_id = -1;
     if (auto* owner_projectile = dynamic_cast<CProjectile*>(owner)) owner_owner_id = owner_projectile->m_owner_id;
 
-    bool target_invalid = m_p_target && IsInvalidMeleeTarget(mob, m_p_target, m_owner_id, owner_owner_id);
+    bool target_invalid = m_p_target && IsUnavailableMeleeTarget(mob, m_p_target, m_owner_id, owner_owner_id);
     bool reached_random_target = !m_p_target && m_has_random_target_pos &&
                                  (m_random_idle ? IsRandomIdleDone(dt) :
                                   DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
@@ -191,7 +203,7 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
             [mob, stats, owner, owner_owner_id](const CEntity* entity) -> bool
             {
                 if (entity == owner) return false;
-                if (IsInvalidMeleeTarget(mob, entity, owner->m_id, owner_owner_id)) return false;
+                if (IsUnavailableMeleeTarget(mob, entity, owner->m_id, owner_owner_id)) return false;
 
                 float detection_multiplier = 1.f;
                 if (auto* flower = dynamic_cast<const CFlower*>(entity)) detection_multiplier = flower->m_final_stats.detection_multiplier;
@@ -239,7 +251,7 @@ void CNeutralMeleeController::OnTick(CMobBase* mob, float dt)
     const SMobStats* stats = mob->GetFinalStats();
     if (!stats) return;
 
-    if (m_p_target && IsInvalidMeleeTarget(mob, m_p_target))
+    if (m_p_target && IsUnavailableMeleeTarget(mob, m_p_target))
     {
         m_p_target = nullptr;
         m_has_random_target_pos = false;
@@ -267,7 +279,7 @@ void CNeutralMeleeController::OnTick(CMobBase* mob, float dt)
 void CNeutralMeleeController::OnDamaged(CMobBase* mob, CEntity* attacker)
 {
     if (!mob || !attacker) return;
-    if (IsInvalidMeleeTarget(mob, attacker)) return;
+    if (IsUnavailableMeleeTarget(mob, attacker)) return;
 
     m_p_target = attacker;
     m_target_pos = attacker->m_pos;

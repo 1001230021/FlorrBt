@@ -49,6 +49,7 @@ class CGameWorld
     const entity_spatial_grid& GetSpatialGrid() const { return m_spatial_grid; }
     const FlorrBtMap* GetMap() const { return m_map.get(); }
     const std::string& GetMapPath() const { return m_map_path; }
+    bool SegmentBlockedByWall(sf::Vector2f start, sf::Vector2f end) const;
 
   private:
     FlorrBtMap::Wall* GetWall(int id) const;

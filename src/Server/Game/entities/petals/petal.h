@@ -127,6 +127,20 @@ class CCompassPetal : public CPetal
     float m_compass_wait_timer = 0.f;
 };
 
+class CBonePetal : public CPetal
+{
+  public:
+    using CPetal::CPetal;
+};
+
+class CGlassPetal : public CPetal
+{
+  public:
+    using CPetal::CPetal;
+
+    std::unordered_map<int, float> m_hit_cooldowns;
+};
+
 class CYggdrasilPetal : public CPetal
 {
   public:
