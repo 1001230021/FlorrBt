@@ -41,12 +41,13 @@ enum class EPetalType : int
     Sawblade,
     Fragment,
     Mimic,
-    Glass
+    Glass,
+    Stinger
 };
 
 using PetalType = EPetalType;
 
-inline constexpr std::array<std::string_view, 37> petal_type_names = {
+inline constexpr std::array<std::string_view, 38> petal_type_names = {
     "None",
     "Air",
     "AntEgg",
@@ -84,6 +85,7 @@ inline constexpr std::array<std::string_view, 37> petal_type_names = {
     "Fragment",
     "Mimic",
     "Glass",
+    "Stinger",
 };
 
 inline std::string_view GetPetalTypeName(EPetalType type)
@@ -147,6 +149,8 @@ inline bool MatchPetalTypeAlias(std::string_view text, EPetalType type)
         return text == "mimic";
     case EPetalType::Glass:
         return text == "glass";
+    case EPetalType::Stinger:
+        return text == "stinger";
     default:
         return false;
     }

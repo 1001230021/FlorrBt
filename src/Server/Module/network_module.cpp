@@ -4,6 +4,7 @@
 #include "../Game/entities/drop.h"
 #include "../Game/entities/flower.h"
 #include "../Game/entities/petals/petal.h"
+#include "../Game/entities/projectile.h"
 #include "../Game/gamecontext.h"
 #include "../Game/gameworld.h"
 #include "../Game/player.h"
@@ -37,6 +38,7 @@ std::string GetEntityName(const CEntity& entity)
     if (const auto* mob = dynamic_cast<const CMobBase*>(&entity)) return std::string(GetMobTypeName(mob->m_mob_type));
     if (const auto* drop = dynamic_cast<const CDrop*>(&entity)) return std::string(GetPetalTypeName(drop->GetType()));
     if (const auto* petal = dynamic_cast<const CPetal*>(&entity)) return std::string(GetPetalTypeName(petal->m_type));
+    if (dynamic_cast<const CMissile*>(&entity)) return "Missile";
     return "Entity";
 }
 
@@ -1002,7 +1004,6 @@ void INetworkModule::DropPlayer(size_t index, const std::string& reason)
 
     CPlayer& player = *m_players[index];
     LOG_INFO("network", "Player " + std::to_string(player.GetId()) + " dropped: " + reason);
-    player.UnequipAllPetals();
     if (auto* flower = dynamic_cast<CPlayerFlower*>(player.GetEntity()))
         flower->PrepareRespawnDestroy();
     else if (CEntity* entity = player.GetEntity())
@@ -1032,10 +1033,14 @@ ServerEntitySnap INetworkModule::BuildEntitySnap(const CEntity& entity, const CE
     if (&entity == &owner) snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Owner);
     if (entity.IsDead()) snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Dead);
 
+    if (const auto* attackable = dynamic_cast<const IAttackableMob*>(&entity))
+    {
+        if (attackable->IsAttacking()) snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Attacking);
+        if (attackable->IsDefending()) snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Defending);
+    }
+
     if (const auto* flower = dynamic_cast<const CFlower*>(&entity))
     {
-        if (flower->m_attacking) snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Attacking);
-        if (flower->m_defending) snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Defending);
         if (FlowerHasAvailablePetal(*flower, EPetalType::Relic))
             snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Relic);
         if (FlowerHasAvailablePetal(*flower, EPetalType::Antennae))

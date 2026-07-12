@@ -69,10 +69,15 @@ int PlayerFlowerExpRequired(int level)
 
 void CFlower::Tick(float dt)
 {
-    CMob::Tick(dt);
+    CAttackableMob<SFlowerStats>::Tick(dt);
     RebuildFinalStats();
     RefreshNullificationState();
     RefreshCorruptionState();
+
+    for (auto& slot : m_slots)
+    {
+        if (slot.m_available && !slot.m_banned) slot.RefreshPetalState(this);
+    }
 
     m_total_copies = 0;
     m_yinyang_layout_count = 0;
@@ -90,9 +95,9 @@ void CFlower::Tick(float dt)
             continue;
         }
 
-        int copies = slot.GetCurrentCopyCount();
+        int copies = slot.GetCurrentCopyCount(this);
         if (slot.m_p_proto && slot.m_p_proto->m_type == EPetalType::YinYang)
-            yinyang_bonus_count += slot.GetBonusCopyCount();
+            yinyang_bonus_count += slot.GetBonusCopyCount(this);
         if (slot.m_p_proto && slot.m_p_proto->m_type == EPetalType::Moon && copies > 0)
         {
             slot.m_start_copy_index = 0;
@@ -136,7 +141,7 @@ void CFlower::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
             }
         }
     }
-    CMob::TakeDamage(dmg, attacker, damage_type);
+    CAttackableMob<SFlowerStats>::TakeDamage(dmg, attacker, damage_type);
 }
 
 void CFlower::ClearPetals()
@@ -213,7 +218,7 @@ void CFlower::RebuildFinalStats()
     m_final_stats = m_base_stats;
     for (const auto& slot : m_slots)
     {
-        slot.ApplyStatsTo(m_final_stats);
+        slot.ApplyStatsTo(m_final_stats, this);
     }
 
     float new_max = m_final_stats.max_health;
@@ -491,7 +496,7 @@ bool CFlower::HasNonYinYangPetals() const
     for (const auto& slot : m_slots)
     {
         if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
-        if (slot.m_p_proto->m_type != EPetalType::YinYang && slot.GetCurrentCopyCount() > 0) return true;
+        if (slot.m_p_proto->m_type != EPetalType::YinYang && slot.GetCurrentCopyCount(this) > 0) return true;
     }
     return false;
 }
@@ -513,7 +518,7 @@ void CPlayerFlower::RebuildFinalStats()
     m_final_stats = BuildPlayerFlowerLevelStats(m_base_stats, m_level);
     for (const auto& slot : GetSlots())
     {
-        slot.ApplyStatsTo(m_final_stats);
+        slot.ApplyStatsTo(m_final_stats, this);
     }
 
     float new_max = m_final_stats.max_health;

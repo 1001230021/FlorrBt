@@ -26,17 +26,17 @@ inline float default_antegg_base_health = 1.0f;
 inline float default_antegg_base_radius = 10.0f;
 inline float default_antegg_copy = 4.0f;
 inline float default_antegg_mass = 1.0f;
-inline float default_antegg_reload_common = 0.0f;
-inline float default_antegg_reload_epic = 0.0f;
-inline float default_antegg_reload_eternal = 0.0f;
-inline float default_antegg_reload_legendary = 0.0f;
-inline float default_antegg_reload_mythic = 0.0f;
-inline float default_antegg_reload_primordial = 0.0f;
-inline float default_antegg_reload_rare = 0.0f;
-inline float default_antegg_reload_super = 0.0f;
-inline float default_antegg_reload_ultra = 0.0f;
-inline float default_antegg_reload_unique = 0.0f;
-inline float default_antegg_reload_unusual = 0.0f;
+inline float default_antegg_reload_common = 24.0f;
+inline float default_antegg_reload_epic = 10.0f;
+inline float default_antegg_reload_eternal = 180.0f;
+inline float default_antegg_reload_legendary = 12.0f;
+inline float default_antegg_reload_mythic = 16.0f;
+inline float default_antegg_reload_primordial = 480.0f;
+inline float default_antegg_reload_rare = 9.0f;
+inline float default_antegg_reload_super = 60.0f;
+inline float default_antegg_reload_ultra = 24.0f;
+inline float default_antegg_reload_unique = 180.0f;
+inline float default_antegg_reload_unusual = 8.0f;
 inline float default_antennae_horizon_common = 0.111f;
 inline float default_antennae_horizon_epic = 0.333f;
 inline float default_antennae_horizon_eternal = 9.0f;
@@ -58,17 +58,17 @@ inline float default_beetleegg_base_health = 1.0f;
 inline float default_beetleegg_base_radius = 10.0f;
 inline float default_beetleegg_copy = 1.0f;
 inline float default_beetleegg_mass = 1.0f;
-inline float default_beetleegg_reload_common = 0.0f;
-inline float default_beetleegg_reload_epic = 0.0f;
-inline float default_beetleegg_reload_eternal = 0.0f;
-inline float default_beetleegg_reload_legendary = 0.0f;
-inline float default_beetleegg_reload_mythic = 0.0f;
-inline float default_beetleegg_reload_primordial = 0.0f;
-inline float default_beetleegg_reload_rare = 0.0f;
-inline float default_beetleegg_reload_super = 0.0f;
-inline float default_beetleegg_reload_ultra = 0.0f;
-inline float default_beetleegg_reload_unique = 0.0f;
-inline float default_beetleegg_reload_unusual = 0.0f;
+inline float default_beetleegg_reload_common = 12.0f;
+inline float default_beetleegg_reload_epic = 5.0f;
+inline float default_beetleegg_reload_eternal = 90.0f;
+inline float default_beetleegg_reload_legendary = 6.0f;
+inline float default_beetleegg_reload_mythic = 8.0f;
+inline float default_beetleegg_reload_primordial = 240.0f;
+inline float default_beetleegg_reload_rare = 4.5f;
+inline float default_beetleegg_reload_super = 30.0f;
+inline float default_beetleegg_reload_ultra = 12.0f;
+inline float default_beetleegg_reload_unique = 90.0f;
+inline float default_beetleegg_reload_unusual = 4.0f;
 inline float default_bandage_base_radius = 10.0f;
 inline float default_bandage_copy = 0.0f;
 inline float default_bandage_no_revive_duration = 30.0f;
@@ -157,7 +157,7 @@ inline float default_faster_target_follow_multiplier = 2.0f;
 inline float default_goldenleaf_base_damage = 16.0f;
 inline float default_goldenleaf_base_health = 12.0f;
 inline float default_goldenleaf_base_radius = 10.0f;
-inline float default_goldenleaf_base_reload_reduction = 0.05f;
+inline float default_goldenleaf_base_reload_reduction = 0.033f;
 inline float default_goldenleaf_copy = 1.0f;
 inline float default_goldenleaf_mass = 3.0f;
 inline float default_horizon = 256.0f;
@@ -203,7 +203,7 @@ inline float default_missile_mass = 2.0f;
 inline float default_missile_lock_angle_degrees = 30.0f;
 inline float default_missile_lock_range = 1024.0f;
 inline float default_missile_reload = 1.5f;
-inline float default_missile_speed_multiplier = 4.0f;
+inline float default_missile_speed_multiplier = 8.0f;
 inline float default_missile_unfired_damage_multiplier = 0.2f;
 inline float default_petal_attack_offset = 18.0f;
 inline float default_petal_defend_offset = -20.0f;
@@ -253,6 +253,11 @@ inline float default_rose_copy = 1.0f;
 inline float default_rose_mass = 2.0f;
 inline float default_rose_preload = 1.5f;
 inline float default_rose_reload = 3.5f;
+inline float default_stinger_base_damage = 100.0f;
+inline float default_stinger_base_health = 1.0f;
+inline float default_stinger_base_radius = 10.0f;
+inline float default_stinger_mass = 2.0f;
+inline float default_stinger_reload = 10.0f;
 inline float default_yinyang_base_damage = 10.0f;
 inline float default_yinyang_base_health = 10.0f;
 inline float default_yinyang_base_radius = 12.0f;
@@ -280,6 +285,32 @@ inline float mob_beetle_max_health = 100.0f;
 inline float mob_beetle_radius = 18.0f;
 inline float mob_beetle_turn_speed = 1.5f;
 inline int mob_beetle_team = 2;
+inline float mob_bee_acceleration = 450.0f;
+inline float mob_bee_armor = 1.0f;
+inline float mob_bee_damage = 50.0f;
+inline float mob_bee_mass = 2.5f;
+inline float mob_bee_max_health = 35.0f;
+inline float mob_bee_max_velocity = 225.0f;
+inline float mob_bee_radius = 12.0f;
+inline int mob_bee_team = 2;
+inline float mob_bee_wave_frequency = 5.2f;
+inline float mob_bee_wave_strength = 0.85f;
+inline float mob_hornet_acceleration = 300.0f;
+inline float mob_hornet_armor = 1.0f;
+inline float mob_hornet_attack_interval = 1.75f;
+inline float mob_hornet_attack_recovery = 0.3f;
+inline float mob_hornet_attack_windup = 0.2f;
+inline float mob_hornet_damage = 50.0f;
+inline float mob_hornet_mass = 2.5f;
+inline float mob_hornet_max_health = 40.0f;
+inline float mob_hornet_max_velocity = default_max_velocity;
+inline float mob_hornet_missile_base_damage = 10.0f;
+inline float mob_hornet_missile_base_health = 5.0f;
+inline float mob_hornet_missile_radius = 10.0f;
+inline float mob_hornet_missile_speed = default_max_velocity * 4.0f;
+inline float mob_hornet_radius = 12.0f;
+inline float mob_hornet_recoil_speed = default_max_velocity * 2.0f;
+inline int mob_hornet_team = 2;
 inline float mob_bandage_beetle_armor = 1.0f;
 inline float mob_bandage_beetle_damage = 30.0f;
 inline float mob_bandage_beetle_mass = 10.0f;
@@ -292,6 +323,7 @@ inline size_t max_lootable_players = 5;
 inline size_t max_lootable_player_above_ultra = 25;
 inline float mob_mass_scale_base = 2.5f;
 inline float mob_mass_scale_exp_multiplier = 0.6f;
+inline float mob_velocity_multiplier = 1.25f;
 inline float mob_normal_flower_armor = 0.0f;
 inline float mob_normal_flower_damage = 8.0f;
 inline float mob_normal_flower_mass = 5.0f;
@@ -626,6 +658,32 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_beetle_radius", mob_beetle_radius),
         REGISTER_CONFIG("mob_beetle_turn_speed", mob_beetle_turn_speed),
         REGISTER_CONFIG("mob_beetle_team", mob_beetle_team),
+        REGISTER_CONFIG("mob_bee_acceleration", mob_bee_acceleration),
+        REGISTER_CONFIG("mob_bee_armor", mob_bee_armor),
+        REGISTER_CONFIG("mob_bee_damage", mob_bee_damage),
+        REGISTER_CONFIG("mob_bee_mass", mob_bee_mass),
+        REGISTER_CONFIG("mob_bee_max_health", mob_bee_max_health),
+        REGISTER_CONFIG("mob_bee_max_velocity", mob_bee_max_velocity),
+        REGISTER_CONFIG("mob_bee_radius", mob_bee_radius),
+        REGISTER_CONFIG("mob_bee_team", mob_bee_team),
+        REGISTER_CONFIG("mob_bee_wave_frequency", mob_bee_wave_frequency),
+        REGISTER_CONFIG("mob_bee_wave_strength", mob_bee_wave_strength),
+        REGISTER_CONFIG("mob_hornet_acceleration", mob_hornet_acceleration),
+        REGISTER_CONFIG("mob_hornet_armor", mob_hornet_armor),
+        REGISTER_CONFIG("mob_hornet_attack_interval", mob_hornet_attack_interval),
+        REGISTER_CONFIG("mob_hornet_attack_recovery", mob_hornet_attack_recovery),
+        REGISTER_CONFIG("mob_hornet_attack_windup", mob_hornet_attack_windup),
+        REGISTER_CONFIG("mob_hornet_damage", mob_hornet_damage),
+        REGISTER_CONFIG("mob_hornet_mass", mob_hornet_mass),
+        REGISTER_CONFIG("mob_hornet_max_health", mob_hornet_max_health),
+        REGISTER_CONFIG("mob_hornet_max_velocity", mob_hornet_max_velocity),
+        REGISTER_CONFIG("mob_hornet_missile_base_damage", mob_hornet_missile_base_damage),
+        REGISTER_CONFIG("mob_hornet_missile_base_health", mob_hornet_missile_base_health),
+        REGISTER_CONFIG("mob_hornet_missile_radius", mob_hornet_missile_radius),
+        REGISTER_CONFIG("mob_hornet_missile_speed", mob_hornet_missile_speed),
+        REGISTER_CONFIG("mob_hornet_radius", mob_hornet_radius),
+        REGISTER_CONFIG("mob_hornet_recoil_speed", mob_hornet_recoil_speed),
+        REGISTER_CONFIG("mob_hornet_team", mob_hornet_team),
         REGISTER_CONFIG("mob_bandage_beetle_armor", mob_bandage_beetle_armor),
         REGISTER_CONFIG("mob_bandage_beetle_damage", mob_bandage_beetle_damage),
         REGISTER_CONFIG("mob_bandage_beetle_mass", mob_bandage_beetle_mass),
@@ -638,6 +696,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("max_lootable_player_above_ultra", max_lootable_player_above_ultra),
         REGISTER_CONFIG("mob_mass_scale_base", mob_mass_scale_base),
         REGISTER_CONFIG("mob_mass_scale_exp_multiplier", mob_mass_scale_exp_multiplier),
+        REGISTER_CONFIG("mob_velocity_multiplier", mob_velocity_multiplier),
         REGISTER_CONFIG("mob_normal_flower_armor", mob_normal_flower_armor),
         REGISTER_CONFIG("mob_normal_flower_damage", mob_normal_flower_damage),
         REGISTER_CONFIG("mob_normal_flower_mass", mob_normal_flower_mass),
@@ -778,6 +837,11 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("rose_reload", default_rose_reload),
         REGISTER_CONFIG("server_fixed_dt", server_fixed_dt),
         REGISTER_CONFIG("spatial_grid_cell_size", spatial_grid_cell_size),
+        REGISTER_CONFIG("stinger_base_damage", default_stinger_base_damage),
+        REGISTER_CONFIG("stinger_base_health", default_stinger_base_health),
+        REGISTER_CONFIG("stinger_base_radius", default_stinger_base_radius),
+        REGISTER_CONFIG("stinger_mass", default_stinger_mass),
+        REGISTER_CONFIG("stinger_reload", default_stinger_reload),
         REGISTER_CONFIG("timeout_protection_seconds", timeout_protection_seconds),
         REGISTER_CONFIG("yinyang_base_damage", default_yinyang_base_damage),
         REGISTER_CONFIG("yinyang_base_health", default_yinyang_base_health),

@@ -19,10 +19,11 @@ class CPetalSlot
     void SetPetal(const CPetalPrototype* proto, int slot_index, ERarity rarity);
     void ClearPetal();
     void KillCopy(int copy_index);
+    void RefreshPetalState(CFlower* flower);
     void Tick(float dt, CFlower* flower);
-    void ApplyStatsTo(SFlowerStats& target) const;
-    int GetBonusCopyCount() const;
-    int GetCurrentCopyCount() const;
+    void ApplyStatsTo(SFlowerStats& target, const CFlower* flower = nullptr) const;
+    int GetBonusCopyCount(const CFlower* flower = nullptr) const;
+    int GetCurrentCopyCount(const CFlower* flower = nullptr) const;
 
     const CPetalPrototype* m_p_proto = nullptr;
     std::vector<CPetal*> m_p_petals;
@@ -33,6 +34,7 @@ class CPetalSlot
     ERarity m_stored_rarity = ERarity::Null;
     int m_slot_index = -1;
     int m_start_copy_index = 0;
+    EPetalType m_runtime_type = EPetalType::None;
 
     bool m_available = true;
     bool m_banned = false;

@@ -117,11 +117,8 @@ void CPlayer::ResetControlledMob()
     mob->MoveTowards(mob->m_pos, 0.f);
     mob->m_vel = {0.f, 0.f};
 
-    if (auto* flower = dynamic_cast<CFlower*>(mob))
-    {
-        flower->m_attacking = false;
-        flower->m_defending = false;
-    }
+    if (auto* attackable = dynamic_cast<IAttackableMob*>(mob))
+        attackable->ClearAttackState();
 
     if (auto* controller = dynamic_cast<CPlayerController*>(mob->GetController()))
     {
@@ -141,11 +138,13 @@ void CPlayer::UnequipAllPetals()
     {
         CPetalSlot& slot = slots[i];
         if (!slot.m_p_proto) continue;
+        if (!flower->CanUnequipPetal(static_cast<int>(i))) continue;
 
         uint8_t old_type = static_cast<uint8_t>(slot.m_p_proto->m_type);
         uint8_t old_rarity = static_cast<uint8_t>(slot.m_stored_rarity);
         flower->UnequipPetal(static_cast<int>(i));
         CAccountDataStore::AddItem(m_account_name, old_type, old_rarity, 1);
+        CAccountDataStore::ClearSlot(m_account_name, static_cast<uint8_t>(i));
     }
 }
 

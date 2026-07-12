@@ -5,9 +5,15 @@ const SOLDIER_ANT_WING_ALPHA = 0.498;
 const SOLDIER_ANT_FORELIMB_WIDTH = 5.833;
 const SOLDIER_ANT_FORELIMB_COLOR = "#292929";
 const SOLDIER_ANT_MOTION_DEADZONE = 0.12;
+const SUMMONED_BODY_FILL = "#f4dc59";
+const SUMMONED_BODY_DARK_FILL = "#d7bd3c";
+const SUMMONED_BODY_STROKE = "#c8ad35";
+const SUMMONED_BODY_CACHE = new Map();
 
-const abdomenImage = makeImage(new URL("../assets/soldier_ant_head.svg", import.meta.url).href);
-const headImage = makeImage(new URL("../assets/soldier_ant_abdomen.svg", import.meta.url).href);
+const abdomenSrc = new URL("../assets/soldier_ant_head.svg", import.meta.url).href;
+const headSrc = new URL("../assets/soldier_ant_abdomen.svg", import.meta.url).href;
+const abdomenImage = makeImage(abdomenSrc);
+const headImage = makeImage(headSrc);
 const wingParts = [
   {
     pivot: { x: 48.736, y: 52.701 },
@@ -35,26 +41,29 @@ const forelimbParts = [
 let wingPaths = null;
 let forelimbPaths = null;
 
-export function drawSoldierAnt(ctx, pos, radius, entityId, angle, motion, time) {
+export function drawSoldierAnt(ctx, pos, radius, entityId, angle, motion, time, options = {}) {
   const spriteSize = Math.max(1, radius * (SOLDIER_ANT_VIEWBOX_SIZE / SOLDIER_ANT_BODY_RADIUS));
   const spriteHalf = spriteSize * 0.5;
   const rotation = (Number.isFinite(angle) ? angle : 0) - SOLDIER_ANT_BASE_FACE_ANGLE;
   const move = clamp01(motion || 0);
   const animation = antAnimation(entityId, move, time);
+  const summoned = Boolean(options.summoned);
+  const abdomen = summoned ? summonedBodyImage(abdomenSrc) : abdomenImage;
+  const head = summoned ? summonedBodyImage(headSrc) : headImage;
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
   ctx.rotate(rotation);
 
   drawForelimbs(ctx, spriteSize, animation);
-  if (isImageReady(abdomenImage)) {
-    ctx.drawImage(abdomenImage, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
+  if (isImageReady(abdomen)) {
+    ctx.drawImage(abdomen, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
   } else {
-    drawFallback(ctx, radius);
+    drawFallback(ctx, radius, summoned);
   }
   drawWings(ctx, spriteSize, animation, move);
-  if (isImageReady(headImage)) {
-    ctx.drawImage(headImage, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
+  if (isImageReady(head)) {
+    ctx.drawImage(head, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
   }
   ctx.restore();
 }
@@ -161,16 +170,75 @@ function makeImage(src) {
   return image;
 }
 
+function summonedBodyImage(src) {
+  let entry = SUMMONED_BODY_CACHE.get(src);
+  if (entry) return entry.image;
+
+  const image = new Image();
+  image.decoding = "async";
+  entry = { image, url: "" };
+  SUMMONED_BODY_CACHE.set(src, entry);
+
+  fetch(src)
+    .then((response) => {
+      if (!response.ok) throw new Error(`Soldier ant SVG failed: ${src}`);
+      return response.text();
+    })
+    .then((svgText) => {
+      const blob = new Blob([recolorSummonedBodySvg(svgText)], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      entry.url = url;
+      image.src = url;
+    })
+    .catch(() => {
+      image.failed = true;
+    });
+
+  return image;
+}
+
+function recolorSummonedBodySvg(svgText) {
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") {
+    return svgText
+      .replace(/#454545/gi, SUMMONED_BODY_DARK_FILL)
+      .replace(/#555\b/gi, SUMMONED_BODY_FILL)
+      .replace(/#905db0/gi, SUMMONED_BODY_FILL)
+      .replace(/#754b8f/gi, SUMMONED_BODY_DARK_FILL);
+  }
+
+  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+  const root = doc.documentElement;
+  if (!root || root.tagName.toLowerCase() !== "svg") return svgText;
+
+  root.querySelectorAll("[fill]").forEach((node) => {
+    const fill = (node.getAttribute("fill") || "").trim().toLowerCase();
+    if (!fill || fill === "none") return;
+    node.setAttribute("fill", summonedBodyFill(fill));
+  });
+  root.querySelectorAll("[stroke]").forEach((node) => {
+    const stroke = (node.getAttribute("stroke") || "").trim().toLowerCase();
+    if (!stroke || stroke === "none") return;
+    node.setAttribute("stroke", SUMMONED_BODY_STROKE);
+  });
+  return new XMLSerializer().serializeToString(root);
+}
+
+function summonedBodyFill(fill) {
+  if (fill === "#555" || fill === "#905db0") return SUMMONED_BODY_FILL;
+  if (fill === "#454545" || fill === "#754b8f") return SUMMONED_BODY_DARK_FILL;
+  return SUMMONED_BODY_FILL;
+}
+
 function isImageReady(image) {
-  return image.complete && image.naturalWidth > 0;
+  return image && !image.failed && image.complete && image.naturalWidth > 0;
 }
 
 function clamp01(value) {
   return Math.max(0, Math.min(1, value));
 }
 
-function drawFallback(ctx, radius) {
-  ctx.fillStyle = "#454545";
+function drawFallback(ctx, radius, summoned = false) {
+  ctx.fillStyle = summoned ? SUMMONED_BODY_FILL : "#454545";
   ctx.beginPath();
   ctx.arc(radius * 0.34, radius * 0.34, radius * 0.95, 0, Math.PI * 2);
   ctx.arc(-radius * 0.34, -radius * 0.34, radius * 1.15, 0, Math.PI * 2);

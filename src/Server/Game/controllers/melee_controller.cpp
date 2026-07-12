@@ -4,6 +4,7 @@
 #include "../states/states.h"
 #include "../../../Shared/game_config.h"
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace
@@ -30,6 +31,47 @@ bool IsUnavailableMeleeTarget(CMobBase* mob, const CEntity* target, int ignored_
 {
     return IsInvalidMeleeTarget(mob, target, ignored_id, ignored_owner_id) ||
            IsMeleeTargetBlockedByWall(mob, target);
+}
+
+CEntity* FindClosestMeleeTarget(CMobBase* mob, float search_range)
+{
+    if (!mob || !mob->GameWorld() || search_range <= 0.f) return nullptr;
+
+    auto candidates = mob->GameWorld()->GetSpatialGrid().QueryRange(
+        mob->m_pos, search_range,
+        [mob, search_range](const CEntity* entity) -> bool
+        {
+            if (IsUnavailableMeleeTarget(mob, entity)) return false;
+
+            float detection_multiplier = 1.f;
+            if (auto* flower = dynamic_cast<const CFlower*>(entity)) detection_multiplier = flower->m_final_stats.detection_multiplier;
+
+            float range = search_range * detection_multiplier;
+            return DistanceSq(mob->m_pos, entity->m_pos) <= range * range;
+        });
+
+    float best_dist_sq = std::numeric_limits<float>::max();
+    CEntity* p_best_target = nullptr;
+    for (auto* candidate : candidates)
+    {
+        float dist_sq = DistanceSq(mob->m_pos, candidate->m_pos);
+        if (dist_sq < best_dist_sq)
+        {
+            best_dist_sq = dist_sq;
+            p_best_target = candidate;
+        }
+    }
+    return p_best_target;
+}
+
+void FaceTarget(CMobBase* mob, const CEntity* target)
+{
+    if (!mob || !target) return;
+    if (mob->IsFacingLocked()) return;
+    sf::Vector2f delta = target->m_pos - mob->m_pos;
+    if (LengthSq(delta) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon) return;
+    mob->m_facing_angle = std::atan2(delta.y, delta.x);
+    mob->m_has_facing = true;
 }
 }
 
@@ -287,4 +329,68 @@ void CNeutralMeleeController::OnDamaged(CMobBase* mob, CEntity* attacker)
     m_random_idle = false;
     m_random_idle_timer = 0.f;
     m_change_target_count = 0.f;
+}
+
+// ============ Hornet Ranged ============
+
+void CHornetRangedController::OnTick(CMobBase* mob, float dt)
+{
+    if (!mob || !mob->GameWorld()) return;
+
+    const SMobStats* stats = mob->GetFinalStats();
+    if (!stats) return;
+
+    m_change_target_count += dt;
+
+    bool target_invalid = m_p_target && IsUnavailableMeleeTarget(mob, m_p_target);
+    bool reached_random_target = !m_p_target && m_has_random_target_pos &&
+                                 (m_random_idle ? IsRandomIdleDone(dt) :
+                                  DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
+    bool can_random_retarget = !m_p_target && m_change_target_count >= game_config::melee_target_time;
+    float retarget_chance = game_config::melee_retarget_chance_multiplier * m_change_target_count * dt /
+                            (game_config::melee_target_time * game_config::melee_target_time);
+    retarget_chance = std::clamp(retarget_chance, 0.f, 1.f);
+
+    bool should_retarget =
+        target_invalid || !m_has_random_target_pos || reached_random_target || (can_random_retarget && CheckChance(retarget_chance));
+    if (should_retarget)
+    {
+        m_change_target_count = 0.f;
+        m_has_random_target_pos = false;
+        m_random_idle = false;
+        m_random_idle_timer = 0.f;
+
+        m_p_target = FindClosestMeleeTarget(mob, stats->horizon);
+        if (m_p_target)
+        {
+            m_target_pos = m_p_target->m_pos;
+            m_has_random_target_pos = true;
+        } else {
+            PickRandomTargetPos(mob, *stats);
+        }
+    }
+
+    if (!m_p_target)
+    {
+        mob->MoveTowards(m_target_pos, dt);
+        return;
+    }
+
+    m_target_pos = m_p_target->m_pos;
+    FaceTarget(mob, m_p_target);
+
+    sf::Vector2f to_target = m_p_target->m_pos - mob->m_pos;
+    float target_dist = Length(to_target);
+    float stop_distance = m_p_target->m_radius + mob->m_radius * 2.f;
+    if (target_dist <= stop_distance)
+        mob->MoveTowards(mob->m_pos, dt);
+    else
+        mob->MoveTowards(m_target_pos, dt);
+
+    float missile_range = game_config::mob_hornet_missile_speed * game_config::default_missile_lifetime;
+    if (target_dist <= missile_range * 0.5f)
+    {
+        if (auto* attackable = dynamic_cast<IAttackableMob*>(mob))
+            attackable->TryAttack(m_p_target);
+    }
 }

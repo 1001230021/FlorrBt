@@ -92,6 +92,11 @@ CUndeadState::CUndeadState(CMobBase* owner, float timer, ERarity rarity, int sou
 CUndeadState::~CUndeadState()
 {
     if (!m_kill_on_destroy || !m_p_owner) return;
+    if (auto* player_flower = dynamic_cast<CPlayerFlower*>(m_p_owner))
+    {
+        player_flower->EnterDeathState();
+        return;
+    }
     m_p_owner->m_health = 0.f;
     m_p_owner->m_is_marked_for_des = true;
 }

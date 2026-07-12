@@ -9,11 +9,11 @@
 class CPetal;
 class CPetalSlot;
 
-class CFlower : public CMob<SFlowerStats>
+class CFlower : public CAttackableMob<SFlowerStats>
 {
   public:
     CFlower(CGameWorld* pworld, sf::Vector2f pos, float r, ERarity rarity, const SFlowerStats& base = SFlowerStats{})
-        : CMob(pworld, pos, r, rarity, base)
+        : CAttackableMob(pworld, pos, r, rarity, base)
     {
         m_final_stats = base;
         m_health = base.max_health;
@@ -53,8 +53,6 @@ class CFlower : public CMob<SFlowerStats>
 
     void InitSlots();
 
-    bool m_attacking = false;
-    bool m_defending = false;
     int m_total_copies = 0;
 
   protected:

@@ -48,11 +48,11 @@ inline std::vector<EMobType> ParseZoneMobs(std::string_view mobs)
     std::string lowered_pool = ZoneMobToLower(mobs);
     if (lowered_pool == "garden")
     {
-        return {EMobType::NormalLadybug, EMobType::SoldierAnt};
+        return {EMobType::NormalLadybug, EMobType::SoldierAnt, EMobType::Bee, EMobType::Hornet};
     }
     if (lowered_pool == "hornet")
     {
-        return {EMobType::SoldierAnt, EMobType::SoldierFireAnt};
+        return {EMobType::Hornet};
     }
 
     std::string token;

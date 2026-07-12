@@ -1,10 +1,15 @@
 const BEETLE_VIEWBOX_SIZE = 110;
 const BEETLE_EFFECTIVE_BOX = 91.667;
+const BEETLE_BASE_FACE_ANGLE = -Math.PI * 0.75;
+const BEETLE_SPRITE_SCALE = 2.4;
 const BEETLE_MOTION_DEADZONE = 0.12;
 const BEETLE_LIMB_FILL = "#333";
 const BEETLE_LIMB_STROKE = "#333";
 const BEETLE_LIMB_STROKE_WIDTH = 4.667;
 const BEETLE_BASE_CACHE = new Map();
+const SUMMONED_BODY_FILL = "#f4dc59";
+const SUMMONED_BODY_DARK_FILL = "#d7bd3c";
+const SUMMONED_BODY_STROKE = "#c8ad35";
 
 const forelimbParts = [
   {
@@ -21,21 +26,22 @@ const forelimbParts = [
 
 let forelimbPaths = null;
 
-export function drawBeetle(ctx, src, pos, radius, entityId, angle, motion, time) {
-  const spriteSize = Math.max(1, radius * 2 * (BEETLE_VIEWBOX_SIZE / BEETLE_EFFECTIVE_BOX));
+export function drawBeetle(ctx, src, pos, radius, entityId, angle, motion, time, options = {}) {
+  const summoned = Boolean(options.summoned);
+  const spriteSize = Math.max(1, radius * 2 * (BEETLE_VIEWBOX_SIZE / BEETLE_EFFECTIVE_BOX) * BEETLE_SPRITE_SCALE);
   const spriteHalf = spriteSize * 0.5;
-  const base = beetleBaseImage(src);
+  const base = beetleBaseImage(src, summoned);
   const animation = beetleAnimation(entityId, motion || 0, time || 0);
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
-  if (Number.isFinite(angle)) ctx.rotate(angle);
+  if (Number.isFinite(angle)) ctx.rotate(angle - BEETLE_BASE_FACE_ANGLE);
 
   drawForelimbs(ctx, spriteSize, animation);
   if (isImageReady(base)) {
     ctx.drawImage(base, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
   } else {
-    drawFallback(ctx, radius);
+    drawFallback(ctx, radius * BEETLE_SPRITE_SCALE, summoned);
   }
 
   ctx.restore();
@@ -75,14 +81,15 @@ function drawForelimbs(ctx, spriteSize, animation) {
   ctx.restore();
 }
 
-function beetleBaseImage(src) {
-  let entry = BEETLE_BASE_CACHE.get(src);
+function beetleBaseImage(src, summoned) {
+  const cacheKey = `${src}|${summoned ? "summoned" : "normal"}`;
+  let entry = BEETLE_BASE_CACHE.get(cacheKey);
   if (entry) return entry.image;
 
   const image = new Image();
   image.decoding = "async";
   entry = { image, url: "" };
-  BEETLE_BASE_CACHE.set(src, entry);
+  BEETLE_BASE_CACHE.set(cacheKey, entry);
 
   fetch(src)
     .then((response) => {
@@ -90,7 +97,9 @@ function beetleBaseImage(src) {
       return response.text();
     })
     .then((svgText) => {
-      const blob = new Blob([stripStaticForelimbs(svgText)], { type: "image/svg+xml" });
+      let bodySvg = stripStaticForelimbs(svgText);
+      if (summoned) bodySvg = recolorSummonedBodySvg(bodySvg);
+      const blob = new Blob([bodySvg], { type: "image/svg+xml" });
       const url = URL.createObjectURL(blob);
       entry.url = url;
       image.src = url;
@@ -112,6 +121,38 @@ function stripStaticForelimbs(svgText) {
   const paths = Array.from(root.querySelectorAll("path"));
   paths.slice(0, 4).forEach((node) => node.remove());
   return new XMLSerializer().serializeToString(root);
+}
+
+function recolorSummonedBodySvg(svgText) {
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") {
+    return svgText
+      .replace(/#905db0/gi, SUMMONED_BODY_FILL)
+      .replace(/#754b8f/gi, SUMMONED_BODY_DARK_FILL)
+      .replace(/#454545/gi, SUMMONED_BODY_DARK_FILL)
+      .replace(/#555\b/gi, SUMMONED_BODY_FILL);
+  }
+
+  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+  const root = doc.documentElement;
+  if (!root || root.tagName.toLowerCase() !== "svg") return svgText;
+
+  root.querySelectorAll("[fill]").forEach((node) => {
+    const fill = (node.getAttribute("fill") || "").trim().toLowerCase();
+    if (!fill || fill === "none") return;
+    node.setAttribute("fill", summonedBodyFill(fill));
+  });
+  root.querySelectorAll("[stroke]").forEach((node) => {
+    const stroke = (node.getAttribute("stroke") || "").trim().toLowerCase();
+    if (!stroke || stroke === "none") return;
+    node.setAttribute("stroke", SUMMONED_BODY_STROKE);
+  });
+  return new XMLSerializer().serializeToString(root);
+}
+
+function summonedBodyFill(fill) {
+  if (fill === "#905db0" || fill === "#555") return SUMMONED_BODY_FILL;
+  if (fill === "#754b8f" || fill === "#454545") return SUMMONED_BODY_DARK_FILL;
+  return SUMMONED_BODY_FILL;
 }
 
 function clipSvgBounds(ctx) {
@@ -156,8 +197,8 @@ function clamp01(value) {
   return Math.max(0, Math.min(1, value));
 }
 
-function drawFallback(ctx, radius) {
-  ctx.fillStyle = "#905db0";
+function drawFallback(ctx, radius, summoned = false) {
+  ctx.fillStyle = summoned ? SUMMONED_BODY_FILL : "#905db0";
   ctx.beginPath();
   ctx.arc(radius * 0.42, radius * 0.42, radius * 0.95, 0, Math.PI * 2);
   ctx.arc(-radius * 0.12, -radius * 0.12, radius * 0.8, 0, Math.PI * 2);

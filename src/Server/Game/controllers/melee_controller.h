@@ -39,3 +39,9 @@ class CNeutralMeleeController : public CMeleeController
     void OnTick(CMobBase* mob, float dt) override;
     void OnDamaged(CMobBase* mob, CEntity* attacker) override;
 };
+
+class CHornetRangedController : public CMeleeController
+{
+  public:
+    void OnTick(CMobBase* mob, float dt) override;
+};

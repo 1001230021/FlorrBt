@@ -267,6 +267,20 @@ void RegisterGlass()
     });
 }
 
+std::once_flag g_stinger_registered;
+void RegisterStinger()
+{
+    std::call_once(g_stinger_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Stinger;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_stinger_base_radius;
+        proto.m_p_behavior = std::make_unique<CStingerBehavior>();
+        REGISTER_PETAL(EPetalType::Stinger, CPetal, proto);
+    });
+}
+
 std::once_flag g_heavy_registered;
 void RegisterHeavy()
 {
@@ -523,6 +537,7 @@ void RegisterPetals()
     RegisterRelic();
     RegisterRose();
     RegisterSawblade();
+    RegisterStinger();
     RegisterTriangle();
     RegisterWing();
     RegisterYinYang();

@@ -44,6 +44,7 @@ class CMobBase : public CEntity
     virtual const SMobStats* GetBaseStats() const = 0;
     virtual const SMobStats* GetFinalStats() const = 0;
     virtual ERarity GetRarity() const = 0;
+    virtual bool IsFacingLocked() const { return false; }
 
     std::vector<CDamageData>& GetDamageData() { return m_damage_data; }
     const std::vector<CDamageData>& GetDamageData() const { return m_damage_data; }
@@ -113,6 +114,40 @@ template <typename TStats = SMobStats> class CMob : public CMobBase
     TStats m_base_stats;
     TStats m_final_stats;
     ERarity m_rarity;
+};
+
+class IAttackableMob
+{
+  public:
+    virtual ~IAttackableMob() = default;
+
+    virtual bool IsAttacking() const = 0;
+    virtual bool IsDefending() const = 0;
+    virtual void SetAttacking(bool attacking) = 0;
+    virtual void SetDefending(bool defending) = 0;
+    virtual bool TryAttack(CEntity* target) = 0;
+
+    void ClearAttackState()
+    {
+        SetAttacking(false);
+        SetDefending(false);
+    }
+};
+
+template <typename TStats = SMobStats> class CAttackableMob : public CMob<TStats>, public IAttackableMob
+{
+  public:
+    using stats_type = TStats;
+    using CMob<TStats>::CMob;
+
+    bool IsAttacking() const override { return m_attacking; }
+    bool IsDefending() const override { return m_defending; }
+    void SetAttacking(bool attacking) override { m_attacking = attacking; }
+    void SetDefending(bool defending) override { m_defending = defending; }
+    bool TryAttack(CEntity*) override { return false; }
+
+    bool m_attacking = false;
+    bool m_defending = false;
 };
 
 class CMobPrototype
@@ -195,6 +230,8 @@ void RegisterSoldierFireAnt();
 void RegisterSoldierTermite();
 void RegisterSummonedBeetle();
 void RegisterSummonedSoldierAnt();
+void RegisterBee();
+void RegisterHornet();
 void RegisterMobs();
 
 #define REGISTER_MOB(type, mob_class, proto) RegisterMobPrototype<mob_class>(type, std::move(proto))
