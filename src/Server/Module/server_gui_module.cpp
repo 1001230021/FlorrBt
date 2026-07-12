@@ -213,6 +213,14 @@ IServerGuiModule::log_line::log_line(ELogPriority line_priority, sf::String line
 
 bool IServerGuiModule::Init()
 {
+    if (!game_config::gui_console_enabled) return true;
+    return OpenGui();
+}
+
+bool IServerGuiModule::OpenGui()
+{
+    if (m_window.isOpen()) return true;
+
     m_window.create(sf::VideoMode({window_width, window_height}), "FlorrBt Server GUI Console");
     m_window.setFramerateLimit(60);
 
@@ -233,11 +241,24 @@ bool IServerGuiModule::Init()
 
 void IServerGuiModule::Tick(float)
 {
+    if (!game_config::gui_console_enabled)
+    {
+        CloseGui();
+        return;
+    }
+
+    if (!m_window.isOpen() && !OpenGui())
+    {
+        game_config::gui_console_enabled = false;
+        return;
+    }
+
     while (const std::optional event = m_window.pollEvent())
     {
         if (event->is<sf::Event::Closed>())
         {
-            ShutDown();
+            game_config::gui_console_enabled = false;
+            CloseGui();
             return;
         }
 
@@ -268,7 +289,8 @@ void IServerGuiModule::Tick(float)
                 continue;
             } else if (key->code == sf::Keyboard::Key::Escape)
             {
-                ShutDown();
+                game_config::gui_console_enabled = false;
+                CloseGui();
                 return;
             } else if (key->code == sf::Keyboard::Key::Enter) {
                 ResetCompletion();
@@ -375,13 +397,17 @@ void IServerGuiModule::Tick(float)
 
 void IServerGuiModule::ShutDown()
 {
+    CloseGui();
+}
+
+void IServerGuiModule::CloseGui()
+{
     if (m_log_sink_id != 0)
     {
         CLogger::RemoveSink(m_log_sink_id);
         m_log_sink_id = 0;
     }
     if (m_window.isOpen()) m_window.close();
-    if (auto* server = CServer::GetInstance()) server->RequestStop();
 }
 
 void IServerGuiModule::PushLine(std::string sender, ELogPriority priority, std::string text)

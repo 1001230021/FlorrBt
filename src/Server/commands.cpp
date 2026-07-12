@@ -257,6 +257,30 @@ REGISTER_CONSOLE_COMMAND(get, {
     LOG_INFO("console", "Value of the " + args[0] + ": " + result);
 })
 
+REGISTER_CONSOLE_COMMAND(gui_console, {
+    if (args.empty())
+    {
+        LOG_INFO("console", "Usage: gui_console [1|0]");
+        return;
+    }
+
+    std::string value = ToLower(args[0]);
+    if (value == "1" || value == "true" || value == "on")
+    {
+        game_config::gui_console_enabled = true;
+        LOG_INFO("console", "GUI console enabled.");
+        return;
+    }
+    if (value == "0" || value == "false" || value == "off")
+    {
+        game_config::gui_console_enabled = false;
+        LOG_INFO("console", "GUI console disabled.");
+        return;
+    }
+
+    LOG_WARN("console", "Usage: gui_console [1|0]");
+})
+
 REGISTER_CONSOLE_COMMAND(mute, {
     if (args.empty())
     {
