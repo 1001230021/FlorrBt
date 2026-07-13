@@ -137,6 +137,8 @@ class CMissilePetal : public CPetal
     void Tick(float dt) override;
 
     bool m_fired = false;
+    bool m_has_fired_angle = false;
+    float m_fired_angle = 0.f;
     float m_fired_lifetime = 0.f;
 };
 
@@ -161,6 +163,14 @@ class CGlassPetal : public CPetal
     using CPetal::CPetal;
 
     std::unordered_map<int, float> m_hit_cooldowns;
+};
+
+class CBrokenEggPetal : public CPetal
+{
+  public:
+    using CPetal::CPetal;
+
+    bool CanCollide() const override { return false; }
 };
 
 class CYggdrasilPetal : public CPetal

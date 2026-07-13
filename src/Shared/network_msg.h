@@ -379,7 +379,7 @@ struct ClientCraftRequest
 // Server packets:
 // Welcome:    [type:1 byte][player_id:2 bytes][owner_entity_id:2 bytes][tick_rate:1 byte][map_len:1 byte][map_name]
 // Snapshot:   [type:1 byte][snapshot_id:4 bytes][owner_entity_id:2 bytes][view_radius:4 bytes][count:2 bytes][entity_snap...]
-// EntitySnap: [entity_id:2 bytes][entity_type:1 byte][team:1 byte][x:4 bytes][y:4 bytes][radius:2 bytes][hp_percent:1 byte][flags:1 byte][angle:2 bytes][rarity:1 byte][name_len:1 byte][name]
+// EntitySnap: [entity_id:2 bytes][entity_type:1 byte][team:1 byte][x:4 bytes][y:4 bytes][radius:2 bytes][hp_percent:1 byte][flags:1 byte][angle:2 bytes][rarity:1 byte][name_len:1 byte][name][primary_slots:1 byte][petal_type:1 byte][rarity:1 byte]...
 //             live petal entity_type = 100 + petal_type, drop entity_type = 150 + petal_type.
 // OwnerState: [type:1 byte][level:1 byte][flags:1 byte][petal_slots:1 byte][secondary_slots:1 byte][exp:4 bytes][exp_required:4 bytes][petal_type:1 byte][rarity:1 byte]...
 // Inventory:  [type:1 byte][count:2 bytes][petal_type:1 byte][rarity:1 byte][count:4 bytes]...
@@ -513,6 +513,12 @@ inline bool HasFlag(ServerEntityFlag flags, ServerEntityFlag flag)
     return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(flag)) != 0;
 }
 
+struct SOwnerPetalSlot
+{
+    uint8_t petal_type = 0;
+    uint8_t rarity = 0;
+};
+
 struct ServerEntitySnap
 {
     net_entity_id entity_id = 0;
@@ -525,6 +531,7 @@ struct ServerEntitySnap
     int16_t angle = 0;
     uint8_t rarity = 0;
     std::string name;
+    std::vector<SOwnerPetalSlot> primary_slots;
 
     static bool parse(const uint8_t* data, size_t len, size_t& offset, ServerEntitySnap& snap)
     {
@@ -544,6 +551,18 @@ struct ServerEntitySnap
 
         snap.name.assign(reinterpret_cast<const char*>(data + offset), reinterpret_cast<const char*>(data + offset + name_len));
         offset += name_len;
+        if (offset + 1 > len) return false;
+
+        uint8_t slot_count = data[offset++];
+        if (offset + static_cast<size_t>(slot_count) * owner_slot_packet_size > len) return false;
+        snap.primary_slots.reserve(slot_count);
+        for (uint8_t i = 0; i < slot_count; ++i)
+        {
+            SOwnerPetalSlot slot;
+            slot.petal_type = data[offset++];
+            slot.rarity = data[offset++];
+            snap.primary_slots.push_back(slot);
+        }
         return true;
     }
 
@@ -563,18 +582,20 @@ struct ServerEntitySnap
         out[offset++] = name_len;
         std::copy_n(snap.name.data(), name_len, out + offset);
         offset += name_len;
+        uint8_t slot_count = static_cast<uint8_t>(std::min<size_t>(snap.primary_slots.size(), UINT8_MAX));
+        out[offset++] = slot_count;
+        for (uint8_t i = 0; i < slot_count; ++i)
+        {
+            out[offset++] = snap.primary_slots[i].petal_type;
+            out[offset++] = snap.primary_slots[i].rarity;
+        }
     }
 
     static size_t GetPackedSize(const ServerEntitySnap& snap)
     {
-        return server_entity_fixed_size + std::min<size_t>(snap.name.size(), UINT8_MAX);
+        return server_entity_fixed_size + std::min<size_t>(snap.name.size(), UINT8_MAX) + 1 +
+               std::min<size_t>(snap.primary_slots.size(), UINT8_MAX) * owner_slot_packet_size;
     }
-};
-
-struct SOwnerPetalSlot
-{
-    uint8_t petal_type = 0;
-    uint8_t rarity = 0;
 };
 
 struct SChatMessage

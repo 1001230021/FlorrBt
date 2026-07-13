@@ -30,13 +30,13 @@ export const PetalNames = [
   "Coin", "Compass", "Cogwheel", "Disc", "Dust", "GoldenLeaf", "Iris", "Lentil", "Moon",
   "Nullification", "Pincer", "Relic", "Rose", "YinYang", "Missile", "BloodSacrifice",
   "Corruption", "Bandage", "Heavy", "Faster", "Yggdrasil", "Dahlia", "Wing", "Triangle",
-  "Sawblade", "Fragment", "Mimic", "Glass", "Stinger",
+  "Sawblade", "Fragment", "Mimic", "Glass", "Stinger", "BrokenEgg",
 ];
 
 export const MobNames = [
   "None", "Beetle", "Gambler", "NormalLadybug", "MechaFlower", "NormalFlower", "PlayerFlower",
   "SoldierAnt", "SoldierFireAnt", "SoldierTermite", "SummonedBeetle", "SummonedSoldierAnt",
-  "BandageBeetle", "Bee", "Hornet",
+  "BandageBeetle", "Bee", "Hornet", "BumbleBee",
 ];
 
 export const RarityNames = [
@@ -198,6 +198,11 @@ function parseEntity(reader) {
   entity.rarity = reader.u8();
   const nameLength = reader.u8();
   entity.name = reader.string(nameLength);
+  const primarySlotCount = reader.u8();
+  entity.primarySlots = [];
+  for (let i = 0; i < primarySlotCount; i += 1) {
+    entity.primarySlots.push({ petalType: reader.u8(), rarity: reader.u8() });
+  }
   return entity;
 }
 

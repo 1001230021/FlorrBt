@@ -45,3 +45,19 @@ class CHornetRangedController : public CMeleeController
   public:
     void OnTick(CMobBase* mob, float dt) override;
 };
+
+class CBumbleBeeController : public IController
+{
+  public:
+    void OnTick(CMobBase* mob, float dt) override;
+
+  private:
+    void PickTurnTimer();
+    void SpawnPollen(CMobBase* mob) const;
+
+    float m_heading = 0.f;
+    float m_turn_timer = 0.f;
+    float m_wave_timer = 0.f;
+    float m_pollen_timer = 0.f;
+    bool m_initialized = false;
+};

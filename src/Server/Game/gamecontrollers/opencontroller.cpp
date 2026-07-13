@@ -36,6 +36,11 @@ bool IsAboveUltra(ERarity rarity)
     return GetLevel(rarity) > GetLevel(ERarity::Ultra);
 }
 
+bool IsSuperOrHigher(ERarity rarity)
+{
+    return GetLevel(rarity) >= GetLevel(ERarity::Super);
+}
+
 int ExpForDropRarity(ERarity rarity)
 {
     int level = std::clamp(GetLevel(rarity), 0, 30);
@@ -159,6 +164,36 @@ bool CanSpawnAt(CGameWorld& world, const sf::Vector2f& pos)
     return Length(closest_mob->m_pos - pos) > min_spawn_distance;
 }
 
+bool HasNearbySuperOrHigherMob(CGameWorld& world, const sf::Vector2f& pos, float radius)
+{
+    if (radius <= 0.f) return false;
+    return world.FindClosestEntity(pos, radius, [](const CEntity* entity)
+    {
+        const auto* mob = dynamic_cast<const CMobBase*>(entity);
+        if (!mob || mob->m_is_marked_for_des || mob->IsDead()) return false;
+        if (mob->m_mob_type == EMobType::PlayerFlower) return false;
+        return IsSuperOrHigher(mob->GetRarity());
+    }) != nullptr;
+}
+
+bool ShouldSkipSuperOrHigherSpawn(CGameWorld& world, const sf::Vector2f& pos, ERarity rarity)
+{
+    if (!IsSuperOrHigher(rarity)) return false;
+
+    if (HasNearbySuperOrHigherMob(world, pos, game_config::open_super_plus_block_radius))
+        return true;
+
+    if (!HasNearbySuperOrHigherMob(world, pos, game_config::open_super_plus_suppress_radius))
+        return false;
+
+    float multiplier = std::clamp(game_config::open_super_plus_suppress_multiplier, 0.f, 1.f);
+    if (multiplier >= 1.f) return false;
+    if (multiplier <= 0.f) return true;
+
+    std::uniform_real_distribution<float> dist(0.f, 1.f);
+    return dist(SpawnRng()) >= multiplier;
+}
+
 std::vector<lootable_player> FindLootablePlayers(const CMobBase& mob)
 {
     const bool above_ultra = IsAboveUltra(mob.GetRarity());
@@ -250,7 +285,11 @@ void COpenController::SpawnMobs(CGameWorld& world)
             continue;
         }
 
-        auto mob = CreateMob(mob_type, &world, pos, PickRarityForDifficulty(zone.difficulty));
+        ERarity rarity = PickRarityForDifficulty(zone.difficulty);
+        if (ShouldSkipSuperOrHigherSpawn(world, pos, rarity))
+            continue;
+
+        auto mob = CreateMob(mob_type, &world, pos, rarity);
         if (mob)
         {
             world.InsertEntity(std::move(mob));

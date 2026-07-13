@@ -15,7 +15,10 @@ class CPlayerController : public IController
 
   private:
     void ExecuteOperate(const ClientOperate& op, CMobBase* mob);
+    void TryManualAttack(CMobBase* mob);
 
     sf::Vector2f m_move_dir = {0.f, 0.f};
+    sf::Vector2f m_aim_dir = {1.f, 0.f};
+    bool m_has_aim_dir = false;
     std::queue<ClientOperate> m_op_queue;
 };

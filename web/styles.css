@@ -731,13 +731,13 @@ button:active {
 .petal-mimic-label {
   position: absolute;
   left: 50%;
-  bottom: 12%;
+  bottom: 14%;
   z-index: 3;
-  width: 62%;
-  height: 22%;
+  width: 52%;
+  height: 18%;
   object-fit: contain;
   pointer-events: none;
-  transform: translateX(-50%);
+  transform: translate(-50%, -4px);
 }
 
 .petal-count {

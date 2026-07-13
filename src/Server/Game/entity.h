@@ -28,6 +28,7 @@ class CEntity
     float m_radius = 0.f;
 
     bool m_skip_world_tick = false;
+    bool m_allow_skip_tick = false;
 
     int m_id = -1;
     bool m_is_marked_for_des = false;

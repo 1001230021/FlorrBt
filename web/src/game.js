@@ -26,7 +26,7 @@ import {
 import { clearLadybugPattern, drawNormalLadybug } from "./ladybug_sprite.js";
 import { drawBeetle } from "./beetle_sprite.js";
 import { drawSoldierAnt } from "./soldier_ant_sprite.js";
-import { drawBee, drawHornet, drawHornetMissile } from "./bee_sprite.js";
+import { drawBee, drawBumbleBee, drawHornet, drawHornetMissile, drawPollen } from "./bee_sprite.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -134,23 +134,27 @@ const summonedSoldierAntType = 11;
 const bandageBeetleType = 12;
 const beeType = 13;
 const hornetType = 14;
+const bumbleBeeType = 15;
 const playerFlowerType = 6;
 const bossRarity = 8;
 const maxBossBars = 3;
+const petalAntEggType = 2;
 const petalAntennaeType = 3;
 const petalCompassType = 10;
 const petalDustType = 13;
+const petalMoonType = 17;
 const petalNullificationType = 18;
 const petalRelicType = 20;
 const petalBandageType = 26;
+const petalDahliaType = 30;
 const petalMimicType = 35;
 const petalStingerType = 37;
 const stingerSplitIconMinRarity = 6;
-const flowerTextureVersion = "20260712a";
+const flowerTextureVersion = "20260713a";
 const PetalIconIds = [
   0, 48, 51, 17, 1, 16, 58, 13, 57, 74, 71, 98, 72, 111, 97, 7, 113, 77,
   "nullification", 27, 53, 5, 19, 9, 108, 80, 103, 18, 12, 30, 38, 8, 106,
-  109, 94, 93, "glass", 6,
+  109, 94, 93, "glass", 6, "broken_egg",
 ];
 const worldPetalSizeScale = 6;
 const worldDropSizeScale = 3.25;
@@ -158,9 +162,11 @@ const petalCardIconScale = 0.92;
 const mobSpriteEffectiveBox = 91.667;
 const mobSpriteViewBox = 110;
 const mobSpriteCoverScale = mobSpriteViewBox / mobSpriteEffectiveBox;
+const beetleSpriteForwardOffsetScale = 0.42;
 const PetalNameToType = new Map(PetalNames.map((name, index) => [normalizePetalName(name), index]));
 const assetImages = new Map();
 const livePetalImages = new Map();
+const bandageOverlayImages = new Map();
 const strippedPetalIconUrls = new Map();
 const mimicLabelIconUrls = new Map();
 
@@ -1224,7 +1230,9 @@ function makeSlotButton(slot, index, kind) {
 
 function slotVisualPetalType(slot, index, kind) {
   if (!slotHasItem(slot) || slot.petalType !== petalMimicType) return slot ? slot.petalType : 0;
-  const slots = kind === "secondary" ? normalizeSlots(state.secondarySlots, state.ownerSlots.length) : state.ownerSlots;
+  if (kind === "secondary") return slot.petalType;
+
+  const slots = state.ownerSlots;
   if (!slots.length) return slot.petalType;
 
   const targetIndex = index <= 0 ? slots.length - 1 : index - 1;
@@ -1414,6 +1422,10 @@ function imageReady(image) {
 
 function ownerHasPetal(petalType) {
   return state.ownerSlots.some((slot) => slotHasItem(slot) && slot.petalType === petalType);
+}
+
+function playerSnapHasPetal(snap, petalType) {
+  return (snap.primarySlots || []).some((slot) => slotHasItem(slot) && slot.petalType === petalType);
 }
 
 function equipFromInventory(item) {
@@ -1954,7 +1966,7 @@ function drawEntity(entity) {
     const summoned = snap.entityType === summonedBeetleType;
     drawBeetle(ctx, "./assets/beetle.svg", pos, radius * deathScale, snap.entityId,
                entity.renderAngle ?? snap.angle, entity.motionBlend || 0, performance.now() / 1000,
-               { summoned });
+               { summoned, forwardOffset: radius * deathScale * beetleSpriteForwardOffsetScale });
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
@@ -1978,7 +1990,8 @@ function drawEntity(entity) {
 
   if (!isPetal && snap.entityType === bandageBeetleType) {
     drawBeetle(ctx, "./assets/bandage_beetle.svg", pos, radius * deathScale, snap.entityId,
-               entity.renderAngle ?? snap.angle, entity.motionBlend || 0, performance.now() / 1000);
+               entity.renderAngle ?? snap.angle, entity.motionBlend || 0, performance.now() / 1000,
+               { forwardOffset: radius * deathScale * beetleSpriteForwardOffsetScale });
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
@@ -1992,10 +2005,24 @@ function drawEntity(entity) {
     return;
   }
 
+  if (!isPetal && snap.entityType === bumbleBeeType) {
+    drawBumbleBee(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
+                  entity.motionBlend || 0, performance.now() / 1000);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
   if (!isPetal && snap.entityType === hornetType) {
     drawHornet(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
                entity.motionBlend || 0, performance.now() / 1000);
     if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && !isDrop && snap.name === "Pollen") {
+    drawPollen(ctx, pos, radius * deathScale, snap.entityId, performance.now() / 1000);
     ctx.restore();
     return;
   }
@@ -2022,7 +2049,7 @@ function drawEntity(entity) {
 
   if (isPetal) {
     const petalType = petalTypeFromSnap(snap);
-    drawLivePetal(petalType, snap.rarity, pos, radius * deathScale, entity.renderAngle ?? snap.angle);
+    drawLivePetal(petalType, snap.rarity, pos, radius * deathScale, entity.renderAngle ?? snap.angle, snap.entityId);
     if (petalType === petalCompassType) drawCompassNeedle(pos, radius * deathScale, entity.renderAngle ?? snap.angle);
     ctx.restore();
     return;
@@ -2050,15 +2077,18 @@ function drawEntity(entity) {
 
 function drawPlayerFlower(snap, pos, radius, angle, isOwner) {
   const flags = snap.flags || 0;
-  const hasAntennae = (flags & flagAntennae) !== 0 || (isOwner && ownerHasPetal(petalAntennaeType));
-  const hasBandage = isOwner && ownerHasPetal(petalBandageType);
-  const hasRelic = (flags & flagRelic) !== 0 || (isOwner && ownerHasPetal(petalRelicType));
-  const nullified = isOwner && ownerHasPetal(petalNullificationType);
+  const hasAntennae = (flags & flagAntennae) !== 0 || playerSnapHasPetal(snap, petalAntennaeType) ||
+    (isOwner && ownerHasPetal(petalAntennaeType));
+  const hasBandage = playerSnapHasPetal(snap, petalBandageType) || (isOwner && ownerHasPetal(petalBandageType));
+  const hasRelic = (flags & flagRelic) !== 0 || playerSnapHasPetal(snap, petalRelicType) ||
+    (isOwner && ownerHasPetal(petalRelicType));
+  const nullified = playerSnapHasPetal(snap, petalNullificationType) || (isOwner && ownerHasPetal(petalNullificationType));
   const corrupted = (flags & flagCorrupted) !== 0;
   const undead = (flags & flagUndead) !== 0;
   const dead = (flags & flagDead) !== 0;
+  const suppressPetalOverlays = corrupted;
 
-  if (hasAntennae) drawAntennaeUnderlay(pos, radius, angle);
+  if (hasAntennae && !suppressPetalOverlays) drawAntennaeUnderlay(pos, radius, angle);
 
   let texture = "normal";
   if (corrupted) texture = "gambler";
@@ -2069,7 +2099,7 @@ function drawPlayerFlower(snap, pos, radius, angle, isOwner) {
   ctx.save();
   ctx.translate(pos.x, pos.y);
   if (dead && Number.isFinite(angle)) ctx.rotate(angle);
-  if (nullified) ctx.globalAlpha *= 0.58;
+  if (nullified && !suppressPetalOverlays) ctx.globalAlpha *= 0.58;
   if (imageReady(image)) {
     ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
   } else {
@@ -2082,7 +2112,7 @@ function drawPlayerFlower(snap, pos, radius, angle, isOwner) {
     ctx.fillRect(-size * 0.5, -size * 0.5, size, size);
   }
   ctx.globalCompositeOperation = "source-over";
-  if (hasBandage && !dead) drawBandagePetalLayer(radius);
+  if (hasBandage && !dead && !suppressPetalOverlays) drawBandagePetalLayer(radius);
   const attacking = (flags & flagAttacking) !== 0;
   const defending = !attacking && (flags & flagDefending) !== 0;
   drawPlayerFlowerFace(radius, angle, texture, dead ? "dead" : (attacking ? "attack" : (defending ? "defend" : "normal")));
@@ -2112,33 +2142,23 @@ function drawMobSvg(src, pos, radius, angle) {
   ctx.restore();
 }
 
-function playerFlowerTexturePath(texture) {
-  switch (texture) {
-    case "undead":
-      return `./assets/player_flower_undead.svg?v=${flowerTextureVersion}`;
-    case "gambler":
-      return `./assets/player_flower_gambler.svg?v=${flowerTextureVersion}`;
-    default:
-      return `./assets/player_flower.svg?v=${flowerTextureVersion}`;
-  }
+function playerFlowerTexturePath(texture = "normal") {
+  const textureFile = texture === "undead" ? "player_flower_undead" :
+                      texture === "gambler" ? "player_flower_gambler" :
+                      "player_flower";
+  return `./assets/${textureFile}.svg?v=${flowerTextureVersion}`;
 }
 
 function drawBandagePetalLayer(radius) {
-  const icon = assetImage(petalIconPath(petalBandageType));
-  const size = Math.max(18, radius * 2.16);
+  const icon = bandageOverlayImage();
+  const size = Math.max(18, radius * 4.48);
+  const offsetY = radius * 0.22;
   ctx.save();
   ctx.beginPath();
-  ctx.arc(0, 0, radius * 1.04, 0, Math.PI * 2);
+  ctx.arc(0, 0, radius * 1.08, 0, Math.PI * 2);
   ctx.clip();
   if (imageReady(icon)) {
-    const sourceWidth = icon.naturalWidth || 110;
-    const sourceHeight = icon.naturalHeight || 110;
-    const sx = sourceWidth * (27 / 110);
-    const sy = sourceHeight * (24 / 110);
-    const sw = sourceWidth * (56 / 110);
-    const sh = sourceHeight * (48 / 110);
-    ctx.drawImage(icon, sx, sy, sw, sh,
-                  -size * 0.5, -size * 0.5, size, size);
+    ctx.drawImage(icon, -size * 0.5, -size * 0.5 + offsetY, size, size);
   } else {
     drawBandagePetalLayerFallback(radius);
   }
@@ -2328,18 +2348,32 @@ function drawPlayerFlowerDeadMouth(radius, smileFill) {
   ctx.stroke();
 }
 
-function drawLivePetal(petalType, rarity, pos, radius, angle) {
+function drawLivePetal(petalType, rarity, pos, radius, angle, entityId = 0) {
   const size = Math.max(1, radius * worldPetalSizeScale);
-  const icon = livePetalIconImage(petalType, rarity);
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
-  if (Number.isFinite(angle)) ctx.rotate(angle);
+  if (petalType !== petalMoonType && Number.isFinite(angle)) ctx.rotate(angle);
 
   if (petalType === petalDustType) {
     drawDustParticlePetal(size, rarity);
     ctx.restore();
     return;
+  }
+
+  if (petalType === petalMoonType) {
+    drawProceduralMoonPetal(size, rarity, entityId);
+    ctx.restore();
+    return;
+  }
+
+  let icon = null;
+  if (petalType === petalAntEggType) {
+    icon = livePetalIconImage(petalType, rarity, extractSingleAntEggLiveSvg, "single-ant-egg");
+  } else if (petalType === petalDahliaType) {
+    icon = livePetalIconImage(petalType, rarity, extractSingleDahliaLiveSvg, "single-dahlia");
+  } else {
+    icon = livePetalIconImage(petalType, rarity);
   }
 
   if (imageReady(icon)) {
@@ -2351,32 +2385,120 @@ function drawLivePetal(petalType, rarity, pos, radius, angle) {
   ctx.restore();
 }
 
-function drawDustParticlePetal(size, rarity) {
-  const icon = petalIconImage(petalDustType);
-  const drawSize = size * 0.58;
-  if (imageReady(icon)) {
-    const sx = icon.naturalWidth * (58 / 110);
-    const sy = icon.naturalHeight * (32 / 110);
-    const sw = icon.naturalWidth * (28 / 110);
-    const sh = icon.naturalHeight * (28 / 110);
-    ctx.drawImage(icon, sx, sy, sw, sh, -drawSize * 0.5, -drawSize * 0.5, drawSize, drawSize);
-    return;
+function drawProceduralMoonPetal(size, rarity, entityId) {
+  const radius = size * 0.16;
+  const borderWidth = 5.2;
+  const innerRadius = Math.max(1, radius - borderWidth);
+  const seed = moonPatternSeed(entityId, rarity);
+  const rand = seededRandom(seed);
+
+  ctx.fillStyle = moonTone("border");
+  ctx.beginPath();
+  ctx.arc(0, 0, radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(0, 0, innerRadius, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.fillStyle = moonTone("base");
+  ctx.fillRect(-innerRadius, -innerRadius, innerRadius * 2, innerRadius * 2);
+
+  const craterCount = 5 + Math.floor(rand() * 5);
+  for (let i = 0; i < craterCount; i += 1) {
+    const angle = rand() * Math.PI * 2;
+    const dist = Math.sqrt(rand()) * innerRadius * 0.9;
+    const x = Math.cos(angle) * dist;
+    const y = Math.sin(angle) * dist;
+    const craterRadius = innerRadius * (0.08 + rand() * 0.13);
+    const strokeWidth = Math.max(1.8, borderWidth * 0.45);
+
+    ctx.lineWidth = strokeWidth;
+    ctx.strokeStyle = moonTone("craterBorder");
+    ctx.fillStyle = moonTone(rand() > 0.36 ? "crater" : "craterLight");
+    ctx.beginPath();
+    ctx.arc(x, y, craterRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
   }
 
-  ctx.fillStyle = rarityColor(rarity, 0.45);
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.28)";
-  ctx.lineWidth = Math.max(1, size * 0.035);
+  ctx.restore();
+
+  ctx.lineWidth = Math.max(1.5, borderWidth * 0.34);
+  ctx.strokeStyle = moonTone("outerEdge");
   ctx.beginPath();
-  for (let i = 0; i < 6; i += 1) {
-    const angle = -Math.PI * 0.5 + i * Math.PI / 3;
-    const x = Math.cos(angle) * drawSize * 0.42;
-    const y = Math.sin(angle) * drawSize * 0.42;
+  ctx.arc(0, 0, Math.max(0, radius - ctx.lineWidth * 0.5), 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+function moonPatternSeed(entityId, rarity) {
+  let seed = ((entityId || 0) * 1103515245 + (rarity || 0) * 2654435761) >>> 0;
+  seed ^= seed >>> 16;
+  seed = Math.imul(seed, 2246822507) >>> 0;
+  seed ^= seed >>> 13;
+  seed = Math.imul(seed, 3266489909) >>> 0;
+  return seed >>> 0;
+}
+
+function seededRandom(seed) {
+  let stateValue = seed || 0x6d2b79f5;
+  return () => {
+    stateValue = (stateValue + 0x6d2b79f5) >>> 0;
+    let t = stateValue;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function moonTone(part) {
+  switch (part) {
+    case "border":
+      return "#6b6b6b";
+    case "outerEdge":
+      return "#676767";
+    case "craterBorder":
+      return "#838383";
+    case "craterLight":
+      return "#a0a0a0";
+    case "crater":
+      return "#8a8a8a";
+    case "base":
+    default:
+      return "#939393";
+  }
+}
+
+function drawDustParticlePetal(size, rarity) {
+  const drawSize = size * 0.32;
+  const dustPoints = [
+    [79.359, 47.857],
+    [74.375, 56.514],
+    [64.135, 55.46],
+    [59.222, 47.857],
+    [64.472, 39.004],
+    [73.848, 39.732],
+  ];
+  const sourceCenterX = 69.291;
+  const sourceCenterY = 47.737;
+  const scale = drawSize / 24;
+
+  ctx.save();
+  ctx.scale(scale, scale);
+  ctx.translate(-sourceCenterX, -sourceCenterY);
+  ctx.fillStyle = "rgba(102, 102, 102, 0.72)";
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.24)";
+  ctx.lineWidth = 1.35;
+  ctx.beginPath();
+  for (let i = 0; i < dustPoints.length; i += 1) {
+    const [x, y] = dustPoints[i];
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   }
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
+  ctx.restore();
 }
 
 function drawDropPetalCard(petalType, rarity, pos, radius) {
@@ -2407,17 +2529,18 @@ function petalIconImage(petalType, rarity = 0) {
   return assetImage(petalIconPath(petalType, rarity));
 }
 
-function livePetalIconImage(petalType, rarity = 0) {
+function livePetalIconImage(petalType, rarity = 0, transformSvg = stripLivePetalLabel, cacheSuffix = "live") {
   const src = petalIconPath(petalType, rarity, { live: true });
   if (!src) return null;
 
-  let entry = livePetalImages.get(src);
+  const cacheKey = `${cacheSuffix}:${src}`;
+  let entry = livePetalImages.get(cacheKey);
   if (entry) return entry.image;
 
   const image = new Image();
   image.decoding = "async";
   entry = { image, url: "" };
-  livePetalImages.set(src, entry);
+  livePetalImages.set(cacheKey, entry);
 
   fetch(src)
     .then((response) => {
@@ -2425,7 +2548,67 @@ function livePetalIconImage(petalType, rarity = 0) {
       return response.text();
     })
     .then((svgText) => {
-      const blob = new Blob([stripLivePetalLabel(svgText)], { type: "image/svg+xml" });
+      const blob = new Blob([transformSvg(svgText)], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      entry.url = url;
+      image.addEventListener("load", () => requestAnimationFrame(drawScene), { once: true });
+      image.addEventListener("error", () => {
+        image.failed = true;
+        if (entry.url) URL.revokeObjectURL(entry.url);
+        requestAnimationFrame(drawScene);
+      }, { once: true });
+      image.src = url;
+    })
+    .catch(() => {
+      image.failed = true;
+      requestAnimationFrame(drawScene);
+    });
+
+  return image;
+}
+
+function extractSingleAntEggLiveSvg(svgText) {
+  return extractFirstLivePetalPathsSvg(svgText, 2, "18 10 74 74");
+}
+
+function extractSingleDahliaLiveSvg(svgText) {
+  return extractFirstLivePetalPathsSvg(svgText, 2, "54 33 31 31");
+}
+
+function extractFirstLivePetalPathsSvg(svgText, pathCount, viewBox) {
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return stripLivePetalLabel(svgText);
+
+  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+  const root = doc.documentElement;
+  if (!root || root.tagName.toLowerCase() !== "svg") return stripLivePetalLabel(svgText);
+
+  const paths = Array.from(root.querySelectorAll("path")).slice(0, pathCount);
+  if (!paths.length) return stripLivePetalLabel(svgText);
+
+  const serializer = new XMLSerializer();
+  const body = paths.map((node) => serializer.serializeToString(node)).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">${body}</svg>`;
+}
+
+function bandageOverlayImage() {
+  const src = petalIconPath(petalBandageType);
+  if (!src) return null;
+
+  let entry = bandageOverlayImages.get(src);
+  if (entry) return entry.image;
+
+  const image = new Image();
+  image.decoding = "async";
+  entry = { image, url: "" };
+  bandageOverlayImages.set(src, entry);
+
+  fetch(src)
+    .then((response) => {
+      if (!response.ok) throw new Error(`Bandage SVG failed: ${src}`);
+      return response.text();
+    })
+    .then((svgText) => {
+      const blob = new Blob([extractBandageOverlaySvg(svgText)], { type: "image/svg+xml" });
       const url = URL.createObjectURL(blob);
       entry.url = url;
       image.addEventListener("load", () => requestAnimationFrame(drawScene), { once: true });
@@ -2452,6 +2635,32 @@ function stripLivePetalLabel(svgText) {
   if (!root || root.tagName.toLowerCase() !== "svg") return svgText;
 
   root.querySelectorAll("text").forEach((node) => node.remove());
+
+  const paths = Array.from(root.querySelectorAll("path"));
+  const remove = new Set();
+  for (let i = 0; i < paths.length - 1; i += 1) {
+    const outline = paths[i];
+    const fill = paths[i + 1];
+    if (isLabelOutlinePath(outline) && isMatchingLabelFillPath(outline, fill)) {
+      remove.add(outline);
+      remove.add(fill);
+      i += 1;
+    }
+  }
+  remove.forEach((node) => node.remove());
+
+  return new XMLSerializer().serializeToString(root);
+}
+
+function extractBandageOverlaySvg(svgText) {
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgText;
+
+  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+  const root = doc.documentElement;
+  if (!root || root.tagName.toLowerCase() !== "svg") return svgText;
+
+  root.querySelectorAll("text").forEach((node) => node.remove());
+  root.querySelectorAll("path[fill-opacity]").forEach((node) => node.remove());
 
   const paths = Array.from(root.querySelectorAll("path"));
   const remove = new Set();

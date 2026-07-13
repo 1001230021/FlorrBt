@@ -1,0 +1,113 @@
+{
+  "columns": 0,
+  "grid": {
+    "height": 1,
+    "orientation": "orthogonal",
+    "width": 1
+  },
+  "margin": 0,
+  "name": "stone_bridge_rect",
+  "spacing": 0,
+  "tilecount": 9,
+  "tiledversion": "1.11.2",
+  "tileheight": 256,
+  "tilerendersize": "grid",
+  "tiles": [
+    {
+      "id": 0,
+      "image": "stone_bridge_rect_tl.png",
+      "imageheight": 256,
+      "imagewidth": 256,
+      "objectgroup": {
+        "draworder": "index",
+        "objects": [
+          {"height": 64, "id": 1, "name": "wall", "type": "wall", "visible": true, "width": 204.8, "x": 51.2, "y": 0}
+        ],
+        "opacity": 1,
+        "type": "objectgroup",
+        "visible": true
+      }
+    },
+    {
+      "id": 1,
+      "image": "stone_bridge_rect_t.png",
+      "imageheight": 256,
+      "imagewidth": 256,
+      "objectgroup": {
+        "draworder": "index",
+        "objects": [
+          {"height": 64, "id": 1, "name": "wall", "type": "wall", "visible": true, "width": 256, "x": 0, "y": 0}
+        ],
+        "opacity": 1,
+        "type": "objectgroup",
+        "visible": true
+      }
+    },
+    {
+      "id": 2,
+      "image": "stone_bridge_rect_tr.png",
+      "imageheight": 256,
+      "imagewidth": 256,
+      "objectgroup": {
+        "draworder": "index",
+        "objects": [
+          {"height": 64, "id": 1, "name": "wall", "type": "wall", "visible": true, "width": 204.8, "x": 0, "y": 0}
+        ],
+        "opacity": 1,
+        "type": "objectgroup",
+        "visible": true
+      }
+    },
+    {"id": 3, "image": "stone_bridge_rect_l.png", "imageheight": 256, "imagewidth": 256},
+    {"id": 4, "image": "stone_bridge_rect_c.png", "imageheight": 256, "imagewidth": 256},
+    {"id": 5, "image": "stone_bridge_rect_r.png", "imageheight": 256, "imagewidth": 256},
+    {
+      "id": 6,
+      "image": "stone_bridge_rect_bl.png",
+      "imageheight": 256,
+      "imagewidth": 256,
+      "objectgroup": {
+        "draworder": "index",
+        "objects": [
+          {"height": 64, "id": 1, "name": "wall", "type": "wall", "visible": true, "width": 204.8, "x": 51.2, "y": 192}
+        ],
+        "opacity": 1,
+        "type": "objectgroup",
+        "visible": true
+      }
+    },
+    {
+      "id": 7,
+      "image": "stone_bridge_rect_b.png",
+      "imageheight": 256,
+      "imagewidth": 256,
+      "objectgroup": {
+        "draworder": "index",
+        "objects": [
+          {"height": 64, "id": 1, "name": "wall", "type": "wall", "visible": true, "width": 256, "x": 0, "y": 192}
+        ],
+        "opacity": 1,
+        "type": "objectgroup",
+        "visible": true
+      }
+    },
+    {
+      "id": 8,
+      "image": "stone_bridge_rect_br.png",
+      "imageheight": 256,
+      "imagewidth": 256,
+      "objectgroup": {
+        "draworder": "index",
+        "objects": [
+          {"height": 64, "id": 1, "name": "wall", "type": "wall", "visible": true, "width": 204.8, "x": 0, "y": 192}
+        ],
+        "opacity": 1,
+        "type": "objectgroup",
+        "visible": true
+      }
+    }
+  ],
+  "tilewidth": 256,
+  "type": "tileset",
+  "version": "1.10"
+}

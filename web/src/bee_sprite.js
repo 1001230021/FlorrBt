@@ -8,6 +8,9 @@ const BEE_ANTENNA_STROKE = "#333";
 const BEE_ANTENNA_LINE_WIDTH = 2.5;
 const HORNET_MISSILE_CENTER = { x: 86.5, y: 86.5 };
 const HORNET_MISSILE_BOX = 32;
+const POLLEN_ASSET = "./assets/petals/14.svg";
+const POLLEN_VIEWBOX = "39 31 32 32";
+const POLLEN_CACHE = { image: null, failed: false };
 
 const antennaParts = [
   {
@@ -57,6 +60,15 @@ export function drawBee(ctx, pos, radius, entityId, angle, motion, time) {
   });
 }
 
+export function drawBumbleBee(ctx, pos, radius, entityId, angle, motion, time) {
+  drawInsect(ctx, pos, radius, entityId, angle, motion, time, {
+    src: "./assets/bumblebee.svg",
+    baseFaceAngle: BEE_BASE_FACE_ANGLE,
+    antennaParts: getAntennaPaths(),
+    strip: "bee",
+  });
+}
+
 export function drawHornet(ctx, pos, radius, entityId, angle, motion, time) {
   drawInsect(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/hornet.svg",
@@ -89,6 +101,19 @@ export function drawHornetMissile(ctx, pos, radius, angle) {
   ctx.translate(-HORNET_MISSILE_CENTER.x, -HORNET_MISSILE_CENTER.y);
   ctx.fillStyle = "#333";
   for (const path of paths) ctx.fill(path);
+  ctx.restore();
+}
+
+export function drawPollen(ctx, pos, radius, entityId, time) {
+  const image = pollenImage();
+  const pulse = 1 + Math.sin((time || 0) * 5.5 + (entityId || 0) * 0.47) * 0.035;
+  const size = Math.max(3, radius * 2.35 * pulse);
+
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  if (image && isImageReady(image)) {
+    ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
+  }
   ctx.restore();
 }
 
@@ -181,6 +206,46 @@ function insectBaseImage(src, strip) {
   return image;
 }
 
+function pollenImage() {
+  if (POLLEN_CACHE.failed) return null;
+  if (POLLEN_CACHE.image) return POLLEN_CACHE.image;
+
+  const image = new Image();
+  image.decoding = "async";
+  image.addEventListener("error", () => {
+    POLLEN_CACHE.failed = true;
+  }, { once: true });
+  POLLEN_CACHE.image = image;
+  fetch(POLLEN_ASSET)
+    .then((response) => {
+      if (!response.ok) throw new Error(`Pollen SVG failed: ${POLLEN_ASSET}`);
+      return response.text();
+    })
+    .then((svgText) => {
+      const blob = new Blob([extractPollenGrain(svgText)], { type: "image/svg+xml" });
+      image.src = URL.createObjectURL(blob);
+    })
+    .catch(() => {
+      POLLEN_CACHE.failed = true;
+    });
+  return image;
+}
+
+function extractPollenGrain(svgText) {
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgText;
+
+  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+  const root = doc.documentElement;
+  if (!root || root.tagName.toLowerCase() !== "svg") return svgText;
+
+  const paths = Array.from(root.querySelectorAll("path")).slice(0, 2);
+  const grain = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
+  grain.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  grain.setAttribute("viewBox", POLLEN_VIEWBOX);
+  for (const path of paths) grain.appendChild(path.cloneNode(true));
+  return new XMLSerializer().serializeToString(grain);
+}
+
 function stripAntennae(svgText, strip) {
   if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgText;
 
@@ -190,7 +255,7 @@ function stripAntennae(svgText, strip) {
 
   const paths = Array.from(root.querySelectorAll("path"));
   if (strip === "hornet") paths.slice(-2).forEach((node) => node.remove());
-  else paths.slice(5, 9).forEach((node) => node.remove());
+  else paths.slice(-4).forEach((node) => node.remove());
   return new XMLSerializer().serializeToString(root);
 }
 

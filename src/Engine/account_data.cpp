@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <system_error>
 #include <vector>
 
 namespace
@@ -220,6 +221,41 @@ void NormalizeInventory(std::vector<SInventoryItem>& inventory)
     }
     inventory = std::move(normalized);
 }
+
+bool BackupCorruptAccountData(const std::filesystem::path& path, const std::string& reason, std::string* warning)
+{
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+
+    std::filesystem::path backup = path.string() + ".corrupt";
+    for (int i = 1; i < 1000 && std::filesystem::exists(backup, ec); ++i)
+    {
+        ec.clear();
+        backup = path.string() + ".corrupt." + std::to_string(i);
+    }
+
+    ec.clear();
+    std::filesystem::rename(path, backup, ec);
+    if (ec)
+    {
+        if (warning) *warning = "Failed to move corrupted account data " + path.string() + ": " + ec.message();
+        return false;
+    }
+
+    g_accounts.clear();
+    std::string save_error;
+    if (!CAccountDataStore::Save(&save_error))
+    {
+        if (warning) *warning = "Moved corrupted account data to " + backup.string() +
+                                ", but failed to create fresh data: " + save_error;
+        return false;
+    }
+
+    if (warning)
+        *warning = "Account data parse failed (" + reason + "); moved corrupted file to " +
+                   backup.string() + " and created a fresh account file.";
+    return true;
+}
 }
 
 bool CAccountDataStore::Load(const std::filesystem::path& path, std::string* error)
@@ -233,8 +269,10 @@ bool CAccountDataStore::Load(const std::filesystem::path& path, std::string* err
         return Save(error);
     }
 
-    std::optional<CJsonValue> root_value = CJsonValue::LoadFromFile(path, error);
-    if (!root_value || !root_value->IsObject()) return false;
+    std::string parse_error;
+    std::optional<CJsonValue> root_value = CJsonValue::LoadFromFile(path, &parse_error);
+    if (!root_value) return BackupCorruptAccountData(path, parse_error, error);
+    if (!root_value->IsObject()) return BackupCorruptAccountData(path, "Root is not an object", error);
 
     const CJsonValue* accounts_value = root_value->Find("accounts");
     if (!accounts_value || !accounts_value->IsArray()) return true;

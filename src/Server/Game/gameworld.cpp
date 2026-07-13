@@ -4,6 +4,8 @@
 #include "entities/mob.h"
 #include "entities/petals/petal.h"
 #include "entities/projectile.h"
+#include "gamecontext.h"
+#include "player.h"
 #include "states/states.h"
 #include "../../Shared/game_config.h"
 #include <algorithm>
@@ -18,6 +20,12 @@ struct summon_owner_link
 {
     int direct_owner_id = -1;
     int root_owner_id = -1;
+};
+
+struct active_tick_view
+{
+    sf::Vector2f center;
+    float radius = 0.f;
 };
 
 summon_owner_link GetSummonOwnerLink(const CEntity* entity)
@@ -77,6 +85,41 @@ bool IsSameRootOwnerSummonCollision(const CEntity* lhs, const CEntity* rhs)
     summon_owner_link rhs_link = GetSummonOwnerLink(rhs);
     return HasSummonOwnerLink(lhs_link) && HasSummonOwnerLink(rhs_link) &&
            lhs_link.root_owner_id >= 0 && lhs_link.root_owner_id == rhs_link.root_owner_id;
+}
+
+std::vector<active_tick_view> BuildActiveTickViews(CGameWorld& world)
+{
+    std::vector<active_tick_view> views;
+    CGameContext* context = world.GameContext();
+    if (!context) return views;
+
+    for (const auto& player : context->Players())
+    {
+        if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
+
+        CEntity* owner = player->GetEntity();
+        auto* owner_mob = dynamic_cast<CMobBase*>(owner);
+        const SMobStats* stats = owner_mob ? owner_mob->GetFinalStats() : nullptr;
+        if (!owner || owner->m_is_marked_for_des || !stats) continue;
+
+        views.push_back({owner->m_pos, std::max(0.f, stats->horizon) * 2.f});
+    }
+    return views;
+}
+
+bool IsEntityInActiveTickView(const CEntity& entity, const std::vector<active_tick_view>& views)
+{
+    for (const active_tick_view& view : views)
+    {
+        float radius = view.radius + std::max(0.f, entity.m_radius);
+        if (DistanceSq(entity.m_pos, view.center) <= radius * radius) return true;
+    }
+    return false;
+}
+
+bool ShouldTickEntity(const CEntity& entity, const std::vector<active_tick_view>& views)
+{
+    return !entity.m_allow_skip_tick || IsEntityInActiveTickView(entity, views);
 }
 
 bool IsSameTeamPetalFlowerCollision(const CEntity* lhs, const CEntity* rhs)
@@ -227,6 +270,29 @@ bool ApplyMissileHit(CMissile* missile, CEntity* target)
     if (!missile || !target || dynamic_cast<CDrop*>(target)) return false;
     if (!dynamic_cast<CMobBase*>(target) && !dynamic_cast<CPetal*>(target)) return false;
     return missile->ApplyHit(target);
+}
+
+bool ApplyPollenHit(CPollenProjectile* pollen, CEntity* target)
+{
+    if (!pollen || !target || dynamic_cast<CDrop*>(target)) return false;
+    auto* mob = dynamic_cast<CMobBase*>(target);
+    auto* petal = dynamic_cast<CPetal*>(target);
+    if (!mob && !petal) return false;
+
+    if (!pollen->ApplyHit(target)) return false;
+
+    float retaliation = 0.f;
+    CEntity* retaliation_owner = target;
+    if (mob)
+    {
+        if (const SMobStats* stats = mob->GetFinalStats()) retaliation = stats->damage;
+    } else if (petal) {
+        retaliation = petal->m_final_petal_stats.damage;
+        retaliation_owner = petal->GetOwner();
+    }
+    if (retaliation > 0.f)
+        pollen->TakeDamage(retaliation, retaliation_owner, EDamageType::Normal);
+    return true;
 }
 
 sf::Vector2f ClosestPointOnSegment(sf::Vector2f point, sf::Vector2f a, sf::Vector2f b)
@@ -424,6 +490,45 @@ bool HandleFiredMissileWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, in
     return true;
 }
 
+bool HandleBumbleBeeWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, int segment_index,
+                            sf::Vector2f start, sf::Vector2f end)
+{
+    auto* mob = dynamic_cast<CMobBase*>(&entity);
+    if (!mob || mob->m_mob_type != EMobType::BumbleBee) return false;
+
+    if (segment_index < 0)
+        segment_index = FindBlockingWallSegment(start, end, entity.m_radius, wall);
+
+    sf::Vector2f normal = segment_index >= 0 ? ChooseWallNormal(wall, segment_index, start) :
+                                              NormalizeOrZero(start - end);
+    if (LengthSq(normal) <= game_config::entity_collision_epsilon)
+        normal = NormalizeOrZero(-mob->m_vel);
+    if (LengthSq(normal) <= game_config::entity_collision_epsilon)
+        normal = {1.f, 0.f};
+
+    if (Dot(mob->m_vel, normal) > 0.f)
+        normal = -normal;
+
+    sf::Vector2f old_vel = mob->m_vel;
+    float speed = Length(old_vel);
+    if (speed <= game_config::entity_collision_epsilon)
+    {
+        const SMobStats* stats = mob->GetFinalStats();
+        speed = stats ? stats->max_velocity : game_config::default_max_velocity;
+        old_vel = -normal * speed;
+    }
+
+    float into_wall = Dot(old_vel, normal);
+    mob->m_pos = start + normal * (entity.m_radius * 0.05f + 0.02f);
+    mob->m_vel = old_vel - normal * (2.f * into_wall);
+    if (LengthSq(mob->m_vel) <= game_config::entity_collision_epsilon)
+        mob->m_vel = normal * speed;
+
+    mob->m_facing_angle = std::atan2(mob->m_vel.y, mob->m_vel.x);
+    mob->m_has_facing = true;
+    return true;
+}
+
 bool PushEntityOutOfWall(CEntity& entity, const FlorrBtMap::Wall& wall)
 {
     if (!ExpandedWallBoundsMayTouch(wall, entity.m_pos, entity.m_pos, entity.m_radius)) return false;
@@ -604,11 +709,12 @@ void CGameWorld::Tick(float dt)
 {
     std::vector<CEntity*> entities = GetAllEntities();
     m_spatial_grid.Rebuild(entities);
+    std::vector<active_tick_view> active_tick_views = BuildActiveTickViews(*this);
 
     for (CEntity* entity : entities)
     {
         if (entity) entity->m_prev_pos = entity->m_pos;
-        if (entity && !entity->m_skip_world_tick) entity->Tick(dt);
+        if (entity && !entity->m_skip_world_tick && ShouldTickEntity(*entity, active_tick_views)) entity->Tick(dt);
     }
 
     if (m_p_controller)
@@ -741,7 +847,10 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
 
         if (swept_hit)
         {
-            if (blocking_wall && HandleFiredMissileWallHit(*entity, *blocking_wall, blocking_segment, start, end))
+            if (blocking_wall && HandleBumbleBeeWallHit(*entity, *blocking_wall, blocking_segment, start, end))
+            {
+                continue;
+            } else if (blocking_wall && HandleFiredMissileWallHit(*entity, *blocking_wall, blocking_segment, start, end))
             {
                 if (entity->m_is_marked_for_des) continue;
             } else {
@@ -765,6 +874,7 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
                 if (HandleFiredMissileWallHit(*entity, *wall, contact_segment, entity->m_pos, entity->m_pos) &&
                     entity->m_is_marked_for_des)
                     break;
+                HandleBumbleBeeWallHit(*entity, *wall, contact_segment, entity->m_pos, entity->m_pos);
             }
         }
     }
@@ -810,6 +920,8 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
             auto* other_petal = dynamic_cast<CPetal*>(other);
             auto* entity_missile = dynamic_cast<CMissile*>(entity);
             auto* other_missile = dynamic_cast<CMissile*>(other);
+            auto* entity_pollen = dynamic_cast<CPollenProjectile*>(entity);
+            auto* other_pollen = dynamic_cast<CPollenProjectile*>(other);
             if (entity_petal && other_petal) continue;
             if (!entity->IsCollision(*other)) continue;
 
@@ -834,6 +946,18 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
             if (other_missile)
             {
                 ApplyMissileHit(other_missile, entity);
+                continue;
+            }
+
+            if (entity_pollen)
+            {
+                ApplyPollenHit(entity_pollen, other);
+                continue;
+            }
+
+            if (other_pollen)
+            {
+                ApplyPollenHit(other_pollen, entity);
                 continue;
             }
 

@@ -99,6 +99,20 @@ void RegisterBeetleEgg()
     });
 }
 
+std::once_flag g_broken_egg_registered;
+void RegisterBrokenEgg()
+{
+    std::call_once(g_broken_egg_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::BrokenEgg;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_beetleegg_base_radius;
+        proto.m_p_behavior = std::make_unique<CBrokenEggBehavior>();
+        REGISTER_PETAL(EPetalType::BrokenEgg, CBrokenEggPetal, proto);
+    });
+}
+
 std::once_flag g_bubble_registered;
 void RegisterBubble()
 {
@@ -514,6 +528,7 @@ void RegisterPetals()
     RegisterBandage();
     RegisterBasic();
     RegisterBeetleEgg();
+    RegisterBrokenEgg();
     RegisterBone();
     RegisterBubble();
     RegisterCarrot();

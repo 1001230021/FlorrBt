@@ -204,6 +204,7 @@ bool CPlayer::TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rari
 
     const CPetalPrototype* proto = FindPetalPrototype(static_cast<EPetalType>(petal_type));
     if (!proto || !proto->m_p_behavior) return false;
+    if (slot.m_p_proto && !flower->CanUnequipPetal(slot_index)) return false;
     if (!CAccountDataStore::TakeItem(m_account_name, petal_type, rarity, 1)) return false;
 
     if (slot.m_p_proto)

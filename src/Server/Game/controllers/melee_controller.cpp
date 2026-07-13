@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 
 namespace
 {
@@ -381,7 +382,7 @@ void CHornetRangedController::OnTick(CMobBase* mob, float dt)
 
     sf::Vector2f to_target = m_p_target->m_pos - mob->m_pos;
     float target_dist = Length(to_target);
-    float stop_distance = m_p_target->m_radius + mob->m_radius * 2.f;
+    float stop_distance = 256.f + mob->m_radius;
     if (target_dist <= stop_distance)
         mob->MoveTowards(mob->m_pos, dt);
     else
@@ -392,5 +393,71 @@ void CHornetRangedController::OnTick(CMobBase* mob, float dt)
     {
         if (auto* attackable = dynamic_cast<IAttackableMob*>(mob))
             attackable->TryAttack(m_p_target);
+    }
+}
+
+// ============ Bumble Bee ============
+
+void CBumbleBeeController::PickTurnTimer()
+{
+    float min_time = std::max(0.f, game_config::mob_bumblebee_turn_interval_min);
+    float max_time = std::max(min_time, game_config::mob_bumblebee_turn_interval_max);
+    m_turn_timer = GetLimitedRng(min_time, max_time);
+}
+
+void CBumbleBeeController::SpawnPollen(CMobBase* mob) const
+{
+    if (!mob || !mob->GameWorld()) return;
+
+    int level = std::max(1, GetLevel(mob->GetRarity()));
+    float damage = game_config::mob_bumblebee_pollen_base_damage * std::pow(3.f, static_cast<float>(level - 1));
+    float health = game_config::mob_bumblebee_pollen_base_health * std::pow(5.f, static_cast<float>(level - 1));
+    float mass = std::pow(2.f, static_cast<float>(level - 1));
+    float radius = std::max(1.f, mob->m_radius * game_config::mob_bumblebee_pollen_radius_multiplier);
+
+    auto pollen = std::make_unique<CPollenProjectile>(mob->GameWorld(), mob->m_pos, radius, damage, health,
+                                                      game_config::mob_bumblebee_pollen_lifetime, mass, mob);
+    pollen->m_team = mob->m_team;
+    mob->GameWorld()->InsertEntity(std::move(pollen));
+}
+
+void CBumbleBeeController::OnTick(CMobBase* mob, float dt)
+{
+    if (!mob || !mob->GameWorld()) return;
+
+    const SMobStats* stats = mob->GetFinalStats();
+    if (!stats) return;
+
+    if (!m_initialized)
+    {
+        m_heading = mob->m_has_facing ? mob->m_facing_angle : GetLimitedRng(-game_config::pi, game_config::pi);
+        PickTurnTimer();
+        m_initialized = true;
+    }
+
+    if (LengthSq(mob->m_vel) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+        m_heading = std::atan2(mob->m_vel.y, mob->m_vel.x);
+
+    m_turn_timer -= dt;
+    if (m_turn_timer <= 0.f)
+    {
+        float max_angle = std::max(0.f, game_config::mob_bumblebee_turn_max_angle);
+        m_heading += GetLimitedRng(-max_angle, max_angle);
+        PickTurnTimer();
+    }
+
+    m_wave_timer += dt;
+    float wave = std::sin(m_wave_timer * game_config::mob_bee_wave_frequency) *
+                 game_config::mob_bee_wave_strength * 0.55f;
+    sf::Vector2f target = mob->m_pos + sf::Vector2f(std::cos(m_heading + wave), std::sin(m_heading + wave)) *
+                          std::max(512.f, stats->max_velocity * 4.f);
+    mob->MoveTowards(target, dt);
+
+    m_pollen_timer += dt;
+    float interval = std::max(game_config::server_fixed_dt, game_config::mob_bumblebee_pollen_interval);
+    while (m_pollen_timer >= interval)
+    {
+        m_pollen_timer -= interval;
+        SpawnPollen(mob);
     }
 }

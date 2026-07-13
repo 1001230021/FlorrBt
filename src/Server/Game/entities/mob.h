@@ -211,6 +211,7 @@ template <typename TMob> bool RegisterMobPrototype(EMobType type, CMobPrototype 
         auto mob = std::make_unique<TMob>(world, pos, stats.radius, rarity, stats);
         mob->m_mob_type = raw_ptr->m_type;
         mob->m_team = raw_ptr->m_team;
+        mob->m_allow_skip_tick = raw_ptr->m_type != EMobType::PlayerFlower;
         if (raw_ptr->m_controller_factory) mob->SetController(raw_ptr->m_controller_factory());
         return mob;
     };
@@ -232,6 +233,7 @@ void RegisterSummonedBeetle();
 void RegisterSummonedSoldierAnt();
 void RegisterBee();
 void RegisterHornet();
+void RegisterBumbleBee();
 void RegisterMobs();
 
 #define REGISTER_MOB(type, mob_class, proto) RegisterMobPrototype<mob_class>(type, std::move(proto))

@@ -49,3 +49,17 @@ class CMissile : public CProjectile
     float m_lifetime = 0.f;
     float m_age = 0.f;
 };
+
+class CPollenProjectile : public CProjectile
+{
+  public:
+    CPollenProjectile(CGameWorld* world, sf::Vector2f pos, float radius, float damage, float health,
+                      float lifetime, float mass, CEntity* owner = nullptr);
+
+    void Tick(float dt) override;
+    bool ApplyHit(CEntity* target);
+
+    float m_damage = 0.f;
+    float m_lifetime = 0.f;
+    float m_age = 0.f;
+};

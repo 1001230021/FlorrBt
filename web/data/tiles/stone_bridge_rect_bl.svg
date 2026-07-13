@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect x="51.2" y="0" width="76.8" height="64" fill="#bec3c4"/>
+  <rect x="128" y="0" width="128" height="64" fill="#bec3c4"/>
+  <rect x="51.2" y="64" width="12.8" height="64" fill="#b4bbbd"/>
+  <rect x="64" y="64" width="128" height="64" fill="#b4bbbd"/>
+  <rect x="192" y="64" width="64" height="64" fill="#b4bbbd"/>
+  <rect x="51.2" y="128" width="76.8" height="64" fill="#c2c6c7"/>
+  <rect x="128" y="128" width="128" height="64" fill="#c2c6c7"/>
+  <path fill="none" stroke="#687277" stroke-linejoin="round" stroke-width="3" d="M51.2 0H256M51.2 64H256M51.2 128H256M51.2 192H256M128 0V64M64 64V128M192 64V128M128 128V192"/>
+  <rect x="51.2" y="192" width="12.8" height="64" fill="#969fa2"/>
+  <rect x="64" y="192" width="128" height="64" fill="#969fa2"/>
+  <rect x="192" y="192" width="64" height="64" fill="#969fa2"/>
+  <path fill="none" stroke="#6f7a7f" stroke-linejoin="round" stroke-width="3" d="M51.2 192H256M51.2 256H256M64 192V256M192 192V256"/>
+  <path fill="none" stroke="#485257" stroke-linejoin="round" stroke-width="5" stroke-linecap="round" d="M256 197H59.2Q51.2 197 51.2 205V243Q51.2 251 59.2 251H256"/>
+  <path fill="none" stroke="#586368" stroke-linejoin="round" stroke-width="4" stroke-linecap="round" d="M51.2 0V256"/>
+</svg>

@@ -18,6 +18,7 @@ struct config_entry
 namespace game_config
 {
 inline std::string account_data_path = "data/accounts.json";
+inline std::string server_log_path = "data/server.log";
 inline std::string startup_commands_path = "data/server.cfg";
 inline float default_acceleration = 150.0f;
 inline float default_air_base_mass = 16.0f;
@@ -295,6 +296,22 @@ inline float mob_bee_radius = 12.0f;
 inline int mob_bee_team = 2;
 inline float mob_bee_wave_frequency = 5.2f;
 inline float mob_bee_wave_strength = 0.85f;
+inline float mob_bumblebee_acceleration = 450.0f;
+inline float mob_bumblebee_armor = 1.0f;
+inline float mob_bumblebee_damage = 20.0f;
+inline float mob_bumblebee_mass = 2.5f;
+inline float mob_bumblebee_max_health = 25.0f;
+inline float mob_bumblebee_max_velocity = 225.0f;
+inline float mob_bumblebee_pollen_base_damage = 10.0f;
+inline float mob_bumblebee_pollen_base_health = 5.0f;
+inline float mob_bumblebee_pollen_interval = 0.25f;
+inline float mob_bumblebee_pollen_lifetime = 2.0f;
+inline float mob_bumblebee_pollen_radius_multiplier = 0.125f;
+inline float mob_bumblebee_radius = 12.0f;
+inline int mob_bumblebee_team = 2;
+inline float mob_bumblebee_turn_interval_max = 2.25f;
+inline float mob_bumblebee_turn_interval_min = 0.65f;
+inline float mob_bumblebee_turn_max_angle = 0.95f;
 inline float mob_hornet_acceleration = 300.0f;
 inline float mob_hornet_armor = 1.0f;
 inline float mob_hornet_attack_interval = 1.75f;
@@ -400,6 +417,9 @@ inline float network_snapshot_interval = 1.0f / 30.0f;
 inline uint8_t network_petal_type_offset = 100;
 inline float open_initial_spawn_delay = 5.f;
 inline float open_spawn_interval = 1.f;
+inline float open_super_plus_block_radius = 1024.0f * 8.0f;
+inline float open_super_plus_suppress_multiplier = 0.35f;
+inline float open_super_plus_suppress_radius = 1024.0f * 16.0f;
 inline float open_spawn_x = 500.0f;
 inline float open_spawn_y = 0.0f;
 inline float pi = 3.14159265359f;
@@ -668,6 +688,22 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_bee_team", mob_bee_team),
         REGISTER_CONFIG("mob_bee_wave_frequency", mob_bee_wave_frequency),
         REGISTER_CONFIG("mob_bee_wave_strength", mob_bee_wave_strength),
+        REGISTER_CONFIG("mob_bumblebee_acceleration", mob_bumblebee_acceleration),
+        REGISTER_CONFIG("mob_bumblebee_armor", mob_bumblebee_armor),
+        REGISTER_CONFIG("mob_bumblebee_damage", mob_bumblebee_damage),
+        REGISTER_CONFIG("mob_bumblebee_mass", mob_bumblebee_mass),
+        REGISTER_CONFIG("mob_bumblebee_max_health", mob_bumblebee_max_health),
+        REGISTER_CONFIG("mob_bumblebee_max_velocity", mob_bumblebee_max_velocity),
+        REGISTER_CONFIG("mob_bumblebee_pollen_base_damage", mob_bumblebee_pollen_base_damage),
+        REGISTER_CONFIG("mob_bumblebee_pollen_base_health", mob_bumblebee_pollen_base_health),
+        REGISTER_CONFIG("mob_bumblebee_pollen_interval", mob_bumblebee_pollen_interval),
+        REGISTER_CONFIG("mob_bumblebee_pollen_lifetime", mob_bumblebee_pollen_lifetime),
+        REGISTER_CONFIG("mob_bumblebee_pollen_radius_multiplier", mob_bumblebee_pollen_radius_multiplier),
+        REGISTER_CONFIG("mob_bumblebee_radius", mob_bumblebee_radius),
+        REGISTER_CONFIG("mob_bumblebee_team", mob_bumblebee_team),
+        REGISTER_CONFIG("mob_bumblebee_turn_interval_max", mob_bumblebee_turn_interval_max),
+        REGISTER_CONFIG("mob_bumblebee_turn_interval_min", mob_bumblebee_turn_interval_min),
+        REGISTER_CONFIG("mob_bumblebee_turn_max_angle", mob_bumblebee_turn_max_angle),
         REGISTER_CONFIG("mob_hornet_acceleration", mob_hornet_acceleration),
         REGISTER_CONFIG("mob_hornet_armor", mob_hornet_armor),
         REGISTER_CONFIG("mob_hornet_attack_interval", mob_hornet_attack_interval),
@@ -694,6 +730,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_horizon_scale_exp", mob_horizon_scale_exp),
         REGISTER_CONFIG("max_lootable_players", max_lootable_players),
         REGISTER_CONFIG("max_lootable_player_above_ultra", max_lootable_player_above_ultra),
+        REGISTER_CONFIG("server_log_path", server_log_path),
         REGISTER_CONFIG("mob_mass_scale_base", mob_mass_scale_base),
         REGISTER_CONFIG("mob_mass_scale_exp_multiplier", mob_mass_scale_exp_multiplier),
         REGISTER_CONFIG("mob_velocity_multiplier", mob_velocity_multiplier),
@@ -773,6 +810,9 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("network_snapshot_interval", network_snapshot_interval),
         REGISTER_CONFIG("open_initial_spawn_delay", open_initial_spawn_delay),
         REGISTER_CONFIG("open_spawn_interval", open_spawn_interval),
+        REGISTER_CONFIG("open_super_plus_block_radius", open_super_plus_block_radius),
+        REGISTER_CONFIG("open_super_plus_suppress_multiplier", open_super_plus_suppress_multiplier),
+        REGISTER_CONFIG("open_super_plus_suppress_radius", open_super_plus_suppress_radius),
         REGISTER_CONFIG("open_spawn_x", open_spawn_x),
         REGISTER_CONFIG("open_spawn_y", open_spawn_y),
         REGISTER_CONFIG("petal_attack_offset", default_petal_attack_offset),

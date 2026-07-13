@@ -105,6 +105,7 @@ void CPetal::Tick(float dt)
     auto* flower = dynamic_cast<CFlower*>(GetOwner());
     if (flower)
     {
+        m_team = flower->m_team;
         m_final_petal_stats = m_base_petal_stats;
         m_final_petal_stats.ActedOn(*flower->GetFinalStats());
     } else {
@@ -151,7 +152,15 @@ void CBeetleEggPetal::TakeDamage(float dmg, CEntity* attacker, EDamageType damag
 
 void CMissilePetal::Tick(float dt)
 {
+    bool restore_fired_angle = m_fired && m_type == EPetalType::Missile && m_has_fired_angle;
+    float fired_angle = m_fired_angle;
+
     CPetal::Tick(dt);
+    if (restore_fired_angle)
+    {
+        m_facing_angle = fired_angle;
+        m_has_facing = true;
+    }
     if (!m_fired) return;
 
     m_fired_lifetime += dt;

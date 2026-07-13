@@ -17,6 +17,7 @@ using CAttackableBasicMob = CAttackableMob<SMobStats>;
 
 std::once_flag g_beetle_registered;
 std::once_flag g_bee_registered;
+std::once_flag g_bumblebee_registered;
 std::once_flag g_hornet_registered;
 std::once_flag g_bandage_beetle_registered;
 std::once_flag g_normal_ladybug_registered;
@@ -60,6 +61,14 @@ SMobStats ScaleSummonedMobStats(SMobStats stats, ERarity rarity)
     const float base_radius = stats.radius;
     stats = ScaleMobStats(stats, rarity);
     stats.radius = base_radius * (1.f + 0.2f * static_cast<float>(GetLevel(rarity)));
+    return stats;
+}
+
+SMobStats ScaleHornetStats(SMobStats stats, ERarity rarity)
+{
+    const float base_horizon = stats.horizon;
+    stats = ScaleMobStats(stats, rarity);
+    stats.horizon = base_horizon;
     return stats;
 }
 
@@ -376,15 +385,39 @@ void RegisterHornet()
         proto.m_base_stats.damage = game_config::mob_hornet_damage;
         proto.m_base_stats.radius = game_config::mob_hornet_radius;
         proto.m_base_stats.mass = game_config::mob_hornet_mass;
-        proto.m_base_stats.horizon = game_config::mob_hornet_missile_speed * game_config::default_missile_lifetime;
+        proto.m_base_stats.horizon = game_config::mob_hornet_missile_speed * game_config::default_missile_lifetime * 0.5f;
         proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
         proto.m_base_stats.max_velocity = game_config::mob_hornet_max_velocity;
         proto.m_base_stats.acceleration = game_config::mob_hornet_acceleration;
         proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
-            return ScaleMobStats(base_stats, rarity);
+            return ScaleHornetStats(base_stats, rarity);
         };
         proto.m_controller_factory = []() { return std::make_unique<CHornetRangedController>(); };
         REGISTER_MOB(EMobType::Hornet, CHornetMob, proto);
+    });
+}
+
+void RegisterBumbleBee()
+{
+    std::call_once(g_bumblebee_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::BumbleBee;
+        proto.m_name = std::string(GetMobTypeName(proto.m_type));
+        proto.m_team = game_config::mob_bumblebee_team;
+        proto.m_base_stats.max_health = game_config::mob_bumblebee_max_health;
+        proto.m_base_stats.armor = game_config::mob_bumblebee_armor;
+        proto.m_base_stats.damage = game_config::mob_bumblebee_damage;
+        proto.m_base_stats.radius = game_config::mob_bumblebee_radius;
+        proto.m_base_stats.mass = game_config::mob_bumblebee_mass;
+        proto.m_base_stats.horizon = game_config::default_horizon;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = game_config::mob_bumblebee_max_velocity;
+        proto.m_base_stats.acceleration = game_config::mob_bumblebee_acceleration;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(base_stats, rarity);
+        };
+        proto.m_controller_factory = []() { return std::make_unique<CBumbleBeeController>(); };
+        REGISTER_MOB(EMobType::BumbleBee, CBeeMob, proto);
     });
 }
 
