@@ -288,6 +288,8 @@ bool CFlower::CanUnequipPetal(int slot_index) const
     const CPetalSlot& slot = m_slots[slot_index];
     if (!slot.m_p_proto) return false;
 
+    if (!slot.m_available || slot.m_banned) return true;
+
     if (slot.m_p_proto->m_type == EPetalType::Corruption)
     {
         if (GetLevel(slot.m_stored_rarity) <= GetLevel(ERarity::Ultra)) return false;

@@ -11,7 +11,6 @@
 #include "Game/entities/petals/petal.h"
 #include "Game/gameworld.h"
 #include "Game/player.h"
-#include "Module/network_module.h"
 #include <algorithm>
 #include <charconv>
 #include <cctype>

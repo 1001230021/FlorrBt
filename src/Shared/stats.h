@@ -46,6 +46,7 @@ struct SFlowerStats : public SMobStats
     float petal_reload_multiplier = 1.f;
     float petal_health_multiplier = 1.f;
     float petal_medicine_multiplier = 1.f;
+    float mult_summoned_health = 1.f;
     float petal_rotation_speed = 3.f;
     bool petal_rotation_quantized = false;
     EPetalRotationMode petal_rotation_mode = EPetalRotationMode::Orbit;
@@ -63,6 +64,7 @@ struct SFlowerStats : public SMobStats
         petal_reload_multiplier *= other.petal_reload_multiplier;
         petal_health_multiplier *= other.petal_health_multiplier;
         petal_medicine_multiplier *= other.petal_medicine_multiplier;
+        mult_summoned_health *= other.mult_summoned_health;
         petal_rotation_speed += other.petal_rotation_speed;
         petal_rotation_quantized = petal_rotation_quantized || other.petal_rotation_quantized;
         if (other.petal_rotation_mode != EPetalRotationMode::Orbit) petal_rotation_mode = other.petal_rotation_mode;

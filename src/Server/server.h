@@ -3,8 +3,11 @@
 #include "../Shared/network_msg.h"
 #include "Module/module.h"
 #include <SFML/System/Vector2.hpp>
+#include <cstddef>
 #include <cstdint>
+#include <fstream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -48,6 +51,7 @@ class CServer
 
   private:
     void ExecuteStartupCommands();
+    void InstallLogSink();
     static CServer* s_p_instance;
     CConsole m_console;
     CGameWorld* m_p_main_world = nullptr;
@@ -55,5 +59,8 @@ class CServer
     std::unique_ptr<CGameContext> m_p_game_context;
     std::vector<SChatEntry> m_chats;
     std::vector<std::unique_ptr<IModule>> m_modules;
+    size_t m_log_sink_id = 0;
+    std::shared_ptr<std::ofstream> m_log_file;
+    std::shared_ptr<std::mutex> m_log_mutex;
     bool m_running = true;
 };

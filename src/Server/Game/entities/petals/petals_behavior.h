@@ -31,6 +31,7 @@ inline SFlowerStats EmptyFlowerStats()
     stats.petal_reload_multiplier = 1.f;
     stats.petal_health_multiplier = 1.f;
     stats.petal_medicine_multiplier = 1.f;
+    stats.mult_summoned_health = 1.f;
     stats.petal_rotation_speed = 0.f;
     stats.petal_rotation_quantized = false;
     stats.petal_rotation_mode = EPetalRotationMode::Orbit;
@@ -251,7 +252,7 @@ inline float PetalTargetAcceleration(const CFlower* flower, float multiplier = 4
                                     game_config::default_lentil_petal_attraction_range);
         range_scale = std::max(1.f, flower->GetFinalStats()->petal_attraction_range / base_range);
     }
-    return acceleration * multiplier * range_scale * 2.f;
+    return acceleration * multiplier * range_scale * 1.25f;
 }
 
 inline float PetalLockedTargetAcceleration(const CFlower* flower, float multiplier = 4.f)
@@ -304,6 +305,7 @@ void RegisterAntEgg();
 void RegisterAntennae();
 void RegisterBasic();
 void RegisterBeetleEgg();
+void RegisterBrokenEgg();
 void RegisterBubble();
 void RegisterCompass();
 void RegisterCogwheel();
@@ -762,7 +764,7 @@ class CGlassBehavior : public CPetalBehavior
 class CStingerBehavior : public CPetalBehavior
 {
   public:
-    bool IsOpen() const override { return true; }
+    bool IsOpen() const override { return false; }
 
     SFlowerStats GetStats(ERarity) const override { return EmptyFlowerStats(); }
 
@@ -785,7 +787,7 @@ class CStingerBehavior : public CPetalBehavior
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
         PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower),
-                                 game_config::default_petal_orbit_k, true, dt);
+                                 game_config::default_petal_orbit_k, false, dt);
     }
 
     void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
@@ -822,6 +824,58 @@ inline float BeetleEggReload(ERarity rarity)
     default:
         return 0.f;
     }
+}
+
+inline float BrokenEggSummonedHealthMultiplier(ERarity rarity)
+{
+    switch (rarity)
+    {
+    case ERarity::Common:
+        return 1.10f;
+    case ERarity::Unusual:
+        return 1.20f;
+    case ERarity::Rare:
+        return 1.35f;
+    case ERarity::Epic:
+        return 1.50f;
+    case ERarity::Legendary:
+        return 1.75f;
+    case ERarity::Mythic:
+        return 2.10f;
+    case ERarity::Ultra:
+        return 2.50f;
+    case ERarity::Super:
+        return 2.80f;
+    case ERarity::Eternal:
+    case ERarity::Unique:
+        return 3.25f;
+    case ERarity::Primordial:
+        return 4.00f;
+    default:
+        return 1.00f;
+    }
+}
+
+inline bool FlowerHasSummonHealthMultiplier(const CFlower* flower)
+{
+    const SFlowerStats* stats = flower ? flower->GetFinalStats() : nullptr;
+    return stats && stats->mult_summoned_health > 1.f + game_config::entity_collision_epsilon;
+}
+
+inline void ApplySummonedHealthMultiplier(CMobBase* summon, const CFlower* flower)
+{
+    if (!summon || !flower || !flower->GetFinalStats()) return;
+
+    float multiplier = std::max(0.f, flower->GetFinalStats()->mult_summoned_health);
+    if (std::abs(multiplier - 1.f) <= game_config::entity_collision_epsilon) return;
+
+    if (auto* mob = dynamic_cast<CMob<SMobStats>*>(summon))
+    {
+        mob->m_base_stats.max_health *= multiplier;
+        mob->m_final_stats.max_health *= multiplier;
+    }
+
+    summon->m_health = std::max(1.f, summon->m_health * multiplier);
 }
 
 inline float BubbleReload(ERarity rarity)
@@ -875,6 +929,8 @@ class CSummonEggBehavior : public CPetalBehavior
         {
             PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower),
                                      game_config::default_petal_orbit_k, true, dt);
+            if (FlowerHasSummonHealthMultiplier(flower) && owner->m_lifetime >= 1.f)
+                owner->m_health = 0.f;
             return;
         }
 
@@ -940,6 +996,7 @@ class CSummonEggBehavior : public CPetalBehavior
             return;
         }
 
+        ApplySummonedHealthMultiplier(raw_summon, flower);
         egg->m_summon_id = raw_summon->m_id;
         egg->m_has_spawned_summon = true;
         owner->m_health = std::max(1.f, raw_summon->m_health);
@@ -1009,6 +1066,43 @@ class CBeetleEggBehavior : public CSummonEggBehavior
         stats.radius = game_config::default_beetleegg_base_radius;
         return stats;
     }
+};
+
+class CBrokenEggBehavior : public CPetalBehavior
+{
+  public:
+    EPetalBonusMode GetBonusMode() const override { return EPetalBonusMode::PreloadKeepsBonus; }
+
+    SFlowerStats GetStats(ERarity rarity) const override
+    {
+        SFlowerStats stats = EmptyFlowerStats();
+        stats.mult_summoned_health = BrokenEggSummonedHealthMultiplier(rarity);
+        return stats;
+    }
+
+    SPetalStats GetPetalStats(ERarity) const override
+    {
+        SPetalStats stats;
+        stats.stack = false;
+        stats.health = 1.f;
+        stats.damage = 0.f;
+        stats.reload = 0.f;
+        stats.preload = 0.f;
+        stats.copy = 1;
+        stats.mass = 0.f;
+        stats.radius = game_config::default_beetleegg_base_radius;
+        return stats;
+    }
+
+    void OnTick(CPetal* owner, ERarity, CFlower* flower, float) override
+    {
+        PetalOrbitMove(owner, flower, PetalOrbitDistance(owner, flower),
+                       game_config::default_petal_orbit_k, false);
+    }
+
+    void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
+    void OnPetalSpawned(CPetal*, ERarity, CFlower*) override {}
+    void OnPetalDestroyed(CPetal*, ERarity, CFlower*) override {}
 };
 
 class CBubbleBehavior : public CPetalBehavior
@@ -1490,7 +1584,7 @@ class CRoseBehavior : public CPetalBehavior
 class CDahliaBehavior : public CPetalBehavior
 {
   public:
-    bool IsOpen() const override { return true; }
+    bool IsOpen() const override { return false; }
 
     SFlowerStats GetStats(ERarity) const override { return EmptyFlowerStats(); }
 
@@ -1517,12 +1611,12 @@ class CDahliaBehavior : public CPetalBehavior
             owner->m_vel = {0.f, 0.f};
             PetalAttractToTarget(owner, target, dt, PetalLockedTargetAcceleration(flower));
             PetalTetherWhileTargeting(owner, flower, PetalOrbitDistance(owner, flower),
-                                      game_config::default_petal_orbit_k, true);
+                                      game_config::default_petal_orbit_k, false);
             return;
         }
 
         PetalClearTarget(owner);
-        PetalOrbitMove(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
+        PetalOrbitMove(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, false);
     }
 
     void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
@@ -2145,8 +2239,16 @@ class CMissileBehavior : public CPetalBehavior
 
         float flower_speed = flower->GetFinalStats() ? flower->GetFinalStats()->max_velocity : game_config::default_max_velocity;
         owner->m_vel = direction * (flower_speed * game_config::default_missile_speed_multiplier);
+        float fired_angle = std::atan2(direction.y, direction.x);
+        owner->m_facing_angle = fired_angle;
+        owner->m_has_facing = true;
         owner->m_skip_world_tick = false;
         owner->m_detach_from_slot = true;
+        if (owner->m_type == EPetalType::Missile)
+        {
+            missile->m_fired_angle = fired_angle;
+            missile->m_has_fired_angle = true;
+        }
         missile->m_fired = true;
         missile->m_fired_lifetime = 0.f;
     }

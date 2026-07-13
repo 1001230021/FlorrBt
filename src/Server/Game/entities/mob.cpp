@@ -274,7 +274,9 @@ std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, sf::Vector
 {
     const CMobPrototype* prototype = FindMobPrototype(type);
     if (!prototype || !prototype->m_factory) return nullptr;
-    return prototype->m_factory(world, pos, rarity);
+    auto mob = prototype->m_factory(world, pos, rarity);
+    if (mob) mob->m_allow_skip_tick = type != EMobType::PlayerFlower;
+    return mob;
 }
 
 void RegisterMobs()
@@ -291,4 +293,5 @@ void RegisterMobs()
     RegisterSummonedSoldierAnt();
     RegisterBee();
     RegisterHornet();
+    RegisterBumbleBee();
 }

@@ -7,7 +7,7 @@ const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
 
-const root = path.resolve(__dirname, "..");
+const root = path.resolve(process.env.FLORRBT_ROOT || path.resolve(__dirname, ".."));
 const webRoot = path.join(root, "web");
 const dataRoot = path.join(root, "data");
 const listenHost = process.env.WEB_HOST || "127.0.0.1";
@@ -149,6 +149,11 @@ function createFrameParser(onData, onClose, onPing) {
   };
 }
 
+if (!fs.existsSync(path.join(webRoot, "index.html"))) {
+  console.error(`Cannot find web/index.html under root: ${root}`);
+  process.exit(1);
+}
+
 const server = http.createServer((req, res) => sendFile(res, req.url || "/"));
 
 server.on("upgrade", (req, socket) => {
@@ -196,4 +201,12 @@ server.on("upgrade", (req, socket) => {
 server.listen(listenPort, listenHost, () => {
   console.log(`FlorrBt web client: http://${listenHost}:${listenPort}`);
   console.log(`WebSocket proxy: ws://${listenHost}:${listenPort}/ws -> ${gameHost}:${gamePort}`);
+});
+
+server.on("error", (error) => {
+  console.error(`Web server error: ${error.message}`);
+  if (error.code === "EADDRINUSE") {
+    console.error(`Port ${listenPort} is already in use. Change WEB_PORT or stop the old web server.`);
+  }
+  process.exit(1);
 });

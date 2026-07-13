@@ -38,6 +38,7 @@ std::string GetEntityName(const CEntity& entity)
     if (const auto* mob = dynamic_cast<const CMobBase*>(&entity)) return std::string(GetMobTypeName(mob->m_mob_type));
     if (const auto* drop = dynamic_cast<const CDrop*>(&entity)) return std::string(GetPetalTypeName(drop->GetType()));
     if (const auto* petal = dynamic_cast<const CPetal*>(&entity)) return std::string(GetPetalTypeName(petal->m_type));
+    if (dynamic_cast<const CPollenProjectile*>(&entity)) return "Pollen";
     if (dynamic_cast<const CMissile*>(&entity)) return "Missile";
     return "Entity";
 }
@@ -58,7 +59,8 @@ float GetPrimordialDefaultMobRadius()
                                   game_config::default_flower_radius, game_config::mob_player_flower_radius,
                                   game_config::mob_summoned_beetle_radius, game_config::mob_soldier_ant_radius,
                                   game_config::mob_soldier_fire_ant_radius, game_config::mob_soldier_termite_radius,
-                                  game_config::mob_summoned_soldier_ant_radius});
+                                  game_config::mob_summoned_soldier_ant_radius, game_config::mob_bee_radius,
+                                  game_config::mob_hornet_radius, game_config::mob_bumblebee_radius});
     float primordial_scale =
         std::pow(static_cast<float>(GetLevel(ERarity::Primordial)), game_config::mob_radius_scale_exp);
     return base_radius * primordial_scale;
@@ -1026,7 +1028,21 @@ ServerEntitySnap INetworkModule::BuildEntitySnap(const CEntity& entity, const CE
 
     if (const auto* mob = dynamic_cast<const CMobBase*>(&entity)) snap.rarity = static_cast<uint8_t>(mob->GetRarity());
     if (const auto* player_flower = dynamic_cast<const CPlayerFlower*>(&entity))
+    {
         snap.rarity = static_cast<uint8_t>(std::clamp(player_flower->m_level, 0, static_cast<int>(UINT8_MAX)));
+        const auto& slots = player_flower->GetSlots();
+        snap.primary_slots.reserve(slots.size());
+        for (const CPetalSlot& slot : slots)
+        {
+            SOwnerPetalSlot primary_slot;
+            if (slot.m_p_proto)
+            {
+                primary_slot.petal_type = static_cast<uint8_t>(slot.m_p_proto->m_type);
+                primary_slot.rarity = static_cast<uint8_t>(slot.m_stored_rarity);
+            }
+            snap.primary_slots.push_back(primary_slot);
+        }
+    }
     if (const auto* drop = dynamic_cast<const CDrop*>(&entity)) snap.rarity = static_cast<uint8_t>(drop->GetRarity());
     if (const auto* petal = dynamic_cast<const CPetal*>(&entity)) snap.rarity = static_cast<uint8_t>(petal->m_rarity);
 

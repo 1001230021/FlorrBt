@@ -28,6 +28,7 @@ let forelimbPaths = null;
 
 export function drawBeetle(ctx, src, pos, radius, entityId, angle, motion, time, options = {}) {
   const summoned = Boolean(options.summoned);
+  const forwardOffset = Number.isFinite(options.forwardOffset) ? options.forwardOffset : 0;
   const spriteSize = Math.max(1, radius * 2 * (BEETLE_VIEWBOX_SIZE / BEETLE_EFFECTIVE_BOX) * BEETLE_SPRITE_SCALE);
   const spriteHalf = spriteSize * 0.5;
   const base = beetleBaseImage(src, summoned);
@@ -36,6 +37,10 @@ export function drawBeetle(ctx, src, pos, radius, entityId, angle, motion, time,
   ctx.save();
   ctx.translate(pos.x, pos.y);
   if (Number.isFinite(angle)) ctx.rotate(angle - BEETLE_BASE_FACE_ANGLE);
+  if (forwardOffset !== 0) {
+    ctx.translate(Math.cos(BEETLE_BASE_FACE_ANGLE) * forwardOffset,
+                  Math.sin(BEETLE_BASE_FACE_ANGLE) * forwardOffset);
+  }
 
   drawForelimbs(ctx, spriteSize, animation);
   if (isImageReady(base)) {

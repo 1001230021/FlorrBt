@@ -65,17 +65,27 @@ function Build-SelfArgs([string]$ChildMode) {
 }
 
 function Find-Node {
-    $cmd = Get-Command node -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-
     $candidates = @(
+        (Get-Command node -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
+        "C:\Program Files\nodejs\node.exe",
+        "C:\Program Files (x86)\nodejs\node.exe",
+        "$env:LOCALAPPDATA\Programs\nodejs\node.exe",
         "C:\Program Files\Microsoft Visual Studio\18\Insiders\MSBuild\Microsoft\VisualStudio\NodeJs\node.exe",
         "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VisualStudio\NodeJs\node.exe",
         "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Microsoft\VisualStudio\NodeJs\node.exe"
     )
+    $candidates += Get-ChildItem -Path "$env:LOCALAPPDATA\OpenAI\Codex\bin" -Recurse -Filter node.exe -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty FullName
 
-    foreach ($candidate in $candidates) {
-        if (Test-Path $candidate) { return $candidate }
+    foreach ($candidate in $candidates | Where-Object { $_ } | Select-Object -Unique) {
+        if (-not (Test-Path $candidate)) { continue }
+        if ($candidate -like "*\WindowsApps\OpenAI.Codex_*") { continue }
+        try {
+            $version = & $candidate --version 2>$null
+            if ($LASTEXITCODE -eq 0 -and $version) { return $candidate }
+        } catch {
+            continue
+        }
     }
 
     throw "Node.js was not found. Install Node.js LTS or add node.exe to PATH."

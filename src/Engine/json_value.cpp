@@ -1,5 +1,7 @@
 #include "json_value.h"
+#include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <fstream>
 #include <sstream>
 
@@ -163,8 +165,15 @@ class CJsonParser
             case 't':
                 result.push_back('\t');
                 break;
+            case 'u':
+            {
+                std::optional<uint32_t> codepoint = ParseUnicodeEscape(error);
+                if (!codepoint) return std::nullopt;
+                AppendUtf8(result, *codepoint);
+                break;
+            }
             default:
-                SetError(error, "Unsupported string escape");
+                SetError(error, std::string("Unsupported string escape '\\") + escaped + "'");
                 return std::nullopt;
             }
         }
@@ -199,6 +208,87 @@ class CJsonParser
         }
     }
 
+    static int HexValue(char ch)
+    {
+        if (ch >= '0' && ch <= '9') return ch - '0';
+        if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+        if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+        return -1;
+    }
+
+    std::optional<uint32_t> ParseUnicodeCodeUnit(std::string* error)
+    {
+        if (m_pos + 4 > m_text.size())
+        {
+            SetError(error, "Incomplete unicode escape");
+            return std::nullopt;
+        }
+
+        uint32_t value = 0;
+        for (int i = 0; i < 4; ++i)
+        {
+            int digit = HexValue(Consume());
+            if (digit < 0)
+            {
+                SetError(error, "Invalid unicode escape");
+                return std::nullopt;
+            }
+            value = (value << 4) | static_cast<uint32_t>(digit);
+        }
+        return value;
+    }
+
+    std::optional<uint32_t> ParseUnicodeEscape(std::string* error)
+    {
+        std::optional<uint32_t> first = ParseUnicodeCodeUnit(error);
+        if (!first) return std::nullopt;
+
+        uint32_t codepoint = *first;
+        if (codepoint >= 0xD800 && codepoint <= 0xDBFF)
+        {
+            size_t low_start = m_pos;
+            if (m_pos + 6 <= m_text.size() && m_text[m_pos] == '\\' && m_text[m_pos + 1] == 'u')
+            {
+                m_pos += 2;
+                std::optional<uint32_t> second = ParseUnicodeCodeUnit(error);
+                if (!second) return std::nullopt;
+                if (*second >= 0xDC00 && *second <= 0xDFFF)
+                    return 0x10000 + ((codepoint - 0xD800) << 10) + (*second - 0xDC00);
+            }
+            m_pos = low_start;
+            return 0xFFFD;
+        }
+
+        if (codepoint >= 0xDC00 && codepoint <= 0xDFFF) return 0xFFFD;
+        return codepoint;
+    }
+
+    static void AppendUtf8(std::string& out, uint32_t codepoint)
+    {
+        if (codepoint <= 0x7F)
+        {
+            out.push_back(static_cast<char>(codepoint));
+        }
+        else if (codepoint <= 0x7FF)
+        {
+            out.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
+            out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        }
+        else if (codepoint <= 0xFFFF)
+        {
+            out.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        }
+        else
+        {
+            out.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+            out.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        }
+    }
+
     void SkipWhitespace()
     {
         while (!IsEnd() && std::isspace(static_cast<unsigned char>(Peek())))
@@ -226,9 +316,47 @@ class CJsonParser
     char Consume() { return m_text[m_pos++]; }
     bool IsEnd() const { return m_pos >= m_text.size(); }
 
+    std::string ErrorContext() const
+    {
+        if (m_text.empty()) return "";
+
+        size_t begin = m_pos > 32 ? m_pos - 32 : 0;
+        size_t end = std::min(m_text.size(), m_pos + 32);
+        std::string result;
+        for (size_t i = begin; i < end; ++i)
+        {
+            char ch = m_text[i];
+            switch (ch)
+            {
+            case '\n':
+                result += "\\n";
+                break;
+            case '\r':
+                result += "\\r";
+                break;
+            case '\t':
+                result += "\\t";
+                break;
+            case '"':
+                result += "\\\"";
+                break;
+            case '\\':
+                result += "\\\\";
+                break;
+            default:
+                result.push_back(static_cast<unsigned char>(ch) < 0x20 ? '?' : ch);
+                break;
+            }
+        }
+        return result;
+    }
+
     void SetError(std::string* error, const std::string& message) const
     {
-        if (error) *error = message + " at byte " + std::to_string(m_pos);
+        if (!error) return;
+        *error = message + " at byte " + std::to_string(m_pos);
+        std::string context = ErrorContext();
+        if (!context.empty()) *error += " near \"" + context + "\"";
     }
 
     const std::string& m_text;

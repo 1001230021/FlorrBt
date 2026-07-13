@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <exception>
+#include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <SFML/System/Clock.hpp>
@@ -41,6 +43,12 @@ CServer::CServer()
 
 CServer::~CServer()
 {
+    if (m_log_sink_id != 0)
+    {
+        CLogger::RemoveSink(m_log_sink_id);
+        m_log_sink_id = 0;
+    }
+    if (m_log_file && m_log_file->is_open()) m_log_file->flush();
     s_p_instance = nullptr;
 }
 
@@ -51,6 +59,7 @@ void CServer::Init()
     RegisterDropRates();
     m_console.InstallCommands();
     ExecuteStartupCommands();
+    InstallLogSink();
 
     std::string account_error;
     if (!CAccountDataStore::Load(game_config::account_data_path, &account_error))
@@ -59,6 +68,7 @@ void CServer::Init()
         m_running = false;
         return;
     }
+    if (!account_error.empty()) LOG_WARN("account", account_error);
 
     for (auto& module : m_modules)
     {
@@ -68,6 +78,45 @@ void CServer::Init()
             return;
         }
     }
+}
+
+void CServer::InstallLogSink()
+{
+    if (m_log_sink_id != 0) return;
+
+    std::filesystem::path log_path(game_config::server_log_path);
+    if (!log_path.parent_path().empty())
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(log_path.parent_path(), ec);
+        if (ec)
+        {
+            LOG_WARN("server", "Failed to create log directory: " + log_path.parent_path().string() + " (" + ec.message() + ")");
+        }
+    }
+
+    auto file = std::make_shared<std::ofstream>(log_path, std::ios::app | std::ios::binary);
+    if (!file->is_open())
+    {
+        LOG_WARN("server", "Failed to open server log file: " + log_path.string());
+        return;
+    }
+
+    auto mutex = std::make_shared<std::mutex>();
+    *file << "==== FlorrBt server log started ====" << std::endl;
+    file->flush();
+
+    m_log_file = file;
+    m_log_mutex = mutex;
+    m_log_sink_id = CLogger::AddSink([file, mutex](const std::string& sender, ELogPriority priority, const std::string& msg)
+    {
+        std::lock_guard<std::mutex> lock(*mutex);
+        if (!file->is_open()) return;
+        *file << CLogger::FormatLine(sender, priority, msg) << std::endl;
+        file->flush();
+    });
+
+    LOG_INFO("server", "Saving server log to " + log_path.string());
 }
 
 void CServer::ExecuteStartupCommands()
@@ -128,9 +177,22 @@ void CServer::Run()
     {
         sf::Clock frameClock;
 
-        report::ProcessAsyncResults();
-        for (auto& module : m_modules)
-            module->Tick(dt);
+        try
+        {
+            report::ProcessAsyncResults();
+            for (auto& module : m_modules)
+                module->Tick(dt);
+        }
+        catch (const std::exception& e)
+        {
+            LOG_FATAL("server", std::string("Unhandled exception in server tick: ") + e.what());
+            m_running = false;
+        }
+        catch (...)
+        {
+            LOG_FATAL("server", "Unhandled unknown exception in server tick");
+            m_running = false;
+        }
 
         sf::Time elapsed = frameClock.getElapsedTime();
         if (elapsed < targetFrameTime) sf::sleep(targetFrameTime - elapsed);

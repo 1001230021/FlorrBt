@@ -49,3 +49,35 @@ bool CMissile::ApplyHit(CEntity* target)
     m_is_marked_for_des = true;
     return true;
 }
+
+CPollenProjectile::CPollenProjectile(CGameWorld* world, sf::Vector2f pos, float radius, float damage, float health,
+                                     float lifetime, float mass, CEntity* owner)
+    : CProjectile(world ? world : (owner ? owner->GameWorld() : nullptr), pos, radius, owner),
+      m_damage(std::max(0.f, damage)), m_lifetime(std::max(0.f, lifetime))
+{
+    if (owner) m_team = owner->m_team;
+    m_health = std::max(0.f, health);
+    m_mass = std::max(0.f, mass);
+    m_vel = {0.f, 0.f};
+    m_has_facing = true;
+    m_facing_angle = GetLimitedRng(-game_config::pi, game_config::pi);
+
+    if (m_health <= 0.f || m_lifetime <= 0.f)
+        m_is_marked_for_des = true;
+}
+
+void CPollenProjectile::Tick(float dt)
+{
+    CProjectile::Tick(dt);
+    m_age += dt;
+    if (m_age >= m_lifetime || m_health <= 0.f)
+        m_is_marked_for_des = true;
+}
+
+bool CPollenProjectile::ApplyHit(CEntity* target)
+{
+    if (!target || target == this || target == GetOwner() || m_is_marked_for_des) return false;
+    if (m_damage > 0.f)
+        target->TakeDamage(m_damage, GetOwner(), EDamageType::Normal);
+    return true;
+}
