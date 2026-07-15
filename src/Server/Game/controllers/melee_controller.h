@@ -40,6 +40,27 @@ class CNeutralMeleeController : public CMeleeController
     void OnDamaged(CMobBase* mob, CEntity* attacker) override;
 };
 
+class CRandomWanderController : public CMeleeController
+{
+  public:
+    void OnTick(CMobBase* mob, float dt) override;
+};
+
+class CQueenAntController : public CMeleeController
+{
+  public:
+    void OnTick(CMobBase* mob, float dt) override;
+};
+
+class CSpiderController : public CMeleeController
+{
+  public:
+    void OnTick(CMobBase* mob, float dt) override;
+
+  private:
+    float m_web_timer = 0.f;
+};
+
 class CHornetRangedController : public CMeleeController
 {
   public:

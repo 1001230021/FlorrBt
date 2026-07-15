@@ -1,6 +1,9 @@
 #include "state_zone.h"
 #include "entities/mob.h"
+#include "entities/projectile.h"
 #include "gameworld.h"
+#include "states/states.h"
+#include "../../Shared/game_config.h"
 #include "../../Shared/tools.h"
 #include <utility>
 #include <vector>
@@ -46,4 +49,29 @@ void CStateZone::Apply()
         std::unique_ptr<CState> state = m_state(mob);
         if (state) mob->AddState(std::move(state));
     }
+}
+
+CSpiderWebZone::CSpiderWebZone(CGameWorld* world, sf::Vector2f pos, float radius, CEntity* owner,
+                               float lifetime, float desired_speed_multiplier)
+    : CStateZone(
+          world, pos, radius,
+          [desired_speed_multiplier](CMobBase* mob) -> std::unique_ptr<CState>
+          {
+              auto state = std::make_unique<CWebSpeedReduceState>(
+                  mob, game_config::mob_spider_web_slow_duration, desired_speed_multiplier);
+              if (!state->IsValid()) return nullptr;
+              return state;
+          },
+          [owner_team = owner ? owner->m_team : 0, owner_id = owner ? owner->m_id : -1](CEntity* entity) -> bool
+          {
+              if (!entity || entity->m_id == owner_id) return false;
+              if (dynamic_cast<CProjectile*>(entity)) return false;
+              if (owner_team != 0 && CheckTeam(owner_team, entity->m_team)) return false;
+              return true;
+          })
+{
+    m_team = owner ? owner->m_team : 0;
+    m_mass = 0.f;
+    m_health = 1.f;
+    m_timer = lifetime;
 }

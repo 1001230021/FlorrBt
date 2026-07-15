@@ -111,6 +111,7 @@
     <ClInclude Include="src\Server\Module\world_module.h" />
     <ClInclude Include="src\Server\report.h" />
     <ClInclude Include="src\Server\server.h" />
+    <ClInclude Include="src\Server\Game\talent.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Server\commands.cpp" />

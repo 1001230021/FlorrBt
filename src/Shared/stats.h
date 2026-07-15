@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 
 enum class EPetalRotationMode
 {
@@ -11,13 +12,13 @@ struct SMobStats
     float max_health = 1.f;
     float armor = 0.f;
     float damage = 0.f;
-    float radius = 10.0f;
+    float radius = 80.0f;
     float mass = 0.f;
-    float horizon = 1024.f;
+    float horizon = 8192.f;
     float max_absorb_range = 0.f;
     float detection_multiplier = 1.f;
-    float max_velocity = 50.f;
-    float acceleration = 100.f;
+    float max_velocity = 400.f;
+    float acceleration = 800.f;
     float turn_speed = 0.f;
 
     void ActedOn(const SMobStats& other)
@@ -40,13 +41,18 @@ struct SFlowerStats : public SMobStats
 {
     float max_health_multiplier = 1.f;
     float reach = 0.0f;
-    float petal_attraction_range = 5.f;
+    float petal_attraction_range = 40.f;
 
     float petal_dmg_multiplier = 1.f;
     float petal_reload_multiplier = 1.f;
     float petal_health_multiplier = 1.f;
     float petal_medicine_multiplier = 1.f;
     float mult_summoned_health = 1.f;
+    float poison_damage_multiplier = 1.f;
+    float poison_duration_multiplier = 1.f;
+    float body_poison_damage_multiplier = 0.f;
+    float body_poison_duration = 0.f;
+    float petal_swap_min_reload = 2.5f;
     float petal_rotation_speed = 3.f;
     bool petal_rotation_quantized = false;
     EPetalRotationMode petal_rotation_mode = EPetalRotationMode::Orbit;
@@ -65,6 +71,11 @@ struct SFlowerStats : public SMobStats
         petal_health_multiplier *= other.petal_health_multiplier;
         petal_medicine_multiplier *= other.petal_medicine_multiplier;
         mult_summoned_health *= other.mult_summoned_health;
+        poison_damage_multiplier *= other.poison_damage_multiplier;
+        poison_duration_multiplier *= other.poison_duration_multiplier;
+        body_poison_damage_multiplier = std::max(body_poison_damage_multiplier, other.body_poison_damage_multiplier);
+        body_poison_duration = std::max(body_poison_duration, other.body_poison_duration);
+        petal_swap_min_reload = std::min(petal_swap_min_reload, other.petal_swap_min_reload);
         petal_rotation_speed += other.petal_rotation_speed;
         petal_rotation_quantized = petal_rotation_quantized || other.petal_rotation_quantized;
         if (other.petal_rotation_mode != EPetalRotationMode::Orbit) petal_rotation_mode = other.petal_rotation_mode;
@@ -80,7 +91,7 @@ struct SPetalStats
     float reload = 2.5f;
     float preload = 2.5f;
     float mass = 0.f;
-    float radius = 5.f;
+    float radius = 40.f;
     float angle = 0.f;
     int copy = 1;
     bool stack = true;

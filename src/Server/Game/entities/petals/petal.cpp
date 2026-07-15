@@ -1,6 +1,9 @@
 #include "petal.h"
 #include "petal_slot.h"
+#include "../../gamecontext.h"
 #include "../../gameworld.h"
+#include "../../player.h"
+#include "../../talent.h"
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -25,9 +28,16 @@ std::optional<sf::Vector2f> CalculateSpawnGlobal(CPetal* petal, CFlower* flower)
     float base_radius = petal->m_type == EPetalType::Moon ? flower->GetFinalStats()->radius :
                         (flower->GetMoonPetal() && flower->GetMoonPetal() != petal ? flower->GetMoonPetal()->m_radius :
                          flower->GetFinalStats()->radius);
-    float reach = game_config::default_petal_neutral_reach + flower->GetFinalStats()->reach;
-    if (flower->m_attacking) reach += game_config::default_petal_attack_offset;
-    else if (flower->m_defending) reach += game_config::default_petal_defend_offset;
+    float reach = game_config::default_petal_neutral_reach;
+    if (petal->m_type != EPetalType::BrokenEgg)
+    {
+        if (flower->m_attacking)
+        {
+            reach += flower->GetFinalStats()->reach + game_config::default_petal_attack_offset;
+        } else if (flower->m_defending) {
+            reach += game_config::default_petal_defend_offset;
+        }
+    }
 
     float orbit_distance = base_radius + game_config::default_petal_orbit_radius + reach;
     float angle = flower->GetPetalRotationAngle() +
@@ -68,7 +78,26 @@ const CPetalPrototype* ActivePrototypeForPetal(const CPetalSlot* slot, const CPe
 SPetalStats PetalStatsForSlot(const CPetalSlot* slot, const CFlower* flower)
 {
     if (!slot || !slot->m_p_proto || !slot->m_p_proto->m_p_behavior) return {};
-    return slot->m_p_proto->m_p_behavior->GetPetalStatsForSlot(slot->m_stored_rarity, slot, flower);
+
+    SPetalStats stats = slot->m_p_proto->m_p_behavior->GetPetalStatsForSlot(slot->m_stored_rarity, slot, flower);
+    CFlower* mutable_flower = const_cast<CFlower*>(flower);
+    CGameContext* context = mutable_flower ? mutable_flower->GameContext() : nullptr;
+    CPlayer* player = context && mutable_flower ? context->FindPlayerFromEntity(mutable_flower) : nullptr;
+    if (!player) return stats;
+
+    const CPetalPrototype* runtime_proto = RuntimePrototypeForSlot(slot, flower);
+    STalentContext talent_ctx;
+    talent_ctx.world = mutable_flower ? mutable_flower->GameWorld() : nullptr;
+    talent_ctx.player = player;
+    talent_ctx.entity = mutable_flower;
+    talent_ctx.flower = mutable_flower;
+    talent_ctx.slot = const_cast<CPetalSlot*>(slot);
+    talent_ctx.petal_stats = &stats;
+    talent_ctx.is_leftmost_slot = slot->m_slot_index == 0;
+    talent_ctx.petal_type = runtime_proto ? runtime_proto->m_type : slot->m_p_proto->m_type;
+    talent_ctx.rarity = slot->m_stored_rarity;
+    player->ApplyTalents(ETalentEvent::RebuildPetalStats, talent_ctx);
+    return stats;
 }
 
 EPetalBonusMode BonusModeForSlot(const CPetalSlot* slot, const CFlower* flower)
@@ -106,8 +135,13 @@ void CPetal::Tick(float dt)
     if (flower)
     {
         m_team = flower->m_team;
+        float old_max_health = m_final_petal_stats.health;
         m_final_petal_stats = m_base_petal_stats;
         m_final_petal_stats.ActedOn(*flower->GetFinalStats());
+        float new_max_health = m_final_petal_stats.health;
+        if (old_max_health > 0.f && new_max_health > 0.f && new_max_health != old_max_health)
+            m_health = m_health * new_max_health / old_max_health;
+        if (new_max_health > 0.f) m_health = std::clamp(m_health, 0.f, new_max_health);
     } else {
         m_is_marked_for_des = true;
         return;
@@ -187,6 +221,7 @@ void CPetalSlot::SpawnCopy(int copy_index, CFlower* flower)
     }
 
     petal->m_copy_index = copy_index;
+    petal->m_max_slot_num = static_cast<int>(m_p_petals.size());
     if (std::optional<sf::Vector2f> global = CalculateSpawnGlobal(petal.get(), flower))
     {
         sf::Vector2f center = (runtime_proto->m_type == EPetalType::Moon) ? flower->m_pos :
@@ -281,6 +316,11 @@ void CPetalSlot::RefreshPetalState(CFlower* flower)
     m_bonus_active.resize(copies, false);
     m_reload_timers.resize(copies, std::max(0.f, petal_stats.preload));
     m_reload_ignore_multiplier.resize(copies, false);
+
+    for (CPetal* petal : m_p_petals)
+    {
+        if (petal) petal->m_max_slot_num = copies;
+    }
 }
 
 void CPetalSlot::Tick(float dt, CFlower* flower)
@@ -310,6 +350,7 @@ void CPetalSlot::Tick(float dt, CFlower* flower)
     {
         CPetal* petal = m_p_petals[i];
         if (!petal) continue;
+        petal->m_max_slot_num = static_cast<int>(m_p_petals.size());
         const CPetalPrototype* active_proto = ActivePrototypeForPetal(this, petal, flower);
         CPetalBehavior* active_behavior =
             active_proto && active_proto->m_p_behavior ? active_proto->m_p_behavior.get() : m_p_proto->m_p_behavior.get();

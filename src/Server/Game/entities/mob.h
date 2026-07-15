@@ -234,6 +234,12 @@ void RegisterSummonedSoldierAnt();
 void RegisterBee();
 void RegisterHornet();
 void RegisterBumbleBee();
+void RegisterRock();
+void RegisterBabyAnt();
+void RegisterWorkerAnt();
+void RegisterQueenAnt();
+void RegisterAntHole();
+void RegisterSpider();
 void RegisterMobs();
 
 #define REGISTER_MOB(type, mob_class, proto) RegisterMobPrototype<mob_class>(type, std::move(proto))

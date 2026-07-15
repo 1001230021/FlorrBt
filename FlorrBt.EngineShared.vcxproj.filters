@@ -72,6 +72,9 @@
     <ClInclude Include="src\Shared\stats.h">
       <Filter>src\Shared</Filter>
     </ClInclude>
+    <ClInclude Include="src\Shared\talent_type.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
     <ClInclude Include="src\Shared\tools.h">
       <Filter>src\Shared</Filter>
     </ClInclude>

@@ -1,5 +1,6 @@
 #pragma once
 #include "inventory.h"
+#include "talent_type.h"
 #include <SFML/System/Vector2.hpp>
 #include <algorithm>
 #include <cmath>
@@ -18,12 +19,16 @@ constexpr uint8_t client_auth_packet_type = 0xf0;
 constexpr uint8_t client_chat_packet_type = 0xf1;
 constexpr uint8_t client_secondary_slot_packet_type = 0xf2;
 constexpr uint8_t client_craft_packet_type = 0xf3;
+constexpr uint8_t client_talent_packet_type = 0xf4;
 constexpr size_t client_compact_packet_size = 1;
 constexpr size_t client_extended_packet_size = 3;
 constexpr size_t client_auth_header_size = 4;
 constexpr size_t client_chat_header_size = 3;
 constexpr size_t client_secondary_slot_packet_size = 4;
 constexpr size_t client_craft_packet_size = 7;
+constexpr size_t client_talent_header_size = 3;
+constexpr size_t talent_packet_item_size = 4;
+constexpr size_t max_client_talent_items = 64;
 constexpr size_t inventory_item_packet_size = 6;
 constexpr size_t owner_slot_packet_size = 2;
 constexpr size_t max_auth_name_size = 32;
@@ -42,6 +47,7 @@ constexpr uint8_t server_drop_entity_type_offset = 150;
 // Chat:         [0xf1][flag:1 byte][message_len:1 byte][message]
 // SecondarySlot:[0xf2][slot:1 byte][petal_type:1 byte][rarity:1 byte]
 // Craft:        [0xf3][petal_type:1 byte][rarity:1 byte][count:4 bytes]
+// Talent:       [0xf4][action:1 byte][count:1 byte][talent_id:2 bytes][rarity:1 byte][rank:1 byte]...
 
 enum class EChatFlag : uint8_t
 {
@@ -376,12 +382,103 @@ struct ClientCraftRequest
     }
 };
 
+enum class ClientTalentAction : uint8_t
+{
+    Add = 1,
+    Remove = 2,
+};
+
+struct STalentPacketItem
+{
+    ETalentId id = ETalentId::None;
+    uint8_t rarity = 0;
+    uint8_t rank = 0;
+};
+
+struct ClientTalentRequest
+{
+    ClientTalentAction action = ClientTalentAction::Add;
+    std::vector<STalentPacketItem> talents;
+
+    static bool IsPacketStart(uint8_t value) { return value == client_talent_packet_type; }
+
+    static size_t GetPacketSize(const uint8_t* data, size_t len)
+    {
+        if (!data || len < client_talent_header_size) return 0;
+        if (!IsPacketStart(data[0])) return 0;
+        uint8_t count = data[2];
+        if (count == 0 || count > max_client_talent_items) return 0;
+        return client_talent_header_size + static_cast<size_t>(count) * talent_packet_item_size;
+    }
+
+    static ClientTalentRequest parse(const uint8_t* data, size_t len, bool* ok = nullptr)
+    {
+        ClientTalentRequest request;
+        if (ok) *ok = false;
+        if (!data || len < client_talent_header_size) return request;
+        if (!IsPacketStart(data[0])) return request;
+
+        size_t offset = 1;
+        uint8_t action = data[offset++];
+        if (action != static_cast<uint8_t>(ClientTalentAction::Add) &&
+            action != static_cast<uint8_t>(ClientTalentAction::Remove))
+            return request;
+        request.action = static_cast<ClientTalentAction>(action);
+
+        uint8_t count = data[offset++];
+        if (count == 0 || count > max_client_talent_items) return request;
+        if (offset + static_cast<size_t>(count) * talent_packet_item_size > len) return request;
+
+        request.talents.reserve(count);
+        for (uint8_t i = 0; i < count; ++i)
+        {
+            STalentPacketItem talent;
+            uint16_t id = static_cast<uint16_t>(data[offset]) | (static_cast<uint16_t>(data[offset + 1]) << 8);
+            offset += 2;
+            talent.id = static_cast<ETalentId>(id);
+            talent.rarity = data[offset++];
+            talent.rank = data[offset++];
+            request.talents.push_back(talent);
+        }
+
+        if (ok) *ok = true;
+        return request;
+    }
+
+    static size_t pack(const ClientTalentRequest& request, uint8_t* out)
+    {
+        if (!out || request.talents.empty()) return 0;
+        const size_t count = std::min(request.talents.size(), max_client_talent_items);
+
+        size_t offset = 0;
+        out[offset++] = client_talent_packet_type;
+        out[offset++] = static_cast<uint8_t>(request.action);
+        out[offset++] = static_cast<uint8_t>(count);
+        for (size_t i = 0; i < count; ++i)
+        {
+            const STalentPacketItem& talent = request.talents[i];
+            uint16_t id = static_cast<uint16_t>(talent.id);
+            out[offset++] = static_cast<uint8_t>(id & 0xff);
+            out[offset++] = static_cast<uint8_t>((id >> 8) & 0xff);
+            out[offset++] = talent.rarity;
+            out[offset++] = talent.rank;
+        }
+        return offset;
+    }
+
+    static size_t GetPackedSize(const ClientTalentRequest& request)
+    {
+        if (request.talents.empty()) return 0;
+        return client_talent_header_size + std::min(request.talents.size(), max_client_talent_items) * talent_packet_item_size;
+    }
+};
+
 // Server packets:
 // Welcome:    [type:1 byte][player_id:2 bytes][owner_entity_id:2 bytes][tick_rate:1 byte][map_len:1 byte][map_name]
 // Snapshot:   [type:1 byte][snapshot_id:4 bytes][owner_entity_id:2 bytes][view_radius:4 bytes][count:2 bytes][entity_snap...]
-// EntitySnap: [entity_id:2 bytes][entity_type:1 byte][team:1 byte][x:4 bytes][y:4 bytes][radius:2 bytes][hp_percent:1 byte][flags:1 byte][angle:2 bytes][rarity:1 byte][name_len:1 byte][name][primary_slots:1 byte][petal_type:1 byte][rarity:1 byte]...
+// EntitySnap: [entity_id:2 bytes][entity_type:1 byte][team:1 byte][x:4 bytes][y:4 bytes][radius:2 bytes][hp_percent:1 byte][flags:2 bytes][angle:2 bytes][rarity:1 byte][name_len:1 byte][name][primary_slots:1 byte][petal_type:1 byte][rarity:1 byte]...
 //             live petal entity_type = 100 + petal_type, drop entity_type = 150 + petal_type.
-// OwnerState: [type:1 byte][level:1 byte][flags:1 byte][petal_slots:1 byte][secondary_slots:1 byte][exp:4 bytes][exp_required:4 bytes][petal_type:1 byte][rarity:1 byte]...
+// OwnerState: [type:1 byte][level:1 byte][flags:1 byte][petal_slots:1 byte][secondary_slots:1 byte][exp:4 bytes][exp_required:4 bytes][petal_type:1 byte][rarity:1 byte]...[talent_points:2 bytes][talent_count:1 byte][talent_id:2 bytes][rarity:1 byte][rank:1 byte]...
 // Inventory:  [type:1 byte][count:2 bytes][petal_type:1 byte][rarity:1 byte][count:4 bytes]...
 // AuthResult: [type:1 byte][success:1 byte][message_len:1 byte][message]
 // Chat:       [type:1 byte][flag:1 byte][player_id:2 bytes][time:4 bytes][name_len:1 byte][message_len:1 byte][name][message]
@@ -391,9 +488,9 @@ using net_coord = int32_t;
 using net_entity_id = uint16_t;
 
 constexpr float net_coord_scale = 64.f;
-constexpr float net_radius_scale = 16.f;
+constexpr float net_radius_scale = 1.f;
 constexpr float net_angle_scale = 1000.f;
-constexpr size_t server_entity_fixed_size = 20;
+constexpr size_t server_entity_fixed_size = 21;
 
 inline net_coord PackCoord(float value)
 {
@@ -417,7 +514,7 @@ inline float UnpackViewRadius(net_coord value)
 
 inline uint16_t PackRadius(float value)
 {
-    return static_cast<uint16_t>(std::round(std::max(0.f, value) * net_radius_scale));
+    return static_cast<uint16_t>(std::clamp(std::round(std::max(0.f, value) * net_radius_scale), 0.f, 65535.f));
 }
 
 inline float UnpackRadius(uint16_t value)
@@ -490,7 +587,7 @@ inline int32_t ReadI32(const uint8_t* data, size_t& offset)
     return static_cast<int32_t>(value);
 }
 
-enum class ServerEntityFlag : uint8_t
+enum class ServerEntityFlag : uint16_t
 {
     None = 0,
     Attacking = 1 << 0,
@@ -501,16 +598,18 @@ enum class ServerEntityFlag : uint8_t
     Corrupted = 1 << 5,
     Relic = 1 << 6,
     Antennae = 1 << 7,
+    Summoned = 1 << 8,
+    Poisoned = 1 << 9,
 };
 
 inline ServerEntityFlag operator|(ServerEntityFlag lhs, ServerEntityFlag rhs)
 {
-    return static_cast<ServerEntityFlag>(static_cast<uint8_t>(lhs) | static_cast<uint8_t>(rhs));
+    return static_cast<ServerEntityFlag>(static_cast<uint16_t>(lhs) | static_cast<uint16_t>(rhs));
 }
 
 inline bool HasFlag(ServerEntityFlag flags, ServerEntityFlag flag)
 {
-    return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(flag)) != 0;
+    return (static_cast<uint16_t>(flags) & static_cast<uint16_t>(flag)) != 0;
 }
 
 struct SOwnerPetalSlot
@@ -527,7 +626,7 @@ struct ServerEntitySnap
     sf::Vector2f pos = {0.f, 0.f};
     float radius = 0.f;
     float hp_percent = 1.f;
-    uint8_t flags = 0;
+    uint16_t flags = 0;
     int16_t angle = 0;
     uint8_t rarity = 0;
     std::string name;
@@ -543,7 +642,7 @@ struct ServerEntitySnap
         snap.pos = sf::Vector2f(UnpackCoord(ReadI32(data, offset)), UnpackCoord(ReadI32(data, offset)));
         snap.radius = UnpackRadius(ReadU16(data, offset));
         snap.hp_percent = UnpackPercent(data[offset++]);
-        snap.flags = data[offset++];
+        snap.flags = ReadU16(data, offset);
         snap.angle = static_cast<int16_t>(ReadU16(data, offset));
         snap.rarity = data[offset++];
         uint8_t name_len = data[offset++];
@@ -575,7 +674,7 @@ struct ServerEntitySnap
         WriteI32(out, offset, PackCoord(snap.pos.y));
         WriteU16(out, offset, PackRadius(snap.radius));
         out[offset++] = PackPercent(snap.hp_percent);
-        out[offset++] = snap.flags;
+        WriteU16(out, offset, snap.flags);
         WriteU16(out, offset, static_cast<uint16_t>(snap.angle));
         out[offset++] = snap.rarity;
         uint8_t name_len = static_cast<uint8_t>(std::min<size_t>(snap.name.size(), UINT8_MAX));
@@ -639,6 +738,8 @@ struct ServerMessage
     std::vector<SOwnerPetalSlot> owner_slots;
     std::optional<uint8_t> secondary_slots_count;
     std::vector<SOwnerPetalSlot> secondary_slots;
+    std::optional<uint16_t> talent_points;
+    std::vector<STalentPacketItem> talents;
     std::optional<bool> auth_success;
     std::string auth_message;
     std::vector<SInventoryItem> inventory;
@@ -775,6 +876,30 @@ struct ServerMessage
                 slot.petal_type = data[offset++];
                 slot.rarity = data[offset++];
                 msg.secondary_slots.push_back(slot);
+            }
+            if (offset < len)
+            {
+                if (offset + 3 > len)
+                {
+                    msg.type = Type::Unknown;
+                    break;
+                }
+                msg.talent_points = ReadU16(data, offset);
+                uint8_t talent_count = data[offset++];
+                if (offset + static_cast<size_t>(talent_count) * talent_packet_item_size > len)
+                {
+                    msg.type = Type::Unknown;
+                    break;
+                }
+                msg.talents.reserve(talent_count);
+                for (uint8_t i = 0; i < talent_count; ++i)
+                {
+                    STalentPacketItem talent;
+                    talent.id = static_cast<ETalentId>(ReadU16(data, offset));
+                    talent.rarity = data[offset++];
+                    talent.rank = data[offset++];
+                    msg.talents.push_back(talent);
+                }
             }
             break;
         case Type::Inventory:
@@ -928,6 +1053,16 @@ struct ServerMessage
                 out[offset++] = msg.secondary_slots[i].petal_type;
                 out[offset++] = msg.secondary_slots[i].rarity;
             }
+            WriteU16(out, offset, msg.talent_points.value_or(0));
+            uint8_t talent_count = static_cast<uint8_t>(std::min<size_t>(msg.talents.size(), UINT8_MAX));
+            out[offset++] = talent_count;
+            for (uint8_t i = 0; i < talent_count; ++i)
+            {
+                const STalentPacketItem& talent = msg.talents[i];
+                WriteU16(out, offset, static_cast<uint16_t>(talent.id));
+                out[offset++] = talent.rarity;
+                out[offset++] = talent.rank;
+            }
             return offset;
         }
         case Type::Inventory:
@@ -990,9 +1125,10 @@ struct ServerMessage
         case Type::AuthResult:
             return 3 + std::min<size_t>(msg.auth_message.size(), UINT8_MAX);
         case Type::OwnerState:
-            return 13 + (std::min<size_t>(msg.owner_slots.size(), UINT8_MAX) +
+            return 16 + (std::min<size_t>(msg.owner_slots.size(), UINT8_MAX) +
                          std::min<size_t>(msg.secondary_slots.size(), UINT8_MAX)) *
-                            owner_slot_packet_size;
+                            owner_slot_packet_size +
+                   std::min<size_t>(msg.talents.size(), UINT8_MAX) * talent_packet_item_size;
         case Type::Inventory:
             return 3 + msg.inventory.size() * inventory_item_packet_size;
         case Type::Chat:

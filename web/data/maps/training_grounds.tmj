@@ -5532,7 +5532,7 @@
                                                               {
                                                                   "name":  "difficulty",
                                                                   "type":  "string",
-                                                                  "value":  "-5.0"
+                                                                  "value":  "10"
                                                               },
                                                               {
                                                                   "name":  "max_rarity",
@@ -5542,7 +5542,7 @@
                                                               {
                                                                   "name":  "mobs",
                                                                   "type":  "string",
-                                                                  "value":  "garden"
+                                                                  "value":  "lady:0.12, spider:0.12, bee:0.12, bbb:0.12, hornet:0.12, sa:0.1, wa:0.1, ba:0.1, rock:0.05, ah:0.05"
                                                               }
                                                           ],
                                            "rotation":  0,
@@ -5659,7 +5659,7 @@
                                                               {
                                                                   "name":  "difficulty",
                                                                   "type":  "string",
-                                                                  "value":  "-2.5"
+                                                                  "value":  "10"
                                                               },
                                                               {
                                                                   "name":  "max_rarity",
@@ -5669,7 +5669,7 @@
                                                               {
                                                                   "name":  "mobs",
                                                                   "type":  "string",
-                                                                  "value":  "garden"
+                                                                  "value":  "lady:0.12, spider:0.12, bee:0.12, bbb:0.12, hornet:0.12, sa:0.1, wa:0.1, ba:0.1, rock:0.05, ah:0.05"
                                                               }
                                                           ],
                                            "rotation":  0,
@@ -5678,34 +5678,6 @@
                                            "width":  0,
                                            "x":  3456,
                                            "y":  20496
-                                       },
-                                       {
-                                           "height":  2464,
-                                           "id":  271,
-                                           "name":  "",
-                                           "properties":  [
-                                                              {
-                                                                  "name":  "density",
-                                                                  "type":  "float",
-                                                                  "value":  0
-                                                              },
-                                                              {
-                                                                  "name":  "force_rarity",
-                                                                  "type":  "int",
-                                                                  "value":  2
-                                                              },
-                                                              {
-                                                                  "name":  "mobs",
-                                                                  "type":  "string",
-                                                                  "value":  "hornet"
-                                                              }
-                                                          ],
-                                           "rotation":  0,
-                                           "type":  "spawn_mobs",
-                                           "visible":  true,
-                                           "width":  4192,
-                                           "x":  1472,
-                                           "y":  15712
                                        },
                                        {
                                            "height":  0,
@@ -5738,7 +5710,7 @@
                                                               {
                                                                   "name":  "difficulty",
                                                                   "type":  "string",
-                                                                  "value":  "-5.0"
+                                                                  "value":  "10"
                                                               },
                                                               {
                                                                   "name":  "max_rarity",
@@ -5748,7 +5720,7 @@
                                                               {
                                                                   "name":  "mobs",
                                                                   "type":  "string",
-                                                                  "value":  "garden"
+                                                                  "value":  "lady:0.12, spider:0.12, bee:0.12, bbb:0.12, hornet:0.12, sa:0.1, wa:0.1, ba:0.1, rock:0.05, ah:0.05"
                                                               }
                                                           ],
                                            "rotation":  0,

@@ -5,6 +5,7 @@
 #include "../gameworld.h"
 #include "../player.h"
 #include "../states/states.h"
+#include "../talent.h"
 #include "../zone_mob_tools.h"
 #include "../../../Engine/account_data.h"
 #include <algorithm>
@@ -63,6 +64,22 @@ int PlayerFlowerExpRequired(int level)
     if (level <= 1) return 10;
     if (level >= 29) return std::numeric_limits<int>::max();
     return 10 * (1 << (level - 1));
+}
+
+int TalentPointGainForLevel(int level)
+{
+    if (level <= 1) return 0;
+
+    int gain = 1;
+    if (level % 5 == 0) gain += 5;
+    if (level % 10 == 0) gain += 10;
+    return gain;
+}
+
+void SyncFlowerRadiusWithStats(CFlower& flower, SFlowerStats& stats)
+{
+    flower.m_radius = std::max(0.f, stats.radius);
+    stats.radius = flower.m_radius;
 }
 
 }
@@ -222,6 +239,7 @@ void CFlower::RebuildFinalStats()
     }
 
     float new_max = m_final_stats.max_health;
+    SyncFlowerRadiusWithStats(*this, m_final_stats);
     if (old_max > 0.f && new_max > 0.f && new_max != old_max) m_health = m_health * new_max / old_max;
     if (new_max > 0.f) m_health = std::clamp(m_health, 0.f, new_max);
 }
@@ -518,14 +536,65 @@ void CPlayerFlower::RebuildFinalStats()
     float old_max = m_final_stats.max_health;
 
     m_final_stats = BuildPlayerFlowerLevelStats(m_base_stats, m_level);
+    CGameContext* context = GameContext();
+    CPlayer* player = context ? context->FindPlayerFromEntity(this) : nullptr;
+    if (player)
+    {
+        STalentContext talent_ctx;
+        talent_ctx.world = GameWorld();
+        talent_ctx.player = player;
+        talent_ctx.entity = this;
+        talent_ctx.flower = this;
+        talent_ctx.player_flower = this;
+        talent_ctx.flower_stats = &m_final_stats;
+        player->ApplyTalents(ETalentEvent::RebuildFlowerStats, talent_ctx);
+    }
+
     for (const auto& slot : GetSlots())
     {
         slot.ApplyStatsTo(m_final_stats, this);
     }
 
     float new_max = m_final_stats.max_health;
+    SyncFlowerRadiusWithStats(*this, m_final_stats);
     if (old_max > 0.f && new_max > 0.f && new_max != old_max) m_health = m_health * new_max / old_max;
     if (new_max > 0.f) m_health = std::clamp(m_health, 0.f, new_max);
+}
+
+void CPlayerFlower::RefreshTalentSlotCount()
+{
+    int slot_count = std::clamp(game_config::mob_player_flower_initial_petal_slots, 0,
+                                std::max(0, game_config::mob_player_flower_max_petal_slots));
+    CGameContext* context = GameContext();
+    CPlayer* player = context ? context->FindPlayerFromEntity(this) : nullptr;
+    if (player) slot_count = player->CalculateTalentSlotCount();
+
+    auto& slots = GetSlots();
+    int old_count = static_cast<int>(slots.size());
+    if (slot_count < old_count)
+    {
+        for (int i = slot_count; i < old_count; ++i)
+        {
+            CPetalSlot& slot = slots[i];
+            if (!slot.m_p_proto) continue;
+
+            uint8_t old_type = static_cast<uint8_t>(slot.m_p_proto->m_type);
+            uint8_t old_rarity = static_cast<uint8_t>(slot.m_stored_rarity);
+            slot.ClearPetal();
+            slot.m_p_proto = nullptr;
+            slot.m_stored_rarity = ERarity::Null;
+            slot.m_available = true;
+            slot.m_banned = false;
+
+            if (player && player->IsAuthenticated())
+            {
+                CAccountDataStore::AddItem(player->GetAccountName(), old_type, old_rarity, 1);
+                CAccountDataStore::ClearSlot(player->GetAccountName(), static_cast<uint8_t>(i));
+            }
+        }
+    }
+
+    SetPetalSlotCount(slot_count);
 }
 
 void CPlayerFlower::TakeExp(int exp)
@@ -534,12 +603,14 @@ void CPlayerFlower::TakeExp(int exp)
 
     m_exp = std::max(0, m_exp + exp);
     bool leveled = false;
+    int gained_talent_points = 0;
     for (;;)
     {
         int required = PlayerFlowerExpRequired(m_level);
         if (required <= 0 || m_exp < required) break;
         m_exp -= required;
         ++m_level;
+        gained_talent_points += TalentPointGainForLevel(m_level);
         leveled = true;
     }
 
@@ -547,6 +618,7 @@ void CPlayerFlower::TakeExp(int exp)
 
     CGameContext* context = GameContext();
     CPlayer* player = context ? context->FindPlayerFromEntity(this) : nullptr;
+    if (player && gained_talent_points > 0) player->AddTalentPoints(gained_talent_points);
     if (player && player->IsAuthenticated())
         CAccountDataStore::SetProgress(player->GetAccountName(), m_level, m_exp);
 }
@@ -575,6 +647,40 @@ void CPlayerFlower::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_
     if (m_is_dead) return;
 
     CFlower::TakeDamage(dmg, attacker, damage_type);
+    if (m_is_marked_for_des)
+    {
+        CGameContext* context = GameContext();
+        CPlayer* player = context ? context->FindPlayerFromEntity(this) : nullptr;
+        if (player)
+        {
+            bool prevent_death = false;
+            float invincible_time = 0.f;
+            float cooldown = player->GetSecondChanceCooldown();
+
+            STalentContext talent_ctx;
+            talent_ctx.world = GameWorld();
+            talent_ctx.player = player;
+            talent_ctx.entity = this;
+            talent_ctx.attacker = attacker;
+            talent_ctx.flower = this;
+            talent_ctx.player_flower = this;
+            talent_ctx.invincible_time = &invincible_time;
+            talent_ctx.cooldown = &cooldown;
+            talent_ctx.prevent_death = &prevent_death;
+            talent_ctx.damage_type = damage_type;
+            player->ApplyTalents(ETalentEvent::OnFlowerFatalDamage, talent_ctx);
+            player->SetSecondChanceCooldown(cooldown);
+
+            if (prevent_death && invincible_time > 0.f)
+            {
+                m_is_marked_for_des = false;
+                m_health = std::max(1.f, m_health);
+                AddState(std::make_unique<CInvincibleState>(this, invincible_time, GetRarity()));
+                return;
+            }
+        }
+    }
+
     if (m_is_marked_for_des && TryEnterUndeadFromBandage())
     {
         m_is_marked_for_des = false;
@@ -704,14 +810,14 @@ void CPlayerFlower::BeginBloodSacrifice()
         {
             if (!IsPointInZone(zone, m_pos)) continue;
 
-            std::vector<EMobType> mob_types = ParseZoneMobs(zone.mobs);
-            if (mob_types.empty())
+            std::vector<SZoneMobEntry> mob_entries = ParseZoneMobEntries(zone.mobs);
+            if (mob_entries.empty())
             {
                 LOG_INFO("blood_sacrifice", "Skipped: zone mob pool is empty: " + zone.mobs);
                 return;
             }
 
-            EMobType mob_type = PickZoneMobType(mob_types);
+            EMobType mob_type = PickZoneMobType(mob_entries);
             if (mob_type == EMobType::None)
             {
                 LOG_INFO("blood_sacrifice", "Skipped: picked no mob from zone pool: " + zone.mobs);

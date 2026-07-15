@@ -15,6 +15,7 @@ import {
   packEquip,
   packInput,
   packSecondarySlot,
+  packTalentRequest,
   packUnequip,
   parseServerMessage,
   petalTypeFromEntity,
@@ -27,6 +28,8 @@ import { clearLadybugPattern, drawNormalLadybug } from "./ladybug_sprite.js";
 import { drawBeetle } from "./beetle_sprite.js";
 import { drawSoldierAnt } from "./soldier_ant_sprite.js";
 import { drawBee, drawBumbleBee, drawHornet, drawHornetMissile, drawPollen } from "./bee_sprite.js";
+import { drawAntHole, drawBabyAnt, drawQueenAnt, drawRock, drawWorkerAnt } from "./garden_mob_sprite.js";
+import { drawSpider, drawSpiderWeb } from "./spider_sprite.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -42,6 +45,7 @@ const reviveBtn = document.getElementById("reviveBtn");
 const chatLog = document.getElementById("chatLog");
 const chatInput = document.getElementById("chatInput");
 const consolePanel = document.getElementById("consolePanel");
+const debugInfo = document.getElementById("debugInfo");
 const consoleLog = document.getElementById("consoleLog");
 const consoleInput = document.getElementById("consoleInput");
 const backpackPanel = document.getElementById("backpackPanel");
@@ -54,6 +58,10 @@ const craftList = document.getElementById("craftList");
 const craftSelection = document.getElementById("craftSelection");
 const craftChance = document.getElementById("craftChance");
 const craftOnceBtn = document.getElementById("craftOnceBtn");
+const talentPanel = document.getElementById("talentPanel");
+const talentCloseBtn = document.getElementById("talentCloseBtn");
+const talentPointsLabel = document.getElementById("talentPoints");
+const talentTree = document.getElementById("talentTree");
 const primarySlots = document.getElementById("primarySlots");
 const secondarySlots = document.getElementById("secondarySlots");
 const inventoryList = document.getElementById("inventoryList");
@@ -75,6 +83,7 @@ const state = {
   mapName: "",
   mapDisplayName: "",
   mapLoadToken: 0,
+  mapLoadPromise: null,
   ownerSlots: Array.from({ length: 5 }, () => emptySlot()),
   secondarySlots: Array.from({ length: 5 }, () => emptySlot()),
   inventory: [],
@@ -94,6 +103,9 @@ const state = {
   debugGrid: false,
   backpackOpen: false,
   craftOpen: false,
+  talentOpen: false,
+  talentPoints: 0,
+  talents: [],
   craftSlots: Array.from({ length: 5 }, () => null),
   craftSource: null,
   craftPhase: "idle",
@@ -108,7 +120,7 @@ const state = {
 };
 
 const settingsKey = "florrbt.web.settings";
-const defaultMapName = "training_grounds.tmj";
+const defaultMapName = "garden.tmj";
 const packetInterval = 1 / 30;
 const predictionSnapDistance = 260;
 const ownerPredictionCorrectionRate = 12;
@@ -118,6 +130,14 @@ const viewScreenFill = 0.46;
 const viewScreenPadding = 36;
 const mouseMoveDeadzonePx = 16;
 const entityFrameMinScreenRadius = 8;
+const entityPixelMinScreenRadius = 0.45;
+const entityDetailMinScreenRadius = 2.4;
+const petalDetailMinScreenRadius = 0.9;
+const dropDetailMinScreenRadius = 1.15;
+const renderCullPaddingPx = 120;
+const mapChunkTileSpan = 4;
+const mapChunkCacheLimit = 192;
+const mapPrewarmBudgetMs = 8;
 const flagAttacking = 1 << 0;
 const flagDefending = 1 << 1;
 const flagDead = 1 << 2;
@@ -126,6 +146,8 @@ const flagUndead = 1 << 4;
 const flagCorrupted = 1 << 5;
 const flagRelic = 1 << 6;
 const flagAntennae = 1 << 7;
+const flagSummoned = 1 << 8;
+const flagPoisoned = 1 << 9;
 const beetleType = 1;
 const normalLadybugType = 3;
 const soldierAntType = 7;
@@ -135,9 +157,16 @@ const bandageBeetleType = 12;
 const beeType = 13;
 const hornetType = 14;
 const bumbleBeeType = 15;
+const rockType = 16;
+const babyAntType = 17;
+const workerAntType = 18;
+const queenAntType = 19;
+const antHoleType = 20;
+const spiderType = 21;
 const playerFlowerType = 6;
 const bossRarity = 8;
 const maxBossBars = 3;
+let currentRenderTimeSeconds = 0;
 const petalAntEggType = 2;
 const petalAntennaeType = 3;
 const petalCompassType = 10;
@@ -149,6 +178,7 @@ const petalBandageType = 26;
 const petalDahliaType = 30;
 const petalMimicType = 35;
 const petalStingerType = 37;
+const petalBrokenEggType = 38;
 const stingerSplitIconMinRarity = 6;
 const flowerTextureVersion = "20260713a";
 const PetalIconIds = [
@@ -167,8 +197,13 @@ const PetalNameToType = new Map(PetalNames.map((name, index) => [normalizePetalN
 const assetImages = new Map();
 const livePetalImages = new Map();
 const bandageOverlayImages = new Map();
+const transformedPetalImages = new Map();
 const strippedPetalIconUrls = new Map();
+const petalLabelIconUrls = new Map();
 const mimicLabelIconUrls = new Map();
+const nonStackPetalTypes = new Set([
+  1, 3, 17, 18, 20, 24, 25, 26, petalBrokenEggType,
+]);
 
 function emptySlot() {
   return { petalType: 0, rarity: 0 };
@@ -176,6 +211,98 @@ function emptySlot() {
 
 function slotHasItem(slot) {
   return slot && slot.petalType > 0 && slot.rarity > 0;
+}
+
+const TalentId = Object.freeze({
+  PetalHealth: 1,
+  PetalSplit: 2,
+  FlowerHealth: 3,
+  PetalRotationSpeed: 4,
+  BodyDamage: 5,
+  BodyDamagePoison: 6,
+  PoisonDamage: 7,
+  PetalReload: 8,
+  SecondChance: 9,
+  SlotNum: 10,
+  Medic: 11,
+  Reach: 12,
+  Magnetism: 13,
+  Summoner: 14,
+  Antennae: 15,
+  ConcentratedPoison: 16,
+});
+
+const talentTierRarities = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+const rarityShortNames = ["", "C", "Un", "R", "E", "L", "M", "U", "S", "Et", "Q", "P"];
+
+function talentKey(id, rarity, rank = 0) {
+  return `${id}:${rarity}:${rank || 0}`;
+}
+
+function buildTalentNodes() {
+  const nodes = [];
+  const add = (group, id, name, rarity, cost, base = null, rank = 0) => {
+    const node = { group, id, name, rarity, cost, base, rank, key: talentKey(id, rarity, rank) };
+    nodes.push(node);
+    return node;
+  };
+  const chain = (group, id, name, rarities, costs, base = null, ranks = []) => {
+    let previous = base;
+    const made = [];
+    for (let i = 0; i < rarities.length; i += 1) {
+      const node = add(group, id, name, rarities[i], costs[i], previous, ranks[i] || 0);
+      previous = node.key;
+      made.push(node);
+    }
+    return made;
+  };
+
+  const flowerHealth = chain("Flower", TalentId.FlowerHealth, "Health", talentTierRarities, [2, 5, 8, 11, 14, 17, 20, 21, 24]);
+  const sharpEdges = chain("Flower", TalentId.BodyDamage, "Sharp Edges", talentTierRarities.slice(0, 8), [2, 3, 4, 5, 6, 7, 8, 9]);
+  add("Flower", TalentId.BodyDamagePoison, "Body Toxicity", 7, 10, sharpEdges[5].key);
+  chain("Petals", TalentId.PetalHealth, "Petal Health", talentTierRarities, [2, 4, 6, 8, 10, 12, 14, 16, 18]);
+  chain("Petals", TalentId.PetalReload, "Reload", talentTierRarities, [2, 6, 10, 12, 16, 20, 24, 28, 32]);
+  chain("Petals", TalentId.PetalRotationSpeed, "Rotation", talentTierRarities.slice(0, 5), [1, 2, 3, 4, 5]);
+
+  const loadout = chain("Loadout", TalentId.SlotNum, "Loadout", talentTierRarities.slice(0, 5), [3, 6, 9, 12, 15]);
+  chain("Loadout", TalentId.Antennae, "Antennae", [3, 4, 5], [1, 3, 5], loadout[0].key);
+  chain("Loadout", TalentId.Reach, "Reach", [3, 6, 8], [3, 6, 9], loadout[1].key);
+  chain("Loadout", TalentId.PetalSplit, "Duplicator", [5, 7, 8, 9], [10, 20, 30, 40], loadout[3].key);
+  add("Loadout", TalentId.Magnetism, "Magnetism", 6, 15, loadout[4].key);
+
+  chain("Support", TalentId.Medic, "Medic", talentTierRarities, [2, 5, 8, 11, 14, 17, 20, 23, 26]);
+  chain("Support", TalentId.Summoner, "Summoner", talentTierRarities, [2, 5, 8, 11, 14, 17, 20, 23, 26]);
+  chain("Support", TalentId.SecondChance, "Second Chance", [5, 6], [10, 20], flowerHealth[2].key);
+
+  const poisonCommon = add("Poison", TalentId.PoisonDamage, "Poison", 1, 1);
+  const poisonUnusual = add("Poison", TalentId.PoisonDamage, "Poison", 2, 2, poisonCommon.key);
+  for (let rank = 0; rank < 7; rank += 1) {
+    add("Poison", TalentId.PoisonDamage, "Poison", 3, 3, poisonUnusual.key, rank);
+  }
+  add("Poison", TalentId.ConcentratedPoison, "Concentrated Poison", 8, 15, talentKey(TalentId.PoisonDamage, 3, 1));
+
+  return nodes;
+}
+
+const talentNodes = buildTalentNodes();
+talentNodes.forEach((node, index) => {
+  node.order = index;
+});
+const talentNodeByKey = new Map(talentNodes.map((node) => [node.key, node]));
+const talentChildrenByBase = buildTalentChildrenByBase(talentNodes);
+const talentRootNodes = talentNodes.filter((node) => !node.base || !talentNodeByKey.has(node.base));
+
+function buildTalentChildrenByBase(nodes) {
+  const childrenByBase = new Map();
+  for (const node of nodes) {
+    if (!node.base || !talentNodeByKey.has(node.base)) continue;
+    if (!childrenByBase.has(node.base)) childrenByBase.set(node.base, []);
+    childrenByBase.get(node.base).push(node);
+  }
+  for (const children of childrenByBase.values()) {
+    children.sort((a, b) => a.order - b.order);
+  }
+  return childrenByBase;
 }
 
 function loadSettings() {
@@ -229,7 +356,10 @@ function toggleConsole(force) {
 
 function toggleBackpack(force) {
   state.backpackOpen = typeof force === "boolean" ? force : !state.backpackOpen;
-  if (state.backpackOpen) toggleCraft(false);
+  if (state.backpackOpen) {
+    toggleCraft(false);
+    toggleTalent(false);
+  }
   backpackPanel.classList.toggle("open", state.backpackOpen);
 }
 
@@ -237,11 +367,22 @@ function toggleCraft(force) {
   state.craftOpen = typeof force === "boolean" ? force : !state.craftOpen;
   if (state.craftOpen) {
     toggleBackpack(false);
+    toggleTalent(false);
     renderCraftPanel();
   } else {
     clearCraftDisplay();
   }
   craftPanel.classList.toggle("open", state.craftOpen);
+}
+
+function toggleTalent(force) {
+  state.talentOpen = typeof force === "boolean" ? force : !state.talentOpen;
+  if (state.talentOpen) {
+    toggleBackpack(false);
+    toggleCraft(false);
+    renderTalentPanel();
+  }
+  talentPanel.classList.toggle("open", state.talentOpen);
 }
 
 function submitConsole() {
@@ -252,7 +393,7 @@ function submitConsole() {
   executeClientCommand(line.startsWith("/") ? line.slice(1) : line);
 }
 
-function connectAndAuth() {
+async function connectAndAuth() {
   const wsUrl = wsUrlInput.value.trim();
   if (!wsUrl) {
     setStatus("Socket is empty");
@@ -261,6 +402,8 @@ function connectAndAuth() {
 
   saveSettings();
   closeSocket(false);
+  setStatus("Preparing map...");
+  await loadMap(defaultMapName);
   setStatus("Connecting...");
 
   const ws = new WebSocket(wsUrl);
@@ -363,12 +506,15 @@ function handleServerMessage(msg) {
     state.ownerLevel = Math.max(1, msg.level || 1);
     state.ownerExp = Math.max(0, msg.exp || 0);
     state.ownerExpRequired = Math.max(1, msg.expRequired || 10);
+    state.talentPoints = Math.max(0, msg.talentPoints || 0);
+    state.talents = msg.talents || [];
     const primaryCount = Math.max(1, (msg.ownerSlots || []).length || state.ownerSlots.length || 5);
     state.ownerSlots = normalizeSlots(msg.ownerSlots, primaryCount);
     state.secondarySlots = normalizeSlots(msg.secondarySlots, primaryCount);
     state.selectedSlot = clamp(state.selectedSlot, 0, state.ownerSlots.length - 1);
     renderInventoryPanel();
     renderCraftPanel();
+    renderTalentPanel();
     return;
   }
 
@@ -425,17 +571,43 @@ function joinAssetPath(basePath, relativePath) {
 
 async function loadMap(mapName) {
   const path = normalizeMapPath(mapName);
-  if (!path || (path === state.mapName && state.map)) return;
+  if (!path) return null;
+  if (path === state.mapName && state.map) return state.map;
+  if (path === state.mapName && state.mapLoadPromise) return state.mapLoadPromise;
 
   const token = ++state.mapLoadToken;
   state.mapName = path;
   state.mapDisplayName = String(mapName || path);
   addConsoleLine(`Loading map: ${path}`);
+  state.mapLoadPromise = loadMapData(path, token);
+  return state.mapLoadPromise;
+}
+
+async function loadMapTileImage(image, src) {
+  return new Promise((resolve) => {
+    image.decoding = "async";
+    image.onload = async () => {
+      if (image.decode) {
+        try {
+          await image.decode();
+        } catch {
+          // Some browsers reject SVG decode even after load; the image is still drawable.
+        }
+      }
+      resolve(true);
+    };
+    image.onerror = () => resolve(false);
+    image.src = src;
+  });
+}
+
+async function loadMapData(path, token) {
   try {
     const response = await fetch(path, { cache: "no-cache" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const tmj = await response.json();
     const tileImages = new Map();
+    const tileLoadPromises = [];
     for (const tilesetRef of tmj.tilesets || []) {
       const tilesetPath = joinAssetPath(path, tilesetRef.source || "");
       if (!tilesetPath) continue;
@@ -446,17 +618,14 @@ async function loadMap(mapName) {
         if (!tile.image) continue;
         const gid = (tilesetRef.firstgid || 1) + (tile.id || 0);
         const image = new Image();
-        image.decoding = "async";
-        image.onload = () => {
-          if (token === state.mapLoadToken) drawScene();
-        };
-        image.onerror = () => {
-          if (token === state.mapLoadToken) addConsoleLine(`Tile image failed: ${image.src}`, "error");
-        };
-        image.src = joinAssetPath(tilesetPath, tile.image);
+        const tileSrc = joinAssetPath(tilesetPath, tile.image);
+        tileLoadPromises.push(loadMapTileImage(image, tileSrc).then((ok) => {
+          if (!ok && token === state.mapLoadToken) addConsoleLine(`Tile image failed: ${tileSrc}`, "error");
+        }));
         tileImages.set(gid, image);
       }
     }
+    await Promise.all(tileLoadPromises);
 
     const layers = [];
     for (const layer of tmj.layers || []) {
@@ -478,13 +647,23 @@ async function loadMap(mapName) {
       tileHeight: tmj.tileheight || 512,
       layers,
       tileImages,
+      chunkCache: new Map(),
+      chunkBuildQueue: [],
+      chunkBuildQueued: new Set(),
+      chunkBuildPumpScheduled: false,
+      chunkUseTick: 0,
     };
     addConsoleLine(`Map loaded: ${path} (${layers.length} layers, ${tileImages.size} tiles)`);
+    startMapChunkPrewarm(state.map, token);
+    return state.map;
   } catch (error) {
     if (token === state.mapLoadToken) {
       state.map = null;
       addConsoleLine(`Map load failed: ${path} (${error.message})`, "error");
     }
+    return null;
+  } finally {
+    if (token === state.mapLoadToken) state.mapLoadPromise = null;
   }
 }
 
@@ -841,6 +1020,178 @@ function renderCraftPanel() {
   renderCraftMatrix();
 }
 
+function renderTalentPanel() {
+  if (!talentTree) return;
+  talentPointsLabel.textContent = `Talent Points: ${state.talentPoints}`;
+  talentTree.replaceChildren();
+
+  const groups = new Map();
+  for (const node of talentRootNodes) {
+    if (!groups.has(node.group)) groups.set(node.group, []);
+    groups.get(node.group).push(node);
+  }
+
+  const ownedKeys = ownedTalentKeys();
+  for (const [groupName, nodes] of groups) {
+    const section = document.createElement("section");
+    section.className = "talent-group";
+
+    const header = document.createElement("div");
+    header.className = "talent-group-title";
+    header.textContent = groupName;
+    section.appendChild(header);
+
+    const roots = document.createElement("div");
+    roots.className = "talent-root-list";
+    for (const node of nodes) {
+      const branch = renderTalentBranch(node, ownedKeys);
+      if (branch) roots.appendChild(branch);
+    }
+    section.appendChild(roots);
+    talentTree.appendChild(section);
+  }
+}
+
+function renderTalentBranch(node, ownedKeys, path = new Set()) {
+  if (!node || path.has(node.key)) return null;
+
+  const nextPath = new Set(path);
+  nextPath.add(node.key);
+
+  const branch = document.createElement("div");
+  branch.className = "talent-branch";
+
+  const nodeWrap = document.createElement("div");
+  nodeWrap.className = "talent-node-wrap";
+  nodeWrap.appendChild(makeTalentButton(node, ownedKeys));
+  branch.appendChild(nodeWrap);
+
+  const children = talentChildrenByBase.get(node.key) || [];
+  const childBranches = [];
+  for (const child of children) {
+    const childBranch = renderTalentBranch(child, ownedKeys, nextPath);
+    if (childBranch) childBranches.push(childBranch);
+  }
+
+  if (childBranches.length > 0) {
+    const childrenWrap = document.createElement("div");
+    childrenWrap.className = `talent-children${childBranches.length === 1 ? " single" : ""}`;
+    for (const childBranch of childBranches) {
+      const childWrap = document.createElement("div");
+      childWrap.className = "talent-child";
+      childWrap.appendChild(childBranch);
+      childrenWrap.appendChild(childWrap);
+    }
+    branch.appendChild(childrenWrap);
+  }
+
+  return branch;
+}
+
+function makeTalentButton(node, ownedKeys = ownedTalentKeys()) {
+  const owned = ownedKeys.has(node.key);
+  const addChain = owned ? [] : collectTalentAddChain(node, ownedKeys);
+  const chainCost = addChain.reduce((sum, talent) => sum + (talent.cost || 0), 0);
+  const ready = owned || (addChain.length > 0 && chainCost <= state.talentPoints);
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `talent-node rarity-${node.rarity}${owned ? " owned" : ""}${ready ? "" : " blocked"}`;
+  button.style.setProperty("--talent-color", rarityColor(node.rarity, 1));
+  button.title = owned
+    ? `Hold to remove ${node.name}`
+    : `Hold to learn ${addChain.map((talent) => talent.name).join(" -> ")} (${chainCost} TP)`;
+
+  const rarity = document.createElement("span");
+  rarity.className = "talent-rarity";
+  rarity.textContent = rarityShortNames[node.rarity] || rarityName(node.rarity).slice(0, 2);
+  button.appendChild(rarity);
+
+  const name = document.createElement("span");
+  name.className = "talent-name";
+  name.textContent = talentDisplayName(node);
+  button.appendChild(name);
+
+  const cost = document.createElement("span");
+  cost.className = "talent-cost";
+  cost.textContent = `${node.cost} TP`;
+  button.appendChild(cost);
+
+  attachTalentLongPress(button, node);
+  return button;
+}
+
+function talentDisplayName(node) {
+  if (node.id === TalentId.PoisonDamage && node.rarity === 3) return `${node.name} ${node.rank + 1}`;
+  return node.name;
+}
+
+function ownedTalentKeys() {
+  return new Set((state.talents || []).map((talent) => talentKey(talent.id, talent.rarity, talent.rank || 0)));
+}
+
+function isTalentOwned(node, ownedKeys = ownedTalentKeys()) {
+  return !!node && ownedKeys.has(node.key);
+}
+
+function collectTalentAddChain(node, ownedKeys = ownedTalentKeys()) {
+  const chain = [];
+  const seen = new Set();
+  let current = node;
+  while (current && !ownedKeys.has(current.key) && !seen.has(current.key)) {
+    seen.add(current.key);
+    chain.push(current);
+    current = current.base ? talentNodeByKey.get(current.base) : null;
+  }
+  return chain.reverse();
+}
+
+function attachTalentLongPress(button, node) {
+  let timer = 0;
+  let fired = false;
+
+  const clear = () => {
+    if (timer) window.clearTimeout(timer);
+    timer = 0;
+    button.classList.remove("holding");
+  };
+
+  button.addEventListener("pointerdown", (event) => {
+    if (event.button !== undefined && event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    fired = false;
+    button.classList.add("holding");
+    timer = window.setTimeout(() => {
+      fired = true;
+      clear();
+      submitTalentNode(node);
+    }, 520);
+  });
+  button.addEventListener("pointerup", clear);
+  button.addEventListener("pointerleave", clear);
+  button.addEventListener("pointercancel", clear);
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!fired) addConsoleLine("Hold a talent to learn/remove it.");
+  });
+}
+
+function submitTalentNode(node) {
+  if (!state.authenticated || !node) return;
+
+  const ownedKeys = ownedTalentKeys();
+  const owned = isTalentOwned(node, ownedKeys);
+  const talents = owned ? [node] : collectTalentAddChain(node, ownedKeys);
+  if (talents.length === 0) return;
+
+  const packet = packTalentRequest(owned ? "remove" : "add", talents);
+  if (!packet) return;
+  sendBytes(packet);
+  addConsoleLine(`${owned ? "Removing" : "Learning"} ${talentDisplayName(node)}`);
+}
+
 function selectCraftPetal(petalType, rarity) {
   if (state.craftPhase === "spinning") return;
   if (!canCraftRarity(rarity)) return;
@@ -917,7 +1268,7 @@ function renderCraftMatrix() {
 
   const corner = document.createElement("div");
   corner.className = "craft-matrix-corner";
-  corner.textContent = "type ↓  rarity →";
+  corner.textContent = "type / rarity";
   matrix.appendChild(corner);
 
   for (let rarity = 1; rarity <= 11; rarity += 1) {
@@ -1201,7 +1552,10 @@ function makeSlotButton(slot, index, kind) {
 
   if (slotHasItem(slot)) {
     button.title = `${petalTypeName(slot.petalType)} ${rarityName(slot.rarity)}`;
-    button.appendChild(makePetalStack(slot.petalType, slot.rarity, 0, slotVisualPetalType(slot, index, kind)));
+    button.appendChild(makePetalStack(slot.petalType, slot.rarity, 0, slotVisualPetalType(slot, index, kind), {
+      kind,
+      slotIndex: index,
+    }));
     button.addEventListener("pointerdown", (event) => beginDrag(event, button, kind, index, slot));
   }
 
@@ -1241,11 +1595,141 @@ function slotVisualPetalType(slot, index, kind) {
   return slot.petalType;
 }
 
-function makePetalStack(petalType, rarity, count = 0, iconPetalType = petalType) {
+function petalBaseCopy(petalType, rarity) {
+  switch (petalType) {
+    case petalAntEggType:
+      return 4;
+    case petalDustType:
+      return 3;
+    case petalDahliaType:
+      return 3;
+    case petalStingerType:
+      return rarity >= 6 ? 3 : 1;
+    case 34:
+      return rarity === 10 ? 1 : (rarity >= 7 ? 3 : 1);
+    case petalMimicType:
+    case petalNullificationType:
+    case 1:
+    case 3:
+    case 18:
+    case 24:
+    case 25:
+    case 26:
+      return 0;
+    default:
+      return 1;
+  }
+}
+
+function petalHasMultiCopyVisual(petalType, rarity) {
+  return effectivePetalCardCopy(petalType, rarity) > 1;
+}
+
+function talentOwned(id, rarity, rank = 0) {
+  return (state.talents || []).some((talent) => (
+    talent.id === id && talent.rarity === rarity && (talent.rank || 0) === rank
+  ));
+}
+
+function canDuplicatorAffect(petalType, copy) {
+  return copy > 0 && !nonStackPetalTypes.has(petalType);
+}
+
+function effectivePetalCardCopy(petalType, rarity, options = {}) {
+  let copy = petalBaseCopy(petalType, rarity);
+  if (!canDuplicatorAffect(petalType, copy)) return copy;
+
+  if (copy >= 2 && talentOwned(TalentId.PetalSplit, 5)) copy += 1;
+  if (copy >= 2 && talentOwned(TalentId.PetalSplit, 7)) copy += 1;
+
+  const inPrimarySlot = options.kind === "primary" && Number.isFinite(options.slotIndex);
+  if (inPrimarySlot && options.slotIndex === 0) {
+    if (rarity !== 9 && rarity !== 10 && talentOwned(TalentId.PetalSplit, 8)) copy += 1;
+    if ((rarity === 9 || rarity === 10) && talentOwned(TalentId.PetalSplit, 9)) copy += 1;
+  }
+  return copy;
+}
+
+function petalSingleRadiusFactor(petalType) {
+  switch (petalType) {
+    case petalDustType:
+      return 0.24;
+    case petalAntEggType:
+      return 0.36;
+    case petalDahliaType:
+      return 0.30;
+    case petalStingerType:
+      return 0.38;
+    default:
+      return 0.42;
+  }
+}
+
+function petalCopyVisualScale(visualCopies, petalType) {
+  if (visualCopies <= 2) return 0.86;
+  if (petalType === petalAntEggType) return 0.82;
+  if (petalType === petalDustType) return 0.9;
+  if (petalType === petalDahliaType) return 0.78;
+  if (visualCopies <= 4) return 0.76;
+  if (visualCopies <= 6) return 0.66;
+  return 0.60;
+}
+
+function petalCopyChordFactor(visualCopies, petalType) {
+  if (petalType === petalAntEggType) return 0.46;
+  if (petalType === petalDustType) return 0.92;
+  if (petalType === petalDahliaType) return 0.63;
+  if (petalType === petalStingerType) return 0.66;
+  if (visualCopies <= 2) return 0.82;
+  if (visualCopies <= 4) return 0.72;
+  return 0.68;
+}
+
+function petalCopyMaxRadius(visualCopies, petalType, singleRadius) {
+  if (petalType === petalDustType) return 6.4;
+  if (petalType === petalAntEggType) return singleRadius * 0.82;
+  if (visualCopies <= 2) return 8.5;
+  if (visualCopies <= 4) return 8.8;
+  return 10.5;
+}
+
+function petalCopyLayout(copy, petalType = 0) {
+  const visualCopies = Math.max(1, Math.min(8, Math.floor(copy || 1)));
+  if (visualCopies === 1) return [{ x: 0, y: 0, angle: 0, scale: 1 }];
+
+  const scale = petalCopyVisualScale(visualCopies, petalType);
+  const singleRadius = 50 * petalCardIconScale * scale * petalSingleRadiusFactor(petalType);
+  const chord = singleRadius * 2 * petalCopyChordFactor(visualCopies, petalType);
+  const ringRadius = chord / (2 * Math.sin(Math.PI / visualCopies));
+  const copyGrowth = 1 + Math.max(0, visualCopies - 3) * 0.035;
+  const minRadius = petalType === petalDustType ? 2.4 : 2.8;
+  const radius = clamp(
+    ringRadius * copyGrowth,
+    minRadius,
+    petalCopyMaxRadius(visualCopies, petalType, singleRadius),
+  );
+  const start = 0;
+  const points = [];
+  for (let i = 0; i < visualCopies; i += 1) {
+    const angle = start + (Math.PI * 2 * i) / visualCopies;
+    points.push({
+      x: Math.cos(angle) * radius,
+      y: Math.sin(angle) * radius,
+      angle: angle + Math.PI * 0.5,
+      scale,
+    });
+  }
+  return points;
+}
+
+function makePetalStack(petalType, rarity, count = 0, iconPetalType = petalType, options = {}) {
   const stack = document.createElement("span");
   stack.className = "petal-stack";
   const mimicVisual = petalType === petalMimicType && iconPetalType !== petalType;
+  const copy = options.copy ?? effectivePetalCardCopy(iconPetalType, rarity, options);
+  const splitLabel = copy > 1;
   if (mimicVisual) stack.classList.add("mimic-visual");
+  if (copy > 1) stack.classList.add("multi-copy");
 
   const base = document.createElement("img");
   base.className = "petal-bg";
@@ -1254,10 +1738,24 @@ function makePetalStack(petalType, rarity, count = 0, iconPetalType = petalType)
   base.src = petalBasePath(rarity);
   stack.appendChild(base);
 
-  const icon = makePetalIcon(iconPetalType, rarity, { stripped: mimicVisual });
-  if (icon) stack.appendChild(icon);
+  const layout = petalCopyLayout(copy, iconPetalType);
+  for (const part of layout) {
+    const icon = makePetalIcon(iconPetalType, rarity, { stripped: mimicVisual || splitLabel });
+    if (!icon) continue;
+    if (layout.length > 1) {
+      icon.classList.add("petal-icon-copy");
+      icon.style.setProperty("--copy-x", `${part.x * 0.54}px`);
+      icon.style.setProperty("--copy-y", `${part.y * 0.54}px`);
+      icon.style.setProperty("--copy-angle", `${part.angle}rad`);
+      icon.style.setProperty("--copy-size", `${Math.round(part.scale * 100)}%`);
+    }
+    stack.appendChild(icon);
+  }
   if (mimicVisual) {
     const label = makeMimicLabelIcon();
+    if (label) stack.appendChild(label);
+  } else if (splitLabel) {
+    const label = makePetalLabelIcon(iconPetalType, rarity);
     if (label) stack.appendChild(label);
   }
   if (count > 1) {
@@ -1267,6 +1765,49 @@ function makePetalStack(petalType, rarity, count = 0, iconPetalType = petalType)
     stack.appendChild(badge);
   }
   return stack;
+}
+
+function makePetalLabelIcon(petalType, rarity = 0) {
+  const src = petalIconPath(petalType, rarity);
+  if (!src) return null;
+  const image = document.createElement("img");
+  image.className = "petal-card-label";
+  image.alt = "";
+  image.draggable = false;
+  setPetalLabelIconSource(image, src);
+  image.addEventListener("error", () => image.remove(), { once: true });
+  return image;
+}
+
+function setPetalLabelIconSource(image, src) {
+  let entry = petalLabelIconUrls.get(src);
+  if (entry && entry.url) {
+    image.src = entry.url;
+    return;
+  }
+
+  if (!entry) {
+    entry = { url: "", waiters: [] };
+    petalLabelIconUrls.set(src, entry);
+    fetch(src)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Petal SVG failed: ${src}`);
+        return response.text();
+      })
+      .then((svgText) => {
+        const blob = new Blob([extractPetalLabelSvg(svgText)], { type: "image/svg+xml" });
+        entry.url = URL.createObjectURL(blob);
+        for (const waiter of entry.waiters) waiter.src = entry.url;
+        entry.waiters = [];
+      })
+      .catch(() => {
+        entry.url = "";
+        for (const waiter of entry.waiters) waiter.remove();
+        entry.waiters = [];
+      });
+  }
+
+  entry.waiters.push(image);
 }
 
 function formatShortCount(value) {
@@ -1721,7 +2262,7 @@ function updateRenderPositions(dt) {
     entity.renderPos.x += (entity.snapshot.pos.x - entity.renderPos.x) * smoothFactor(16, dt);
     entity.renderPos.y += (entity.snapshot.pos.y - entity.renderPos.y) * smoothFactor(16, dt);
     entity.renderAngle = smoothAngle(entity.renderAngle, entity.snapshot.angle,
-                                     entity.snapshot.entityType === hornetType ? 40 : 10, dt);
+                                     (entity.snapshot.entityType === hornetType || entity.snapshot.entityType === queenAntType) ? 40 : 10, dt);
   }
 
   for (const id of dead) {
@@ -1776,6 +2317,45 @@ function worldToScreen(pos) {
   };
 }
 
+function screenToWorld(pos) {
+  const scale = worldScale();
+  return {
+    x: (pos.x - state.canvasWidth * 0.5) / scale + state.camera.x,
+    y: (pos.y - state.canvasHeight * 0.5) / scale + state.camera.y,
+  };
+}
+
+function debugNumber(value, digits = 1) {
+  return Number.isFinite(value) ? value.toFixed(digits) : "-";
+}
+
+function updateDebugInfo() {
+  if (!debugInfo) return;
+  if (!state.consoleOpen) {
+    debugInfo.textContent = "";
+    return;
+  }
+
+  const owner = state.entities.get(state.ownerEntityId);
+  const ownerPos = owner?.renderPos || owner?.snapshot?.pos || null;
+  const ownerSnap = owner?.snapshot || null;
+  const mouseWorld = state.mouse.seen ? screenToWorld(state.mouse) : null;
+  const map = state.map;
+  const chunkCache = map?.chunkCache?.size || 0;
+  const chunkQueue = map?.chunkBuildQueue?.length || 0;
+  const visibleChunks = map?.visibleChunkKeys?.size || 0;
+  const chunkProfile = map?.chunkProfileLabel || "-";
+  const inputMode = state.keyboardControl ? "keyboard" : "mouse";
+  const socketState = state.ws ? ["connecting", "open", "closing", "closed"][state.ws.readyState] || state.ws.readyState : "none";
+
+  debugInfo.textContent = [
+    `pos (${debugNumber(ownerPos?.x)}, ${debugNumber(ownerPos?.y)})  id ${state.ownerEntityId || "-"}  hp ${debugNumber(ownerSnap?.hpPercent * 100, 0)}%`,
+    `cam (${debugNumber(state.camera.x)}, ${debugNumber(state.camera.y)})  mouse ${mouseWorld ? `(${debugNumber(mouseWorld.x)}, ${debugNumber(mouseWorld.y)})` : "(-, -)"}`,
+    `view ${debugNumber(state.viewRadius, 0)}  scale ${debugNumber(worldScale(), 4)}  fps ${debugNumber(state.fps, 1)}  dpr ${debugNumber(state.dpr, 2)}`,
+    `entities ${state.entities.size}  map ${map?.path || "-"}  chunks ${chunkCache}/${visibleChunks} q${chunkQueue} ${chunkProfile}  input ${inputMode}  ws ${socketState}`,
+  ].join("\n");
+}
+
 function canonicalTileGid(raw) {
   return (raw >>> 0) & 0x1fffffff;
 }
@@ -1791,18 +2371,18 @@ function transformTilePoint(x, y, width, height, flipH, flipV, flipD) {
   return { x, y };
 }
 
-function drawTileImage(image, pos, width, height, raw) {
+function drawTileImage(image, pos, width, height, raw, targetCtx = ctx) {
   const flipH = (raw & 0x80000000) !== 0;
   const flipV = (raw & 0x40000000) !== 0;
   const flipD = (raw & 0x20000000) !== 0;
 
-  ctx.save();
-  ctx.translate(pos.x, pos.y);
+  targetCtx.save();
+  targetCtx.translate(pos.x, pos.y);
   if (flipH || flipV || flipD) {
     const origin = transformTilePoint(0, 0, width, height, flipH, flipV, flipD);
     const xAxis = transformTilePoint(width, 0, width, height, flipH, flipV, flipD);
     const yAxis = transformTilePoint(0, height, width, height, flipH, flipV, flipD);
-    ctx.transform(
+    targetCtx.transform(
       (xAxis.x - origin.x) / width,
       (xAxis.y - origin.y) / width,
       (yAxis.x - origin.x) / height,
@@ -1812,8 +2392,297 @@ function drawTileImage(image, pos, width, height, raw) {
     );
   }
   const bleed = 0.75;
-  ctx.drawImage(image, -bleed, -bleed, width + bleed * 2, height + bleed * 2);
-  ctx.restore();
+  targetCtx.drawImage(image, -bleed, -bleed, width + bleed * 2, height + bleed * 2);
+  targetCtx.restore();
+}
+
+function createMapRenderCanvas(width, height) {
+  if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(width, height);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+}
+
+function pruneMapChunkCache(map) {
+  if (!map?.chunkCache || map.chunkCache.size <= mapChunkCacheLimit) return;
+  const protectedKeys = map.visibleChunkKeys || new Set();
+  const dynamicLimit = Math.max(mapChunkCacheLimit, protectedKeys.size + 128);
+  if (map.chunkCache.size <= dynamicLimit) return;
+  const entries = [...map.chunkCache.entries()].sort((a, b) => (a[1].lastUsed || 0) - (b[1].lastUsed || 0));
+  let removeCount = Math.max(0, entries.length - dynamicLimit);
+  for (const [key] of entries) {
+    if (removeCount <= 0) break;
+    if (protectedKeys.has(key)) continue;
+    map.chunkCache.delete(key);
+    removeCount -= 1;
+  }
+}
+
+function mapChunkProfile(scale) {
+  if (!Number.isFinite(scale) || scale <= 0) return { span: mapChunkTileSpan, renderScale: 1, label: "4@1x" };
+  if (scale < 0.004) return { span: 128, renderScale: 1 / 64, label: "128@1/64" };
+  if (scale < 0.009) return { span: 64, renderScale: 1 / 32, label: "64@1/32" };
+  if (scale < 0.012) return { span: 32, renderScale: 1 / 16, label: "32@1/16" };
+  if (scale < 0.026) return { span: 16, renderScale: 1 / 8, label: "16@1/8" };
+  if (scale < 0.06) return { span: 8, renderScale: 1 / 4, label: "8@1/4" };
+  if (scale < 0.12) return { span: 4, renderScale: 1 / 2, label: "4@1/2" };
+  return { span: mapChunkTileSpan, renderScale: 1, label: "4@1x" };
+}
+
+function normalizeMapChunkProfile(profile) {
+  const span = Math.max(1, Math.floor(profile?.span || mapChunkTileSpan));
+  const renderScale = clamp(Number(profile?.renderScale) || 1, 1 / 64, 1);
+  const label = profile?.label || `${span}@${Math.round(renderScale * 1024)}/1024`;
+  return { span, renderScale, label };
+}
+
+function mapChunkProfileKey(profile) {
+  const normalized = normalizeMapChunkProfile(profile);
+  return `${normalized.span}:${Math.round(normalized.renderScale * 1024)}`;
+}
+
+function mapChunkKey(layerIndex, chunkX, chunkY, profile) {
+  return `${mapChunkProfileKey(profile)}:${layerIndex}:${chunkX}:${chunkY}`;
+}
+
+function buildMapChunk(map, layer, layerIndex, chunkX, chunkY, profile = mapChunkProfile(1)) {
+  const chunkProfile = normalizeMapChunkProfile(profile);
+  const tileW = map.tileWidth;
+  const tileH = map.tileHeight;
+  const startX = chunkX * chunkProfile.span;
+  const startY = chunkY * chunkProfile.span;
+  const widthTiles = chunkProfile.span;
+  const heightTiles = chunkProfile.span;
+  const width = Math.max(1, widthTiles * tileW);
+  const height = Math.max(1, heightTiles * tileH);
+  const pixelTileW = Math.max(1, tileW * chunkProfile.renderScale);
+  const pixelTileH = Math.max(1, tileH * chunkProfile.renderScale);
+  const pixelWidth = Math.max(1, Math.ceil(width * chunkProfile.renderScale));
+  const pixelHeight = Math.max(1, Math.ceil(height * chunkProfile.renderScale));
+  const maxTileX = Math.max(0, layer.width - 1);
+  const maxTileY = Math.max(0, layer.height - 1);
+  const drawTiles = [];
+
+  for (let localY = 0; localY < heightTiles; localY += 1) {
+    const tileY = startY + localY;
+    const sampleY = clamp(tileY, 0, maxTileY);
+    for (let localX = 0; localX < widthTiles; localX += 1) {
+      const tileX = startX + localX;
+      const sampleX = clamp(tileX, 0, maxTileX);
+      const raw = layer.tiles[sampleY * layer.width + sampleX] >>> 0;
+      const gid = canonicalTileGid(raw);
+      if (!gid) continue;
+
+      const image = map.tileImages.get(gid);
+      if (!imageReady(image)) return null;
+      drawTiles.push({ image, raw, x: localX * pixelTileW, y: localY * pixelTileH });
+    }
+  }
+
+  const key = mapChunkKey(layerIndex, chunkX, chunkY, chunkProfile);
+  if (!drawTiles.length) {
+    return {
+      canvas: null,
+      worldX: startX * tileW,
+      worldY: startY * tileH,
+      width,
+      height,
+      empty: true,
+      lastUsed: ++map.chunkUseTick,
+      key,
+      profileKey: mapChunkProfileKey(chunkProfile),
+    };
+  }
+
+  const canvas = createMapRenderCanvas(pixelWidth, pixelHeight);
+  const chunkCtx = canvas.getContext("2d");
+  if (!chunkCtx) return null;
+
+  for (const tile of drawTiles) {
+    drawTileImage(tile.image, { x: tile.x, y: tile.y }, pixelTileW, pixelTileH, tile.raw, chunkCtx);
+  }
+
+  return {
+    canvas,
+    worldX: startX * tileW,
+    worldY: startY * tileH,
+    width,
+    height,
+    empty: false,
+    lastUsed: ++map.chunkUseTick,
+    key,
+    profileKey: mapChunkProfileKey(chunkProfile),
+  };
+}
+
+function getMapChunk(map, layer, layerIndex, chunkX, chunkY, options = {}) {
+  const buildNow = options.buildNow !== false;
+  const profile = normalizeMapChunkProfile(options.profile || mapChunkProfile(1));
+  if (!map.chunkCache) map.chunkCache = new Map();
+  const key = mapChunkKey(layerIndex, chunkX, chunkY, profile);
+  let chunk = map.chunkCache.get(key);
+  if (!chunk) {
+    if (!buildNow) {
+      queueMapChunkBuild(map, layer, layerIndex, chunkX, chunkY, profile);
+      return null;
+    }
+    chunk = buildMapChunk(map, layer, layerIndex, chunkX, chunkY, profile);
+    if (!chunk) return null;
+    map.chunkCache.set(key, chunk);
+    pruneMapChunkCache(map);
+  }
+  chunk.lastUsed = ++map.chunkUseTick;
+  return chunk;
+}
+
+function queueMapChunkBuild(map, layer, layerIndex, chunkX, chunkY, profile = mapChunkProfile(1)) {
+  const chunkProfile = normalizeMapChunkProfile(profile);
+  if (!map.chunkCache) map.chunkCache = new Map();
+  if (!map.chunkBuildQueue) map.chunkBuildQueue = [];
+  if (!map.chunkBuildQueued) map.chunkBuildQueued = new Set();
+
+  const key = mapChunkKey(layerIndex, chunkX, chunkY, chunkProfile);
+  if (map.chunkCache.has(key) || map.chunkBuildQueued.has(key)) return;
+
+  map.chunkBuildQueued.add(key);
+  const job = { key, layer, layerIndex, chunkX, chunkY, profile: chunkProfile };
+  if (map.visibleChunkKeys?.has(key)) map.chunkBuildQueue.unshift(job);
+  else map.chunkBuildQueue.push(job);
+  scheduleMapChunkBuildPump(map);
+}
+
+function scheduleMapChunkBuildPump(map) {
+  if (!map || map.chunkBuildPumpScheduled) return;
+  map.chunkBuildPumpScheduled = true;
+
+  const run = () => {
+    map.chunkBuildPumpScheduled = false;
+    pumpMapChunkBuildQueue(map);
+  };
+  if (window.requestIdleCallback) window.requestIdleCallback(run, { timeout: 80 });
+  else requestAnimationFrame(run);
+}
+
+function pumpMapChunkBuildQueue(map) {
+  if (!map || state.map !== map || !map.chunkBuildQueue?.length) return;
+
+  let builtAny = false;
+  const started = performance.now();
+  while (map.chunkBuildQueue.length && performance.now() - started < mapPrewarmBudgetMs) {
+    const job = map.chunkBuildQueue.shift();
+    map.chunkBuildQueued?.delete(job.key);
+    if (map.chunkCache?.has(job.key)) continue;
+
+    const chunk = buildMapChunk(map, job.layer, job.layerIndex, job.chunkX, job.chunkY, job.profile);
+    if (!chunk) continue;
+    map.chunkCache.set(job.key, chunk);
+    pruneMapChunkCache(map);
+    builtAny = true;
+  }
+
+  if (builtAny) requestAnimationFrame(drawScene);
+  if (map.chunkBuildQueue.length) scheduleMapChunkBuildPump(map);
+}
+
+function startMapChunkPrewarm(map, token) {
+  if (!map?.layers?.length) return;
+
+  const jobs = [];
+  const profile = mapChunkProfile(1);
+  map.activeChunkProfileKey = mapChunkProfileKey(profile);
+  for (let layerIndex = 0; layerIndex < map.layers.length; layerIndex += 1) {
+    const layer = map.layers[layerIndex];
+    if (!layer.width || !layer.height || !layer.tiles || layer.tiles.length <= 0) continue;
+
+    const chunkCols = Math.ceil(layer.width / profile.span);
+    const chunkRows = Math.ceil(layer.height / profile.span);
+    for (let chunkY = 0; chunkY < chunkRows; chunkY += 1) {
+      for (let chunkX = 0; chunkX < chunkCols; chunkX += 1) {
+        jobs.push({ layer, layerIndex, chunkX, chunkY, profile });
+      }
+    }
+  }
+  if (!jobs.length) return;
+  if (jobs.length > mapChunkCacheLimit) {
+    addConsoleLine(`Map tiles ready: ${map.path} (${jobs.length} chunks on demand)`);
+    return;
+  }
+
+  for (const job of jobs) {
+    if (token !== state.mapLoadToken || state.map !== map) return;
+    queueMapChunkBuild(map, job.layer, job.layerIndex, job.chunkX, job.chunkY, job.profile);
+  }
+}
+
+function resetMapChunkBuildQueueForProfile(map, profile) {
+  const profileKey = mapChunkProfileKey(profile);
+  if (map.activeChunkProfileKey === profileKey) return;
+  if (!map.activeChunkProfileKey) {
+    map.activeChunkProfileKey = profileKey;
+    return;
+  }
+  map.activeChunkProfileKey = profileKey;
+  map.chunkBuildQueue = [];
+  map.chunkBuildQueued = new Set();
+}
+
+function chunkBoundsForWorldBounds(bounds, tileW, tileH, span) {
+  return {
+    minX: Math.floor(Math.floor(bounds.left / tileW) / span),
+    minY: Math.floor(Math.floor(bounds.top / tileH) / span),
+    maxX: Math.floor(Math.ceil(bounds.right / tileW) / span),
+    maxY: Math.floor(Math.ceil(bounds.bottom / tileH) / span),
+  };
+}
+
+function clampChunkBoundsToLayer(bounds, layer, span) {
+  const maxChunkX = Math.ceil(Math.max(1, layer.width) / span);
+  const maxChunkY = Math.ceil(Math.max(1, layer.height) / span);
+  return {
+    minX: clamp(bounds.minX, -1, maxChunkX),
+    minY: clamp(bounds.minY, -1, maxChunkY),
+    maxX: clamp(bounds.maxX, -1, maxChunkX),
+    maxY: clamp(bounds.maxY, -1, maxChunkY),
+  };
+}
+
+function mapPreloadBounds(visibleBounds, tileW, tileH) {
+  const last = state.map?.lastPreloadCamera || state.camera;
+  const dx = state.camera.x - last.x;
+  const dy = state.camera.y - last.y;
+  state.map.lastPreloadCamera = { x: state.camera.x, y: state.camera.y };
+
+  const owner = state.entities.get(state.ownerEntityId);
+  const snapshotMove = owner?.snapshotMove || 0;
+  const cameraMove = Math.hypot(dx, dy);
+  const speedHint = Math.max(cameraMove, snapshotMove);
+  const tileSize = Math.max(1, Math.min(tileW, tileH));
+  const sidePadding = clamp(tileSize + speedHint * 4, tileSize, Math.max(tileSize, state.viewRadius * 0.3));
+  const lead = clamp(tileSize + speedHint * 12, tileSize * 1.5, Math.max(tileSize * 2, state.viewRadius * 0.85));
+  const length = Math.hypot(dx, dy);
+  const nx = length > 0.001 ? dx / length : 0;
+  const ny = length > 0.001 ? dy / length : 0;
+
+  return {
+    left: visibleBounds.left - sidePadding + Math.min(0, nx * lead),
+    top: visibleBounds.top - sidePadding + Math.min(0, ny * lead),
+    right: visibleBounds.right + sidePadding + Math.max(0, nx * lead),
+    bottom: visibleBounds.bottom + sidePadding + Math.max(0, ny * lead),
+  };
+}
+
+function queueMapChunksForBounds(map, layer, layerIndex, bounds, profile) {
+  const chunkBounds = clampChunkBoundsToLayer(
+    chunkBoundsForWorldBounds(bounds, map.tileWidth, map.tileHeight, profile.span),
+    layer,
+    profile.span,
+  );
+  for (let chunkY = chunkBounds.minY; chunkY <= chunkBounds.maxY; chunkY += 1) {
+    for (let chunkX = chunkBounds.minX; chunkX <= chunkBounds.maxX; chunkX += 1) {
+      queueMapChunkBuild(map, layer, layerIndex, chunkX, chunkY, profile);
+    }
+  }
 }
 
 function drawMapTiles() {
@@ -1821,46 +2690,69 @@ function drawMapTiles() {
   if (!map || !map.layers || !map.tileImages) return;
 
   const scale = worldScale();
+  const profile = mapChunkProfile(scale);
+  resetMapChunkBuildQueueForProfile(map, profile);
+  map.chunkProfileLabel = profile.label;
   const tileW = map.tileWidth;
   const tileH = map.tileHeight;
   if (tileW <= 0 || tileH <= 0) return;
 
-  const worldLeft = state.camera.x - state.canvasWidth * 0.5 / scale - tileW;
-  const worldTop = state.camera.y - state.canvasHeight * 0.5 / scale - tileH;
-  const worldRight = state.camera.x + state.canvasWidth * 0.5 / scale + tileW;
-  const worldBottom = state.camera.y + state.canvasHeight * 0.5 / scale + tileH;
+  const visibleBounds = {
+    left: state.camera.x - state.canvasWidth * 0.5 / scale - tileW,
+    top: state.camera.y - state.canvasHeight * 0.5 / scale - tileH,
+    right: state.camera.x + state.canvasWidth * 0.5 / scale + tileW,
+    bottom: state.camera.y + state.canvasHeight * 0.5 / scale + tileH,
+  };
+  const preloadBounds = mapPreloadBounds(visibleBounds, tileW, tileH);
+  const visibleChunkKeys = new Set();
 
-  for (const layer of map.layers) {
+  for (let layerIndex = 0; layerIndex < map.layers.length; layerIndex += 1) {
+    const layer = map.layers[layerIndex];
     if (!layer.width || !layer.height || !layer.tiles || layer.tiles.length <= 0) continue;
+    const chunkBounds = clampChunkBoundsToLayer(
+      chunkBoundsForWorldBounds(visibleBounds, tileW, tileH, profile.span),
+      layer,
+      profile.span,
+    );
 
-    const minX = Math.floor(worldLeft / tileW);
-    const minY = Math.floor(worldTop / tileH);
-    const maxX = Math.ceil(worldRight / tileW);
-    const maxY = Math.ceil(worldBottom / tileH);
-    const maxTileX = Math.max(0, layer.width - 1);
-    const maxTileY = Math.max(0, layer.height - 1);
+    for (let chunkY = chunkBounds.minY; chunkY <= chunkBounds.maxY; chunkY += 1) {
+      for (let chunkX = chunkBounds.minX; chunkX <= chunkBounds.maxX; chunkX += 1) {
+        visibleChunkKeys.add(mapChunkKey(layerIndex, chunkX, chunkY, profile));
+      }
+    }
+  }
+  map.visibleChunkKeys = visibleChunkKeys;
 
-    for (let y = minY; y <= maxY; y += 1) {
-      const sampleY = clamp(y, 0, maxTileY);
-      for (let x = minX; x <= maxX; x += 1) {
-        const sampleX = clamp(x, 0, maxTileX);
-        const raw = layer.tiles[sampleY * layer.width + sampleX] >>> 0;
-        const gid = canonicalTileGid(raw);
-        if (!gid) continue;
-        const image = map.tileImages.get(gid);
-        if (!image || !image.complete || image.naturalWidth <= 0) continue;
+  for (let layerIndex = 0; layerIndex < map.layers.length; layerIndex += 1) {
+    const layer = map.layers[layerIndex];
+    if (!layer.width || !layer.height || !layer.tiles || layer.tiles.length <= 0) continue;
+    const chunkBounds = clampChunkBoundsToLayer(
+      chunkBoundsForWorldBounds(visibleBounds, tileW, tileH, profile.span),
+      layer,
+      profile.span,
+    );
+    queueMapChunksForBounds(map, layer, layerIndex, preloadBounds, profile);
 
-        const pos = worldToScreen({ x: x * tileW, y: y * tileH });
-        const width = tileW * scale;
-        const height = tileH * scale;
-        drawTileImage(image, pos, width, height, raw);
+    for (let chunkY = chunkBounds.minY; chunkY <= chunkBounds.maxY; chunkY += 1) {
+      for (let chunkX = chunkBounds.minX; chunkX <= chunkBounds.maxX; chunkX += 1) {
+        const chunk = getMapChunk(map, layer, layerIndex, chunkX, chunkY, { buildNow: false, profile });
+        if (!chunk || chunk.empty) continue;
+        const pos = worldToScreen({ x: chunk.worldX, y: chunk.worldY });
+        const bleed = 0.75;
+        ctx.drawImage(
+          chunk.canvas,
+          pos.x - bleed,
+          pos.y - bleed,
+          chunk.width * scale + bleed * 2,
+          chunk.height * scale + bleed * 2,
+        );
       }
     }
   }
 }
 
 function drawGrid() {
-  ctx.fillStyle = "#edf3f7";
+  ctx.fillStyle = state.map ? "#20aa63" : "#edf3f7";
   ctx.fillRect(0, 0, state.canvasWidth, state.canvasHeight);
   drawMapTiles();
 
@@ -1947,10 +2839,25 @@ function drawTileDebugGrid(scale) {
   ctx.restore();
 }
 
+function drawPixelEntity(snap, pos, radius, isOwner, isPetal, isDrop) {
+  const size = Math.max(1, Math.min(2, Math.round(radius * 2)));
+  const x = Math.round(pos.x - size * 0.5);
+  const y = Math.round(pos.y - size * 0.5);
+  const alpha = clamp(radius / entityDetailMinScreenRadius, 0.18, 0.72);
+
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  if (isOwner) ctx.fillStyle = "#ffd446";
+  else if (isPetal || isDrop) ctx.fillStyle = rarityColor(snap.rarity || 1, 0.9);
+  else ctx.fillStyle = rarityColor(snap.rarity || 1, 0.72);
+  ctx.fillRect(x, y, size, size);
+  ctx.restore();
+}
+
 function drawEntity(entity) {
   const snap = entity.snapshot;
   const pos = worldToScreen(entity.renderPos);
-  const radius = Math.max(3, worldLengthToScreen(snap.radius));
+  const radius = Math.max(0, worldLengthToScreen(snap.radius));
   const isOwner = (snap.flags & flagOwner) !== 0 || snap.entityId === state.ownerEntityId;
   const isPetal = isPetalEntity(snap.entityType);
   const isDrop = isDropEntity(snap.entityType);
@@ -1962,10 +2869,24 @@ function drawEntity(entity) {
   ctx.save();
   ctx.globalAlpha = deathAlpha;
 
+  const visibleRadius = radius * deathScale;
+  if (visibleRadius < entityPixelMinScreenRadius) {
+    ctx.restore();
+    return;
+  }
+
+  const detailMinRadius = isPetal ? petalDetailMinScreenRadius :
+    isDrop ? dropDetailMinScreenRadius : entityDetailMinScreenRadius;
+  if (visibleRadius < detailMinRadius) {
+    drawPixelEntity(snap, pos, visibleRadius, isOwner, isPetal, isDrop);
+    ctx.restore();
+    return;
+  }
+
   if (!isPetal && (snap.entityType === beetleType || snap.entityType === summonedBeetleType)) {
     const summoned = snap.entityType === summonedBeetleType;
     drawBeetle(ctx, "./assets/beetle.svg", pos, radius * deathScale, snap.entityId,
-               entity.renderAngle ?? snap.angle, entity.motionBlend || 0, performance.now() / 1000,
+               entity.renderAngle ?? snap.angle, entity.motionBlend || 0, currentRenderTimeSeconds,
                { summoned, forwardOffset: radius * deathScale * beetleSpriteForwardOffsetScale });
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -1979,10 +2900,56 @@ function drawEntity(entity) {
     return;
   }
 
+  if (!isPetal && snap.entityType === rockType) {
+    drawRock(ctx, pos, radius * deathScale, snap.entityId);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === babyAntType) {
+    drawBabyAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
+                entity.motionBlend || 0, currentRenderTimeSeconds);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === workerAntType) {
+    drawWorkerAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
+                  entity.motionBlend || 0, currentRenderTimeSeconds);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === queenAntType) {
+    drawQueenAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
+                 entity.motionBlend || 0, currentRenderTimeSeconds);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === antHoleType) {
+    drawAntHole(ctx, pos, radius * deathScale);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === spiderType) {
+    drawSpider(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
+               entity.motionBlend || 0, currentRenderTimeSeconds);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
   if (!isPetal && (snap.entityType === soldierAntType || snap.entityType === summonedSoldierAntType)) {
     const summoned = snap.entityType === summonedSoldierAntType;
     drawSoldierAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                   entity.motionBlend || 0, performance.now() / 1000, { summoned });
+                   entity.motionBlend || 0, currentRenderTimeSeconds, { summoned });
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
@@ -1990,7 +2957,7 @@ function drawEntity(entity) {
 
   if (!isPetal && snap.entityType === bandageBeetleType) {
     drawBeetle(ctx, "./assets/bandage_beetle.svg", pos, radius * deathScale, snap.entityId,
-               entity.renderAngle ?? snap.angle, entity.motionBlend || 0, performance.now() / 1000,
+               entity.renderAngle ?? snap.angle, entity.motionBlend || 0, currentRenderTimeSeconds,
                { forwardOffset: radius * deathScale * beetleSpriteForwardOffsetScale });
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -1999,7 +2966,7 @@ function drawEntity(entity) {
 
   if (!isPetal && snap.entityType === beeType) {
     drawBee(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-            entity.motionBlend || 0, performance.now() / 1000);
+            entity.motionBlend || 0, currentRenderTimeSeconds);
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
@@ -2007,7 +2974,7 @@ function drawEntity(entity) {
 
   if (!isPetal && snap.entityType === bumbleBeeType) {
     drawBumbleBee(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                  entity.motionBlend || 0, performance.now() / 1000);
+                  entity.motionBlend || 0, currentRenderTimeSeconds);
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
@@ -2015,14 +2982,20 @@ function drawEntity(entity) {
 
   if (!isPetal && snap.entityType === hornetType) {
     drawHornet(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-               entity.motionBlend || 0, performance.now() / 1000);
+               entity.motionBlend || 0, currentRenderTimeSeconds);
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && !isDrop && snap.name === "Pollen") {
-    drawPollen(ctx, pos, radius * deathScale, snap.entityId, performance.now() / 1000);
+    drawPollen(ctx, pos, radius * deathScale, snap.entityId, currentRenderTimeSeconds);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && !isDrop && snap.name === "SpiderWeb") {
+    drawSpiderWeb(ctx, pos, radius * deathScale, snap.entityId, currentRenderTimeSeconds);
     ctx.restore();
     return;
   }
@@ -2085,17 +3058,18 @@ function drawPlayerFlower(snap, pos, radius, angle, isOwner) {
   const nullified = playerSnapHasPetal(snap, petalNullificationType) || (isOwner && ownerHasPetal(petalNullificationType));
   const corrupted = (flags & flagCorrupted) !== 0;
   const undead = (flags & flagUndead) !== 0;
+  const poisoned = (flags & flagPoisoned) !== 0;
   const dead = (flags & flagDead) !== 0;
   const suppressPetalOverlays = corrupted;
 
-  if (hasAntennae && !suppressPetalOverlays) drawAntennaeUnderlay(pos, radius, angle);
+  if (hasAntennae && !suppressPetalOverlays) drawAntennaeUnderlay(pos, radius);
 
   let texture = "normal";
   if (corrupted) texture = "gambler";
   else if (undead) texture = "undead";
 
   const image = assetImage(playerFlowerTexturePath(texture));
-  const size = Math.max(18, radius * 2.36);
+  const size = Math.max(0.5, radius * 2.36);
   ctx.save();
   ctx.translate(pos.x, pos.y);
   if (dead && Number.isFinite(angle)) ctx.rotate(angle);
@@ -2103,10 +3077,14 @@ function drawPlayerFlower(snap, pos, radius, angle, isOwner) {
   if (imageReady(image)) {
     ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
   } else {
-    drawPlayerFlowerFallback(radius, texture);
+    drawPlayerFlowerFallback(radius, poisoned && !corrupted && !undead ? "poisoned" : texture);
   }
 
-  if (hasRelic && !corrupted && !undead) {
+  if (poisoned && !corrupted && !undead) {
+    ctx.globalCompositeOperation = "source-atop";
+    ctx.fillStyle = "rgba(126, 55, 170, 0.42)";
+    ctx.fillRect(-size * 0.5, -size * 0.5, size, size);
+  } else if (hasRelic && !corrupted && !undead) {
     ctx.globalCompositeOperation = "source-atop";
     ctx.fillStyle = "rgba(20, 24, 32, 0.38)";
     ctx.fillRect(-size * 0.5, -size * 0.5, size, size);
@@ -2151,7 +3129,7 @@ function playerFlowerTexturePath(texture = "normal") {
 
 function drawBandagePetalLayer(radius) {
   const icon = bandageOverlayImage();
-  const size = Math.max(18, radius * 4.48);
+  const size = Math.max(0.5, radius * 4.48);
   const offsetY = radius * 0.22;
   ctx.save();
   ctx.beginPath();
@@ -2194,19 +3172,14 @@ function drawBandagePetalLayerFallback(radius) {
   ctx.restore();
 }
 
-function drawAntennaeUnderlay(pos, radius, angle) {
-  const icon = assetImage(petalIconPath(petalAntennaeType));
-  const size = Math.max(18, radius * 2.65);
+function drawAntennaeUnderlay(pos, radius) {
+  const icon = antennaeOverlayImage();
+  const size = Math.max(0.5, radius * 2.8);
   ctx.save();
-  ctx.translate(pos.x, pos.y);
-  if (Number.isFinite(angle)) ctx.rotate(angle + Math.PI * 0.5);
-  ctx.globalAlpha *= 0.9;
+  ctx.translate(pos.x, pos.y - radius * 0.34);
+  ctx.globalAlpha *= 0.92;
   if (imageReady(icon)) {
-    const sourceWidth = icon.naturalWidth || 110;
-    const sourceHeight = icon.naturalHeight || 110;
-    const cropHeight = sourceHeight * 0.64;
-    ctx.drawImage(icon, 0, 0, sourceWidth, cropHeight,
-                  -size * 0.5, -size * 0.58, size, size * 0.66);
+    ctx.drawImage(icon, -size * 0.5, -size * 0.5, size, size);
   } else {
     ctx.strokeStyle = "#111";
     ctx.lineWidth = Math.max(2, radius * 0.14);
@@ -2224,15 +3197,17 @@ function drawAntennaeUnderlay(pos, radius, angle) {
 function drawPlayerFlowerFallback(radius, texture) {
   const centerFill = texture === "undead" ? "#a7c66f" :
                      texture === "gambler" ? "#c64136" :
+                     texture === "poisoned" ? "#9a64c7" :
                      "#f2cc42";
   const stroke = texture === "undead" ? "#73934c" :
                  texture === "gambler" ? "#782821" :
+                 texture === "poisoned" ? "#6a3d94" :
                  "#d9b638";
   ctx.fillStyle = centerFill;
   ctx.beginPath();
   ctx.arc(0, 0, radius * 0.88, 0, Math.PI * 2);
   ctx.fill();
-  ctx.lineWidth = Math.max(2.2, radius * 0.18);
+  ctx.lineWidth = Math.max(0.45, radius * 0.18);
   ctx.strokeStyle = stroke;
   ctx.stroke();
 }
@@ -2299,7 +3274,7 @@ function drawPlayerFlowerDeadEyes(radius, eyeFill) {
     { x: radius * 0.23, y: -radius * 0.31 },
   ];
   ctx.strokeStyle = eyeFill;
-  ctx.lineWidth = Math.max(2, radius * 0.115);
+  ctx.lineWidth = Math.max(0.45, radius * 0.115);
   ctx.lineCap = "round";
   for (const eye of centers) {
     const dx = radius * 0.12;
@@ -2315,7 +3290,7 @@ function drawPlayerFlowerDeadEyes(radius, eyeFill) {
 
 function drawPlayerFlowerSmile(radius, texture, smileFill) {
   ctx.strokeStyle = smileFill;
-  ctx.lineWidth = Math.max(1.5, radius * 0.075);
+  ctx.lineWidth = Math.max(0.45, radius * 0.075);
   ctx.lineCap = "round";
   ctx.beginPath();
   if (texture === "undead") {
@@ -2328,7 +3303,7 @@ function drawPlayerFlowerSmile(radius, texture, smileFill) {
 
 function drawPlayerFlowerAngryMouth(radius, smileFill) {
   ctx.strokeStyle = smileFill;
-  ctx.lineWidth = Math.max(1.5, radius * 0.075);
+  ctx.lineWidth = Math.max(0.45, radius * 0.075);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.beginPath();
@@ -2339,7 +3314,7 @@ function drawPlayerFlowerAngryMouth(radius, smileFill) {
 
 function drawPlayerFlowerDeadMouth(radius, smileFill) {
   ctx.strokeStyle = smileFill;
-  ctx.lineWidth = Math.max(1.5, radius * 0.075);
+  ctx.lineWidth = Math.max(0.45, radius * 0.075);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.beginPath();
@@ -2349,10 +3324,12 @@ function drawPlayerFlowerDeadMouth(radius, smileFill) {
 }
 
 function drawLivePetal(petalType, rarity, pos, radius, angle, entityId = 0) {
-  const size = Math.max(1, radius * worldPetalSizeScale);
+  const size = radius * worldPetalSizeScale;
+  if (size < 0.5) return;
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
+  if (petalHasMultiCopyVisual(petalType, rarity)) ctx.translate(0, -size * 0.035);
   if (petalType !== petalMoonType && Number.isFinite(angle)) ctx.rotate(angle);
 
   if (petalType === petalDustType) {
@@ -2470,17 +3447,17 @@ function moonTone(part) {
 }
 
 function drawDustParticlePetal(size, rarity) {
-  const drawSize = size * 0.32;
+  const drawSize = size * 0.52;
   const dustPoints = [
-    [79.359, 47.857],
-    [74.375, 56.514],
-    [64.135, 55.46],
-    [59.222, 47.857],
-    [64.472, 39.004],
-    [73.848, 39.732],
+    [65.073, 47.857],
+    [60.089, 56.514],
+    [49.849, 55.46],
+    [44.936, 47.857],
+    [50.186, 39.004],
+    [59.562, 39.732],
   ];
-  const sourceCenterX = 69.291;
-  const sourceCenterY = 47.737;
+  const sourceCenterX = 55;
+  const sourceCenterY = 55;
   const scale = drawSize / 24;
 
   ctx.save();
@@ -2502,9 +3479,13 @@ function drawDustParticlePetal(size, rarity) {
 }
 
 function drawDropPetalCard(petalType, rarity, pos, radius) {
-  const size = Math.max(1, radius * worldDropSizeScale);
+  const size = radius * worldDropSizeScale;
+  if (size < 0.5) return;
   const base = petalBaseImage(rarity);
-  const icon = petalIconImage(petalType, rarity);
+  const copy = effectivePetalCardCopy(petalType, rarity);
+  const splitLabel = copy > 1;
+  const icon = petalCardIconImage(petalType, rarity, { stripped: splitLabel });
+  const label = splitLabel ? petalLabelImage(petalType, rarity) : null;
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
@@ -2516,17 +3497,82 @@ function drawDropPetalCard(petalType, rarity, pos, radius) {
     drawPetalCardFallback(size, rarity);
   }
 
-  if (imageReady(icon)) {
-    drawCenteredImage(icon, size, petalCardIconScale);
-  } else {
-    drawPetalSilhouette(size * petalCardIconScale, rarity);
+  drawPetalCardCopies(icon, size, rarity, copy, petalType);
+  if (splitLabel && imageReady(label)) {
+    drawCenteredImage(label, size, petalCardIconScale);
   }
 
   ctx.restore();
 }
 
+function drawPetalCardCopies(icon, size, rarity, copy, petalType = 0) {
+  const layout = petalCopyLayout(copy, petalType);
+  for (const part of layout) {
+    ctx.save();
+    if (layout.length > 1) {
+      ctx.translate(size * part.x / 100, size * part.y / 100);
+      ctx.rotate(part.angle);
+    }
+    const scale = petalCardIconScale * (layout.length > 1 ? part.scale : 1);
+    if (imageReady(icon)) {
+      drawCenteredImage(icon, size, scale);
+    } else {
+      drawPetalSilhouette(size * scale, rarity);
+    }
+    ctx.restore();
+  }
+}
+
 function petalIconImage(petalType, rarity = 0) {
   return assetImage(petalIconPath(petalType, rarity));
+}
+
+function petalCardIconImage(petalType, rarity = 0, options = {}) {
+  const src = petalIconPath(petalType, rarity);
+  if (!src) return null;
+  if (options.stripped) return transformedPetalImage(src, stripLivePetalLabel, "card-stripped");
+  return assetImage(src);
+}
+
+function petalLabelImage(petalType, rarity = 0) {
+  const src = petalIconPath(petalType, rarity);
+  if (!src) return null;
+  return transformedPetalImage(src, extractPetalLabelSvg, "card-label");
+}
+
+function transformedPetalImage(src, transformSvg, cachePrefix) {
+  const cacheKey = `${cachePrefix}:${src}`;
+  let entry = transformedPetalImages.get(cacheKey);
+  if (entry) return entry.image;
+
+  const image = new Image();
+  image.decoding = "async";
+  entry = { image, url: "" };
+  transformedPetalImages.set(cacheKey, entry);
+
+  fetch(src)
+    .then((response) => {
+      if (!response.ok) throw new Error(`Petal SVG failed: ${src}`);
+      return response.text();
+    })
+    .then((svgText) => {
+      const blob = new Blob([transformSvg(svgText)], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      entry.url = url;
+      image.addEventListener("load", () => requestAnimationFrame(drawScene), { once: true });
+      image.addEventListener("error", () => {
+        image.failed = true;
+        if (entry.url) URL.revokeObjectURL(entry.url);
+        requestAnimationFrame(drawScene);
+      }, { once: true });
+      image.src = url;
+    })
+    .catch(() => {
+      image.failed = true;
+      requestAnimationFrame(drawScene);
+    });
+
+  return image;
 }
 
 function livePetalIconImage(petalType, rarity = 0, transformSvg = stripLivePetalLabel, cacheSuffix = "live") {
@@ -2627,6 +3673,12 @@ function bandageOverlayImage() {
   return image;
 }
 
+function antennaeOverlayImage() {
+  const src = petalIconPath(petalAntennaeType);
+  if (!src) return null;
+  return transformedPetalImage(src, stripLivePetalLabel, "antennae-overlay");
+}
+
 function stripLivePetalLabel(svgText) {
   if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgText;
 
@@ -2678,6 +3730,34 @@ function extractBandageOverlaySvg(svgText) {
   return new XMLSerializer().serializeToString(root);
 }
 
+function extractPetalLabelSvg(svgText) {
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 110 110"></svg>`;
+
+  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+  const root = doc.documentElement;
+  if (!root || root.tagName.toLowerCase() !== "svg")
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 110 110"></svg>`;
+
+  const serializer = new XMLSerializer();
+  const labelNodes = [];
+  root.querySelectorAll("text").forEach((node) => labelNodes.push(node));
+
+  const paths = Array.from(root.querySelectorAll("path"));
+  for (let i = 0; i < paths.length - 1; i += 1) {
+    const outline = paths[i];
+    const fill = paths[i + 1];
+    if (isLabelOutlinePath(outline) && isMatchingLabelFillPath(outline, fill)) {
+      labelNodes.push(outline, fill);
+      i += 1;
+    }
+  }
+
+  const viewBox = root.getAttribute("viewBox") || "0 0 110 110";
+  const body = labelNodes.map((node) => serializer.serializeToString(node)).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">${body}</svg>`;
+}
+
 function extractMimicLabelSvg(svgText) {
   if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgText;
 
@@ -2725,6 +3805,7 @@ function petalBaseImage(rarity) {
 
 function drawCenteredImage(image, size, scale) {
   const drawSize = size * scale;
+  if (drawSize < 0.5) return;
   ctx.drawImage(image, -drawSize * 0.5, -drawSize * 0.5, drawSize, drawSize);
 }
 
@@ -2783,12 +3864,17 @@ function drawCompassNeedle(pos, radius, angle) {
 }
 
 function isMobSnap(snap) {
-  return snap && !isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType) &&
+  return snap && snap.entityType > 0 && !isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType) &&
          snap.entityType !== playerFlowerType;
 }
 
+function isSummonedMobSnap(snap) {
+  return !!snap && (((snap.flags || 0) & flagSummoned) !== 0 ||
+    snap.entityType === summonedBeetleType || snap.entityType === summonedSoldierAntType);
+}
+
 function hasHealthFrame(snap) {
-  return snap && !isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType);
+  return snap && snap.entityType > 0 && !isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType);
 }
 
 function mobDisplayName(snap) {
@@ -2843,14 +3929,19 @@ function drawCapsuleBar(x, y, width, height, progress, fill, border = 4, track =
   ctx.restore();
 }
 
-function drawSegmentedCapsuleBar(x, y, width, height, members, fill, border = 5) {
-  const safeMembers = members.length > 0 ? members : [{ hp: 0 }];
+function drawLayeredCapsuleBar(x, y, width, height, members, fill, border = 5) {
+  const entries = (members || [])
+    .map((member) => ({
+      hp: clamp(member?.hp || 0, 0, 1),
+      count: Math.max(1, Math.floor(member?.count || 1)),
+    }))
+    .filter((member) => Number.isFinite(member.hp) && member.count > 0)
+    .sort((a, b) => a.hp - b.hp);
   const inset = Math.min(border, width * 0.35, height * 0.35);
   const innerX = x + inset;
   const innerY = y + inset;
   const innerW = Math.max(0, width - inset * 2);
   const innerH = Math.max(0, height - inset * 2);
-  const segment = safeMembers.length > 0 ? innerW / safeMembers.length : innerW;
 
   ctx.fillStyle = "#050506";
   roundedRectPath(x, y, width, height);
@@ -2863,14 +3954,26 @@ function drawSegmentedCapsuleBar(x, y, width, height, members, fill, border = 5)
   ctx.clip();
   ctx.fillStyle = "#111115";
   ctx.fillRect(innerX, innerY, innerW, innerH);
-  safeMembers
-    .sort((a, b) => b.hp - a.hp || a.distance - b.distance)
-    .forEach((member, index) => {
-      ctx.fillStyle = fill;
-      ctx.globalAlpha = 0.98;
-      ctx.fillRect(innerX + index * segment, innerY, segment * clamp(member.hp, 0, 1), innerH);
-    });
-  ctx.globalAlpha = 1;
+
+  const totalCount = entries.reduce((sum, member) => sum + member.count, 0);
+  if (totalCount > 0) {
+    let previous = 0;
+    let index = 0;
+    let covering = totalCount;
+    ctx.fillStyle = fill;
+    while (index < entries.length) {
+      const hp = entries[index].hp;
+      if (hp > previous) {
+        ctx.globalAlpha = covering / totalCount;
+        ctx.fillRect(innerX + innerW * previous, innerY, innerW * (hp - previous), innerH);
+      }
+      while (index < entries.length && Math.abs(entries[index].hp - hp) <= 0.0001) {
+        covering -= entries[index].count;
+        index += 1;
+      }
+      previous = hp;
+    }
+  }
   ctx.restore();
 }
 
@@ -2948,6 +4051,7 @@ function bossBarCandidates(entities) {
   for (const entity of entities) {
     const snap = entity.snapshot;
     if (!snap || entity.dying || !isMobSnap(snap) || snap.rarity < bossRarity) continue;
+    if (isSummonedMobSnap(snap)) continue;
     const key = `${snap.entityType}:${snap.rarity}`;
     let group = groups.get(key);
     if (!group) {
@@ -2957,6 +4061,8 @@ function bossBarCandidates(entities) {
         rarity: snap.rarity,
         name: mobDisplayName(snap),
         members: [],
+        memberBuckets: new Map(),
+        count: 0,
         nearestDistance: Number.POSITIVE_INFINITY,
       };
       groups.set(key, group);
@@ -2964,7 +4070,15 @@ function bossBarCandidates(entities) {
 
     const distance = Math.hypot(entity.renderPos.x - origin.x, entity.renderPos.y - origin.y);
     group.nearestDistance = Math.min(group.nearestDistance, distance);
-    group.members.push({ hp: clamp(snap.hpPercent, 0, 1), distance });
+    group.count += 1;
+    const hp = Math.round(clamp(snap.hpPercent, 0, 1) * 1000) / 1000;
+    let member = group.memberBuckets.get(hp);
+    if (!member) {
+      member = { hp, count: 0 };
+      group.memberBuckets.set(hp, member);
+      group.members.push(member);
+    }
+    member.count += 1;
   }
 
   return [...groups.values()]
@@ -2985,7 +4099,7 @@ function drawBossBars(entities) {
   groups.forEach((group, index) => {
     const y = startY + index * (height + gap);
     const rarityFill = rarityColor(group.rarity, 1);
-    const count = Math.max(1, group.members.length);
+    const count = Math.max(1, group.count || group.members.length);
     const title = count > 1 ? `${group.name} x${count}` : group.name;
 
     ctx.save();
@@ -2995,7 +4109,7 @@ function drawBossBars(entities) {
       lineWidth: 7,
       baseline: "bottom",
     });
-    drawSegmentedCapsuleBar(x, y, width, height, group.members, "#69d33e", 8);
+    drawLayeredCapsuleBar(x, y, width, height, group.members, "#69d33e", 8);
     drawOutlinedText(rarityName(group.rarity), x + width * 0.5, y + height + 8, {
       font: "900 27px Segoe UI, Microsoft YaHei, sans-serif",
       fill: rarityFill,
@@ -3055,19 +4169,54 @@ function drawSelfHud() {
   ctx.restore();
 }
 
-function drawScene() {
+function isEntityInRenderView(entity, scale) {
+  const snap = entity?.snapshot;
+  const pos = entity?.renderPos;
+  if (!snap || !pos || scale <= 0) return false;
+  if (snap.entityId === state.ownerEntityId) return true;
+
+  const deathProgress = entity.dying ? clamp((entity.deathAge || 0) / deathFadeDuration, 0, 1) : 0;
+  const radius = Math.max(0, snap.radius || 0) * (entity.dying ? 1 + deathProgress * 0.45 : 1);
+  const padding = renderCullPaddingPx / scale;
+  const halfW = state.canvasWidth * 0.5 / scale + radius + padding;
+  const halfH = state.canvasHeight * 0.5 / scale + radius + padding;
+  return pos.x >= state.camera.x - halfW && pos.x <= state.camera.x + halfW &&
+         pos.y >= state.camera.y - halfH && pos.y <= state.camera.y + halfH;
+}
+
+function drawScene(now = performance.now()) {
+  currentRenderTimeSeconds = now / 1000;
   drawGrid();
-  const entities = [...state.entities.values()];
-  for (const entity of entities) {
-    if (!isPetalEntity(entity.snapshot.entityType) && entity.snapshot.entityId !== state.ownerEntityId)
-      drawEntity(entity);
-  }
-  for (const entity of entities) {
-    if (isPetalEntity(entity.snapshot.entityType)) drawEntity(entity);
-  }
+  const scale = worldScale();
+  const petalEntities = [];
+  const spiderWebEntities = [];
+  const bossEntities = [];
   const owner = state.entities.get(state.ownerEntityId);
+
+  for (const entity of state.entities.values()) {
+    const snap = entity.snapshot;
+    if (!snap || !isEntityInRenderView(entity, scale)) continue;
+    if (snap.entityId === state.ownerEntityId) continue;
+
+    if (isPetalEntity(snap.entityType)) {
+      petalEntities.push(entity);
+    } else if (snap.name === "SpiderWeb") {
+      spiderWebEntities.push(entity);
+    } else {
+      drawEntity(entity);
+      if (snap.rarity >= bossRarity) bossEntities.push(entity);
+    }
+  }
+
+  for (const entity of petalEntities) {
+    drawEntity(entity);
+  }
+
   if (owner) drawEntity(owner);
-  drawBossBars(entities);
+  for (const entity of spiderWebEntities) {
+    drawEntity(entity);
+  }
+  drawBossBars(bossEntities);
   drawSelfHud();
   updateDeathOverlay();
 }
@@ -3081,7 +4230,8 @@ function tick(now) {
   }
   flushInput(dt);
   updateRenderPositions(dt);
-  drawScene();
+  drawScene(now);
+  updateDebugInfo();
   requestAnimationFrame(tick);
 }
 
@@ -3095,6 +4245,7 @@ function setupEvents() {
   reviveBtn.addEventListener("click", requestRevive);
   backpackCloseBtn.addEventListener("click", () => toggleBackpack(false));
   craftCloseBtn.addEventListener("click", () => toggleCraft(false));
+  talentCloseBtn.addEventListener("click", () => toggleTalent(false));
   craftOnceBtn.addEventListener("click", () => submitCraft());
   for (const input of [wsUrlInput, accountInput, passwordInput]) {
     input.addEventListener("keydown", (event) => {
@@ -3138,6 +4289,11 @@ function setupEvents() {
     if (key === "c") {
       event.preventDefault();
       toggleCraft();
+      return;
+    }
+    if (key === "x") {
+      event.preventDefault();
+      toggleTalent();
       return;
     }
     if (key === "enter") {

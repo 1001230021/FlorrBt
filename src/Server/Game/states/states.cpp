@@ -2,7 +2,9 @@
 #include "../controllers/melee_controller.h"
 #include "../entities/projectile.h"
 #include "../gameworld.h"
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace
@@ -49,7 +51,9 @@ bool MobNullifiesTarget(const CMobBase* nullified, const CMobBase* target)
 }
 
 CPoisonState::CPoisonState(CMobBase* owner, float timer, float basic_dmg, ERarity rarity, CEntity* applier)
-    : CState(owner, timer, rarity), m_basic_dmg(basic_dmg), m_p_applier(applier)
+    : CState(owner, timer, rarity), m_basic_dmg(basic_dmg),
+      m_applier_id(applier ? applier->m_id : -1),
+      m_applier_generation(applier ? applier->m_generation : 0)
 {
     auto existing_states = owner ? owner->FindStates<CPoisonState>() : std::vector<CPoisonState*>{};
     CPoisonState* existing = existing_states.empty() ? nullptr : existing_states[0];
@@ -80,7 +84,12 @@ void CPoisonState::Tick(float dt)
 {
     if (!m_is_valid || !m_p_owner) return;
 
-    m_p_owner->TakeDamage(m_basic_dmg * dt, m_p_applier, EDamageType::Poison);
+    CEntity* applier = nullptr;
+    CGameWorld* world = m_p_owner->GameWorld();
+    if (world && m_applier_id >= 0 && m_applier_generation != 0)
+        applier = world->GetEntity(m_applier_id, m_applier_generation);
+
+    m_p_owner->TakeDamage(m_basic_dmg * dt, applier, EDamageType::Poison);
     m_timer -= dt;
 }
 
@@ -167,6 +176,34 @@ CPincerSpeedReduceState::CPincerSpeedReduceState(CMobBase* owner, float timer, E
     }
 }
 
+CWebSpeedReduceState::CWebSpeedReduceState(CMobBase* owner, float timer, float desired_multiplier)
+    : CState(owner, timer, ERarity::Common)
+{
+    desired_multiplier = std::clamp(desired_multiplier, 0.f, 1.f);
+    float reference_mass = std::max(0.01f, game_config::mob_player_flower_mass);
+    float mass = owner ? owner->m_mass : reference_mass;
+    float normalized_mass = std::isfinite(mass) ? std::max(0.01f, mass / reference_mass)
+                                                : std::numeric_limits<float>::infinity();
+    m_multiplier = std::clamp(1.f - (1.f - desired_multiplier) / normalized_mass, 0.f, 1.f);
+    if (owner && owner->m_mob_type == EMobType::Spider)
+        m_multiplier = std::clamp(1.f - (1.f - m_multiplier) * 0.5f, 0.f, 1.f);
+
+    auto existing_states = owner ? owner->FindStates<CWebSpeedReduceState>() : std::vector<CWebSpeedReduceState*>{};
+    CWebSpeedReduceState* existing = existing_states.empty() ? nullptr : existing_states[0];
+    if (!existing)
+    {
+        m_is_valid = true;
+        return;
+    }
+
+    if (m_multiplier < existing->m_multiplier ||
+        (m_multiplier == existing->m_multiplier && timer > existing->m_timer))
+    {
+        owner->RemoveState(existing);
+        m_is_valid = true;
+    }
+}
+
 CPsionicConnectionState::CPsionicConnectionState(CMobBase* owner, float timer, ERarity rarity)
     : CState(owner, timer, rarity)
 {
@@ -196,8 +233,6 @@ float GetPincerSpeedMultiplier(const CMobBase* mob)
     if (!mob) return 1.f;
 
     auto states = const_cast<CMobBase*>(mob)->FindStates<CPincerSpeedReduceState>();
-    if (states.empty()) return 1.f;
-
     int mob_level = GetLevel(mob->GetRarity());
     float multiplier = 1.f;
     for (const auto* state : states)
@@ -211,6 +246,12 @@ float GetPincerSpeedMultiplier(const CMobBase* mob)
             multiplier = std::min(multiplier, 0.2f);
         else if (diff == -1)
             multiplier = std::min(multiplier, 0.9f);
+    }
+
+    for (const auto* state : const_cast<CMobBase*>(mob)->FindStates<CWebSpeedReduceState>())
+    {
+        if (!state) continue;
+        multiplier = std::min(multiplier, state->GetMultiplier());
     }
     return multiplier;
 }

@@ -294,4 +294,10 @@ void RegisterMobs()
     RegisterBee();
     RegisterHornet();
     RegisterBumbleBee();
+    RegisterRock();
+    RegisterBabyAnt();
+    RegisterWorkerAnt();
+    RegisterQueenAnt();
+    RegisterAntHole();
+    RegisterSpider();
 }
