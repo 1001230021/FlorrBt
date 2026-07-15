@@ -1,16 +1,3 @@
 {
-  "accounts": [
-    {
-      "name": "1001230021",
-      "password": "$argon2id$v=19$m=65536,t=2,p=1$MkvwvAp9n/Ans7ejZKw3Rw$2mOO3UbKNadhcNrboFdY5uoVr9GciPKx0LtzOOCn6Vw",
-      "level": 5,
-      "exp": 26,
-      "inventory": [{"type": 46, "rarity": 1, "count": 4}, {"type": 31, "rarity": 2, "count": 3}, {"type": 39, "rarity": 1, "count": 2}, {"type": 45, "rarity": 1, "count": 3}, {"type": 31, "rarity": 1, "count": 22}, {"type": 2, "rarity": 1, "count": 1}, {"type": 36, "rarity": 1, "count": 18}, {"type": 36, "rarity": 2, "count": 2}, {"type": 39, "rarity": 2, "count": 3}, {"type": 21, "rarity": 1, "count": 3}, {"type": 46, "rarity": 2, "count": 1}, {"type": 4, "rarity": 1, "count": 4}, {"type": 45, "rarity": 2, "count": 1}],
-      "slots": [{"type": 40, "rarity": 2, "count": 1}, {"type": 40, "rarity": 2, "count": 1}, {"type": 36, "rarity": 2, "count": 1}, {"type": 36, "rarity": 2, "count": 1}, {"type": 36, "rarity": 2, "count": 1}, {"type": 36, "rarity": 2, "count": 1}, {"type": 36, "rarity": 2, "count": 1}],
-      "secondary_slots": [{"type": 21, "rarity": 2, "count": 1}],
-      "talent_points": 0,
-      "talents": [{"id": 10, "rarity": 1, "rank": 0}, {"id": 10, "rarity": 2, "rank": 0}],
-      "extra": {}
-    }
-  ]
+  "accounts": []
 }

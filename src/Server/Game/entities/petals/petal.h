@@ -181,6 +181,8 @@ class CGlassPetal : public CPetal
   public:
     using CPetal::CPetal;
 
+    void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
+
     std::unordered_map<int, float> m_hit_cooldowns;
 };
 

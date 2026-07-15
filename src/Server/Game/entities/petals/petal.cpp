@@ -31,10 +31,7 @@ std::optional<sf::Vector2f> CalculateSpawnGlobal(CPetal* petal, CFlower* flower)
                         (flower->GetMoonPetal() && flower->GetMoonPetal() != petal ? flower->GetMoonPetal()->m_radius :
                          flower->GetFinalStats()->radius);
     float reach = game_config::default_petal_neutral_reach;
-    bool ignores_reach = petal->m_type == EPetalType::BrokenEgg || petal->m_type == EPetalType::Basil ||
-                         petal->m_type == EPetalType::Web || petal->m_type == EPetalType::Pollen ||
-                         petal->m_type == EPetalType::Honey || petal->m_type == EPetalType::Wax;
-    if (!ignores_reach)
+    if (!PetalIgnoresReachBonus(petal->m_type))
     {
         if (flower->m_attacking)
         {
@@ -195,6 +192,11 @@ void CBeetleEggPetal::TakeDamage(float dmg, CEntity* attacker, EDamageType damag
     }
 
     CPetal::TakeDamage(dmg, attacker, damage_type);
+}
+
+void CGlassPetal::TakeDamage(float, CEntity*, EDamageType)
+{
+    m_health = std::max(m_health, std::max(1.f, m_final_petal_stats.health));
 }
 
 void CMissilePetal::Tick(float dt)

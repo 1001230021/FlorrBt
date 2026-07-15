@@ -10,7 +10,6 @@
 #include "report.h"
 #include "../Shared/drop_rate.h"
 #include "../Shared/game_config.h"
-#include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <exception>
@@ -211,7 +210,6 @@ void CServer::Run()
 {
     const float dt = game_config::server_fixed_dt;
     const sf::Time targetFrameTime = sf::seconds(dt);
-    float tick_overrun_log_cooldown = 0.f;
 
     while (m_running)
     {
@@ -235,14 +233,6 @@ void CServer::Run()
         }
 
         sf::Time elapsed = frameClock.getElapsedTime();
-        tick_overrun_log_cooldown = std::max(0.f, tick_overrun_log_cooldown - elapsed.asSeconds());
-        if (elapsed > targetFrameTime && tick_overrun_log_cooldown <= 0.f)
-        {
-            LOG_WARN("server", "Tick overrun: " + std::to_string(elapsed.asMilliseconds()) +
-                                   "ms for " + std::to_string(static_cast<int>(dt * 1000.f)) +
-                                   "ms simulation step");
-            tick_overrun_log_cooldown = 2.f;
-        }
         if (elapsed < targetFrameTime) sf::sleep(targetFrameTime - elapsed);
     }
 }

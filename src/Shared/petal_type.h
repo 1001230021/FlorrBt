@@ -123,6 +123,24 @@ inline std::string_view GetPetalTypeName(EPetalType type)
 
 inline std::string_view GetPetalTypeName(uint8_t type) { return GetPetalTypeName(static_cast<EPetalType>(type)); }
 
+inline bool PetalIgnoresReachBonus(EPetalType type)
+{
+    switch (type)
+    {
+    case EPetalType::BrokenEgg:
+    case EPetalType::Basil:
+    case EPetalType::Rose:
+    case EPetalType::Dahlia:
+    case EPetalType::Web:
+    case EPetalType::Pollen:
+    case EPetalType::Honey:
+    case EPetalType::Wax:
+        return true;
+    default:
+        return false;
+    }
+}
+
 inline bool MatchPetalTypeAlias(std::string_view text, EPetalType type)
 {
     if (text == GetPetalTypeName(type)) return true;

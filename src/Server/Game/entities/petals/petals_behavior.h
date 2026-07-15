@@ -74,17 +74,24 @@ inline float PetalOrbitBaseRadius(const CPetal* owner, const CFlower* flower)
     return flower->GetFinalStats()->radius;
 }
 
-inline float PetalOrbitReach(const CFlower* flower, bool include_mode_offset)
+inline float PetalOrbitReach(const CPetal* owner, const CFlower* flower, bool include_mode_offset)
 {
     if (!flower || !flower->GetFinalStats()) return 0.f;
 
     float reach = game_config::default_petal_neutral_reach;
+    if (owner && PetalIgnoresReachBonus(owner->m_type)) return reach;
+
     if (flower->m_attacking) reach += flower->GetFinalStats()->reach;
     if (!include_mode_offset) return reach;
 
     if (flower->m_attacking) reach += game_config::default_petal_attack_offset;
     else if (flower->m_defending) reach += game_config::default_petal_defend_offset;
     return reach;
+}
+
+inline float PetalOrbitReach(const CFlower* flower, bool include_mode_offset)
+{
+    return PetalOrbitReach(nullptr, flower, include_mode_offset);
 }
 
 inline float PetalOrbitNeutralDistance(const CPetal* owner, const CFlower* flower)
@@ -99,7 +106,7 @@ inline float PetalOrbitDistance(const CPetal* owner, const CFlower* flower)
     if (!owner || !flower || !flower->GetFinalStats()) return 0.f;
 
     float distance = PetalOrbitBaseRadius(owner, flower) + game_config::default_petal_orbit_radius +
-                     PetalOrbitReach(flower, true);
+                     PetalOrbitReach(owner, flower, true);
     return distance;
 }
 
@@ -979,7 +986,7 @@ class CHeavyBehavior : public CPetalBehavior
         if (flower && flower->m_defending)
         {
             float orbit_distance = PetalOrbitBaseRadius(owner, flower) + game_config::default_petal_orbit_radius +
-                                   PetalOrbitReach(flower, false);
+                                   PetalOrbitReach(owner, flower, false);
             PetalOrbitMoveAndAttract(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true, dt);
             return;
         }
@@ -1073,6 +1080,11 @@ class CGlassBehavior : public CPetalBehavior
     {
         auto* glass = dynamic_cast<CGlassPetal*>(owner);
         if (!glass || !target) return;
+        if (auto* mob = dynamic_cast<CMobBase*>(target); mob && mob->HasState<CInvincibleState>())
+        {
+            damage = 0.f;
+            return;
+        }
 
         auto it = glass->m_hit_cooldowns.find(target->m_id);
         if (it != glass->m_hit_cooldowns.end() && it->second > 0.f)
@@ -2040,7 +2052,7 @@ class CWingBehavior : public CPetalBehavior
         {
             float wave = std::sin(owner->m_lifetime * game_config::pi * 2.f) + 2.f;
             distance = PetalOrbitBaseRadius(owner, flower) + game_config::default_petal_orbit_radius +
-                       PetalOrbitReach(flower, true) * wave;
+                       PetalOrbitReach(owner, flower, true) * wave;
         }
         PetalOrbitMoveAndAttract(owner, flower, distance, game_config::default_petal_orbit_k, true, dt);
     }

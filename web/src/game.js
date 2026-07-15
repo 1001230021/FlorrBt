@@ -235,7 +235,7 @@ const petalSoilType = 48;
 const petalHoneyType = 49;
 const petalWaxType = 50;
 const stingerSplitIconMinRarity = 6;
-const flowerTextureVersion = "20260713a";
+const flowerTextureVersion = "20260715b";
 const PetalIconIds = [
   0, 48, 51, 17, 1, 16, 58, 13, 57, 74, 71, 98, 72, 111, 97, 7, 113, 77,
   "nullification", 27, 53, 5, 19, 9, 108, 80, 103, 18, 12, 30, 38, 8, 106,
@@ -3251,14 +3251,12 @@ function chunkBoundsForWorldBounds(bounds, tileW, tileH, span) {
   };
 }
 
-function clampChunkBoundsToLayer(bounds, layer, span) {
-  const maxChunkX = Math.ceil(Math.max(1, layer.width) / span);
-  const maxChunkY = Math.ceil(Math.max(1, layer.height) / span);
+function normalizeChunkBounds(bounds) {
   return {
-    minX: clamp(bounds.minX, -1, maxChunkX),
-    minY: clamp(bounds.minY, -1, maxChunkY),
-    maxX: clamp(bounds.maxX, -1, maxChunkX),
-    maxY: clamp(bounds.maxY, -1, maxChunkY),
+    minX: Math.min(bounds.minX, bounds.maxX),
+    minY: Math.min(bounds.minY, bounds.maxY),
+    maxX: Math.max(bounds.minX, bounds.maxX),
+    maxY: Math.max(bounds.minY, bounds.maxY),
   };
 }
 
@@ -3288,11 +3286,7 @@ function mapPreloadBounds(visibleBounds, tileW, tileH) {
 }
 
 function queueMapChunksForBounds(map, layer, layerIndex, bounds, profile) {
-  const chunkBounds = clampChunkBoundsToLayer(
-    chunkBoundsForWorldBounds(bounds, map.tileWidth, map.tileHeight, profile.span),
-    layer,
-    profile.span,
-  );
+  const chunkBounds = normalizeChunkBounds(chunkBoundsForWorldBounds(bounds, map.tileWidth, map.tileHeight, profile.span));
   for (let chunkY = chunkBounds.minY; chunkY <= chunkBounds.maxY; chunkY += 1) {
     for (let chunkX = chunkBounds.minX; chunkX <= chunkBounds.maxX; chunkX += 1) {
       queueMapChunkBuild(map, layer, layerIndex, chunkX, chunkY, profile);
@@ -3324,11 +3318,7 @@ function drawMapTiles() {
   for (let layerIndex = 0; layerIndex < map.layers.length; layerIndex += 1) {
     const layer = map.layers[layerIndex];
     if (!layer.width || !layer.height || !layer.tiles || layer.tiles.length <= 0) continue;
-    const chunkBounds = clampChunkBoundsToLayer(
-      chunkBoundsForWorldBounds(visibleBounds, tileW, tileH, profile.span),
-      layer,
-      profile.span,
-    );
+    const chunkBounds = normalizeChunkBounds(chunkBoundsForWorldBounds(visibleBounds, tileW, tileH, profile.span));
 
     for (let chunkY = chunkBounds.minY; chunkY <= chunkBounds.maxY; chunkY += 1) {
       for (let chunkX = chunkBounds.minX; chunkX <= chunkBounds.maxX; chunkX += 1) {
@@ -3341,11 +3331,7 @@ function drawMapTiles() {
   for (let layerIndex = 0; layerIndex < map.layers.length; layerIndex += 1) {
     const layer = map.layers[layerIndex];
     if (!layer.width || !layer.height || !layer.tiles || layer.tiles.length <= 0) continue;
-    const chunkBounds = clampChunkBoundsToLayer(
-      chunkBoundsForWorldBounds(visibleBounds, tileW, tileH, profile.span),
-      layer,
-      profile.span,
-    );
+    const chunkBounds = normalizeChunkBounds(chunkBoundsForWorldBounds(visibleBounds, tileW, tileH, profile.span));
     queueMapChunksForBounds(map, layer, layerIndex, preloadBounds, profile);
 
     for (let chunkY = chunkBounds.minY; chunkY <= chunkBounds.maxY; chunkY += 1) {
@@ -3682,6 +3668,8 @@ function drawPlayerFlower(snap, pos, radius, angle, isOwner) {
   let texture = "normal";
   if (corrupted) texture = "gambler";
   else if (undead) texture = "undead";
+  else if (poisoned) texture = "poisoned";
+  else if (hasRelic) texture = "relic";
 
   const image = assetImage(playerFlowerTexturePath(texture));
   const size = Math.max(0.5, radius * 2.36);
@@ -3692,21 +3680,8 @@ function drawPlayerFlower(snap, pos, radius, angle, isOwner) {
   if (imageReady(image)) {
     ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
   } else {
-    drawPlayerFlowerFallback(radius, poisoned && !corrupted && !undead ? "poisoned" : texture);
+    drawPlayerFlowerFallback(radius, texture);
   }
-
-  const allowStatusTint = !corrupted && !undead;
-  if (hasRelic && allowStatusTint) {
-    ctx.globalCompositeOperation = "source-atop";
-    ctx.fillStyle = "rgba(20, 24, 32, 0.38)";
-    ctx.fillRect(-size * 0.5, -size * 0.5, size, size);
-  }
-  if (poisoned && allowStatusTint) {
-    ctx.globalCompositeOperation = "source-atop";
-    ctx.fillStyle = "rgba(126, 55, 170, 0.42)";
-    ctx.fillRect(-size * 0.5, -size * 0.5, size, size);
-  }
-  ctx.globalCompositeOperation = "source-over";
   if (hasBandage && !dead && !suppressPetalOverlays) drawBandagePetalLayer(radius);
   const attacking = (flags & flagAttacking) !== 0;
   const defending = !attacking && (flags & flagDefending) !== 0;
@@ -3740,6 +3715,8 @@ function drawMobSvg(src, pos, radius, angle) {
 function playerFlowerTexturePath(texture = "normal") {
   const textureFile = texture === "undead" ? "player_flower_undead" :
                       texture === "gambler" ? "player_flower_gambler" :
+                      texture === "poisoned" ? "player_flower_poisoned" :
+                      texture === "relic" ? "player_flower_relic" :
                       "player_flower";
   return `./assets/${textureFile}.svg?v=${flowerTextureVersion}`;
 }
@@ -3815,10 +3792,12 @@ function drawPlayerFlowerFallback(radius, texture) {
   const centerFill = texture === "undead" ? "#a7c66f" :
                      texture === "gambler" ? "#c64136" :
                      texture === "poisoned" ? "#9a64c7" :
+                     texture === "relic" ? "#c7a93f" :
                      "#f2cc42";
   const stroke = texture === "undead" ? "#73934c" :
                  texture === "gambler" ? "#782821" :
                  texture === "poisoned" ? "#6a3d94" :
+                 texture === "relic" ? "#9c8430" :
                  "#d9b638";
   ctx.fillStyle = centerFill;
   ctx.beginPath();

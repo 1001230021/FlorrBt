@@ -11,7 +11,6 @@
 #include "../../Engine/logger.h"
 #include "../../Shared/game_config.h"
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -20,12 +19,6 @@
 namespace
 {
 constexpr const char* default_map_path = "data/maps/garden.tmj";
-using profile_clock = std::chrono::steady_clock;
-
-double ProfileMs(profile_clock::time_point start, profile_clock::time_point end)
-{
-    return std::chrono::duration<double, std::milli>(end - start).count();
-}
 
 struct summon_owner_link
 {
@@ -334,7 +327,12 @@ void ApplyPetalHits(CPetal* petal, CMobBase* target, float dt)
             proto->m_p_behavior->OnPetalHit(petal, petal->m_rarity, target, damage);
         if (damage <= 0.f) break;
         if (damage > 0.f)
+        {
             target->TakeDamage(damage, petal->GetOwner(), EDamageType::Normal);
+            if (petal->m_type == EPetalType::Glass && !target->m_is_marked_for_des && target->m_health > 0.f &&
+                !target->HasState<CInvincibleState>())
+                target->AddState(std::make_unique<CInvincibleState>(target, 1.f, target->GetRarity()));
+        }
     }
 }
 
@@ -958,10 +956,6 @@ CEntity* CGameWorld::TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& ta
 
 void CGameWorld::Tick(float dt)
 {
-    static float slow_profile_cooldown = 0.f;
-    slow_profile_cooldown = std::max(0.f, slow_profile_cooldown - dt);
-    auto t0 = profile_clock::now();
-
     m_tick_entities.clear();
     CollectEntities(m_tick_entities);
     std::vector<CEntity*>& entities = m_tick_entities;
@@ -971,9 +965,7 @@ void CGameWorld::Tick(float dt)
         if (entity && !entity->m_is_marked_for_des)
             m_cached_max_entity_radius = std::max(m_cached_max_entity_radius, std::max(0.f, entity->m_radius));
     }
-    auto t_get = profile_clock::now();
     m_spatial_grid.Rebuild(entities);
-    auto t_rebuild_a = profile_clock::now();
     std::vector<active_tick_view> active_tick_views = BuildActiveTickViews(*this);
     m_active_entities.clear();
     std::vector<CEntity*>& active_entities = m_active_entities;
@@ -1019,11 +1011,9 @@ void CGameWorld::Tick(float dt)
         if (!entity || entity->m_is_marked_for_des) continue;
         if (!entity->m_skip_world_tick) entity->Tick(dt);
     }
-    auto t_tick = profile_clock::now();
 
     if (m_p_controller)
         m_p_controller->OnTick(*this, dt);
-    auto t_controller = profile_clock::now();
 
     auto remove_transferred = [this](CEntity* entity)
     {
@@ -1034,33 +1024,9 @@ void CGameWorld::Tick(float dt)
     entities.erase(std::remove_if(entities.begin(), entities.end(), remove_transferred), entities.end());
 
     ResolveWallCollisions(active_entities);
-    auto t_walls = profile_clock::now();
     m_spatial_grid.Rebuild(entities);
-    auto t_rebuild_b = profile_clock::now();
     ResolveCollisions(active_entities, dt);
-    auto t_collisions = profile_clock::now();
     Cleanup();
-    auto t_cleanup = profile_clock::now();
-
-    double total_ms = ProfileMs(t0, t_cleanup);
-    if (game_config::slow_tick_profile_ms > 0.f &&
-        total_ms >= static_cast<double>(game_config::slow_tick_profile_ms) &&
-        slow_profile_cooldown <= 0.f)
-    {
-        LOG_WARN("gameworld", "Slow world tick: total=" + std::to_string(total_ms) +
-                              "ms entities=" + std::to_string(entities.size()) +
-                              " active=" + std::to_string(active_entities.size()) +
-                              " views=" + std::to_string(active_tick_views.size()) +
-                              " get=" + std::to_string(ProfileMs(t0, t_get)) +
-                              " rebuild1=" + std::to_string(ProfileMs(t_get, t_rebuild_a)) +
-                              " tick=" + std::to_string(ProfileMs(t_rebuild_a, t_tick)) +
-                              " controller=" + std::to_string(ProfileMs(t_tick, t_controller)) +
-                              " walls=" + std::to_string(ProfileMs(t_controller, t_walls)) +
-                              " rebuild2=" + std::to_string(ProfileMs(t_walls, t_rebuild_b)) +
-                              " collisions=" + std::to_string(ProfileMs(t_rebuild_b, t_collisions)) +
-                              " cleanup=" + std::to_string(ProfileMs(t_collisions, t_cleanup)));
-        slow_profile_cooldown = 2.f;
-    }
 }
 
 CEntity* CGameWorld::GetEntity(int id) const
