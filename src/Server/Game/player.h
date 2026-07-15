@@ -1,4 +1,6 @@
 #pragma once
+#include "../../Shared/rarity.h"
+#include "../../Shared/talent_type.h"
 #include <SFML/Network/TcpSocket.hpp>
 #include <cstdint>
 #include <string>
@@ -7,7 +9,9 @@
 class CEntity;
 class CGameContext;
 class CGameWorld;
+class ITalent;
 struct SCraftResult;
+struct STalentContext;
 struct ClientOperate;
 
 class CPlayer
@@ -33,10 +37,24 @@ class CPlayer
     void ResetControlledMob();
     void UnequipAllPetals();
     void ApplySavedProgress();
+    void ApplySavedTalents();
     void ApplySavedSlots();
     bool TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rarity);
     bool TryUnequipPetal(uint8_t slot_index);
     bool TryCraftPetal(uint8_t petal_type, uint8_t rarity, uint32_t count, SCraftResult* result = nullptr);
+    bool AddTalent(ETalentId id, ERarity rarity, int rank = 0);
+    bool RemoveTalent(ETalentId id, ERarity rarity, int rank = 0);
+    void AddTalentPoints(int amount);
+    int GetTalentPoints() const { return m_talent_points; }
+    const std::vector<ITalent*>& GetTalents() const { return m_talents; }
+    bool HasTalent(const ITalent* talent) const;
+    void ApplyTalents(ETalentEvent event, STalentContext& ctx) const;
+    int CalculateTalentSlotCount() const;
+    void RefreshTalentEffects();
+    float GetSecondChanceCooldown() const { return m_second_chance_cooldown; }
+    void SetSecondChanceCooldown(float cooldown);
+    void SetUseNewPlayerSpawn(bool value) { m_use_new_player_spawn = value; }
+    bool ConsumeUseNewPlayerSpawn();
 
     void SetOwnedEntity(CEntity* entity);
     CEntity* GetEntity() const;
@@ -51,6 +69,8 @@ class CPlayer
     bool HasOwnedEntity() const { return m_entity_id >= 0; }
     bool IsConnected() const { return m_connected; }
     bool IsAuthenticated() const { return m_authenticated; }
+    bool IsRconAuthorized() const { return m_rcon_authorized; }
+    void SetRconAuthorized(bool authorized) { m_rcon_authorized = authorized; }
     bool IsTimedOut() const { return !m_connected && m_timeout_left <= 0.f; }
 
     std::vector<uint8_t> m_send_buffer;
@@ -63,6 +83,7 @@ class CPlayer
     int m_entity_id = -1;
     bool m_connected = true;
     bool m_authenticated = false;
+    bool m_rcon_authorized = false;
     bool m_report_disabled = false;
     float m_timeout_left = 0.f;
     float m_mute_timer = 0.f;
@@ -71,4 +92,11 @@ class CPlayer
     std::string m_name;
     std::string m_account_name;
     std::string m_remote_address;
+    int m_talent_points = 0;
+    float m_second_chance_cooldown = 0.f;
+    bool m_use_new_player_spawn = false;
+    std::vector<ITalent*> m_talents;
+
+    void SaveTalentState() const;
+    void NormalizeTalentOrder();
 };

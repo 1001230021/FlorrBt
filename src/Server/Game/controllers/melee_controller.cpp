@@ -1,6 +1,7 @@
 #include "melee_controller.h"
 #include "../entities/projectile.h"
 #include "../gameworld.h"
+#include "../state_zone.h"
 #include "../states/states.h"
 #include "../../../Shared/game_config.h"
 #include <algorithm>
@@ -332,6 +333,67 @@ void CNeutralMeleeController::OnDamaged(CMobBase* mob, CEntity* attacker)
     m_change_target_count = 0.f;
 }
 
+// ============ Random Wander ============
+
+void CRandomWanderController::OnTick(CMobBase* mob, float dt)
+{
+    if (!mob || !mob->GameWorld()) return;
+
+    const SMobStats* stats = mob->GetFinalStats();
+    if (!stats) return;
+
+    m_p_target = nullptr;
+
+    bool reached_random_target = m_has_random_target_pos &&
+                                 (m_random_idle ? IsRandomIdleDone(dt) :
+                                  DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
+    if (!m_has_random_target_pos || reached_random_target)
+    {
+        PickRandomTargetPos(mob, *stats);
+    }
+    mob->MoveTowards(m_target_pos, dt);
+}
+
+// ============ Queen Ant ============
+
+void CQueenAntController::OnTick(CMobBase* mob, float dt)
+{
+    CMeleeController::OnTick(mob, dt);
+    if (!mob || !m_p_target || m_p_target->m_is_marked_for_des || m_p_target->IsDead()) return;
+
+    const SMobStats* stats = mob->GetFinalStats();
+    if (!stats) return;
+
+    float attack_range = std::max(mob->m_radius * 4.f, stats->horizon);
+    if (DistanceSq(mob->m_pos, m_p_target->m_pos) > attack_range * attack_range) return;
+
+    if (auto* attackable = dynamic_cast<IAttackableMob*>(mob))
+    {
+        if (attackable->TryAttack(m_p_target))
+            mob->m_vel = {0.f, 0.f};
+    }
+}
+
+// ============ Spider ============
+
+void CSpiderController::OnTick(CMobBase* mob, float dt)
+{
+    CMeleeController::OnTick(mob, dt);
+    if (!mob || !mob->GameWorld()) return;
+    if (GetLevel(mob->GetRarity()) < GetLevel(ERarity::Legendary)) return;
+    if (!m_p_target || m_p_target->m_is_marked_for_des || m_p_target->IsDead()) return;
+
+    m_web_timer += dt;
+    float interval = std::max(game_config::server_fixed_dt, game_config::mob_spider_web_interval);
+    if (m_web_timer < interval) return;
+    m_web_timer = std::fmod(m_web_timer, interval);
+
+    auto web = std::make_unique<CSpiderWebZone>(
+        mob->GameWorld(), mob->m_pos, mob->m_radius, mob,
+        game_config::mob_spider_web_lifetime, game_config::mob_spider_web_speed_multiplier);
+    mob->GameWorld()->InsertEntity(std::move(web));
+}
+
 // ============ Hornet Ranged ============
 
 void CHornetRangedController::OnTick(CMobBase* mob, float dt)
@@ -382,7 +444,7 @@ void CHornetRangedController::OnTick(CMobBase* mob, float dt)
 
     sf::Vector2f to_target = m_p_target->m_pos - mob->m_pos;
     float target_dist = Length(to_target);
-    float stop_distance = 256.f + mob->m_radius;
+    float stop_distance = 128.f + mob->m_radius;
     if (target_dist <= stop_distance)
         mob->MoveTowards(mob->m_pos, dt);
     else
@@ -450,7 +512,7 @@ void CBumbleBeeController::OnTick(CMobBase* mob, float dt)
     float wave = std::sin(m_wave_timer * game_config::mob_bee_wave_frequency) *
                  game_config::mob_bee_wave_strength * 0.55f;
     sf::Vector2f target = mob->m_pos + sf::Vector2f(std::cos(m_heading + wave), std::sin(m_heading + wave)) *
-                          std::max(512.f, stats->max_velocity * 4.f);
+                          std::max(256.f, stats->max_velocity * 4.f);
     mob->MoveTowards(target, dt);
 
     m_pollen_timer += dt;

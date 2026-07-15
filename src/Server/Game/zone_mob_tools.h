@@ -9,6 +9,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 inline std::mt19937& ZoneMobRng()
@@ -42,37 +43,87 @@ inline bool TryParseZoneMobType(std::string_view text, EMobType& type)
     return false;
 }
 
-inline std::vector<EMobType> ParseZoneMobs(std::string_view mobs)
+struct SZoneMobEntry
 {
-    std::vector<EMobType> result;
-    std::string lowered_pool = ZoneMobToLower(mobs);
-    if (lowered_pool == "garden")
+    EMobType type = EMobType::None;
+    float weight = 1.f;
+};
+
+inline std::string TrimZoneMobToken(std::string token)
+{
+    token.erase(token.begin(), std::find_if(token.begin(), token.end(), [](unsigned char ch)
     {
-        return {EMobType::NormalLadybug, EMobType::SoldierAnt, EMobType::Bee, EMobType::Hornet, EMobType::BumbleBee};
-    }
-    if (lowered_pool == "hornet")
+        return !std::isspace(ch);
+    }));
+    token.erase(std::find_if(token.rbegin(), token.rend(), [](unsigned char ch)
     {
-        return {EMobType::Hornet};
-    }
+        return !std::isspace(ch);
+    }).base(), token.end());
+    return token;
+}
+
+inline std::vector<SZoneMobEntry> ParseZoneMobEntries(std::string_view mobs)
+{
+    std::vector<SZoneMobEntry> result;
 
     std::string token;
     std::stringstream stream{std::string(mobs)};
     while (std::getline(stream, token, ','))
     {
-        token.erase(token.begin(), std::find_if(token.begin(), token.end(), [](unsigned char ch)
+        token = TrimZoneMobToken(std::move(token));
+        if (token.empty()) continue;
+
+        float weight = 1.f;
+        size_t separator = token.find(':');
+        if (separator == std::string::npos) separator = token.find('=');
+        if (separator != std::string::npos)
         {
-            return !std::isspace(ch);
-        }));
-        token.erase(std::find_if(token.rbegin(), token.rend(), [](unsigned char ch)
-        {
-            return !std::isspace(ch);
-        }).base(), token.end());
+            std::string weight_text = TrimZoneMobToken(token.substr(separator + 1));
+            token = TrimZoneMobToken(token.substr(0, separator));
+            try
+            {
+                weight = std::stof(weight_text);
+            }
+            catch (...)
+            {
+                weight = 0.f;
+            }
+        }
+        if (token.empty() || weight <= 0.f) continue;
 
         EMobType type = EMobType::None;
-        if (TryParseZoneMobType(token, type)) result.push_back(type);
+        if (TryParseZoneMobType(token, type)) result.push_back({type, weight});
     }
 
     return result;
+}
+
+inline std::vector<EMobType> ParseZoneMobs(std::string_view mobs)
+{
+    std::vector<EMobType> result;
+    for (const SZoneMobEntry& entry : ParseZoneMobEntries(mobs))
+        result.push_back(entry.type);
+    return result;
+}
+
+inline EMobType PickZoneMobType(const std::vector<SZoneMobEntry>& mob_entries)
+{
+    float total_weight = 0.f;
+    for (const SZoneMobEntry& entry : mob_entries)
+        if (entry.type != EMobType::None && entry.weight > 0.f)
+            total_weight += entry.weight;
+    if (total_weight <= 0.f) return EMobType::None;
+
+    std::uniform_real_distribution<float> dist(0.f, total_weight);
+    float roll = dist(ZoneMobRng());
+    for (const SZoneMobEntry& entry : mob_entries)
+    {
+        if (entry.type == EMobType::None || entry.weight <= 0.f) continue;
+        if (roll <= entry.weight) return entry.type;
+        roll -= entry.weight;
+    }
+
+    return mob_entries.back().type;
 }
 
 inline EMobType PickZoneMobType(const std::vector<EMobType>& mob_types)

@@ -16,6 +16,7 @@ struct ClientAuthRequest;
 struct ClientChatRequest;
 struct ClientCraftRequest;
 struct ClientSecondarySlotRequest;
+struct ClientTalentRequest;
 struct SCraftResult;
 struct ServerEntitySnap;
 struct ServerMessage;
@@ -70,6 +71,7 @@ class INetworkModule : public IModule
     void HandleChatRequest(CPlayer& player, const ClientChatRequest& request);
     void HandleCraftRequest(CPlayer& player, const ClientCraftRequest& request);
     void HandleSecondarySlotRequest(CPlayer& player, const ClientSecondarySlotRequest& request);
+    void HandleTalentRequest(CPlayer& player, const ClientTalentRequest& request);
     void Respawn(CPlayer& player);
     CPlayer* FindReconnectablePlayer(const std::string& account_name, const CPlayer* pending_player = nullptr) const;
     void DropPlayer(size_t index, const std::string& reason);

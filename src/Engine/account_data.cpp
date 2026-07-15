@@ -136,6 +136,37 @@ std::vector<SInventoryItem> ParseSlots(const CJsonValue* value)
     return slots;
 }
 
+std::vector<SAccountTalent> ParseTalents(const CJsonValue* value)
+{
+    std::vector<SAccountTalent> talents;
+    if (!value || !value->IsArray()) return talents;
+
+    for (const CJsonValue& talent_value : value->AsArray())
+    {
+        if (!talent_value.IsObject()) continue;
+
+        SAccountTalent talent;
+        if (const CJsonValue* id = talent_value.Find("id")) talent.id = static_cast<ETalentId>(id->AsInt());
+        if (const CJsonValue* rarity = talent_value.Find("rarity")) talent.rarity = static_cast<ERarity>(rarity->AsInt());
+        if (const CJsonValue* rank = talent_value.Find("rank")) talent.rank = std::max(0, rank->AsInt());
+
+        if (talent.id == ETalentId::None) continue;
+        int rarity_value = static_cast<int>(talent.rarity);
+        if (rarity_value <= static_cast<int>(ERarity::Null) ||
+            rarity_value > static_cast<int>(ERarity::Primordial))
+            continue;
+
+        auto it = std::find_if(talents.begin(), talents.end(),
+                               [&talent](const SAccountTalent& existing)
+                               {
+                                   return existing.id == talent.id && existing.rarity == talent.rarity &&
+                                          existing.rank == talent.rank;
+                               });
+        if (it == talents.end()) talents.push_back(talent);
+    }
+    return talents;
+}
+
 std::vector<SInventoryItem> DefaultSlots()
 {
     std::vector<SInventoryItem> slots(5);
@@ -143,6 +174,24 @@ std::vector<SInventoryItem> DefaultSlots()
         slots[i] = {static_cast<uint8_t>(EPetalType::Basic), static_cast<uint8_t>(ERarity::Common), 1};
     slots[4] = {static_cast<uint8_t>(EPetalType::Rose), static_cast<uint8_t>(ERarity::Common), 1};
     return slots;
+}
+
+int TalentPointGainForLevel(int level)
+{
+    if (level <= 1) return 0;
+
+    int gain = 1;
+    if (level % 5 == 0) gain += 5;
+    if (level % 10 == 0) gain += 10;
+    return gain;
+}
+
+int TotalTalentPointsForLevel(int level)
+{
+    int total = 0;
+    for (int current_level = 2; current_level <= std::max(1, level); ++current_level)
+        total += TalentPointGainForLevel(current_level);
+    return total;
 }
 
 uint8_t CraftResultRarity(uint8_t rarity)
@@ -194,6 +243,23 @@ void WriteItemsJson(std::ofstream& file, const std::vector<SInventoryItem>& item
         if (j != 0) file << ", ";
         file << "{\"type\": " << static_cast<int>(item.petal_type) << ", \"rarity\": "
              << static_cast<int>(item.rarity) << ", \"count\": " << item.count << "}";
+    }
+    file << "]";
+}
+
+void WriteTalentsJson(std::ofstream& file, const std::vector<SAccountTalent>& talents)
+{
+    file << "[";
+    bool first = true;
+    for (const SAccountTalent& talent : talents)
+    {
+        if (talent.id == ETalentId::None ||
+            static_cast<int>(talent.rarity) <= static_cast<int>(ERarity::Null))
+            continue;
+        if (!first) file << ", ";
+        file << "{\"id\": " << static_cast<int>(talent.id) << ", \"rarity\": "
+             << static_cast<int>(talent.rarity) << ", \"rank\": " << std::max(0, talent.rank) << "}";
+        first = false;
     }
     file << "]";
 }
@@ -286,10 +352,35 @@ bool CAccountDataStore::Load(const std::filesystem::path& path, std::string* err
         if (const CJsonValue* password = account_value.Find("password")) account.password = password->AsString();
         if (const CJsonValue* level = account_value.Find("level")) account.level = std::max(1, level->AsInt(1));
         if (const CJsonValue* exp = account_value.Find("exp")) account.exp = std::max(0, exp->AsInt(0));
-        if (const CJsonValue* extra = account_value.Find("extra")) account.extra_json = JsonToString(*extra);
+        const CJsonValue* extra = account_value.Find("extra");
+        if (extra) account.extra_json = JsonToString(*extra);
+        bool loaded_talent_points = false;
+        if (const CJsonValue* talent_points = account_value.Find("talent_points"))
+        {
+            account.talent_points = std::max(0, talent_points->AsInt());
+            loaded_talent_points = true;
+        }
+        else if (extra && extra->IsObject())
+        {
+            if (const CJsonValue* talent_points = extra->Find("talent_points"))
+            {
+                account.talent_points = std::max(0, talent_points->AsInt());
+                loaded_talent_points = true;
+            }
+            else if (const CJsonValue* talent_points_alt = extra->Find("tp"))
+            {
+                account.talent_points = std::max(0, talent_points_alt->AsInt());
+                loaded_talent_points = true;
+            }
+        }
         account.inventory = ParseInventory(account_value.Find("inventory"));
         account.slots = ParseSlots(account_value.Find("slots"));
         account.secondary_slots = ParseSlots(account_value.Find("secondary_slots"));
+        account.talents = ParseTalents(account_value.Find("talents"));
+        if (account.talents.empty() && extra && extra->IsObject())
+            account.talents = ParseTalents(extra->Find("talents"));
+        if (!loaded_talent_points && account.talents.empty())
+            account.talent_points = TotalTalentPointsForLevel(account.level);
         NormalizeInventory(account.inventory);
 
         if (!account.name.empty() && !account.password.empty() && !FindAccount(account.name))
@@ -331,6 +422,10 @@ bool CAccountDataStore::Save(std::string* error)
         file << ",\n";
         file << "      \"secondary_slots\": ";
         WriteItemsJson(file, account.secondary_slots);
+        file << ",\n";
+        file << "      \"talent_points\": " << std::max(0, account.talent_points) << ",\n";
+        file << "      \"talents\": ";
+        WriteTalentsJson(file, account.talents);
         file << ",\n";
         file << "      \"extra\": " << (account.extra_json.empty() ? "{}" : account.extra_json) << "\n";
         file << "    }" << (i + 1 == g_accounts.size() ? "\n" : ",\n");
@@ -440,6 +535,47 @@ void CAccountDataStore::SetProgress(const std::string& name, int level, int exp)
 
     account->level = std::max(1, level);
     account->exp = std::max(0, exp);
+    Save();
+}
+
+int CAccountDataStore::GetTalentPoints(const std::string& name)
+{
+    const SPlayerAccount* account = FindAccountConst(name);
+    return account ? std::max(0, account->talent_points) : 0;
+}
+
+void CAccountDataStore::SetTalentPoints(const std::string& name, int talent_points)
+{
+    SPlayerAccount* account = FindAccount(name);
+    if (!account) return;
+
+    account->talent_points = std::max(0, talent_points);
+    Save();
+}
+
+void CAccountDataStore::AddTalentPoints(const std::string& name, int talent_points)
+{
+    if (talent_points == 0) return;
+
+    SPlayerAccount* account = FindAccount(name);
+    if (!account) return;
+
+    account->talent_points = std::max(0, account->talent_points + talent_points);
+    Save();
+}
+
+std::vector<SAccountTalent> CAccountDataStore::GetTalents(const std::string& name)
+{
+    const SPlayerAccount* account = FindAccountConst(name);
+    return account ? account->talents : std::vector<SAccountTalent>{};
+}
+
+void CAccountDataStore::SetTalents(const std::string& name, const std::vector<SAccountTalent>& talents)
+{
+    SPlayerAccount* account = FindAccount(name);
+    if (!account) return;
+
+    account->talents = talents;
     Save();
 }
 

@@ -2,6 +2,7 @@
 #include "../../../Shared/shared.h"
 #include "../entities/flower.h"
 #include "../state.h"
+#include <cstdint>
 
 class CPoisonState : public CState
 {
@@ -15,7 +16,8 @@ class CPoisonState : public CState
 
   private:
     float m_basic_dmg = 0.f;
-    CEntity* m_p_applier = nullptr;
+    int m_applier_id = -1;
+    std::uint64_t m_applier_generation = 0;
     bool m_is_valid = false;
 };
 
@@ -40,6 +42,20 @@ class CPincerSpeedReduceState : public CState
     bool IsValid() const { return m_is_valid; }
 
   private:
+    bool m_is_valid = false;
+};
+
+class CWebSpeedReduceState : public CState
+{
+  public:
+    CWebSpeedReduceState(CMobBase* owner, float timer, float desired_multiplier);
+
+    void Tick(float dt) override { m_timer -= dt; }
+    bool IsValid() const { return m_is_valid; }
+    float GetMultiplier() const { return m_multiplier; }
+
+  private:
+    float m_multiplier = 1.f;
     bool m_is_valid = false;
 };
 

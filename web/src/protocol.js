@@ -5,7 +5,7 @@ export const NETWORK_PETAL_TYPE_OFFSET = 100;
 export const NETWORK_DROP_TYPE_OFFSET = 150;
 export const MAX_CHAT_MESSAGE_SIZE = 180;
 export const NET_COORD_SCALE = 64;
-export const NET_RADIUS_SCALE = 16;
+export const NET_RADIUS_SCALE = 1;
 export const NET_ANGLE_SCALE = 1000;
 
 export const ChatFlag = Object.freeze({
@@ -36,7 +36,8 @@ export const PetalNames = [
 export const MobNames = [
   "None", "Beetle", "Gambler", "NormalLadybug", "MechaFlower", "NormalFlower", "PlayerFlower",
   "SoldierAnt", "SoldierFireAnt", "SoldierTermite", "SummonedBeetle", "SummonedSoldierAnt",
-  "BandageBeetle", "Bee", "Hornet", "BumbleBee",
+  "BandageBeetle", "Bee", "Hornet", "BumbleBee", "Rock", "BabyAnt", "WorkerAnt", "QueenAnt",
+  "AntHole", "Spider",
 ];
 
 export const RarityNames = [
@@ -193,7 +194,7 @@ function parseEntity(reader) {
   };
   entity.radius = reader.u16() / NET_RADIUS_SCALE;
   entity.hpPercent = reader.u8() / 255;
-  entity.flags = reader.u8();
+  entity.flags = reader.u16();
   entity.angle = reader.i16() / NET_ANGLE_SCALE;
   entity.rarity = reader.u8();
   const nameLength = reader.u8();
@@ -256,6 +257,15 @@ export function parseServerMessage(payload) {
       }
       for (let i = 0; i < secondaryCount; i += 1) {
         msg.secondarySlots.push({ petalType: reader.u8(), rarity: reader.u8() });
+      }
+      msg.talentPoints = 0;
+      msg.talents = [];
+      if (reader.has(3)) {
+        msg.talentPoints = reader.u16();
+        const talentCount = reader.u8();
+        for (let i = 0; i < talentCount; i += 1) {
+          msg.talents.push({ id: reader.u16(), rarity: reader.u8(), rank: reader.u8() });
+        }
       }
       return msg;
     }
@@ -353,6 +363,26 @@ export function packCraft(petalType, rarity, count) {
   out[2] = rarity & 0xff;
   const view = new DataView(out.buffer);
   view.setUint32(3, safeCount, true);
+  return out;
+}
+
+export function packTalentRequest(action, talents) {
+  const safeTalents = (talents || [])
+    .filter((talent) => talent && talent.id > 0 && talent.rarity > 0)
+    .slice(0, 64);
+  if (safeTalents.length === 0) return null;
+  const out = new Uint8Array(3 + safeTalents.length * 4);
+  const view = new DataView(out.buffer);
+  out[0] = 0xf4;
+  out[1] = action === "remove" || action === 2 ? 2 : 1;
+  out[2] = safeTalents.length & 0xff;
+  let offset = 3;
+  for (const talent of safeTalents) {
+    view.setUint16(offset, talent.id & 0xffff, true);
+    offset += 2;
+    out[offset++] = talent.rarity & 0xff;
+    out[offset++] = (talent.rank || 0) & 0xff;
+  }
   return out;
 }
 

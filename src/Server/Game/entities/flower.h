@@ -84,7 +84,9 @@ class CPlayerFlower : public CFlower
     void Tick(float dt) override;
     void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
     void RebuildFinalStats() override;
+    void RefreshTalentSlotCount();
     bool IsDead() const override { return m_is_dead || CFlower::IsDead(); }
+    bool IsVisible() const override { return !m_is_marked_for_des; }
     bool CanCollide() const override { return !m_is_dead && CFlower::CanCollide(); }
     void EnterDeathState();
     void PrepareRespawnDestroy();

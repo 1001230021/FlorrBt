@@ -1,6 +1,7 @@
 #pragma once
 #include "../../Shared/shared.h"
 #include <SFML/System/Vector2.hpp>
+#include <cstdint>
 
 class CGameWorld;
 class CGameContext;
@@ -11,7 +12,8 @@ class CEntity
     CEntity(CGameWorld* pworld, float x, float y, float r) : m_p_game_world(pworld), m_pos(x, y), m_prev_pos(x, y), m_radius(r) {}
     virtual ~CEntity() = default;
 
-    CGameWorld* GameWorld() { return m_p_game_world; }
+    CGameWorld* GameWorld() const { return m_p_game_world; }
+    void SetGameWorld(CGameWorld* world) { m_p_game_world = world; }
     CGameContext* GameContext();
 
     virtual void Tick(float dt) = 0;
@@ -31,6 +33,7 @@ class CEntity
     bool m_allow_skip_tick = false;
 
     int m_id = -1;
+    std::uint64_t m_generation = 0;
     bool m_is_marked_for_des = false;
 
     int m_team = 0;

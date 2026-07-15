@@ -89,6 +89,7 @@
     <ClInclude Include="src\Shared\rarity.h" />
     <ClInclude Include="src\Shared\shared.h" />
     <ClInclude Include="src\Shared\stats.h" />
+    <ClInclude Include="src\Shared\talent_type.h" />
     <ClInclude Include="src\Shared\tools.h" />
   </ItemGroup>
   <ItemGroup>

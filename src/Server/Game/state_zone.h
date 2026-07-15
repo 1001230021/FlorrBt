@@ -42,3 +42,12 @@ class CStateZone : public CEntity
     zone_filter m_filter;
     float m_timer = endless;
 };
+
+class CSpiderWebZone : public CStateZone
+{
+  public:
+    CSpiderWebZone(CGameWorld* world, sf::Vector2f pos, float radius, CEntity* owner,
+                   float lifetime, float desired_speed_multiplier);
+
+    bool IsVisible() const override { return !IsDead(); }
+};

@@ -1,5 +1,7 @@
 #include "network_module.h"
 #include "../../Engine/account_data.h"
+#include "../../Engine/logger.h"
+#include "../Game/controllers/melee_controller.h"
 #include "../Game/controllers/player_controller.h"
 #include "../Game/entities/drop.h"
 #include "../Game/entities/flower.h"
@@ -8,7 +10,9 @@
 #include "../Game/gamecontext.h"
 #include "../Game/gameworld.h"
 #include "../Game/player.h"
+#include "../Game/state_zone.h"
 #include "../Game/states/states.h"
+#include "../Game/talent.h"
 #include "../Game/zone_mob_tools.h"
 #include "../report.h"
 #include <SFML/Network.hpp>
@@ -16,12 +20,16 @@
 #include <chrono>
 #include <cmath>
 #include <cctype>
+#include <exception>
 #include <limits>
 #include <random>
+#include <string_view>
 #include <vector>
 
 namespace
 {
+constexpr const char* new_player_checkpoint_name = "new_players";
+
 uint8_t GetEntityType(const CEntity& entity)
 {
     if (const auto* mob = dynamic_cast<const CMobBase*>(&entity)) return static_cast<uint8_t>(mob->m_mob_type);
@@ -38,6 +46,7 @@ std::string GetEntityName(const CEntity& entity)
     if (const auto* mob = dynamic_cast<const CMobBase*>(&entity)) return std::string(GetMobTypeName(mob->m_mob_type));
     if (const auto* drop = dynamic_cast<const CDrop*>(&entity)) return std::string(GetPetalTypeName(drop->GetType()));
     if (const auto* petal = dynamic_cast<const CPetal*>(&entity)) return std::string(GetPetalTypeName(petal->m_type));
+    if (dynamic_cast<const CSpiderWebZone*>(&entity)) return "SpiderWeb";
     if (dynamic_cast<const CPollenProjectile*>(&entity)) return "Pollen";
     if (dynamic_cast<const CMissile*>(&entity)) return "Missile";
     return "Entity";
@@ -60,10 +69,11 @@ float GetPrimordialDefaultMobRadius()
                                   game_config::mob_summoned_beetle_radius, game_config::mob_soldier_ant_radius,
                                   game_config::mob_soldier_fire_ant_radius, game_config::mob_soldier_termite_radius,
                                   game_config::mob_summoned_soldier_ant_radius, game_config::mob_bee_radius,
-                                  game_config::mob_hornet_radius, game_config::mob_bumblebee_radius});
-    float primordial_scale =
-        std::pow(static_cast<float>(GetLevel(ERarity::Primordial)), game_config::mob_radius_scale_exp);
-    return base_radius * primordial_scale;
+                                  game_config::mob_hornet_radius, game_config::mob_bumblebee_radius,
+                                  game_config::mob_rock_radius, game_config::mob_baby_ant_radius,
+                                  game_config::mob_worker_ant_radius, game_config::mob_queen_ant_radius,
+                                  game_config::mob_ant_hole_radius, game_config::mob_spider_radius});
+    return base_radius * game_config::MobRadiusScaleForLevel(GetLevel(ERarity::Primordial));
 }
 
 std::string ToLower(std::string text)
@@ -71,6 +81,145 @@ std::string ToLower(std::string text)
     std::transform(text.begin(), text.end(), text.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return text;
+}
+
+std::string Trim(std::string_view text)
+{
+    size_t begin = 0;
+    while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin]))) ++begin;
+
+    size_t end = text.size();
+    while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1]))) --end;
+
+    return std::string(text.substr(begin, end - begin));
+}
+
+std::string LogPriorityName(ELogPriority priority)
+{
+    switch (priority)
+    {
+    case ELogPriority::Debug: return "DEBUG";
+    case ELogPriority::Info: return "INFO";
+    case ELogPriority::Warning: return "WARN";
+    case ELogPriority::Error: return "ERROR";
+    case ELogPriority::Fatal: return "FATAL";
+    }
+    return "UNKNOWN";
+}
+
+bool ExtractRconPayload(const std::string& message, std::string& payload)
+{
+    if (message.empty() || message.front() != '/') return false;
+
+    size_t command_begin = 1;
+    size_t command_end = command_begin;
+    while (command_end < message.size() && !std::isspace(static_cast<unsigned char>(message[command_end])))
+        ++command_end;
+
+    if (ToLower(message.substr(command_begin, command_end - command_begin)) != "rcon") return false;
+
+    payload = Trim(std::string_view(message).substr(command_end));
+    return true;
+}
+
+void SendPrivateServerMessage(INetworkModule& network, CPlayer& player, const std::string& message)
+{
+    auto* server = CServer::GetInstance();
+    if (!server) return;
+
+    std::string text = message.empty() ? "(empty)" : message;
+    size_t offset = 0;
+    while (offset < text.size())
+    {
+        std::string part = text.substr(offset, max_chat_message_size);
+        offset += part.size();
+        if (const CServer::SChatEntry* chat =
+                server->SubmitChat(nullptr, {0.f, 0.f}, EChatFlag::Server, 0, "RCON", part,
+                                   static_cast<int>(player.GetId())))
+        {
+            network.SendChatToPlayer(player, *chat);
+        }
+    }
+}
+
+bool HandleRconCommand(INetworkModule& network, CPlayer& player, const std::string& message)
+{
+    std::string payload;
+    if (!ExtractRconPayload(message, payload)) return false;
+
+    if (!player.IsAuthenticated()) return true;
+
+    if (payload.empty())
+    {
+        SendPrivateServerMessage(network, player,
+                                 player.IsRconAuthorized() ? "Usage: /rcon [server command]" :
+                                                             "Usage: /rcon [password]");
+        return true;
+    }
+
+    if (!player.IsRconAuthorized())
+    {
+        if (game_config::rcon_password.empty())
+        {
+            SendPrivateServerMessage(network, player, "RCON is disabled.");
+            return true;
+        }
+
+        if (payload == game_config::rcon_password)
+        {
+            player.SetRconAuthorized(true);
+            LOG_INFO("rcon", "Player " + player.GetName() + " authorized from " + player.GetRemoteAddress());
+            SendPrivateServerMessage(network, player, "RCON authorized.");
+        } else {
+            LOG_WARN("rcon", "Failed RCON login for player " + player.GetName() + " from " + player.GetRemoteAddress());
+            SendPrivateServerMessage(network, player, "RCON authorization failed.");
+        }
+        return true;
+    }
+
+    auto* server = CServer::GetInstance();
+    if (!server)
+    {
+        SendPrivateServerMessage(network, player, "RCON failed: server is unavailable.");
+        return true;
+    }
+
+    LOG_INFO("rcon", "Player " + player.GetName() + " executed: " + payload);
+
+    std::vector<std::string> captured_lines;
+    size_t sink_id = CLogger::AddSink([&captured_lines](const std::string& sender, ELogPriority priority,
+                                                        const std::string& msg)
+    {
+        captured_lines.push_back("[" + sender + "][" + LogPriorityName(priority) + "] " + msg);
+    });
+
+    try
+    {
+        server->GetConsole().ExecuteLine(payload);
+    }
+    catch (const std::exception& e)
+    {
+        captured_lines.push_back(std::string("[rcon][ERROR] ") + e.what());
+    }
+    catch (...)
+    {
+        captured_lines.push_back("[rcon][ERROR] Unknown exception");
+    }
+    CLogger::RemoveSink(sink_id);
+
+    if (captured_lines.empty())
+    {
+        SendPrivateServerMessage(network, player, "Executed: " + payload);
+    } else {
+        constexpr size_t max_rcon_reply_lines = 12;
+        size_t count = std::min(captured_lines.size(), max_rcon_reply_lines);
+        for (size_t i = 0; i < count; ++i)
+            SendPrivateServerMessage(network, player, captured_lines[i]);
+        if (captured_lines.size() > count)
+            SendPrivateServerMessage(network, player,
+                                     "... " + std::to_string(captured_lines.size() - count) + " more lines");
+    }
+    return true;
 }
 
 bool FlowerHasAvailablePetal(const CFlower& flower, EPetalType type)
@@ -135,6 +284,7 @@ sf::Vector2f PickRespawnPosition(CGameWorld& world)
         std::vector<size_t> checkpoints;
         for (size_t i = 0; i < map->checkpoints.size(); ++i)
         {
+            if (map->checkpoints[i].name == new_player_checkpoint_name) continue;
             if (map->checkpoints[i].w > 0.f && map->checkpoints[i].h > 0.f) checkpoints.push_back(i);
         }
         if (!checkpoints.empty())
@@ -244,11 +394,14 @@ void INetworkModule::SendSnapshots()
         QueueOwnerState(*player);
 
         float view_radius = owner_mob->GetFinalStats()->horizon;
-        float snap_radius = view_radius + GetPrimordialDefaultMobRadius();
+        float snap_view_radius = view_radius * 2.f;
+        float snap_radius = snap_view_radius + GetPrimordialDefaultMobRadius();
         auto visible_entities = owner->GameWorld()->GetSpatialGrid().QueryRange(
-            owner->m_pos, snap_radius, [owner](const CEntity* entity)
+            owner->m_pos, snap_radius, [owner, snap_view_radius](const CEntity* entity)
             {
-                return entity && entity->IsVisible() && entity != owner;
+                if (!entity || !entity->IsVisible() || entity == owner) return false;
+                float radius = snap_view_radius + std::max(0.f, entity->m_radius);
+                return DistanceSq(owner->m_pos, entity->m_pos) <= radius * radius;
             });
 
         ServerMessage msg;
@@ -454,6 +607,13 @@ bool INetworkModule::QueueOwnerState(CPlayer& player)
     msg.flags = 0;
     msg.exp = 0;
     msg.exp_required = 10;
+    msg.talent_points = static_cast<uint16_t>(std::clamp(player.GetTalentPoints(), 0, static_cast<int>(UINT16_MAX)));
+    for (const ITalent* talent : player.GetTalents())
+    {
+        if (!talent) continue;
+        msg.talents.push_back({talent->m_id, static_cast<uint8_t>(talent->m_rarity),
+                               static_cast<uint8_t>(std::clamp(talent->m_rank, 0, 255))});
+    }
 
     auto* player_flower = dynamic_cast<CPlayerFlower*>(player.GetEntity());
     if (player_flower)
@@ -652,6 +812,23 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
             continue;
         }
 
+        if (ClientTalentRequest::IsPacketStart(player.m_receive_buffer[0]))
+        {
+            size_t packet_size = ClientTalentRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
+            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return EPlayerBufferResult::Continue;
+
+            bool ok = false;
+            ClientTalentRequest request = ClientTalentRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
+            player.m_receive_buffer.erase(player.m_receive_buffer.begin(), player.m_receive_buffer.begin() + packet_size);
+            if (!player.IsAuthenticated())
+            {
+                QueueAuthResult(player, false, "Please login first");
+                return EPlayerBufferResult::RequestedDisconnect;
+            }
+            if (ok) HandleTalentRequest(player, request);
+            continue;
+        }
+
         if (!player.IsAuthenticated())
         {
             QueueAuthResult(player, false, "Please login first");
@@ -688,6 +865,9 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
 
 void INetworkModule::HandleChatRequest(CPlayer& player, const ClientChatRequest& request)
 {
+    if (HandleRconCommand(*this, player, request.message))
+        return;
+
     CEntity* entity = player.GetEntity();
     if (!entity || entity->m_is_marked_for_des) return;
 
@@ -741,6 +921,23 @@ void INetworkModule::HandleCraftRequest(CPlayer& player, const ClientCraftReques
     }
 }
 
+void INetworkModule::HandleTalentRequest(CPlayer& player, const ClientTalentRequest& request)
+{
+    bool changed = false;
+    for (const STalentPacketItem& item : request.talents)
+    {
+        ERarity rarity = static_cast<ERarity>(item.rarity);
+        int rank = static_cast<int>(item.rank);
+        if (request.action == ClientTalentAction::Remove)
+            changed = player.RemoveTalent(item.id, rarity, rank) || changed;
+        else
+            changed = player.AddTalent(item.id, rarity, rank) || changed;
+    }
+
+    QueueOwnerState(player);
+    if (changed) QueueInventory(player);
+}
+
 INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& player, const ClientAuthRequest& request)
 {
     if (player.IsAuthenticated())
@@ -792,6 +989,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
     }
 
     player.Authenticate(request.name);
+    player.SetUseNewPlayerSpawn(register_mode);
     if (auto* controller = m_lobby_world.GetController())
         controller->OnPlayerConnect(m_lobby_world, &player);
 
@@ -819,9 +1017,16 @@ void INetworkModule::Respawn(CPlayer& player)
     raw_flower = dynamic_cast<CPlayerFlower*>(m_lobby_world.InsertEntity(std::move(entity)));
     if (!raw_flower) return;
 
-    player.SetOwnedEntity(raw_flower);
-    player.ApplySavedProgress();
-    player.ApplySavedSlots();
+    if (auto* controller = m_lobby_world.GetController())
+        controller->OnPlayerSpawn(m_lobby_world, &player, raw_flower);
+    else
+    {
+        player.SetOwnedEntity(raw_flower);
+        player.ApplySavedProgress();
+        player.ApplySavedTalents();
+        player.ApplySavedSlots();
+    }
+
     player.m_logged_missing_entity = false;
     LOG_INFO("network", "Player " + std::to_string(player.GetId()) + " respawned");
 }
@@ -1046,29 +1251,33 @@ ServerEntitySnap INetworkModule::BuildEntitySnap(const CEntity& entity, const CE
     if (const auto* drop = dynamic_cast<const CDrop*>(&entity)) snap.rarity = static_cast<uint8_t>(drop->GetRarity());
     if (const auto* petal = dynamic_cast<const CPetal*>(&entity)) snap.rarity = static_cast<uint8_t>(petal->m_rarity);
 
-    if (&entity == &owner) snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Owner);
-    if (entity.IsDead()) snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Dead);
+    if (&entity == &owner) snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Owner);
+    if (entity.IsDead()) snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Dead);
 
     if (const auto* attackable = dynamic_cast<const IAttackableMob*>(&entity))
     {
-        if (attackable->IsAttacking()) snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Attacking);
-        if (attackable->IsDefending()) snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Defending);
+        if (attackable->IsAttacking()) snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Attacking);
+        if (attackable->IsDefending()) snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Defending);
     }
 
     if (const auto* flower = dynamic_cast<const CFlower*>(&entity))
     {
         if (FlowerHasAvailablePetal(*flower, EPetalType::Relic))
-            snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Relic);
+            snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Relic);
         if (FlowerHasAvailablePetal(*flower, EPetalType::Antennae))
-            snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Antennae);
+            snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Antennae);
     }
     if (const auto* mob = dynamic_cast<const CMobBase*>(&entity))
     {
         auto& mutable_mob = *const_cast<CMobBase*>(mob);
+        if (dynamic_cast<CSummonedMeleeController*>(mutable_mob.GetController()))
+            snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Summoned);
         if (!mutable_mob.FindStates<CUndeadState>().empty())
-            snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Undead);
+            snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Undead);
         if (!mutable_mob.FindStates<CCorruptionState>().empty())
-            snap.flags |= static_cast<uint8_t>(ServerEntityFlag::Corrupted);
+            snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Corrupted);
+        if (!mutable_mob.FindStates<CPoisonState>().empty())
+            snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Poisoned);
     }
     return snap;
 }

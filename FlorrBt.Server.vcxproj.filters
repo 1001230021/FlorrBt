@@ -111,6 +111,9 @@
     <ClInclude Include="src\Server\Game\entities\blood_sacrifice_ritual.h">
       <Filter>src\Server\Game\entities</Filter>
     </ClInclude>
+    <ClInclude Include="src\Server\Game\talent.h">
+      <Filter>src\Server\Game</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Server\commands.cpp">

@@ -8,6 +8,7 @@ class COpenController : public IGameController
     COpenController() = default;
     void OnTick(CGameWorld& world, float dt) override;
     void OnPlayerConnect(CGameWorld& world, CPlayer* player) override;
+    void OnPlayerSpawn(CGameWorld& world, CPlayer* player, CEntity* entity) override;
     void OnEntityDie(CGameWorld& world, CEntity* entity) override;
     void SpawnMobs(CGameWorld& world);
 

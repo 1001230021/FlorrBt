@@ -5,10 +5,14 @@
 #include "../../Shared/shared.h"
 #include "gamecontroller.h"
 #include "entity.h"
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
+
+class CPlayer;
 
 class CGameWorld
 {
@@ -35,10 +39,13 @@ class CGameWorld
 
     void RemoveEntity(int id);
     void DestroyProjectilesOwnedBy(int owner_id);
+    CEntity* TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& target_world,
+                                         std::optional<sf::Vector2f> target_pos = std::nullopt);
 
     void Tick(float dt);
 
     CEntity* GetEntity(int id) const;
+    CEntity* GetEntity(int id, std::uint64_t generation) const;
     CEntity* FindClosestEntity(const sf::Vector2f& center, float max_range,
                                std::function<bool(const CEntity*)> filter = nullptr) const;
     CEntity* FindClosestEntityByEdge(const sf::Vector2f& center, float max_edge_range,
@@ -60,6 +67,7 @@ class CGameWorld
 
     std::set<int> m_free_ids;
     int m_next_id = 0;
+    std::uint64_t m_next_generation = 1;
     CGameContext* m_p_game_context = nullptr;
 
     std::unique_ptr<FlorrBtMap> m_map;

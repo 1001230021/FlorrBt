@@ -96,6 +96,17 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         std::vector<TObject*> result;
         if (radius <= 0.f) return result;
 
+        ForEachInRange(center, radius, [&](TObject* object)
+        {
+            if (!filter || filter(object)) result.push_back(object);
+        });
+        return result;
+    }
+
+    template <typename TVisitor> void ForEachInRange(const sf::Vector2f& center, float radius, TVisitor visitor) const
+    {
+        if (radius <= 0.f) return;
+
         float radius_sq = radius * radius;
         VisitCellsInRange(center, radius, [&](const std::vector<TId>& ids)
         {
@@ -103,11 +114,9 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
             {
                 TObject* object = Resolve(id);
                 if (!object || !IsValid(*object)) continue;
-                if (filter && !filter(object)) continue;
-                if (DistanceSq(m_get_position(*object), center) <= radius_sq) result.push_back(object);
+                if (DistanceSq(m_get_position(*object), center) <= radius_sq) visitor(object);
             }
         });
-        return result;
     }
 
   private:

@@ -1,4 +1,5 @@
 #include "../Engine/commands_registry.h"
+#include "../Engine/account_data.h"
 #include "../Engine/console.h"
 #include "../Engine/logger.h"
 #include "server.h"
@@ -203,6 +204,16 @@ std::string JoinArgs(const std::vector<std::string>& args, size_t begin)
     }
     return result;
 }
+
+int TalentPointGainForCommandLevel(int level)
+{
+    if (level <= 1) return 0;
+
+    int gain = 1;
+    if (level % 5 == 0) gain += 5;
+    if (level % 10 == 0) gain += 10;
+    return gain;
+}
 }
 
 REGISTER_CONSOLE_COMMAND(quit, {
@@ -215,6 +226,38 @@ REGISTER_CONSOLE_COMMAND(quit, {
 REGISTER_CONSOLE_COMMAND(echo, {
     if (args.empty()) return;
     LOG_INFO("console", args[0]);
+})
+
+REGISTER_CONSOLE_COMMAND(repeat, {
+    if (args.size() < 2)
+    {
+        LOG_INFO("console", "Usage: repeat [times] [cmd...]");
+        return;
+    }
+
+    auto times = ParseInt(args[0]);
+    if (!times || *times <= 0)
+    {
+        LOG_WARN("console", "Invalid repeat count: " + args[0]);
+        return;
+    }
+    if (*times > 1000)
+    {
+        LOG_WARN("console", "Repeat count is capped at 1000.");
+        return;
+    }
+
+    std::string command = JoinArgs(args, 1);
+    if (ToLower(args[1]) == "repeat")
+    {
+        LOG_WARN("console", "Nested repeat is blocked.");
+        return;
+    }
+
+    auto* server = CServer::GetInstance();
+    if (!server) return;
+    for (int i = 0; i < *times; ++i)
+        server->GetConsole().ExecuteLine(command);
 })
 
 REGISTER_CONSOLE_COMMAND(who, {
@@ -237,6 +280,56 @@ REGISTER_CONSOLE_COMMAND(who, {
     LOG_INFO("console", "name=" + player->GetName() + " account=" + player->GetAccountName() +
                             " player_id=" + std::to_string(player->GetId()) + " entity_id=" +
                             std::to_string(entity ? entity->m_id : -1));
+})
+
+REGISTER_CONSOLE_COMMAND(level_up, {
+    if (args.size() < 2)
+    {
+        LOG_INFO("console", "Usage: level_up [player id/name] [num]");
+        return;
+    }
+
+    auto num = ParseInt(args[1]);
+    if (!num || *num <= 0)
+    {
+        LOG_WARN("console", "Invalid level count: " + args[1]);
+        return;
+    }
+
+    auto* server = CServer::GetInstance();
+    CGameContext* context = server ? server->GameContext() : nullptr;
+    CPlayer* player = FindPlayerByIdOrName(context, args[0]);
+    if (!player)
+    {
+        LOG_WARN("console", "Player not found: " + args[0]);
+        return;
+    }
+
+    auto* flower = dynamic_cast<CPlayerFlower*>(player->GetEntity());
+    if (!flower)
+    {
+        LOG_WARN("console", "Player has no player flower: " + args[0]);
+        return;
+    }
+
+    int gained_talent_points = 0;
+    int old_level = flower->m_level;
+    for (int i = 0; i < *num && flower->m_level < 255; ++i)
+    {
+        ++flower->m_level;
+        flower->m_exp = 0;
+        gained_talent_points += TalentPointGainForCommandLevel(flower->m_level);
+    }
+
+    flower->RebuildFinalStats();
+    if (gained_talent_points > 0) player->AddTalentPoints(gained_talent_points);
+    if (player->IsAuthenticated())
+        CAccountDataStore::SetProgress(player->GetAccountName(), flower->m_level, flower->m_exp);
+    if (context) context->Network().QueueOwnerStateUpdate(*player);
+
+    LOG_INFO("console", "Level " + player->GetName() + " " + std::to_string(old_level) + " -> " +
+                            std::to_string(flower->m_level) + ", +" +
+                            std::to_string(gained_talent_points) + " TP.");
 })
 
 REGISTER_CONSOLE_COMMAND(query_player_id, {
@@ -362,6 +455,18 @@ REGISTER_CONSOLE_COMMAND(gui_console, {
     }
 
     LOG_WARN("console", "Usage: gui_console [1|0]");
+})
+
+REGISTER_CONSOLE_COMMAND(rcon_keyboard, {
+    if (args.empty())
+    {
+        game_config::rcon_password.clear();
+        LOG_INFO("console", "RCON password cleared. Remote console disabled.");
+        return;
+    }
+
+    game_config::rcon_password = JoinArgs(args, 0);
+    LOG_INFO("console", "RCON password updated.");
 })
 
 REGISTER_CONSOLE_COMMAND(mute, {

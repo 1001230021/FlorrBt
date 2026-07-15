@@ -41,6 +41,7 @@
   <input id="chatInput" class="chat-input ui hidden" autocomplete="off" spellcheck="false" maxlength="180" placeholder="Chat">
 
   <section id="consolePanel" class="console-panel ui">
+    <div id="debugInfo" class="console-debug"></div>
     <div id="consoleLog" class="console-log"></div>
     <input id="consoleInput" class="console-input" autocomplete="off" spellcheck="false" maxlength="240" placeholder="Console">
   </section>
@@ -78,6 +79,15 @@
       <div id="craftChance" class="craft-chance"></div>
     </div>
     <div id="craftList" class="craft-list"></div>
+  </section>
+
+  <section id="talentPanel" class="talent-panel ui">
+    <div class="panel-title">
+      <span>Talents</span>
+      <button id="talentCloseBtn" class="panel-close" type="button" aria-label="Close talents">x</button>
+    </div>
+    <div id="talentPoints" class="talent-points">Talent Points: 0</div>
+    <div id="talentTree" class="talent-tree"></div>
   </section>
 
   <script type="module" src="./src/game.js"></script>

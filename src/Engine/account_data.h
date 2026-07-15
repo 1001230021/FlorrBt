@@ -1,9 +1,18 @@
 #pragma once
 #include "../Shared/inventory.h"
+#include "../Shared/rarity.h"
+#include "../Shared/talent_type.h"
 #include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
+
+struct SAccountTalent
+{
+    ETalentId id = ETalentId::None;
+    ERarity rarity = ERarity::Null;
+    int rank = 0;
+};
 
 struct SPlayerAccount
 {
@@ -15,6 +24,8 @@ struct SPlayerAccount
     std::vector<SInventoryItem> slots;
     std::vector<SInventoryItem> secondary_slots;
     std::string extra_json = "{}";
+    int talent_points = 0;
+    std::vector<SAccountTalent> talents;
 };
 
 struct SCraftResult
@@ -41,6 +52,11 @@ class CAccountDataStore
     static std::vector<SInventoryItem> GetSecondarySlots(const std::string& name);
     static bool GetProgress(const std::string& name, int& level, int& exp);
     static void SetProgress(const std::string& name, int level, int exp);
+    static int GetTalentPoints(const std::string& name);
+    static void SetTalentPoints(const std::string& name, int talent_points);
+    static void AddTalentPoints(const std::string& name, int talent_points);
+    static std::vector<SAccountTalent> GetTalents(const std::string& name);
+    static void SetTalents(const std::string& name, const std::vector<SAccountTalent>& talents);
     static void SetSlot(const std::string& name, uint8_t slot_index, uint8_t petal_type, uint8_t rarity);
     static void ClearSlot(const std::string& name, uint8_t slot_index);
     static bool SetSecondarySlot(const std::string& name, uint8_t slot_index, uint8_t petal_type, uint8_t rarity);

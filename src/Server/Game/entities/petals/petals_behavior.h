@@ -21,6 +21,7 @@ inline SFlowerStats EmptyFlowerStats()
     stats.radius = 0.f;
     stats.mass = 0.f;
     stats.horizon = 0.f;
+    stats.max_absorb_range = 0.f;
     stats.detection_multiplier = 1.f;
     stats.max_velocity = 0.f;
     stats.acceleration = 0.f;
@@ -32,6 +33,11 @@ inline SFlowerStats EmptyFlowerStats()
     stats.petal_health_multiplier = 1.f;
     stats.petal_medicine_multiplier = 1.f;
     stats.mult_summoned_health = 1.f;
+    stats.poison_damage_multiplier = 1.f;
+    stats.poison_duration_multiplier = 1.f;
+    stats.body_poison_damage_multiplier = 0.f;
+    stats.body_poison_duration = 0.f;
+    stats.petal_swap_min_reload = 2.5f;
     stats.petal_rotation_speed = 0.f;
     stats.petal_rotation_quantized = false;
     stats.petal_rotation_mode = EPetalRotationMode::Orbit;
@@ -70,12 +76,20 @@ inline float PetalOrbitReach(const CFlower* flower, bool include_mode_offset)
 {
     if (!flower || !flower->GetFinalStats()) return 0.f;
 
-    float reach = game_config::default_petal_neutral_reach + flower->GetFinalStats()->reach;
+    float reach = game_config::default_petal_neutral_reach;
+    if (flower->m_attacking) reach += flower->GetFinalStats()->reach;
     if (!include_mode_offset) return reach;
 
     if (flower->m_attacking) reach += game_config::default_petal_attack_offset;
     else if (flower->m_defending) reach += game_config::default_petal_defend_offset;
     return reach;
+}
+
+inline float PetalOrbitNeutralDistance(const CPetal* owner, const CFlower* flower)
+{
+    if (!owner || !flower || !flower->GetFinalStats()) return 0.f;
+    return PetalOrbitBaseRadius(owner, flower) + game_config::default_petal_orbit_radius +
+           game_config::default_petal_neutral_reach;
 }
 
 inline float PetalOrbitDistance(const CPetal* owner, const CFlower* flower)
@@ -95,6 +109,32 @@ inline sf::Vector2f PetalOrbitCenter(const CPetal* owner, CFlower* flower)
     CPetal* moon = flower->GetMoonPetal();
     if (!moon || moon == owner) return flower->m_pos;
     return moon->m_pos;
+}
+
+inline float PetalClosedClusterSpacing(const CPetal* owner)
+{
+    if (!owner) return 0.62f;
+
+    switch (owner->m_type)
+    {
+    case EPetalType::Dust:
+        return 0.18f;
+    case EPetalType::AntEgg:
+    case EPetalType::BeetleEgg:
+    case EPetalType::Dahlia:
+        return 0.42f;
+    default:
+        return 0.62f;
+    }
+}
+
+inline float PetalClosedClusterRadius(const CPetal* owner, int copies_in_group)
+{
+    if (!owner || copies_in_group <= 1) return 0.f;
+
+    const float sin_step = std::max(0.001f, std::sin(game_config::pi / static_cast<float>(copies_in_group)));
+    const float adjacent_center_distance = owner->m_radius * PetalClosedClusterSpacing(owner);
+    return adjacent_center_distance / (2.0f * sin_step);
 }
 
 inline std::optional<sf::Vector2f> PetalOrbitGlobal(CPetal* owner, CFlower* flower, float orbit_distance, bool is_open)
@@ -123,11 +163,11 @@ inline std::optional<sf::Vector2f> PetalOrbitGlobal(CPetal* owner, CFlower* flow
         global = orbit_center + sf::Vector2f(std::cos(angle), std::sin(angle)) * (orbit_distance + layer_distance);
         if (!is_open)
         {
-            int copies_in_group = owner->m_base_petal_stats.copy;
+            int copies_in_group = owner->m_max_slot_num;
+            if (copies_in_group <= 0) copies_in_group = owner->m_base_petal_stats.copy;
             if (copies_in_group <= 0) return std::nullopt;
 
-            float spread_radius = 0.0f;
-            if (copies_in_group > 1) spread_radius = owner->m_radius / std::sin(game_config::pi / copies_in_group);
+            float spread_radius = PetalClosedClusterRadius(owner, copies_in_group);
             float sub_angle = (2.0f * game_config::pi * owner->m_copy_index) / static_cast<float>(copies_in_group);
             global += sf::Vector2f(std::cos(sub_angle), std::sin(sub_angle)) * spread_radius;
         }
@@ -138,11 +178,11 @@ inline std::optional<sf::Vector2f> PetalOrbitGlobal(CPetal* owner, CFlower* flow
     } else {
         float group_angle = flower->GetPetalRotationAngle() + (2.0f * game_config::pi * start_index) / static_cast<float>(total_copies);
         sf::Vector2f group_global = orbit_center + sf::Vector2f(std::cos(group_angle), std::sin(group_angle)) * orbit_distance;
-        int copies_in_group = owner->m_base_petal_stats.copy;
+        int copies_in_group = owner->m_max_slot_num;
+        if (copies_in_group <= 0) copies_in_group = owner->m_base_petal_stats.copy;
         if (copies_in_group <= 0) return std::nullopt;
 
-        float spread_radius = 0.0f;
-        if (copies_in_group > 1) spread_radius = owner->m_radius / std::sin(game_config::pi / copies_in_group);
+        float spread_radius = PetalClosedClusterRadius(owner, copies_in_group);
         float sub_angle = (2.0f * game_config::pi * owner->m_copy_index) / static_cast<float>(copies_in_group);
         global = group_global + sf::Vector2f(std::cos(sub_angle), std::sin(sub_angle)) * spread_radius;
     }
@@ -1096,7 +1136,7 @@ class CBrokenEggBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float) override
     {
-        PetalOrbitMove(owner, flower, PetalOrbitDistance(owner, flower),
+        PetalOrbitMove(owner, flower, PetalOrbitNeutralDistance(owner, flower),
                        game_config::default_petal_orbit_k, false);
     }
 
@@ -1130,8 +1170,7 @@ class CBubbleBehavior : public CPetalBehavior
     {
         if (!owner || !flower) return;
 
-        float orbit_distance = PetalOrbitBaseRadius(owner, flower) + game_config::default_petal_orbit_radius +
-                               PetalOrbitReach(flower, false);
+        float orbit_distance = PetalOrbitNeutralDistance(owner, flower);
         (void)dt;
         PetalOrbitMove(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true);
 
@@ -2002,8 +2041,15 @@ class CIrisBehavior : public CPetalBehavior
 
         if (dynamic_cast<CFlower*>(target)) damage *= game_config::default_iris_flower_damage_multiplier;
 
-        float duration = game_config::default_iris_poison_duration;
-        float poison_per_second = duration > 0.f ? game_config::default_iris_poison_total_damage / duration : 0.f;
+        const auto* flower = dynamic_cast<const CFlower*>(owner->GetOwner());
+        const SFlowerStats* flower_stats = flower ? flower->GetFinalStats() : nullptr;
+        float duration = game_config::default_iris_poison_duration *
+                         (flower_stats ? flower_stats->poison_duration_multiplier : 1.f);
+        float poison_per_second = game_config::default_iris_poison_duration > 0.f ?
+                                  game_config::default_iris_poison_total_damage /
+                                      game_config::default_iris_poison_duration :
+                                  0.f;
+        poison_per_second *= flower_stats ? flower_stats->poison_damage_multiplier : 1.f;
         auto poison = std::make_unique<CPoisonState>(mob, duration, poison_per_second, rarity, owner->GetOwner());
         if (poison->IsValid()) mob->AddState(std::move(poison));
     }
@@ -2173,9 +2219,15 @@ class CPincerBehavior : public CPetalBehavior
         auto* mob = dynamic_cast<CMobBase*>(target);
         if (!owner || !mob) return;
 
-        float poison_duration = game_config::default_pincer_poison_duration;
+        const auto* flower = dynamic_cast<const CFlower*>(owner->GetOwner());
+        const SFlowerStats* flower_stats = flower ? flower->GetFinalStats() : nullptr;
+        float poison_duration = game_config::default_pincer_poison_duration *
+                                (flower_stats ? flower_stats->poison_duration_multiplier : 1.f);
         float poison_total = game_config::default_pincer_poison_total_damage * PetalRarityScale(rarity);
-        float poison_per_second = poison_duration > 0.f ? poison_total / poison_duration : 0.f;
+        float poison_per_second = game_config::default_pincer_poison_duration > 0.f ?
+                                  poison_total / game_config::default_pincer_poison_duration :
+                                  0.f;
+        poison_per_second *= flower_stats ? flower_stats->poison_damage_multiplier : 1.f;
         auto poison = std::make_unique<CPoisonState>(mob, poison_duration, poison_per_second, rarity, owner->GetOwner());
         if (poison->IsValid()) mob->AddState(std::move(poison));
 

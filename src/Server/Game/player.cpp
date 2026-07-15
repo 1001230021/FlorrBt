@@ -6,8 +6,18 @@
 #include "entities/petals/petal.h"
 #include "controllers/player_controller.h"
 #include "gameworld.h"
+#include "talent.h"
 #include "../../Shared/game_config.h"
 #include <algorithm>
+
+namespace
+{
+bool SameTalent(const ITalent* lhs, const ITalent* rhs)
+{
+    return lhs && rhs && lhs->m_id == rhs->m_id && lhs->m_rarity == rhs->m_rarity && lhs->m_rank == rhs->m_rank;
+}
+
+}
 
 CPlayer::CPlayer(sf::TcpSocket&& socket, uint32_t id, const std::string& name)
     : m_socket(std::move(socket)), m_player_id(id), m_name(name)
@@ -67,6 +77,7 @@ void CPlayer::DetachSocket()
 void CPlayer::TickTimeout(float dt)
 {
     if (m_mute_timer > 0.f) m_mute_timer = std::max(0.f, m_mute_timer - dt);
+    if (m_second_chance_cooldown > 0.f) m_second_chance_cooldown = std::max(0.f, m_second_chance_cooldown - dt);
     if (m_connected || m_timeout_left <= 0.f) return;
     m_timeout_left -= dt;
 }
@@ -187,6 +198,29 @@ void CPlayer::ApplySavedSlots()
     flower->RebuildFinalStats();
 }
 
+void CPlayer::ApplySavedTalents()
+{
+    if (!m_authenticated) return;
+
+    m_talent_points = CAccountDataStore::GetTalentPoints(m_account_name);
+    m_talents.clear();
+
+    for (const SAccountTalent& saved : CAccountDataStore::GetTalents(m_account_name))
+    {
+        ITalent* talent = FindBuiltinTalent(saved.id, saved.rarity, saved.rank);
+        if (!talent) continue;
+        if (std::find_if(m_talents.begin(), m_talents.end(), [talent](const ITalent* existing)
+            {
+                return SameTalent(existing, talent);
+            }) != m_talents.end())
+            continue;
+        m_talents.push_back(talent);
+    }
+
+    NormalizeTalentOrder();
+    RefreshTalentEffects();
+}
+
 bool CPlayer::TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rarity)
 {
     if (!m_authenticated) return false;
@@ -250,6 +284,125 @@ bool CPlayer::TryCraftPetal(uint8_t petal_type, uint8_t rarity, uint32_t count, 
     return CAccountDataStore::CraftItem(m_account_name, petal_type, rarity, count, result);
 }
 
+bool CPlayer::AddTalent(ETalentId id, ERarity rarity, int rank)
+{
+    if (!m_authenticated) return false;
+
+    ITalent* talent = FindBuiltinTalent(id, rarity, rank);
+    if (!talent) return false;
+    if (HasTalent(talent)) return false;
+    if (talent->m_based && !HasTalent(talent->m_based)) return false;
+    if (m_talent_points < talent->m_cost) return false;
+
+    m_talent_points -= talent->m_cost;
+    m_talents.push_back(talent);
+    NormalizeTalentOrder();
+    SaveTalentState();
+    RefreshTalentEffects();
+    return true;
+}
+
+bool CPlayer::RemoveTalent(ETalentId id, ERarity rarity, int rank)
+{
+    if (!m_authenticated) return false;
+
+    ITalent* target = FindBuiltinTalent(id, rarity, rank);
+    if (!target || !HasTalent(target)) return false;
+
+    std::vector<ITalent*> removing;
+    removing.push_back(target);
+
+    bool changed = true;
+    while (changed)
+    {
+        changed = false;
+        for (ITalent* owned : m_talents)
+        {
+            if (!owned || !owned->m_based) continue;
+            if (std::find(removing.begin(), removing.end(), owned) != removing.end()) continue;
+            if (std::find(removing.begin(), removing.end(), owned->m_based) == removing.end()) continue;
+            removing.push_back(owned);
+            changed = true;
+        }
+    }
+
+    int refund = 0;
+    for (ITalent* talent : removing)
+        if (talent) refund += talent->m_cost;
+
+    m_talents.erase(std::remove_if(m_talents.begin(), m_talents.end(),
+                                   [&removing](ITalent* talent)
+                                   {
+                                       return std::find(removing.begin(), removing.end(), talent) != removing.end();
+                                   }),
+                    m_talents.end());
+    m_talent_points = std::max(0, m_talent_points + refund);
+    NormalizeTalentOrder();
+    SaveTalentState();
+    RefreshTalentEffects();
+    return true;
+}
+
+void CPlayer::AddTalentPoints(int amount)
+{
+    if (amount == 0) return;
+
+    m_talent_points = std::max(0, m_talent_points + amount);
+    if (m_authenticated) CAccountDataStore::SetTalentPoints(m_account_name, m_talent_points);
+}
+
+bool CPlayer::HasTalent(const ITalent* talent) const
+{
+    if (!talent) return false;
+    return std::find_if(m_talents.begin(), m_talents.end(), [talent](const ITalent* owned)
+    {
+        return SameTalent(owned, talent);
+    }) != m_talents.end();
+}
+
+void CPlayer::ApplyTalents(ETalentEvent event, STalentContext& ctx) const
+{
+    for (ITalent* talent : m_talents)
+    {
+        if (talent) talent->Apply(event, ctx);
+    }
+}
+
+int CPlayer::CalculateTalentSlotCount() const
+{
+    int slot_count = std::clamp(game_config::mob_player_flower_initial_petal_slots, 0,
+                                std::max(0, game_config::mob_player_flower_max_petal_slots));
+
+    STalentContext ctx;
+    ctx.player = const_cast<CPlayer*>(this);
+    ctx.entity = const_cast<CEntity*>(GetEntity());
+    ctx.slot_num = &slot_count;
+    ApplyTalents(ETalentEvent::RebuildSlotNum, ctx);
+
+    return std::clamp(slot_count, 0, std::max(0, game_config::mob_player_flower_max_petal_slots));
+}
+
+void CPlayer::RefreshTalentEffects()
+{
+    auto* flower = dynamic_cast<CPlayerFlower*>(GetEntity());
+    if (!flower) return;
+
+    flower->RefreshTalentSlotCount();
+    flower->RebuildFinalStats();
+}
+
+void CPlayer::SetSecondChanceCooldown(float cooldown)
+{
+    m_second_chance_cooldown = std::max(0.f, cooldown);
+}
+
+bool CPlayer::ConsumeUseNewPlayerSpawn()
+{
+    bool value = m_use_new_player_spawn;
+    m_use_new_player_spawn = false;
+    return value;
+}
+
 void CPlayer::SetOwnedEntity(CEntity* entity)
 {
     if (!entity)
@@ -279,4 +432,48 @@ CEntity* CPlayer::GetEntity() const
 CGameContext* CPlayer::GameContext() const
 {
     return m_p_world ? m_p_world->GameContext() : nullptr;
+}
+
+void CPlayer::SaveTalentState() const
+{
+    if (!m_authenticated) return;
+
+    std::vector<SAccountTalent> saved;
+    saved.reserve(m_talents.size());
+    for (const ITalent* talent : m_talents)
+    {
+        if (!talent) continue;
+        saved.push_back({talent->m_id, talent->m_rarity, talent->m_rank});
+    }
+
+    CAccountDataStore::SetTalentPoints(m_account_name, m_talent_points);
+    CAccountDataStore::SetTalents(m_account_name, saved);
+}
+
+void CPlayer::NormalizeTalentOrder()
+{
+    std::vector<ITalent*> ordered;
+    std::vector<ITalent*> builtins = BuiltinTalents();
+    ordered.reserve(m_talents.size());
+
+    for (ITalent* builtin : builtins)
+    {
+        auto it = std::find_if(m_talents.begin(), m_talents.end(), [builtin](const ITalent* owned)
+        {
+            return SameTalent(owned, builtin);
+        });
+        if (it != m_talents.end()) ordered.push_back(builtin);
+    }
+
+    m_talents = std::move(ordered);
+
+    for (;;)
+    {
+        auto it = std::find_if(m_talents.begin(), m_talents.end(), [this](const ITalent* talent)
+        {
+            return talent && talent->m_based && !HasTalent(talent->m_based);
+        });
+        if (it == m_talents.end()) break;
+        m_talents.erase(it);
+    }
 }

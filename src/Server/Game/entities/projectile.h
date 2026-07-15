@@ -44,10 +44,16 @@ class CMissile : public CProjectile
 
     void Tick(float dt) override;
     bool ApplyHit(CEntity* target);
+    void AttachToOwner();
+    bool Fire(sf::Vector2f direction, float speed, float lifetime);
+    bool IsAttachedToOwner() const { return m_attached_to_owner; }
 
     float m_damage = 0.f;
     float m_lifetime = 0.f;
     float m_age = 0.f;
+
+  private:
+    bool m_attached_to_owner = false;
 };
 
 class CPollenProjectile : public CProjectile

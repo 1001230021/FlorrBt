@@ -7,4 +7,5 @@
 #include "petal_type.h"
 #include "rarity.h"
 #include "stats.h"
+#include "talent_type.h"
 #include "tools.h"

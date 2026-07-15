@@ -17,14 +17,17 @@ struct config_entry
 
 namespace game_config
 {
+inline constexpr float world_unit_scale = 2.0f;
+inline constexpr float WorldUnits(float value) { return value * world_unit_scale; }
+
 inline std::string account_data_path = "data/accounts.json";
 inline std::string server_log_path = "data/server.log";
 inline std::string startup_commands_path = "data/server.cfg";
-inline float default_acceleration = 150.0f;
+inline float default_acceleration = WorldUnits(150.0f);
 inline float default_air_base_mass = 16.0f;
-inline float default_air_base_radius = 8.0f;
+inline float default_air_base_radius = WorldUnits(8.0f);
 inline float default_antegg_base_health = 1.0f;
-inline float default_antegg_base_radius = 10.0f;
+inline float default_antegg_base_radius = WorldUnits(10.0f);
 inline float default_antegg_copy = 4.0f;
 inline float default_antegg_mass = 1.0f;
 inline float default_antegg_reload_common = 24.0f;
@@ -40,23 +43,23 @@ inline float default_antegg_reload_unique = 180.0f;
 inline float default_antegg_reload_unusual = 8.0f;
 inline float default_antennae_horizon_common = 0.111f;
 inline float default_antennae_horizon_epic = 0.333f;
-inline float default_antennae_horizon_eternal = 9.0f;
+inline float default_antennae_horizon_eternal = 13.5f;
 inline float default_antennae_horizon_legendary = 0.429f;
 inline float default_antennae_horizon_mythic = 1.0f;
-inline float default_antennae_horizon_primordial = 19.0f;
+inline float default_antennae_horizon_primordial = 38.0f;
 inline float default_antennae_horizon_rare = 0.25f;
 inline float default_antennae_horizon_super = 4.0f;
 inline float default_antennae_horizon_ultra = 1.857f;
-inline float default_antennae_horizon_unique = 9.0f;
+inline float default_antennae_horizon_unique = 13.5f;
 inline float default_antennae_horizon_unusual = 0.176f;
 inline float default_basic_base_damage = 10.0f;
 inline float default_basic_base_health = 10.0f;
-inline float default_basic_base_radius = 10.0f;
+inline float default_basic_base_radius = WorldUnits(10.0f);
 inline float default_basic_copy = 1.0f;
 inline float default_basic_mass = 2.0f;
 inline float default_basic_reload = 2.5f;
 inline float default_beetleegg_base_health = 1.0f;
-inline float default_beetleegg_base_radius = 10.0f;
+inline float default_beetleegg_base_radius = WorldUnits(10.0f);
 inline float default_beetleegg_copy = 1.0f;
 inline float default_beetleegg_mass = 1.0f;
 inline float default_beetleegg_reload_common = 12.0f;
@@ -70,7 +73,7 @@ inline float default_beetleegg_reload_super = 30.0f;
 inline float default_beetleegg_reload_ultra = 12.0f;
 inline float default_beetleegg_reload_unique = 90.0f;
 inline float default_beetleegg_reload_unusual = 4.0f;
-inline float default_bandage_base_radius = 10.0f;
+inline float default_bandage_base_radius = WorldUnits(10.0f);
 inline float default_bandage_copy = 0.0f;
 inline float default_bandage_no_revive_duration = 30.0f;
 inline float default_bandage_undead_common = 1.5f;
@@ -84,12 +87,12 @@ inline float default_bandage_undead_super = 15.8f;
 inline float default_bandage_undead_ultra = 11.3f;
 inline float default_bandage_undead_unique = 22.1f;
 inline float default_bandage_undead_unusual = 2.1f;
-inline float default_blood_sacrifice_base_radius = 10.0f;
+inline float default_blood_sacrifice_base_radius = WorldUnits(10.0f);
 inline float default_blood_sacrifice_copy = 0.0f;
 inline float default_blood_sacrifice_delay = 10.0f;
 inline float default_bubble_base_health = 1.0f;
-inline float default_bubble_base_radius = 10.0f;
-inline float default_bubble_boost_speed = 240.0f;
+inline float default_bubble_base_radius = WorldUnits(10.0f);
+inline float default_bubble_boost_speed = WorldUnits(240.0f);
 inline float default_bubble_copy = 1.0f;
 inline float default_bubble_mass = 1.0f;
 inline float default_bubble_reload_common = 1.0f;
@@ -105,16 +108,16 @@ inline float default_bubble_reload_unique = 0.05f;
 inline float default_bubble_reload_unusual = 0.8f;
 inline float default_carrot_base_damage = 18.0f;
 inline float default_carrot_base_health = 18.0f;
-inline float default_carrot_base_radius = 10.0f;
+inline float default_carrot_base_radius = WorldUnits(10.0f);
 inline float default_carrot_copy = 1.0f;
 inline float default_carrot_lifetime_multiplier = 0.6666667f;
 inline float default_carrot_mass = 2.0f;
 inline float default_carrot_reload = 1.0f;
 inline float default_compass_base_damage = 1.0f;
 inline float default_compass_base_health = 40.0f;
-inline float default_compass_base_radius = 10.0f;
+inline float default_compass_base_radius = WorldUnits(10.0f);
 inline float default_compass_copy = 1.0f;
-inline float default_compass_magnet_range = 1024.0f;
+inline float default_compass_magnet_range = WorldUnits(1024.0f);
 inline float default_compass_mass = 1.0f;
 inline float default_compass_reload = 2.5f;
 inline float default_compass_wait_ultra = 4.0f;
@@ -122,34 +125,34 @@ inline float default_compass_wait_super = 2.0f;
 inline float default_compass_wait_unique = 1.0f;
 inline float default_cogwheel_base_damage = 19.0f;
 inline float default_cogwheel_base_health = 13.0f;
-inline float default_cogwheel_base_radius = 10.0f;
+inline float default_cogwheel_base_radius = WorldUnits(10.0f);
 inline float default_cogwheel_copy = 1.0f;
 inline float default_cogwheel_mass = 2.0f;
 inline float default_cogwheel_reload = 2.5f;
 inline float default_cogwheel_stop_fraction = 0.55f;
-inline float default_corruption_base_radius = 10.0f;
+inline float default_corruption_base_radius = WorldUnits(10.0f);
 inline float default_corruption_copy = 0.0f;
-inline float default_corruption_radius_above_ultra = 1024.0f;
-inline float default_corruption_radius_primordial = 4096.0f;
-inline float default_detection_radius = 512.0f;
-inline float default_absorb_range = 64.0f;
+inline float default_corruption_radius_above_ultra = WorldUnits(1024.0f);
+inline float default_corruption_radius_primordial = WorldUnits(4096.0f);
+inline float default_detection_radius = WorldUnits(512.0f);
+inline float default_absorb_range = WorldUnits(64.0f);
 inline float default_drop_lifetime = 30.0f;
 inline float default_drop_mass = 0.01f;
 inline float default_drop_pickup_delay = 0.5f;
-inline float default_drop_pickup_range = 64.0f;
-inline float default_drop_radius = 8.0f;
-inline float default_drop_stack_range = 128.0f;
+inline float default_drop_pickup_range = WorldUnits(64.0f);
+inline float default_drop_radius = WorldUnits(8.0f);
+inline float default_drop_stack_range = WorldUnits(128.0f);
 inline float default_dust_base_damage = 4.3f;
 inline float default_dust_base_health = 1.7f;
-inline float default_dust_base_radius = 7.5f;
+inline float default_dust_base_radius = WorldUnits(7.5f);
 inline float default_dust_copy = 3.0f;
 inline float default_dust_mass = 1.0f;
 inline float default_dust_reload_reduction = 0.03f;
 inline float default_flower_petal_num_max = 10.0f;
-inline float default_flower_radius = 20.0f;
+inline float default_flower_radius = WorldUnits(20.0f);
 inline float default_faster_base_damage = 12.0f;
 inline float default_faster_base_health = 5.0f;
-inline float default_faster_base_radius = 10.0f;
+inline float default_faster_base_radius = WorldUnits(10.0f);
 inline float default_faster_mass = 1.0f;
 inline float default_faster_reload = 2.5f;
 inline float default_faster_rotation_speed_base = 0.3f;
@@ -157,20 +160,20 @@ inline float default_faster_rotation_speed_level = 0.2f;
 inline float default_faster_target_follow_multiplier = 2.0f;
 inline float default_goldenleaf_base_damage = 16.0f;
 inline float default_goldenleaf_base_health = 12.0f;
-inline float default_goldenleaf_base_radius = 10.0f;
+inline float default_goldenleaf_base_radius = WorldUnits(10.0f);
 inline float default_goldenleaf_base_reload_reduction = 0.033f;
 inline float default_goldenleaf_copy = 1.0f;
 inline float default_goldenleaf_mass = 3.0f;
-inline float default_horizon = 256.0f;
+inline float default_horizon = WorldUnits(256.0f);
 inline float default_heavy_base_damage = 10.0f;
 inline float default_heavy_base_health = 150.0f;
-inline float default_heavy_base_radius = 22.5f;
+inline float default_heavy_base_radius = WorldUnits(22.5f);
 inline float default_heavy_mass_multiplier = 120.0f;
 inline float default_heavy_reload = 10.0f;
 inline float default_heavy_rotation_speed = -0.33f;
 inline float default_iris_base_damage = 5.0f;
 inline float default_iris_base_health = 5.0f;
-inline float default_iris_base_radius = 10.0f;
+inline float default_iris_base_radius = WorldUnits(10.0f);
 inline float default_iris_copy = 1.0f;
 inline float default_iris_flower_damage_multiplier = 0.5f;
 inline float default_iris_mass = 2.0f;
@@ -179,47 +182,47 @@ inline float default_iris_poison_total_damage = 70.0f;
 inline float default_iris_reload = 4.0f;
 inline float default_lentil_base_damage = 13.0f;
 inline float default_lentil_base_health = 12.0f;
-inline float default_lentil_base_radius = 10.0f;
+inline float default_lentil_base_radius = WorldUnits(10.0f);
 inline float default_lentil_copy = 1.0f;
 inline float default_lentil_mass = 2.0f;
-inline float default_lentil_petal_attraction_range = 8.0f;
+inline float default_lentil_petal_attraction_range = WorldUnits(8.0f);
 inline float default_lentil_reload = 2.0f;
-inline std::string lobby_map_path = "data/maps/training_grounds.tmj";
-inline float default_max_velocity = 75.0f;
+inline std::string lobby_map_path = "data/maps/garden.tmj";
+inline float default_max_velocity = WorldUnits(75.0f);
 inline float default_moon_base_damage = 3.0f;
 inline float default_moon_base_health = 5000.0f;
 inline float default_moon_base_mass = 5.0f;
 inline float default_moon_orbit_k = 1.5f;
-inline float default_moon_radius_step = 10.0f;
+inline float default_moon_radius_step = WorldUnits(10.0f);
 inline float default_moon_reload = 100.0f;
 inline float default_moon_slowdown_time = 1.0f;
 inline float default_moon_stop_velocity_epsilon = 1.0f;
 inline float default_missile_arm_time = 0.5f;
 inline float default_missile_base_damage = 35.0f;
 inline float default_missile_base_health = 2.0f;
-inline float default_missile_base_radius = 10.0f;
+inline float default_missile_base_radius = WorldUnits(10.0f);
 inline float default_missile_copy = 1.0f;
 inline float default_missile_lifetime = 5.0f;
 inline float default_missile_mass = 2.0f;
 inline float default_missile_lock_angle_degrees = 30.0f;
-inline float default_missile_lock_range = 1024.0f;
+inline float default_missile_lock_range = WorldUnits(1024.0f);
 inline float default_missile_reload = 1.5f;
 inline float default_missile_speed_multiplier = 8.0f;
 inline float default_missile_unfired_damage_multiplier = 0.2f;
-inline float default_petal_attack_offset = 18.0f;
-inline float default_petal_defend_offset = -20.0f;
-inline float default_petal_neutral_reach = 8.0f;
+inline float default_petal_attack_offset = WorldUnits(18.0f);
+inline float default_petal_defend_offset = WorldUnits(-20.0f);
+inline float default_petal_neutral_reach = WorldUnits(8.0f);
 inline float default_petal_orbit_k = 5.0f;
-inline float default_petal_orbit_radius = 16.0f;
+inline float default_petal_orbit_radius = WorldUnits(16.0f);
 inline float default_petal_pow = 3.0f;
 inline float default_petal_preload = 2.5f;
-inline float default_petal_radius = 15.0f;
+inline float default_petal_radius = WorldUnits(15.0f);
 inline float default_petal_reload = 2.5f;
 inline float default_petal_reload_multiplier_min = 0.001f;
 inline float default_petal_stat_reload_multiplier_min = 0.05f;
 inline float default_pincer_base_damage = 5.0f;
 inline float default_pincer_base_health = 5.0f;
-inline float default_pincer_base_radius = 10.0f;
+inline float default_pincer_base_radius = WorldUnits(10.0f);
 inline float default_pincer_copy = 1.0f;
 inline float default_pincer_mass = 2.0f;
 inline float default_pincer_poison_duration = 0.75f;
@@ -228,7 +231,7 @@ inline float default_pincer_reload = 2.5f;
 inline float default_pincer_slow_duration = 0.8f;
 inline float default_relic_base_damage = 0.0f;
 inline float default_relic_base_health = 10.0f;
-inline float default_relic_base_radius = 10.0f;
+inline float default_relic_base_radius = WorldUnits(10.0f);
 inline float default_relic_copy = 0.0f;
 inline float default_relic_health_bonus_common = 0.10f;
 inline float default_relic_health_bonus_epic = 0.40f;
@@ -242,31 +245,31 @@ inline float default_relic_health_bonus_ultra = 0.75f;
 inline float default_relic_health_bonus_unique = 1.50f;
 inline float default_relic_health_bonus_unusual = 0.20f;
 inline float default_relic_mass = 2.0f;
-inline float default_relic_psionic_zone_radius = 1024.0f;
-inline float default_relic_psionic_zone_radius_primordial = 4096.0f;
+inline float default_relic_psionic_zone_radius = WorldUnits(1024.0f);
+inline float default_relic_psionic_zone_radius_primordial = WorldUnits(4096.0f);
 inline float default_relic_psionic_zone_refresh = 0.25f;
 inline float default_relic_reload = 2.5f;
 inline float default_rose_base_damage = 5.0f;
 inline float default_rose_base_health = 5.0f;
 inline float default_rose_base_medicine = 7.5f;
-inline float default_rose_base_radius = 10.0f;
+inline float default_rose_base_radius = WorldUnits(10.0f);
 inline float default_rose_copy = 1.0f;
 inline float default_rose_mass = 2.0f;
 inline float default_rose_preload = 1.5f;
 inline float default_rose_reload = 3.5f;
 inline float default_stinger_base_damage = 100.0f;
 inline float default_stinger_base_health = 1.0f;
-inline float default_stinger_base_radius = 10.0f;
+inline float default_stinger_base_radius = WorldUnits(10.0f);
 inline float default_stinger_mass = 2.0f;
 inline float default_stinger_reload = 10.0f;
 inline float default_yinyang_base_damage = 10.0f;
 inline float default_yinyang_base_health = 10.0f;
-inline float default_yinyang_base_radius = 12.0f;
+inline float default_yinyang_base_radius = WorldUnits(12.0f);
 inline float default_yinyang_copy = 1.0f;
 inline float default_yinyang_mass = 2.0f;
 inline float default_yinyang_reload = 2.0f;
 inline float default_yggdrasil_base_health = 10.0f;
-inline float default_yggdrasil_base_radius = 10.0f;
+inline float default_yggdrasil_base_radius = WorldUnits(10.0f);
 inline float default_yggdrasil_channel_common = 600.0f;
 inline float default_yggdrasil_channel_super = 1.0f;
 inline float default_yggdrasil_channel_eternal = 0.33f;
@@ -283,36 +286,86 @@ inline float mob_beetle_armor = 1.0f;
 inline float mob_beetle_damage = 30.0f;
 inline float mob_beetle_mass = 10.0f;
 inline float mob_beetle_max_health = 100.0f;
-inline float mob_beetle_radius = 18.0f;
+inline float mob_beetle_radius = WorldUnits(18.0f);
 inline float mob_beetle_turn_speed = 1.5f;
 inline int mob_beetle_team = 2;
-inline float mob_bee_acceleration = 450.0f;
+inline float mob_bee_acceleration = WorldUnits(450.0f);
 inline float mob_bee_armor = 1.0f;
 inline float mob_bee_damage = 50.0f;
 inline float mob_bee_mass = 2.5f;
 inline float mob_bee_max_health = 35.0f;
-inline float mob_bee_max_velocity = 225.0f;
-inline float mob_bee_radius = 12.0f;
+inline float mob_bee_max_velocity = WorldUnits(225.0f);
+inline float mob_bee_radius = WorldUnits(12.0f);
 inline int mob_bee_team = 2;
 inline float mob_bee_wave_frequency = 5.2f;
 inline float mob_bee_wave_strength = 0.85f;
-inline float mob_bumblebee_acceleration = 450.0f;
+inline float mob_bumblebee_acceleration = WorldUnits(450.0f);
 inline float mob_bumblebee_armor = 1.0f;
 inline float mob_bumblebee_damage = 20.0f;
 inline float mob_bumblebee_mass = 2.5f;
 inline float mob_bumblebee_max_health = 25.0f;
-inline float mob_bumblebee_max_velocity = 225.0f;
+inline float mob_bumblebee_max_velocity = WorldUnits(225.0f);
 inline float mob_bumblebee_pollen_base_damage = 10.0f;
 inline float mob_bumblebee_pollen_base_health = 5.0f;
 inline float mob_bumblebee_pollen_interval = 0.25f;
 inline float mob_bumblebee_pollen_lifetime = 2.0f;
-inline float mob_bumblebee_pollen_radius_multiplier = 0.125f;
-inline float mob_bumblebee_radius = 12.0f;
+inline float mob_bumblebee_pollen_radius_multiplier = 1.0f;
+inline float mob_bumblebee_radius = WorldUnits(12.0f);
 inline int mob_bumblebee_team = 2;
 inline float mob_bumblebee_turn_interval_max = 2.25f;
 inline float mob_bumblebee_turn_interval_min = 0.65f;
 inline float mob_bumblebee_turn_max_angle = 0.95f;
-inline float mob_hornet_acceleration = 300.0f;
+inline float mob_rock_armor = 1.0f;
+inline float mob_rock_damage = 10.0f;
+inline float mob_rock_mass = 80.0f;
+inline float mob_rock_max_health_min = 50.0f;
+inline float mob_rock_max_health_max = 100.0f;
+inline float mob_rock_radius = WorldUnits(18.0f);
+inline int mob_rock_team = 2;
+inline float mob_baby_ant_armor = 1.0f;
+inline float mob_baby_ant_damage = 10.0f;
+inline float mob_baby_ant_mass = 2.0f;
+inline float mob_baby_ant_max_health = 25.0f;
+inline float mob_baby_ant_radius = WorldUnits(9.0f);
+inline int mob_baby_ant_team = 2;
+inline float mob_worker_ant_armor = 1.0f;
+inline float mob_worker_ant_damage = 10.0f;
+inline float mob_worker_ant_mass = 3.0f;
+inline float mob_worker_ant_max_health = 60.0f;
+inline float mob_worker_ant_radius = WorldUnits(11.0f);
+inline int mob_worker_ant_team = 2;
+inline float mob_queen_ant_armor = 1.0f;
+inline float mob_queen_ant_attack_interval = 3.0f;
+inline float mob_queen_ant_attack_recovery = 0.3f;
+inline float mob_queen_ant_attack_windup = 0.7f;
+inline int mob_queen_ant_max_summons = 20;
+inline float mob_queen_ant_damage = 10.0f;
+inline float mob_queen_ant_mass = 10.0f;
+inline float mob_queen_ant_max_health = 250.0f;
+inline float mob_queen_ant_radius = WorldUnits(26.0f);
+inline int mob_queen_ant_team = 2;
+inline float mob_ant_hole_armor = 1.0f;
+inline float mob_ant_hole_damage = 15.0f;
+inline float mob_ant_hole_max_health = 750.0f;
+inline float mob_ant_hole_radius = WorldUnits(32.0f);
+inline float mob_ant_hole_release_interval = 0.15f;
+inline int mob_ant_hole_team = 2;
+inline float mob_spider_acceleration = WorldUnits(180.0f);
+inline float mob_spider_armor = 1.0f;
+inline float mob_spider_damage = 15.0f;
+inline float mob_spider_horizon = WorldUnits(1200.0f);
+inline float mob_spider_mass = 5.0f;
+inline float mob_spider_max_health = 60.0f;
+inline float mob_spider_max_velocity = WorldUnits(86.0f);
+inline float mob_spider_poison_duration = 3.0f;
+inline float mob_spider_poison_total = 40.0f;
+inline float mob_spider_radius = WorldUnits(16.0f);
+inline int mob_spider_team = 2;
+inline float mob_spider_web_interval = 1.0f;
+inline float mob_spider_web_lifetime = 6.0f;
+inline float mob_spider_web_slow_duration = 0.35f;
+inline float mob_spider_web_speed_multiplier = 0.05f;
+inline float mob_hornet_acceleration = WorldUnits(300.0f);
 inline float mob_hornet_armor = 1.0f;
 inline float mob_hornet_attack_interval = 1.75f;
 inline float mob_hornet_attack_recovery = 0.3f;
@@ -323,16 +376,17 @@ inline float mob_hornet_max_health = 40.0f;
 inline float mob_hornet_max_velocity = default_max_velocity;
 inline float mob_hornet_missile_base_damage = 10.0f;
 inline float mob_hornet_missile_base_health = 5.0f;
-inline float mob_hornet_missile_radius = 10.0f;
+inline float mob_hornet_missile_radius = WorldUnits(10.0f);
+inline float mob_hornet_missile_reload = 0.5f;
 inline float mob_hornet_missile_speed = default_max_velocity * 4.0f;
-inline float mob_hornet_radius = 12.0f;
+inline float mob_hornet_radius = WorldUnits(12.0f);
 inline float mob_hornet_recoil_speed = default_max_velocity * 2.0f;
 inline int mob_hornet_team = 2;
 inline float mob_bandage_beetle_armor = 1.0f;
 inline float mob_bandage_beetle_damage = 30.0f;
 inline float mob_bandage_beetle_mass = 10.0f;
 inline float mob_bandage_beetle_max_health = 70.0f;
-inline float mob_bandage_beetle_radius = 18.0f;
+inline float mob_bandage_beetle_radius = WorldUnits(18.0f);
 inline int mob_bandage_beetle_team = 2;
 inline float mob_damage_scale_base = 3.0f;
 inline float mob_horizon_scale_exp = 1.25f;
@@ -351,10 +405,10 @@ inline float mob_normal_ladybug_armor = 0.8f;
 inline float mob_normal_ladybug_damage = 10.0f;
 inline float mob_normal_ladybug_mass = 5.0f;
 inline float mob_normal_ladybug_max_health = 60.0f;
-inline float mob_normal_ladybug_radius = 18.0f;
+inline float mob_normal_ladybug_radius = WorldUnits(18.0f);
 inline int mob_normal_ladybug_team = 2;
 inline int nullification_level_gap = 2;
-inline float psionic_connection_range = 2048.0f;
+inline float psionic_connection_range = WorldUnits(2048.0f);
 inline float mob_player_flower_armor = 0.0f;
 inline float mob_player_flower_damage = 25.0f;
 inline float mob_player_flower_level_damage_growth = 1.0565f;
@@ -365,9 +419,17 @@ inline int mob_player_flower_max_stat_level = 75;
 inline int mob_player_flower_initial_petal_slots = 5;
 inline int mob_player_flower_max_petal_slots = 10;
 inline float mob_player_flower_petal_rotation_speed = 1.5f;
-inline float mob_player_flower_radius = 18.0f;
+inline float mob_player_flower_radius = WorldUnits(18.0f);
 inline int mob_player_flower_team = 1;
-inline float mob_radius_scale_exp = 1.5f;
+inline float mob_radius_level_step = 0.05f;
+inline float MobRadiusScaleForLevel(int level)
+{
+    float scale = 1.f;
+    int clamped_level = std::clamp(level, 1, 10);
+    for (int previous_level = 1; previous_level < clamped_level; ++previous_level)
+        scale *= 1.f + static_cast<float>(previous_level) * mob_radius_level_step;
+    return std::max(0.f, scale);
+}
 inline float mob_stop_damping = 0.9f;
 inline float mob_stop_velocity_epsilon = 1e-5f;
 inline float mob_slow_to_max_velocity_time = 0.35f;
@@ -375,28 +437,28 @@ inline float mob_soldier_ant_armor = 1.0f;
 inline float mob_soldier_ant_damage = 10.0f;
 inline float mob_soldier_ant_mass = 3.3333333f;
 inline float mob_soldier_ant_max_health = 100.0f;
-inline float mob_soldier_ant_radius = 12.0f;
+inline float mob_soldier_ant_radius = WorldUnits(12.0f);
 inline int mob_soldier_ant_team = 2;
 inline float mob_soldier_fire_ant_armor = 1.0f;
 inline float mob_soldier_fire_ant_damage = 20.0f;
 inline float mob_soldier_fire_ant_mass = 3.3333333f;
 inline float mob_soldier_fire_ant_max_health = 100.0f;
-inline float mob_soldier_fire_ant_radius = 12.0f;
+inline float mob_soldier_fire_ant_radius = WorldUnits(12.0f);
 inline int mob_soldier_fire_ant_team = 2;
 inline float mob_soldier_termite_armor = 1.0f;
 inline float mob_soldier_termite_damage = 10.0f;
 inline float mob_soldier_termite_mass = 3.3333333f;
 inline float mob_soldier_termite_max_health = 200.0f;
-inline float mob_soldier_termite_radius = 12.0f;
+inline float mob_soldier_termite_radius = WorldUnits(12.0f);
 inline int mob_soldier_termite_team = 2;
 inline float mob_summoned_beetle_armor = 1.0f;
 inline float mob_summoned_beetle_damage = 30.0f;
-inline float mob_summoned_beetle_follow_range = 120.0f;
-inline float mob_summoned_beetle_hard_range = 360.0f;
-inline float mob_summoned_beetle_horizon = 512.0f;
+inline float mob_summoned_beetle_follow_range = WorldUnits(120.0f);
+inline float mob_summoned_beetle_hard_range = WorldUnits(360.0f);
+inline float mob_summoned_beetle_horizon = WorldUnits(512.0f);
 inline float mob_summoned_beetle_mass = 9.0f;
 inline float mob_summoned_beetle_max_health = 100.0f;
-inline float mob_summoned_beetle_radius = 16.0f;
+inline float mob_summoned_beetle_radius = WorldUnits(16.0f);
 inline float mob_summoned_beetle_scale_exp = 0.5f;
 inline int mob_summoned_beetle_team = 1;
 inline float mob_summoned_search_range_multiplier = 2.0f;
@@ -405,10 +467,10 @@ inline float mob_summoned_wander_follow_range_multiplier = 0.08f;
 inline float mob_summoned_wander_radius_multiplier = 1.2f;
 inline float mob_summoned_soldier_ant_armor = 1.0f;
 inline float mob_summoned_soldier_ant_damage = 10.0f;
-inline float mob_summoned_soldier_ant_horizon = 512.0f;
+inline float mob_summoned_soldier_ant_horizon = WorldUnits(512.0f);
 inline float mob_summoned_soldier_ant_mass = 3.0f;
 inline float mob_summoned_soldier_ant_max_health = 100.0f;
-inline float mob_summoned_soldier_ant_radius = 10.0f;
+inline float mob_summoned_soldier_ant_radius = WorldUnits(10.0f);
 inline int mob_summoned_soldier_ant_team = 1;
 inline size_t network_max_receive_buffer_size = 1024;
 inline size_t network_max_send_buffer_size = 1024 * 1024;
@@ -417,14 +479,14 @@ inline float network_snapshot_interval = 1.0f / 30.0f;
 inline uint8_t network_petal_type_offset = 100;
 inline float open_initial_spawn_delay = 5.f;
 inline float open_spawn_interval = 1.f;
-inline float open_super_plus_block_radius = 1024.0f * 8.0f;
+inline float open_super_plus_block_radius = 1024.0f * 4.0f;
 inline float open_super_plus_suppress_multiplier = 0.35f;
-inline float open_super_plus_suppress_radius = 1024.0f * 16.0f;
-inline float open_spawn_x = 500.0f;
-inline float open_spawn_y = 0.0f;
+inline float open_super_plus_suppress_radius = 1024.0f * 8.0f;
+inline float open_spawn_x = WorldUnits(500.0f);
+inline float open_spawn_y = WorldUnits(0.0f);
 inline float pi = 3.14159265359f;
 inline float player_input_axis_max = 127.0f;
-inline float player_move_target_distance = 100123.0f;
+inline float player_move_target_distance = WorldUnits(100123.0f);
 inline float player_respawn_x = 5376.0f;
 inline float player_respawn_y = 5376.0f;
 inline int port = 10012;
@@ -434,8 +496,9 @@ inline std::string report_deepseek_model = "deepseek-chat";
 inline int report_invalid_disable_count = 3;
 inline float report_keyword_base_mute_seconds = 60.0f;
 inline float report_scan_window_seconds = 60.0f;
+inline std::string rcon_password = "";
 inline float server_fixed_dt = 0.016f;
-inline float spatial_grid_cell_size = 200.0f;
+inline float spatial_grid_cell_size = WorldUnits(200.0f);
 inline float timeout_protection_seconds = 30.0f;
 inline bool gui_console_enabled = false;
 
@@ -478,6 +541,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
     static std::unordered_map<std::string, config_entry> entries = {
         REGISTER_CONFIG("account_data_path", account_data_path),
         REGISTER_CONFIG("startup_commands_path", startup_commands_path),
+        REGISTER_CONFIG("rcon_password", rcon_password),
         REGISTER_CONFIG("gui_console", gui_console_enabled),
         REGISTER_CONFIG("acceleration", default_acceleration),
         REGISTER_CONFIG("air_base_mass", default_air_base_mass),
@@ -704,6 +768,56 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_bumblebee_turn_interval_max", mob_bumblebee_turn_interval_max),
         REGISTER_CONFIG("mob_bumblebee_turn_interval_min", mob_bumblebee_turn_interval_min),
         REGISTER_CONFIG("mob_bumblebee_turn_max_angle", mob_bumblebee_turn_max_angle),
+        REGISTER_CONFIG("mob_rock_armor", mob_rock_armor),
+        REGISTER_CONFIG("mob_rock_damage", mob_rock_damage),
+        REGISTER_CONFIG("mob_rock_mass", mob_rock_mass),
+        REGISTER_CONFIG("mob_rock_max_health_min", mob_rock_max_health_min),
+        REGISTER_CONFIG("mob_rock_max_health_max", mob_rock_max_health_max),
+        REGISTER_CONFIG("mob_rock_radius", mob_rock_radius),
+        REGISTER_CONFIG("mob_rock_team", mob_rock_team),
+        REGISTER_CONFIG("mob_baby_ant_armor", mob_baby_ant_armor),
+        REGISTER_CONFIG("mob_baby_ant_damage", mob_baby_ant_damage),
+        REGISTER_CONFIG("mob_baby_ant_mass", mob_baby_ant_mass),
+        REGISTER_CONFIG("mob_baby_ant_max_health", mob_baby_ant_max_health),
+        REGISTER_CONFIG("mob_baby_ant_radius", mob_baby_ant_radius),
+        REGISTER_CONFIG("mob_baby_ant_team", mob_baby_ant_team),
+        REGISTER_CONFIG("mob_worker_ant_armor", mob_worker_ant_armor),
+        REGISTER_CONFIG("mob_worker_ant_damage", mob_worker_ant_damage),
+        REGISTER_CONFIG("mob_worker_ant_mass", mob_worker_ant_mass),
+        REGISTER_CONFIG("mob_worker_ant_max_health", mob_worker_ant_max_health),
+        REGISTER_CONFIG("mob_worker_ant_radius", mob_worker_ant_radius),
+        REGISTER_CONFIG("mob_worker_ant_team", mob_worker_ant_team),
+        REGISTER_CONFIG("mob_queen_ant_armor", mob_queen_ant_armor),
+        REGISTER_CONFIG("mob_queen_ant_attack_interval", mob_queen_ant_attack_interval),
+        REGISTER_CONFIG("mob_queen_ant_attack_recovery", mob_queen_ant_attack_recovery),
+        REGISTER_CONFIG("mob_queen_ant_attack_windup", mob_queen_ant_attack_windup),
+        REGISTER_CONFIG("mob_queen_ant_max_summons", mob_queen_ant_max_summons),
+        REGISTER_CONFIG("mob_queen_ant_damage", mob_queen_ant_damage),
+        REGISTER_CONFIG("mob_queen_ant_mass", mob_queen_ant_mass),
+        REGISTER_CONFIG("mob_queen_ant_max_health", mob_queen_ant_max_health),
+        REGISTER_CONFIG("mob_queen_ant_radius", mob_queen_ant_radius),
+        REGISTER_CONFIG("mob_queen_ant_team", mob_queen_ant_team),
+        REGISTER_CONFIG("mob_ant_hole_armor", mob_ant_hole_armor),
+        REGISTER_CONFIG("mob_ant_hole_damage", mob_ant_hole_damage),
+        REGISTER_CONFIG("mob_ant_hole_max_health", mob_ant_hole_max_health),
+        REGISTER_CONFIG("mob_ant_hole_radius", mob_ant_hole_radius),
+        REGISTER_CONFIG("mob_ant_hole_release_interval", mob_ant_hole_release_interval),
+        REGISTER_CONFIG("mob_ant_hole_team", mob_ant_hole_team),
+        REGISTER_CONFIG("mob_spider_acceleration", mob_spider_acceleration),
+        REGISTER_CONFIG("mob_spider_armor", mob_spider_armor),
+        REGISTER_CONFIG("mob_spider_damage", mob_spider_damage),
+        REGISTER_CONFIG("mob_spider_horizon", mob_spider_horizon),
+        REGISTER_CONFIG("mob_spider_mass", mob_spider_mass),
+        REGISTER_CONFIG("mob_spider_max_health", mob_spider_max_health),
+        REGISTER_CONFIG("mob_spider_max_velocity", mob_spider_max_velocity),
+        REGISTER_CONFIG("mob_spider_poison_duration", mob_spider_poison_duration),
+        REGISTER_CONFIG("mob_spider_poison_total", mob_spider_poison_total),
+        REGISTER_CONFIG("mob_spider_radius", mob_spider_radius),
+        REGISTER_CONFIG("mob_spider_team", mob_spider_team),
+        REGISTER_CONFIG("mob_spider_web_interval", mob_spider_web_interval),
+        REGISTER_CONFIG("mob_spider_web_lifetime", mob_spider_web_lifetime),
+        REGISTER_CONFIG("mob_spider_web_slow_duration", mob_spider_web_slow_duration),
+        REGISTER_CONFIG("mob_spider_web_speed_multiplier", mob_spider_web_speed_multiplier),
         REGISTER_CONFIG("mob_hornet_acceleration", mob_hornet_acceleration),
         REGISTER_CONFIG("mob_hornet_armor", mob_hornet_armor),
         REGISTER_CONFIG("mob_hornet_attack_interval", mob_hornet_attack_interval),
@@ -716,6 +830,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_hornet_missile_base_damage", mob_hornet_missile_base_damage),
         REGISTER_CONFIG("mob_hornet_missile_base_health", mob_hornet_missile_base_health),
         REGISTER_CONFIG("mob_hornet_missile_radius", mob_hornet_missile_radius),
+        REGISTER_CONFIG("mob_hornet_missile_reload", mob_hornet_missile_reload),
         REGISTER_CONFIG("mob_hornet_missile_speed", mob_hornet_missile_speed),
         REGISTER_CONFIG("mob_hornet_radius", mob_hornet_radius),
         REGISTER_CONFIG("mob_hornet_recoil_speed", mob_hornet_recoil_speed),
@@ -760,7 +875,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_player_flower_petal_rotation_speed", mob_player_flower_petal_rotation_speed),
         REGISTER_CONFIG("mob_player_flower_radius", mob_player_flower_radius),
         REGISTER_CONFIG("mob_player_flower_team", mob_player_flower_team),
-        REGISTER_CONFIG("mob_radius_scale_exp", mob_radius_scale_exp),
+        REGISTER_CONFIG("mob_radius_level_step", mob_radius_level_step),
         REGISTER_CONFIG("mob_slow_to_max_velocity_time", mob_slow_to_max_velocity_time),
         REGISTER_CONFIG("mob_stop_damping", mob_stop_damping),
         REGISTER_CONFIG("mob_stop_velocity_epsilon", mob_stop_velocity_epsilon),
