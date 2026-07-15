@@ -34,6 +34,44 @@ struct lootable_player
     float damage = 0.f;
 };
 
+struct zone_bounds
+{
+    sf::Vector2f center = {0.f, 0.f};
+    float radius = 0.f;
+};
+
+const std::vector<SZoneMobEntry>& CachedZoneMobEntries(const std::string& mobs)
+{
+    static const std::vector<SZoneMobEntry> empty;
+    static std::unordered_map<std::string, std::vector<SZoneMobEntry>> cache;
+
+    auto [it, inserted] = cache.try_emplace(mobs);
+    if (inserted) it->second = ParseZoneMobEntries(mobs);
+    return it->second.empty() ? empty : it->second;
+}
+
+zone_bounds ZoneBounds(const FlorrBtMap::Zone& zone)
+{
+    zone_bounds bounds;
+    if (zone.vertices.empty()) return bounds;
+
+    float min_x = zone.vertices.front().x;
+    float max_x = zone.vertices.front().x;
+    float min_y = zone.vertices.front().y;
+    float max_y = zone.vertices.front().y;
+    for (const auto& vertex : zone.vertices)
+    {
+        min_x = std::min(min_x, vertex.x);
+        max_x = std::max(max_x, vertex.x);
+        min_y = std::min(min_y, vertex.y);
+        max_y = std::max(max_y, vertex.y);
+    }
+
+    bounds.center = {(min_x + max_x) * 0.5f, (min_y + max_y) * 0.5f};
+    bounds.radius = Distance(bounds.center, {max_x, max_y});
+    return bounds;
+}
+
 bool IsAboveUltra(ERarity rarity)
 {
     return GetLevel(rarity) > GetLevel(ERarity::Ultra);
@@ -225,23 +263,33 @@ sf::Vector2f PickReturningPlayerSpawnPosition(CGameWorld& world)
 
 float ZoneArea(const FlorrBtMap::Zone& zone)
 {
+    static std::unordered_map<const FlorrBtMap::Zone*, float> cache;
+    if (auto it = cache.find(&zone); it != cache.end()) return it->second;
+
     const std::vector<FlorrBtMap::Point>& vertices = zone.vertices;
-    if (vertices.size() < 3) return 0.f;
+    if (vertices.size() < 3)
+    {
+        cache[&zone] = 0.f;
+        return 0.f;
+    }
 
     double area = 0.0;
     for (size_t i = 0, j = vertices.size() - 1; i < vertices.size(); j = i++)
         area += static_cast<double>(vertices[j].x) * static_cast<double>(vertices[i].y) -
                 static_cast<double>(vertices[i].x) * static_cast<double>(vertices[j].y);
     area = std::abs(area) * 0.5;
-    if (!std::isfinite(area) || area <= 0.0) return 0.f;
-    return static_cast<float>(std::min(area, static_cast<double>(std::numeric_limits<float>::max())));
+    float result = (!std::isfinite(area) || area <= 0.0) ? 0.f :
+                   static_cast<float>(std::min(area, static_cast<double>(std::numeric_limits<float>::max())));
+    cache[&zone] = result;
+    return result;
 }
 
 int ZoneTargetMobCount(const FlorrBtMap::Zone& zone)
 {
     if (zone.density <= 0.f) return 0;
 
-    const double desired = static_cast<double>(ZoneArea(zone)) * static_cast<double>(zone.density);
+    const double density_area = std::max(1.0, static_cast<double>(game_config::open_spawn_density_area));
+    const double desired = static_cast<double>(ZoneArea(zone)) / density_area * static_cast<double>(zone.density);
     if (!std::isfinite(desired) || desired <= 0.0) return 0;
 
     const double capped_desired = std::min(desired, static_cast<double>(max_zone_spawn_target));
@@ -263,16 +311,17 @@ bool CountsForZoneDensity(const CMobBase* mob)
     return true;
 }
 
-int CountMobsInZone(const FlorrBtMap::Zone& zone, const std::vector<CEntity*>& entities)
+int CountMobsInZone(CGameWorld& world, const FlorrBtMap::Zone& zone)
 {
     int count = 0;
-    for (const CEntity* entity : entities)
+    zone_bounds bounds = ZoneBounds(zone);
+    world.GetSpatialGrid().ForEachInRange(bounds.center, bounds.radius, [&](const CEntity* entity)
     {
         const auto* mob = dynamic_cast<const CMobBase*>(entity);
-        if (!CountsForZoneDensity(mob)) continue;
-        if (!IsPointInZone(zone, mob->m_pos)) continue;
+        if (!CountsForZoneDensity(mob)) return;
+        if (!IsPointInZone(zone, mob->m_pos)) return;
         ++count;
-    }
+    });
     return count;
 }
 
@@ -393,7 +442,6 @@ void COpenController::SpawnMobs(CGameWorld& world)
     int skipped_spacing = 0;
     int skipped_pool = 0;
     int skipped_create = 0;
-    const std::vector<CEntity*> entities = world.GetAllEntities();
     for (const FlorrBtMap::Zone& zone : map->zones)
     {
         const int target_mobs = ZoneTargetMobCount(zone);
@@ -403,13 +451,13 @@ void COpenController::SpawnMobs(CGameWorld& world)
             continue;
         }
 
-        int current_mobs = CountMobsInZone(zone, entities);
+        int current_mobs = CountMobsInZone(world, zone);
         if (current_mobs >= target_mobs)
         {
             continue;
         }
 
-        std::vector<SZoneMobEntry> mob_entries = ParseZoneMobEntries(zone.mobs);
+        const std::vector<SZoneMobEntry>& mob_entries = CachedZoneMobEntries(zone.mobs);
         if (mob_entries.empty())
         {
             ++skipped_pool;

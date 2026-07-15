@@ -5,8 +5,8 @@
 #include "states/states.h"
 #include "../../Shared/game_config.h"
 #include "../../Shared/tools.h"
+#include <algorithm>
 #include <utility>
-#include <vector>
 
 CStateZone::CStateZone(CGameWorld* world, sf::Vector2f pos, float radius, state_factory state, zone_filter filter)
     : CEntity(world, pos.x, pos.y, radius), m_state(std::move(state)), m_filter(std::move(filter))
@@ -25,7 +25,12 @@ void CStateZone::Tick(float dt)
         }
     }
 
-    Apply();
+    m_apply_timer -= dt;
+    if (m_apply_timer <= 0.f)
+    {
+        m_apply_timer = std::max(game_config::server_fixed_dt, m_apply_interval);
+        Apply();
+    }
 }
 
 void CStateZone::Apply()
@@ -33,22 +38,16 @@ void CStateZone::Apply()
     CGameWorld* world = GameWorld();
     if (!world || !m_state || m_radius <= 0.f) return;
 
-    const float radius_sq = m_radius * m_radius;
-    std::vector<CEntity*> entities = world->GetSpatialGrid().QueryRange(m_pos, m_radius, [this, radius_sq](const CEntity* entity)
+    world->GetSpatialGrid().ForEachInRange(m_pos, m_radius, [this](CEntity* entity)
     {
-        if (!entity || entity == this || entity->m_is_marked_for_des) return false;
-        if (DistanceSq(entity->m_pos, m_pos) > radius_sq) return false;
-        return !m_filter || m_filter(const_cast<CEntity*>(entity));
-    });
-
-    for (CEntity* entity : entities)
-    {
+        if (!entity || entity == this || entity->m_is_marked_for_des) return;
+        if (m_filter && !m_filter(entity)) return;
         auto* mob = dynamic_cast<CMobBase*>(entity);
-        if (!mob) continue;
+        if (!mob) return;
 
         std::unique_ptr<CState> state = m_state(mob);
         if (state) mob->AddState(std::move(state));
-    }
+    });
 }
 
 CSpiderWebZone::CSpiderWebZone(CGameWorld* world, sf::Vector2f pos, float radius, CEntity* owner,
@@ -74,4 +73,5 @@ CSpiderWebZone::CSpiderWebZone(CGameWorld* world, sf::Vector2f pos, float radius
     m_mass = 0.f;
     m_health = 1.f;
     m_timer = lifetime;
+    m_apply_interval = game_config::mob_spider_web_apply_interval;
 }

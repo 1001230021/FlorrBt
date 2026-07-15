@@ -80,5 +80,7 @@ class CBumbleBeeController : public IController
     float m_turn_timer = 0.f;
     float m_wave_timer = 0.f;
     float m_pollen_timer = 0.f;
+    float m_honey_target_timer = game_config::melee_target_time;
+    CEntity* m_p_honey_target = nullptr;
     bool m_initialized = false;
 };

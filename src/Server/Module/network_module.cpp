@@ -15,20 +15,62 @@
 #include "../Game/talent.h"
 #include "../Game/zone_mob_tools.h"
 #include "../report.h"
+#include "../../Shared/network_msg.h"
 #include <SFML/Network.hpp>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cctype>
 #include <exception>
 #include <limits>
 #include <random>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace
 {
 constexpr const char* new_player_checkpoint_name = "new_players";
+constexpr size_t snapshot_packet_budget = UINT16_MAX - 1024;
+constexpr size_t snapshot_backlog_skip_bytes = snapshot_packet_budget * 2;
+constexpr size_t snapshot_entity_budget = 900;
+
+size_t PacketLengthAt(const std::vector<uint8_t>& buffer, size_t offset)
+{
+    if (offset + packet_length_prefix_size > buffer.size()) return 0;
+    return static_cast<size_t>(buffer[offset]) | (static_cast<size_t>(buffer[offset + 1]) << 8);
+}
+
+void CompactSentPackets(CPlayer& player)
+{
+    if (player.m_send_offset == 0) return;
+    if (player.m_send_offset >= player.m_send_buffer.size())
+    {
+        player.m_send_buffer.clear();
+        player.m_send_offset = 0;
+        return;
+    }
+
+    size_t erase_until = 0;
+    while (erase_until + packet_length_prefix_size <= player.m_send_buffer.size())
+    {
+        size_t packet_len = PacketLengthAt(player.m_send_buffer, erase_until);
+        size_t packet_end = erase_until + packet_length_prefix_size + packet_len;
+        if (packet_end > player.m_send_buffer.size() || packet_end > player.m_send_offset) break;
+        erase_until = packet_end;
+    }
+
+    if (erase_until == 0) return;
+    player.m_send_buffer.erase(player.m_send_buffer.begin(), player.m_send_buffer.begin() + erase_until);
+    player.m_send_offset -= erase_until;
+}
+
+size_t PendingSendBytes(const CPlayer& player)
+{
+    if (player.m_send_offset >= player.m_send_buffer.size()) return 0;
+    return player.m_send_buffer.size() - player.m_send_offset;
+}
 
 uint8_t GetEntityType(const CEntity& entity)
 {
@@ -391,37 +433,109 @@ void INetworkModule::SendSnapshots()
         auto* owner_mob = dynamic_cast<CMobBase*>(owner);
         if (!owner_mob || !owner_mob->GetFinalStats()) continue;
 
+        DropQueuedSnapshots(*player);
+        if (PendingSendBytes(*player) > snapshot_backlog_skip_bytes)
+        {
+            if ((m_snapshot_id % 60) == 0)
+            {
+                LOG_WARN("network", "Skipping snapshot for player " + std::to_string(player->GetId()) +
+                                        " because output backlog is " + std::to_string(PendingSendBytes(*player)) +
+                                        " bytes");
+            }
+            if (!FlushSendBuffer(*player))
+            {
+                LOG_INFO("network", "Player " + std::to_string(player->GetId()) + " disconnected while flushing backlog");
+                player->DetachSocket();
+            }
+            continue;
+        }
+
         QueueOwnerState(*player);
 
         float view_radius = owner_mob->GetFinalStats()->horizon;
         float snap_view_radius = view_radius * 2.f;
+        if (game_config::network_snapshot_query_radius_cap > 0.f)
+            snap_view_radius = std::min(snap_view_radius, game_config::network_snapshot_query_radius_cap);
         float snap_radius = snap_view_radius + GetPrimordialDefaultMobRadius();
-        auto visible_entities = owner->GameWorld()->GetSpatialGrid().QueryRange(
-            owner->m_pos, snap_radius, [owner, snap_view_radius](const CEntity* entity)
+        const size_t max_snapshot_candidates = snapshot_entity_budget > 0 ? snapshot_entity_budget - 1 : 0;
+        struct visible_candidate
+        {
+            const CEntity* entity = nullptr;
+            float dist_sq = 0.f;
+        };
+        std::vector<visible_candidate> visible_entities;
+        visible_entities.reserve(std::min<size_t>(max_snapshot_candidates, 128));
+        size_t visible_count = 1;
+        auto farther_to_owner = [](const visible_candidate& lhs, const visible_candidate& rhs)
+        {
+            return lhs.dist_sq < rhs.dist_sq;
+        };
+
+        owner->GameWorld()->GetSpatialGrid().ForEachInRange(owner->m_pos, snap_radius, [&](CEntity* entity)
+        {
+            if (!entity || !entity->IsVisible() || entity == owner) return;
+            float radius = snap_view_radius + std::max(0.f, entity->m_radius);
+            float dist_sq = DistanceSq(owner->m_pos, entity->m_pos);
+            if (dist_sq > radius * radius) return;
+            ++visible_count;
+
+            if (max_snapshot_candidates == 0) return;
+            visible_candidate candidate{entity, dist_sq};
+            if (visible_entities.size() < max_snapshot_candidates)
             {
-                if (!entity || !entity->IsVisible() || entity == owner) return false;
-                float radius = snap_view_radius + std::max(0.f, entity->m_radius);
-                return DistanceSq(owner->m_pos, entity->m_pos) <= radius * radius;
-            });
+                visible_entities.push_back(candidate);
+                std::push_heap(visible_entities.begin(), visible_entities.end(), farther_to_owner);
+                return;
+            }
+            if (candidate.dist_sq >= visible_entities.front().dist_sq) return;
+
+            std::pop_heap(visible_entities.begin(), visible_entities.end(), farther_to_owner);
+            visible_entities.back() = candidate;
+            std::push_heap(visible_entities.begin(), visible_entities.end(), farther_to_owner);
+        });
+
+        std::sort(visible_entities.begin(), visible_entities.end(),
+                  [](const visible_candidate& lhs, const visible_candidate& rhs)
+        {
+            return lhs.dist_sq < rhs.dist_sq;
+        });
 
         ServerMessage msg;
         msg.type = ServerMessage::Type::Snapshot;
         msg.snapshot_id = m_snapshot_id;
         msg.owner_entity_id = static_cast<net_entity_id>(owner->m_id);
         msg.view_radius = view_radius;
-        msg.entities.reserve(visible_entities.size() + 1);
-        msg.entities.push_back(BuildEntitySnap(*owner, *owner));
+        msg.entities.reserve(std::min(visible_entities.size() + 1, snapshot_entity_budget));
+        ServerEntitySnap owner_snap = BuildEntitySnap(*owner, *owner);
+        size_t packed_size = 14 + ServerEntitySnap::GetPackedSize(owner_snap);
+        msg.entities.push_back(std::move(owner_snap));
 
-        for (const auto* entity : visible_entities)
+        for (const auto& candidate : visible_entities)
         {
+            const CEntity* entity = candidate.entity;
             if (!entity) continue;
             if (!entity->IsVisible()) continue;
-            msg.entities.push_back(BuildEntitySnap(*entity, *owner));
+            if (msg.entities.size() >= snapshot_entity_budget) break;
+            ServerEntitySnap snap = BuildEntitySnap(*entity, *owner);
+            size_t snap_size = ServerEntitySnap::GetPackedSize(snap);
+            if (packed_size + snap_size > snapshot_packet_budget) break;
+            packed_size += snap_size;
+            msg.entities.push_back(std::move(snap));
+        }
+
+        if (msg.entities.size() < visible_count && (m_snapshot_id % 60) == 0)
+        {
+            LOG_WARN("network", "Trimmed snapshot for player " + std::to_string(player->GetId()) + ": " +
+                                    std::to_string(msg.entities.size()) + "/" + std::to_string(visible_count) +
+                                    " entities, " + std::to_string(packed_size) + " bytes");
         }
 
         if (!QueueMessage(*player, msg))
         {
-            LOG_WARN("network", "Failed to queue snapshot for player " + std::to_string(player->GetId()));
+            LOG_WARN("network", "Failed to queue snapshot for player " + std::to_string(player->GetId()) +
+                                    " (" + std::to_string(msg.entities.size()) + " entities, " +
+                                    std::to_string(ServerMessage::GetPackedSize(msg)) + " bytes, backlog " +
+                                    std::to_string(PendingSendBytes(*player)) + " bytes)");
         }
         if (!FlushSendBuffer(*player))
         {
@@ -530,16 +644,23 @@ void INetworkModule::ProcessMessages()
 
 bool INetworkModule::FlushSendBuffer(CPlayer& player)
 {
+    CompactSentPackets(player);
     while (!player.m_send_buffer.empty())
     {
         size_t sent = 0;
-        auto status = player.GetSocket().send(player.m_send_buffer.data(), player.m_send_buffer.size(), sent);
+        auto status = player.GetSocket().send(player.m_send_buffer.data() + player.m_send_offset,
+                                              player.m_send_buffer.size() - player.m_send_offset, sent);
         if (sent > 0)
         {
-            player.m_send_buffer.erase(player.m_send_buffer.begin(), player.m_send_buffer.begin() + sent);
+            player.m_send_offset += sent;
+            CompactSentPackets(player);
         }
 
-        if (status == sf::Socket::Status::Done) continue;
+        if (status == sf::Socket::Status::Done)
+        {
+            if (sent == 0 && !player.m_send_buffer.empty()) return true;
+            continue;
+        }
         if (status == sf::Socket::Status::Partial || status == sf::Socket::Status::NotReady) return true;
         if (status == sf::Socket::Status::Disconnected) return false;
         LOG_WARN("network", "Send failed for player " + std::to_string(player.GetId()));
@@ -548,11 +669,70 @@ bool INetworkModule::FlushSendBuffer(CPlayer& player)
     return true;
 }
 
+void INetworkModule::DropQueuedSnapshots(CPlayer& player)
+{
+    CompactSentPackets(player);
+    if (player.m_send_buffer.empty()) return;
+
+    size_t scan_offset = 0;
+    if (player.m_send_offset > 0)
+    {
+        size_t first_len = PacketLengthAt(player.m_send_buffer, 0);
+        size_t first_end = packet_length_prefix_size + first_len;
+        if (first_end > player.m_send_buffer.size()) return;
+        scan_offset = first_end;
+    }
+
+    std::vector<uint8_t> kept;
+    kept.reserve(player.m_send_buffer.size());
+    kept.insert(kept.end(), player.m_send_buffer.begin(), player.m_send_buffer.begin() + scan_offset);
+
+    size_t dropped_packets = 0;
+    size_t offset = scan_offset;
+    while (offset + packet_length_prefix_size <= player.m_send_buffer.size())
+    {
+        size_t packet_len = PacketLengthAt(player.m_send_buffer, offset);
+        size_t packet_payload = offset + packet_length_prefix_size;
+        size_t packet_end = packet_payload + packet_len;
+        if (packet_len == 0 || packet_end > player.m_send_buffer.size())
+        {
+            kept.insert(kept.end(), player.m_send_buffer.begin() + offset, player.m_send_buffer.end());
+            offset = player.m_send_buffer.size();
+            break;
+        }
+
+        uint8_t type = player.m_send_buffer[packet_payload];
+        if (type == static_cast<uint8_t>(ServerMessage::Type::Snapshot))
+        {
+            dropped_packets++;
+        } else {
+            kept.insert(kept.end(), player.m_send_buffer.begin() + offset, player.m_send_buffer.begin() + packet_end);
+        }
+        offset = packet_end;
+    }
+
+    if (offset < player.m_send_buffer.size())
+    {
+        kept.insert(kept.end(), player.m_send_buffer.begin() + offset, player.m_send_buffer.end());
+    }
+    if (dropped_packets == 0) return;
+
+    player.m_send_buffer.swap(kept);
+}
+
 bool INetworkModule::QueueMessage(CPlayer& player, const ServerMessage& msg)
 {
+    CompactSentPackets(player);
     size_t len = ServerMessage::GetPackedSize(msg);
-    if (len == 0 || len > UINT16_MAX) return false;
-    if (player.m_send_buffer.size() + len + packet_length_prefix_size > game_config::network_max_send_buffer_size)
+    if (len == 0 || len > UINT16_MAX)
+    {
+        if (msg.type == ServerMessage::Type::Snapshot)
+        {
+            LOG_WARN("network", "Snapshot packet size is invalid: " + std::to_string(len) + " bytes");
+        }
+        return false;
+    }
+    if (PendingSendBytes(player) + len + packet_length_prefix_size > game_config::network_max_send_buffer_size)
     {
         LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " output buffer overflow");
         return false;
@@ -1272,11 +1452,11 @@ ServerEntitySnap INetworkModule::BuildEntitySnap(const CEntity& entity, const CE
         auto& mutable_mob = *const_cast<CMobBase*>(mob);
         if (dynamic_cast<CSummonedMeleeController*>(mutable_mob.GetController()))
             snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Summoned);
-        if (!mutable_mob.FindStates<CUndeadState>().empty())
+        if (mob->HasState<CUndeadState>())
             snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Undead);
-        if (!mutable_mob.FindStates<CCorruptionState>().empty())
+        if (mob->HasState<CCorruptionState>())
             snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Corrupted);
-        if (!mutable_mob.FindStates<CPoisonState>().empty())
+        if (mob->HasState<CPoisonState>())
             snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Poisoned);
     }
     return snap;

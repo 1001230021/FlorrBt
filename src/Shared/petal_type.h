@@ -43,12 +43,24 @@ enum class EPetalType : int
     Mimic,
     Glass,
     Stinger,
-    BrokenEgg
+    BrokenEgg,
+    Light,
+    Leaf,
+    Rock,
+    Web,
+    Cactus,
+    Pollen,
+    Corn,
+    Rice,
+    Basil,
+    Soil,
+    Honey,
+    Wax
 };
 
 using PetalType = EPetalType;
 
-inline constexpr std::array<std::string_view, 39> petal_type_names = {
+inline constexpr std::array<std::string_view, 51> petal_type_names = {
     "None",
     "Air",
     "AntEgg",
@@ -88,6 +100,18 @@ inline constexpr std::array<std::string_view, 39> petal_type_names = {
     "Glass",
     "Stinger",
     "BrokenEgg",
+    "Light",
+    "Leaf",
+    "Rock",
+    "Web",
+    "Cactus",
+    "Pollen",
+    "Corn",
+    "Rice",
+    "Basil",
+    "Soil",
+    "Honey",
+    "Wax",
 };
 
 inline std::string_view GetPetalTypeName(EPetalType type)
@@ -155,6 +179,30 @@ inline bool MatchPetalTypeAlias(std::string_view text, EPetalType type)
         return text == "stinger";
     case EPetalType::BrokenEgg:
         return text == "begg" || text == "brokenegg" || text == "broken_egg";
+    case EPetalType::Light:
+        return text == "light" || text == "lgt";
+    case EPetalType::Leaf:
+        return text == "leaf";
+    case EPetalType::Rock:
+        return text == "rock";
+    case EPetalType::Web:
+        return text == "web";
+    case EPetalType::Cactus:
+        return text == "cactus";
+    case EPetalType::Pollen:
+        return text == "pollen";
+    case EPetalType::Corn:
+        return text == "corn";
+    case EPetalType::Rice:
+        return text == "rice";
+    case EPetalType::Basil:
+        return text == "basil";
+    case EPetalType::Soil:
+        return text == "soil";
+    case EPetalType::Honey:
+        return text == "honey";
+    case EPetalType::Wax:
+        return text == "wax";
     default:
         return false;
     }

@@ -35,5 +35,6 @@ class CDrop : public CEntity
     uint16_t m_stack_num = 1;
 
     float m_unable_picked_timer = game_config::default_drop_pickup_delay;
+    float m_merge_timer = 0.f;
     float m_timer = game_config::default_drop_lifetime;
 };

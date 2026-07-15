@@ -40,6 +40,7 @@ struct SMobStats
 struct SFlowerStats : public SMobStats
 {
     float max_health_multiplier = 1.f;
+    float health_regen = 0.f;
     float reach = 0.0f;
     float petal_attraction_range = 40.f;
 
@@ -47,6 +48,7 @@ struct SFlowerStats : public SMobStats
     float petal_reload_multiplier = 1.f;
     float petal_health_multiplier = 1.f;
     float petal_medicine_multiplier = 1.f;
+    float healing_received_multiplier = 1.f;
     float mult_summoned_health = 1.f;
     float poison_damage_multiplier = 1.f;
     float poison_duration_multiplier = 1.f;
@@ -63,6 +65,7 @@ struct SFlowerStats : public SMobStats
 
         max_health *= other.max_health_multiplier;
         max_health_multiplier *= other.max_health_multiplier;
+        health_regen += other.health_regen;
         reach += other.reach;
         petal_attraction_range += other.petal_attraction_range;
 
@@ -70,6 +73,7 @@ struct SFlowerStats : public SMobStats
         petal_reload_multiplier *= other.petal_reload_multiplier;
         petal_health_multiplier *= other.petal_health_multiplier;
         petal_medicine_multiplier *= other.petal_medicine_multiplier;
+        healing_received_multiplier *= other.healing_received_multiplier;
         mult_summoned_health *= other.mult_summoned_health;
         poison_damage_multiplier *= other.poison_damage_multiplier;
         poison_duration_multiplier *= other.poison_duration_multiplier;

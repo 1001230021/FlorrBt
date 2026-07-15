@@ -8,6 +8,10 @@ const BEE_ANTENNA_STROKE = "#333";
 const BEE_ANTENNA_LINE_WIDTH = 2.5;
 const HORNET_MISSILE_CENTER = { x: 86.5, y: 86.5 };
 const HORNET_MISSILE_BOX = 32;
+const HORNET_MISSILE_PATHS = new Set([
+  "M96.896 96.896 84.64 75.447l-9.193 9.193z",
+  "M94.545 98.24 82.288 76.79l2.352-1.343 1.915 1.915-9.193 9.193-1.915-1.915 1.344-2.352L98.24 94.545l-1.344 2.351zm4.703-2.688q.087.153.154.316.066.163.112.333.045.17.068.345.022.174.022.35t-.022.35-.068.345-.112.333-.154.316q-.066.115-.143.224-.078.108-.165.209t-.184.192-.202.172-.218.153q-.112.07-.231.13t-.244.107-.252.082-.26.057-.264.032q-.132.01-.265.005-.134-.003-.266-.02t-.261-.047q-.13-.03-.256-.071-.126-.043-.248-.097-.121-.054-.237-.12L74.103 86.99q-.314-.18-.57-.436-.095-.094-.18-.197t-.158-.214-.136-.228-.114-.24-.09-.25q-.038-.128-.064-.258t-.04-.263q-.012-.132-.012-.265 0-.134.013-.266t.039-.263q.026-.13.064-.258.04-.127.09-.25t.114-.24q.062-.118.136-.228t.159-.214q.084-.102.178-.197l9.192-9.192q.257-.256.572-.436.115-.066.237-.12.121-.055.247-.097.127-.042.256-.072.13-.03.262-.047.132-.016.265-.02t.266.005.264.032q.13.022.26.057.128.035.252.083.124.047.243.107.12.059.232.13.113.07.218.152t.202.173.184.192q.087.1.164.208.077.109.143.224z",
+]);
 const POLLEN_ASSET = "./assets/petals/14.svg";
 const POLLEN_VIEWBOX = "39 31 32 32";
 const POLLEN_CACHE = { image: null, failed: false };
@@ -254,7 +258,12 @@ function stripAntennae(svgText, strip) {
   if (!root || root.tagName.toLowerCase() !== "svg") return svgText;
 
   const paths = Array.from(root.querySelectorAll("path"));
-  if (strip === "hornet") paths.slice(-2).forEach((node) => node.remove());
+  if (strip === "hornet") {
+    paths.forEach((node) => {
+      if (HORNET_MISSILE_PATHS.has(node.getAttribute("d") || "")) node.remove();
+    });
+    Array.from(root.querySelectorAll("path")).slice(-2).forEach((node) => node.remove());
+  }
   else paths.slice(-4).forEach((node) => node.remove());
   return new XMLSerializer().serializeToString(root);
 }

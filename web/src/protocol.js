@@ -30,7 +30,9 @@ export const PetalNames = [
   "Coin", "Compass", "Cogwheel", "Disc", "Dust", "GoldenLeaf", "Iris", "Lentil", "Moon",
   "Nullification", "Pincer", "Relic", "Rose", "YinYang", "Missile", "BloodSacrifice",
   "Corruption", "Bandage", "Heavy", "Faster", "Yggdrasil", "Dahlia", "Wing", "Triangle",
-  "Sawblade", "Fragment", "Mimic", "Glass", "Stinger", "BrokenEgg",
+  "Sawblade", "Fragment", "Mimic", "Glass", "Stinger", "BrokenEgg", "Light",
+  "Leaf", "Rock", "Web", "Cactus", "Pollen", "Corn", "Rice", "Basil", "Soil",
+  "Honey", "Wax",
 ];
 
 export const MobNames = [

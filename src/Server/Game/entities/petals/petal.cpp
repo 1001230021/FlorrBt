@@ -10,6 +10,8 @@
 
 namespace
 {
+constexpr float max_petal_owner_distance_multiplier = 16.f;
+
 std::optional<sf::Vector2f> CalculateSpawnGlobal(CPetal* petal, CFlower* flower)
 {
     if (!petal || !flower || !flower->GetFinalStats()) return std::nullopt;
@@ -29,7 +31,10 @@ std::optional<sf::Vector2f> CalculateSpawnGlobal(CPetal* petal, CFlower* flower)
                         (flower->GetMoonPetal() && flower->GetMoonPetal() != petal ? flower->GetMoonPetal()->m_radius :
                          flower->GetFinalStats()->radius);
     float reach = game_config::default_petal_neutral_reach;
-    if (petal->m_type != EPetalType::BrokenEgg)
+    bool ignores_reach = petal->m_type == EPetalType::BrokenEgg || petal->m_type == EPetalType::Basil ||
+                         petal->m_type == EPetalType::Web || petal->m_type == EPetalType::Pollen ||
+                         petal->m_type == EPetalType::Honey || petal->m_type == EPetalType::Wax;
+    if (!ignores_reach)
     {
         if (flower->m_attacking)
         {
@@ -149,6 +154,14 @@ void CPetal::Tick(float dt)
     CProjectile::Tick(dt);
     m_lifetime += dt;
 
+    float flower_radius = flower->GetFinalStats() ? flower->GetFinalStats()->radius : flower->m_radius;
+    float max_distance = std::max(0.f, flower_radius) * max_petal_owner_distance_multiplier;
+    if (max_distance > 0.f && DistanceSq(m_pos, flower->m_pos) > max_distance * max_distance)
+    {
+        m_is_marked_for_des = true;
+        return;
+    }
+
     for (auto it = m_hit_credits.begin(); it != m_hit_credits.end();)
     {
         CEntity* target = GameWorld() ? GameWorld()->GetEntity(it->first) : nullptr;
@@ -189,7 +202,7 @@ void CMissilePetal::Tick(float dt)
     bool restore_fired_angle = m_fired && m_type == EPetalType::Missile && m_has_fired_angle;
     float fired_angle = m_fired_angle;
 
-    CPetal::Tick(dt);
+    CThrownPetal::Tick(dt);
     if (restore_fired_angle)
     {
         m_facing_angle = fired_angle;
@@ -203,6 +216,58 @@ void CMissilePetal::Tick(float dt)
         lifetime *= game_config::default_carrot_lifetime_multiplier;
     if (m_fired_lifetime >= lifetime || m_health <= 0.f)
         m_is_marked_for_des = true;
+}
+
+void CThrownPetal::BeginThrow(sf::Vector2f direction, float speed, float deceleration_time,
+                              bool destroy_when_stopped, bool tick_from_world, bool decelerates)
+{
+    float len = Length(direction);
+    if (len <= game_config::entity_collision_epsilon)
+        direction = {1.f, 0.f};
+    else
+        direction /= len;
+
+    m_thrown = true;
+    m_throw_decelerates = decelerates;
+    m_destroy_when_stopped = destroy_when_stopped;
+    m_throw_age = 0.f;
+    m_throw_deceleration_time = std::max(0.001f, deceleration_time);
+    m_throw_initial_speed = std::max(0.f, speed);
+    m_throw_direction = direction;
+    m_vel = m_throw_direction * m_throw_initial_speed;
+    m_facing_angle = std::atan2(m_throw_direction.y, m_throw_direction.x);
+    m_has_facing = true;
+    m_skip_world_tick = !tick_from_world;
+}
+
+void CThrownPetal::StopThrow(bool destroy)
+{
+    if (!m_thrown) return;
+    m_throw_age = m_throw_deceleration_time;
+    m_vel = {0.f, 0.f};
+    if (destroy) m_health = 0.f;
+}
+
+void CThrownPetal::Tick(float dt)
+{
+    if (m_thrown)
+    {
+        if (m_throw_decelerates)
+        {
+            float t = std::clamp(m_throw_age / std::max(0.001f, m_throw_deceleration_time), 0.f, 1.f);
+            m_vel = m_throw_direction * (m_throw_initial_speed * (1.f - t));
+        }
+    }
+
+    CPetal::Tick(dt);
+
+    if (!m_thrown) return;
+    m_throw_age += dt;
+    if (m_throw_decelerates && m_throw_age >= m_throw_deceleration_time)
+    {
+        m_vel = {0.f, 0.f};
+        if (m_destroy_when_stopped) m_health = 0.f;
+    }
 }
 
 void CPetalSlot::SpawnCopy(int copy_index, CFlower* flower)

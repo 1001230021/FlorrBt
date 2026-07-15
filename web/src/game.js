@@ -42,8 +42,17 @@ const connectBtn = document.getElementById("connectBtn");
 const authStatus = document.getElementById("authStatus");
 const deathOverlay = document.getElementById("deathOverlay");
 const reviveBtn = document.getElementById("reviveBtn");
+const quickActions = document.getElementById("quickActions");
+const quickBackpackBtn = document.getElementById("quickBackpackBtn");
+const quickTalentBtn = document.getElementById("quickTalentBtn");
+const quickCraftBtn = document.getElementById("quickCraftBtn");
+const quickTalentPoints = document.getElementById("quickTalentPoints");
+const chatPanel = document.getElementById("chatPanel");
+const chatChannels = document.getElementById("chatChannels");
 const chatLog = document.getElementById("chatLog");
+const chatHint = document.getElementById("chatHint");
 const chatInput = document.getElementById("chatInput");
+const petalInfoTooltip = document.getElementById("petalInfoTooltip");
 const consolePanel = document.getElementById("consolePanel");
 const debugInfo = document.getElementById("debugInfo");
 const consoleLog = document.getElementById("consoleLog");
@@ -100,6 +109,9 @@ const state = {
   lastFrameTime: performance.now(),
   fps: 0,
   consoleOpen: false,
+  chatOpen: false,
+  chatFilters: { local: true, global: true, whisper: true, server: true },
+  lastChatRenderAt: 0,
   debugGrid: false,
   backpackOpen: false,
   craftOpen: false,
@@ -138,6 +150,11 @@ const renderCullPaddingPx = 120;
 const mapChunkTileSpan = 4;
 const mapChunkCacheLimit = 192;
 const mapPrewarmBudgetMs = 8;
+const chatMaxHistory = 80;
+const chatClosedMaxLines = 6;
+const chatVisibleMs = 10000;
+const chatFadeMs = 3000;
+const chatClosedRenderIntervalMs = 180;
 const flagAttacking = 1 << 0;
 const flagDefending = 1 << 1;
 const flagDead = 1 << 2;
@@ -167,24 +184,63 @@ const playerFlowerType = 6;
 const bossRarity = 8;
 const maxBossBars = 3;
 let currentRenderTimeSeconds = 0;
+const petalAirType = 1;
 const petalAntEggType = 2;
 const petalAntennaeType = 3;
+const petalBasicType = 4;
+const petalBeetleEggType = 5;
+const petalBoneType = 6;
+const petalBubbleType = 7;
+const petalCarrotType = 8;
+const petalCoinType = 9;
 const petalCompassType = 10;
+const petalCogwheelType = 11;
+const petalDiscType = 12;
 const petalDustType = 13;
+const petalGoldenLeafType = 14;
+const petalIrisType = 15;
+const petalLentilType = 16;
 const petalMoonType = 17;
 const petalNullificationType = 18;
+const petalPincerType = 19;
 const petalRelicType = 20;
+const petalRoseType = 21;
+const petalYinYangType = 22;
+const petalMissileType = 23;
+const petalBloodSacrificeType = 24;
+const petalCorruptionType = 25;
 const petalBandageType = 26;
+const petalHeavyType = 27;
+const petalFasterType = 28;
+const petalYggdrasilType = 29;
 const petalDahliaType = 30;
+const petalWingType = 31;
+const petalTriangleType = 32;
+const petalSawbladeType = 33;
+const petalFragmentType = 34;
 const petalMimicType = 35;
+const petalGlassType = 36;
 const petalStingerType = 37;
 const petalBrokenEggType = 38;
+const petalLightType = 39;
+const petalLeafType = 40;
+const petalRockType = 41;
+const petalWebType = 42;
+const petalCactusType = 43;
+const petalPollenType = 44;
+const petalCornType = 45;
+const petalRiceType = 46;
+const petalBasilType = 47;
+const petalSoilType = 48;
+const petalHoneyType = 49;
+const petalWaxType = 50;
 const stingerSplitIconMinRarity = 6;
 const flowerTextureVersion = "20260713a";
 const PetalIconIds = [
   0, 48, 51, 17, 1, 16, 58, 13, 57, 74, 71, 98, 72, 111, 97, 7, 113, 77,
   "nullification", 27, 53, 5, 19, 9, 108, 80, 103, 18, 12, 30, 38, 8, 106,
-  109, 94, 93, "glass", 6, "broken_egg",
+  109, 94, 93, "glass", 6, "broken_egg", 2, 22, 3, 20, 11, 14,
+  25, 24, 49, 41, 21, 96,
 ];
 const worldPetalSizeScale = 6;
 const worldDropSizeScale = 3.25;
@@ -354,6 +410,31 @@ function toggleConsole(force) {
   }
 }
 
+function updateQuickActionButtons() {
+  quickBackpackBtn?.classList.toggle("active", state.backpackOpen);
+  quickCraftBtn?.classList.toggle("active", state.craftOpen);
+  quickTalentBtn?.classList.toggle("active", state.talentOpen);
+  if (quickTalentPoints) {
+    const points = Math.max(0, Math.floor(state.talentPoints || 0));
+    quickTalentPoints.textContent = formatShortCount(points);
+    quickTalentPoints.classList.toggle("hidden", points <= 0);
+    quickTalentBtn?.setAttribute("title", points > 0 ? `Talents [X] - ${points} TP` : "Talents [X]");
+  }
+}
+
+function updatePlayUiVisibility() {
+  const visible = state.authenticated;
+  quickActions?.classList.toggle("hidden", !visible);
+  chatPanel?.classList.toggle("hidden", !visible);
+  if (!visible) {
+    state.chatOpen = false;
+    chatInput.value = "";
+    chatInput.classList.add("hidden");
+    chatChannels.classList.add("hidden");
+    chatPanel.classList.remove("open");
+  }
+}
+
 function toggleBackpack(force) {
   state.backpackOpen = typeof force === "boolean" ? force : !state.backpackOpen;
   if (state.backpackOpen) {
@@ -361,6 +442,7 @@ function toggleBackpack(force) {
     toggleTalent(false);
   }
   backpackPanel.classList.toggle("open", state.backpackOpen);
+  updateQuickActionButtons();
 }
 
 function toggleCraft(force) {
@@ -373,6 +455,7 @@ function toggleCraft(force) {
     clearCraftDisplay();
   }
   craftPanel.classList.toggle("open", state.craftOpen);
+  updateQuickActionButtons();
 }
 
 function toggleTalent(force) {
@@ -383,6 +466,7 @@ function toggleTalent(force) {
     renderTalentPanel();
   }
   talentPanel.classList.toggle("open", state.talentOpen);
+  updateQuickActionButtons();
 }
 
 function submitConsole() {
@@ -429,6 +513,7 @@ async function connectAndAuth() {
   ws.addEventListener("close", () => {
     state.connected = false;
     state.authenticated = false;
+    updatePlayUiVisibility();
     authPanel.classList.remove("hidden");
     setStatus("Disconnected");
     addConsoleLine("Disconnected", "error");
@@ -448,6 +533,7 @@ function closeSocket(sendDisconnect = true) {
   state.ws = null;
   state.connected = false;
   state.authenticated = false;
+  updatePlayUiVisibility();
 }
 
 function sendBytes(bytes) {
@@ -493,6 +579,7 @@ function handleServerMessage(msg) {
     state.authenticated = !!msg.success;
     setStatus(msg.message || (msg.success ? "Authenticated" : "Auth failed"), msg.success);
     if (msg.success) authPanel.classList.add("hidden");
+    updatePlayUiVisibility();
     addConsoleLine(msg.message || (msg.success ? "Authenticated" : "Auth failed"), msg.success ? "" : "error");
     return;
   }
@@ -508,6 +595,7 @@ function handleServerMessage(msg) {
     state.ownerExpRequired = Math.max(1, msg.expRequired || 10);
     state.talentPoints = Math.max(0, msg.talentPoints || 0);
     state.talents = msg.talents || [];
+    updateQuickActionButtons();
     const primaryCount = Math.max(1, (msg.ownerSlots || []).length || state.ownerSlots.length || 5);
     state.ownerSlots = normalizeSlots(msg.ownerSlots, primaryCount);
     state.secondarySlots = normalizeSlots(msg.secondarySlots, primaryCount);
@@ -531,8 +619,8 @@ function handleServerMessage(msg) {
   }
 
   if (msg.type === ServerType.Chat) {
-    state.chats.push(msg.chat);
-    if (state.chats.length > 8) state.chats.splice(0, state.chats.length - 8);
+    state.chats.push({ ...msg.chat, receivedAt: performance.now() });
+    if (state.chats.length > chatMaxHistory) state.chats.splice(0, state.chats.length - chatMaxHistory);
     renderChat();
     addConsoleLine(`${msg.chat.playerName || msg.chat.playerId}: ${msg.chat.message || ""}`);
   }
@@ -843,15 +931,25 @@ function isTyping() {
 
 function openChat(prefix = "") {
   if (!state.authenticated) return;
+  if (state.consoleOpen) toggleConsole(false);
+  state.chatOpen = true;
+  chatPanel.classList.add("open");
+  chatChannels.classList.remove("hidden");
   chatInput.value = prefix;
+  chatInput.placeholder = prefix ? "" : "[Local]";
   chatInput.classList.remove("hidden");
   chatInput.focus();
   chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+  renderChat();
 }
 
 function closeChat() {
+  state.chatOpen = false;
   chatInput.value = "";
   chatInput.classList.add("hidden");
+  chatChannels.classList.add("hidden");
+  chatPanel.classList.remove("open");
+  renderChat();
   canvas.focus();
 }
 
@@ -944,23 +1042,73 @@ function splitCommand(text) {
   return out;
 }
 
-function renderChat() {
+function renderChat(now = performance.now()) {
   chatLog.replaceChildren();
+  const rows = [];
   for (const chat of state.chats) {
+    const kind = chatKind(chat);
+    if (!state.chatFilters[kind]) continue;
+    const alpha = state.chatOpen ? 1 : chatClosedAlpha(chat, now);
+    if (alpha <= 0) continue;
+    rows.push({ chat, kind, alpha });
+  }
+
+  const visibleRows = state.chatOpen ? rows : rows.slice(-chatClosedMaxLines);
+  for (const { chat, kind, alpha } of visibleRows) {
     const line = document.createElement("div");
-    line.className = "chat-line";
-    const name = document.createElement("span");
-    name.className = "chat-name";
-    name.textContent = chat.flag === ChatFlag.Server ? "Server" : `${chat.playerName || chat.playerId}: `;
-    line.appendChild(name);
+    line.className = `chat-line ${kind}`;
+    line.style.setProperty("--chat-alpha", alpha.toFixed(3));
+
+    if (kind !== "server") {
+      const prefix = document.createElement("span");
+      prefix.className = "chat-prefix";
+      prefix.textContent = `[${chatFlagLabel(kind)}] `;
+      line.appendChild(prefix);
+
+      const name = document.createElement("span");
+      name.className = "chat-name";
+      name.textContent = `${chat.playerName || chat.playerId}: `;
+      line.appendChild(name);
+    }
 
     const body = document.createElement("span");
     const styled = parseRarityMessage(chat.message || "");
     body.textContent = styled.text;
-    if (styled.color) body.style.color = styled.color;
+    if (kind === "server" && styled.color) body.style.color = styled.color;
     line.appendChild(body);
     chatLog.appendChild(line);
   }
+
+  if (state.chatOpen) chatLog.scrollTop = chatLog.scrollHeight;
+  state.lastChatRenderAt = now;
+}
+
+function chatKind(chat) {
+  if (!chat) return "local";
+  if (chat.flag === ChatFlag.Global) return "global";
+  if (chat.flag === ChatFlag.Whisper) return "whisper";
+  if (chat.flag === ChatFlag.Server) return "server";
+  return "local";
+}
+
+function chatFlagLabel(kind) {
+  if (kind === "global") return "Global";
+  if (kind === "whisper") return "Whisper";
+  return "Local";
+}
+
+function chatClosedAlpha(chat, now) {
+  const receivedAt = Number.isFinite(chat.receivedAt) ? chat.receivedAt : now;
+  const age = now - receivedAt;
+  if (age <= chatVisibleMs) return 1;
+  if (age >= chatVisibleMs + chatFadeMs) return 0;
+  return clamp(1 - (age - chatVisibleMs) / chatFadeMs, 0, 1);
+}
+
+function updateChatVisibility(now) {
+  if (state.chatOpen || state.chats.length === 0) return;
+  if (now - state.lastChatRenderAt < chatClosedRenderIntervalMs) return;
+  renderChat(now);
 }
 
 function parseRarityMessage(message) {
@@ -1237,6 +1385,7 @@ function renderInventoryGroups(container, items, mode) {
       button.type = "button";
       button.title = `${petalTypeName(item.petalType)} ${rarityName(item.rarity)} x${formatShortCount(item.count)}`;
       button.appendChild(makePetalStack(item.petalType, item.rarity, item.count));
+      attachPetalInfoTooltip(button, item.petalType, item.rarity);
 
       if (mode === "inventory") {
         button.addEventListener("pointerdown", (event) => beginDrag(event, button, "inventory", -1, item));
@@ -1302,6 +1451,7 @@ function renderCraftMatrix() {
         cell.type = "button";
         cell.title = `${petalTypeName(row.petalType)} ${rarityName(rarity)} x${formatShortCount(displayCount)}`;
         cell.appendChild(makePetalStack(row.petalType, rarity, displayCount));
+        attachPetalInfoTooltip(cell, row.petalType, rarity);
         cell.addEventListener("pointerdown", (event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -1402,13 +1552,17 @@ function renderCraftStage() {
     const index = Number(button.dataset.craftSlot || 0);
     const slot = state.craftSlots[index];
     button.replaceChildren();
+    clearPetalInfoTooltip(button);
     button.classList.toggle("hidden", !showRing);
     button.classList.toggle("filled", slotHasItem(slot));
     button.disabled = state.craftPhase === "spinning";
     button.title = slotHasItem(slot)
       ? `${petalTypeName(slot.petalType)} ${rarityName(slot.rarity)} x${formatShortCount(slot.count || 1)}`
       : "Craft slot";
-    if (slotHasItem(slot)) button.appendChild(makePetalStack(slot.petalType, slot.rarity, slot.count || 1));
+    if (slotHasItem(slot)) {
+      button.appendChild(makePetalStack(slot.petalType, slot.rarity, slot.count || 1));
+      attachPetalInfoTooltip(button, slot.petalType, slot.rarity);
+    }
     button.onclick = (event) => {
       event.preventDefault();
       clearCraftDisplay();
@@ -1417,10 +1571,12 @@ function renderCraftStage() {
   });
 
   craftResultSlot.replaceChildren();
+  clearPetalInfoTooltip(craftResultSlot);
   craftResultSlot.classList.toggle("hidden", state.craftPhase !== "success" || !slotHasItem(state.craftResult));
   if (state.craftPhase === "success" && slotHasItem(state.craftResult)) {
     craftResultSlot.title = `${petalTypeName(state.craftResult.petalType)} ${rarityName(state.craftResult.rarity)} x${formatShortCount(state.craftResult.count || 1)}`;
     craftResultSlot.appendChild(makePetalStack(state.craftResult.petalType, state.craftResult.rarity, state.craftResult.count || 1));
+    attachPetalInfoTooltip(craftResultSlot, state.craftResult.petalType, state.craftResult.rarity);
   }
   craftResultSlot.onclick = (event) => {
     event.preventDefault();
@@ -1556,6 +1712,7 @@ function makeSlotButton(slot, index, kind) {
       kind,
       slotIndex: index,
     }));
+    attachPetalInfoTooltip(button, slot.petalType, slot.rarity);
     button.addEventListener("pointerdown", (event) => beginDrag(event, button, kind, index, slot));
   }
 
@@ -1605,6 +1762,10 @@ function petalBaseCopy(petalType, rarity) {
       return 3;
     case petalStingerType:
       return rarity >= 6 ? 3 : 1;
+    case petalLightType:
+      return rarity >= 6 ? 5 : (rarity >= 4 ? 3 : (rarity >= 2 ? 2 : 1));
+    case petalPollenType:
+      return rarity >= 4 ? 3 : (rarity >= 2 ? 2 : 1);
     case 34:
       return rarity === 10 ? 1 : (rarity >= 7 ? 3 : 1);
     case petalMimicType:
@@ -1648,6 +1809,460 @@ function effectivePetalCardCopy(petalType, rarity, options = {}) {
     if ((rarity === 9 || rarity === 10) && talentOwned(TalentId.PetalSplit, 9)) copy += 1;
   }
   return copy;
+}
+
+function attachPetalInfoTooltip(element, petalType, rarity) {
+  if (!element || !petalInfoTooltip || !petalType || !rarity) return;
+  element.dataset.petalInfoType = String(petalType);
+  element.dataset.petalInfoRarity = String(rarity);
+
+  if (element.dataset.petalInfoBound === "1") return;
+  element.dataset.petalInfoBound = "1";
+
+  element.addEventListener("pointerenter", (event) => showPetalInfoTooltipFromElement(element, event));
+  element.addEventListener("pointermove", movePetalInfoTooltip);
+  element.addEventListener("pointerleave", hidePetalInfoTooltip);
+  element.addEventListener("pointercancel", hidePetalInfoTooltip);
+  element.addEventListener("blur", hidePetalInfoTooltip);
+  element.addEventListener("focus", () => {
+    const rect = element.getBoundingClientRect();
+    showPetalInfoTooltipFromElement(element, {
+      clientX: rect.left + rect.width * 0.5,
+      clientY: rect.top + rect.height * 0.5,
+    });
+  });
+}
+
+function clearPetalInfoTooltip(element) {
+  if (!element) return;
+  delete element.dataset.petalInfoType;
+  delete element.dataset.petalInfoRarity;
+}
+
+function showPetalInfoTooltipFromElement(element, event) {
+  const petalType = Number(element?.dataset?.petalInfoType || 0);
+  const rarity = Number(element?.dataset?.petalInfoRarity || 0);
+  if (!petalType || !rarity) return;
+  showPetalInfoTooltip(petalType, rarity, event);
+}
+
+function showPetalInfoTooltip(petalType, rarity, event) {
+  if (!petalInfoTooltip) return;
+  const info = buildPetalInfo(petalType, rarity);
+  if (!info || info.rows.length === 0) {
+    hidePetalInfoTooltip();
+    return;
+  }
+
+  renderPetalInfoTooltip(info);
+  petalInfoTooltip.classList.remove("hidden");
+  petalInfoTooltip.setAttribute("aria-hidden", "false");
+  movePetalInfoTooltip(event);
+}
+
+function hidePetalInfoTooltip() {
+  if (!petalInfoTooltip) return;
+  petalInfoTooltip.classList.add("hidden");
+  petalInfoTooltip.setAttribute("aria-hidden", "true");
+}
+
+function movePetalInfoTooltip(event) {
+  if (!petalInfoTooltip || petalInfoTooltip.classList.contains("hidden") || !event) return;
+  const offset = 14;
+  const pad = 8;
+  const rect = petalInfoTooltip.getBoundingClientRect();
+  let x = event.clientX + offset;
+  let y = event.clientY + offset;
+  if (x + rect.width + pad > window.innerWidth) x = event.clientX - rect.width - offset;
+  if (y + rect.height + pad > window.innerHeight) y = event.clientY - rect.height - offset;
+  x = clamp(x, pad, Math.max(pad, window.innerWidth - rect.width - pad));
+  y = clamp(y, pad, Math.max(pad, window.innerHeight - rect.height - pad));
+  petalInfoTooltip.style.left = `${x}px`;
+  petalInfoTooltip.style.top = `${y}px`;
+}
+
+function renderPetalInfoTooltip(info) {
+  petalInfoTooltip.replaceChildren();
+
+  const title = document.createElement("div");
+  title.className = "petal-info-title";
+  title.style.color = rarityColor(info.rarity, 1);
+  title.textContent = `${rarityName(info.rarity)} ${petalTypeName(info.petalType)}`;
+  petalInfoTooltip.appendChild(title);
+
+  const subtitle = document.createElement("div");
+  subtitle.className = "petal-info-subtitle";
+  subtitle.textContent = "Single petal";
+  petalInfoTooltip.appendChild(subtitle);
+
+  for (const item of info.rows) {
+    const row = document.createElement("div");
+    row.className = "petal-info-row";
+
+    const label = document.createElement("span");
+    label.className = "petal-info-label";
+    label.textContent = item.label;
+    row.appendChild(label);
+
+    const value = document.createElement("span");
+    value.className = "petal-info-value";
+    value.textContent = item.value;
+    row.appendChild(value);
+
+    petalInfoTooltip.appendChild(row);
+  }
+}
+
+function buildPetalInfo(petalType, rarity) {
+  const rows = [];
+  const level = rarityLevel(rarity);
+  const scale = petalRarityScale(rarity);
+  const addRow = (label, value) => {
+    if (value === null || value === undefined || value === "") return;
+    rows.push({ label, value: String(value) });
+  };
+  const addNumber = (label, value, suffix = "") => {
+    if (!Number.isFinite(value) || Math.abs(value) <= 0.000001) return;
+    addRow(label, `${formatPetalStat(value)}${suffix}`);
+  };
+  const addSeconds = (label, value) => addNumber(label, value, "s");
+  const addPercent = (label, value, options = {}) => {
+    if (!Number.isFinite(value) || Math.abs(value) <= 0.000001) return;
+    const sign = options.sign && value > 0 ? "+" : "";
+    addRow(label, `${sign}${formatPetalStat(value * 100)}%`);
+  };
+  const addCombat = (damage, health, reload, options = {}) => {
+    if (options.copy && options.copy > 1) addRow("Petals", `x${options.copy}`);
+    addNumber("Damage", damage);
+    addNumber("Durability", health);
+    addNumber("Armor", options.armor || 0);
+    addSeconds("Reload", reload);
+    if (options.preload && Math.abs(options.preload - reload) > 0.0001) addSeconds("Preload", options.preload);
+  };
+
+  switch (petalType) {
+    case petalAntennaeType:
+      addPercent("Vision", antennaeVisionBonus(rarity), { sign: true });
+      break;
+    case petalGoldenLeafType:
+      addPercent("Reload cut", goldenLeafReloadReduction(rarity));
+      break;
+    case petalDustType:
+      addPercent("Reload cut", dustReloadReduction(rarity));
+      break;
+    case petalBandageType:
+      addSeconds("Undead", bandageUndeadDuration(rarity));
+      break;
+    case petalBrokenEggType:
+      addPercent("Summon HP", brokenEggSummonHealthBonus(rarity), { sign: true });
+      break;
+    case petalRelicType:
+      addPercent("Linked HP", relicHealthBonus(rarity), { sign: true });
+      break;
+    case petalCorruptionType:
+      addRow("Flower body", "Corrupted");
+      break;
+    case petalBloodSacrificeType:
+      addSeconds("Delay", 10);
+      break;
+    case petalNullificationType:
+      addRow("Effect", "Nullify");
+      break;
+    case petalAirType:
+      addRow("Mass", "16");
+      break;
+    case petalBasicType:
+      addCombat(10 * scale, 10 * scale, 2.5);
+      break;
+    case petalLightType: {
+      const copy = lightCopy(rarity);
+      addCombat(13 * scale / copy, 5 * scale / copy, 0.8, { copy });
+      break;
+    }
+    case petalLeafType:
+      addCombat(16 * scale, 12 * scale, 1.8);
+      addNumber("Regen", roseMedicineScale(rarity), "/s");
+      break;
+    case petalRockType:
+      addCombat(25 * scale, 30 * scale, 3);
+      break;
+    case petalWebType:
+      addCombat(5 * scale, 5 * scale, 3);
+      addSeconds("Throw CD", 0.5);
+      addSeconds("Web time", 10);
+      addNumber("Web radius", webRadiusValue(rarity));
+      break;
+    case petalCactusType:
+      addCombat(7 * scale, 15 * scale, 1);
+      addNumber("Flower HP", 30 * scale);
+      break;
+    case petalPollenType: {
+      const copy = pollenCopy(rarity);
+      addCombat(40 * scale / copy, 10 * scale / copy, 2, { copy });
+      addSeconds("Throw CD", 0.5);
+      break;
+    }
+    case petalCornType:
+      addCombat(8 * scale, 200 * scale, 7);
+      break;
+    case petalRiceType:
+      addCombat(4 * scale, scale, 0.1);
+      break;
+    case petalBasilType:
+      addNumber("Durability", 10 * scale);
+      addSeconds("Reload", 2.5);
+      addPercent("Healing taken", basilHealingBonus(rarity), { sign: true });
+      break;
+    case petalSoilType:
+      addCombat(10 * scale, 10 * scale, 2.5);
+      addNumber("Flower HP", 50 * scale);
+      addNumber("Flower radius", 10);
+      break;
+    case petalHoneyType:
+      addNumber("Durability", 50 * scale);
+      addSeconds("Reload", 2);
+      addSeconds("Throw CD", 0.5);
+      addRow("Attracts", `<= ${rarityName(Math.max(1, rarity - 1))}`);
+      break;
+    case petalWaxType:
+      addNumber("Durability", 1000 * scale);
+      addSeconds("Reload", 30);
+      break;
+    case petalRoseType:
+      addCombat(5 * scale, 5 * scale, 3.5, { preload: 1.5 });
+      addNumber("Heal", 7.5 * roseMedicineScale(rarity));
+      break;
+    case petalDahliaType:
+      addCombat(1.7 * scale, 1.7 * scale, 1.5, { copy: 3 });
+      addNumber("Heal", 1.2 * roseMedicineScale(rarity));
+      break;
+    case petalStingerType: {
+      const copy = petalBaseCopy(petalType, rarity);
+      addCombat(100 * scale / copy, 1, 10, { copy });
+      break;
+    }
+    case petalMissileType:
+      addCombat(35 * scale, 2 * scale, 1.5);
+      addSeconds("Lifetime", 5);
+      break;
+    case petalAntEggType:
+      addRow("Petals", "x4");
+      addNumber("Durability", 1);
+      addSeconds("Reload", antEggReload(rarity));
+      break;
+    case petalBeetleEggType:
+      addNumber("Durability", 1);
+      addSeconds("Reload", beetleEggReload(rarity));
+      break;
+    case petalBubbleType:
+      addNumber("Durability", 1);
+      addSeconds("Reload", bubbleReload(rarity));
+      break;
+    case petalCarrotType:
+      addCombat(18 * scale, 18 * scale, 1);
+      break;
+    case petalBoneType:
+      addCombat(14 * scale, 10 * scale, 2.5, { armor: 10 * scale });
+      break;
+    case petalCoinType:
+      addCombat(15 * scale, 10 * scale, 2.5);
+      break;
+    case petalCompassType:
+      addCombat(scale, 40 * scale, 2.5);
+      addNumber("Magnet", 1024);
+      break;
+    case petalCogwheelType:
+      addCombat(19 * scale, 13 * scale, 2.5);
+      break;
+    case petalIrisType:
+      addCombat(5 * scale, 5 * scale, 4);
+      addNumber("Poison", 70);
+      addSeconds("Poison time", 3);
+      break;
+    case petalLentilType:
+      addCombat(13 * scale, 12 * scale, 2);
+      addNumber("Attract range", 8 * level);
+      break;
+    case petalMoonType:
+      addCombat(3 * scale, 5000 * scale, 100);
+      break;
+    case petalPincerType:
+      addCombat(5 * scale, 5 * scale, 2.5);
+      addNumber("Poison", 15 * scale);
+      addSeconds("Poison time", 0.75);
+      break;
+    case petalYinYangType:
+      addCombat(10 * scale, 10 * scale, 2);
+      break;
+    case petalHeavyType:
+      addCombat(10 * scale, 150 * scale, 10);
+      break;
+    case petalFasterType:
+      addCombat(12 * scale, 5 * scale, 2.5);
+      addNumber("Rotation", 0.3 + 0.2 * level, " rad/s");
+      break;
+    case petalYggdrasilType:
+      addNumber("Durability", 10 * scale);
+      addSeconds("Revive", yggdrasilChannelTime(rarity));
+      break;
+    case petalWingType:
+      addCombat(20 * scale, 10 * scale, 3);
+      break;
+    case petalTriangleType:
+      addCombat(5 * scale + triangleBonusDamage(rarity), 10 * scale, 2);
+      break;
+    case petalSawbladeType:
+      addCombat(40 * scale, 25 * scale, 2.5);
+      break;
+    case petalFragmentType: {
+      const value = fragmentValue(rarity);
+      const copy = petalBaseCopy(petalType, rarity);
+      addCombat(value, value, rarity === 10 ? 8 : 10, { copy });
+      break;
+    }
+    case petalGlassType:
+      addCombat(22 * scale, 10 * scale, 2.5);
+      break;
+    case petalMimicType:
+      addNumber("Durability", 10);
+      addSeconds("Reload", 2.5);
+      addRow("Copies", "left petal");
+      break;
+    default:
+      break;
+  }
+
+  return { petalType, rarity, rows };
+}
+
+function rarityLevel(rarity) {
+  const value = Math.max(1, Math.floor(Number(rarity) || 1));
+  if (value === 10) return 9;
+  if (value >= 11) return 10;
+  return clamp(value, 1, 9);
+}
+
+function petalRarityScale(rarity) {
+  return 3 ** (rarityLevel(rarity) - 1);
+}
+
+function lightCopy(rarity) {
+  const level = rarityLevel(rarity);
+  if (level <= 1) return 1;
+  if (level <= 3) return 2;
+  if (level <= 5) return 3;
+  return 5;
+}
+
+function pollenCopy(rarity) {
+  return rarityLevel(rarity) <= 1 ? 1 : (rarityLevel(rarity) <= 3 ? 2 : 3);
+}
+
+function roseMedicineScale(rarity) {
+  const sqrt3 = Math.sqrt(3);
+  switch (Math.floor(Number(rarity) || 1)) {
+    case 1: return 1;
+    case 2: return 3;
+    case 3: return 9;
+    case 4: return 27;
+    case 5: return 81;
+    case 6: return 243;
+    case 7: return 243 * sqrt3;
+    case 8: return 243 * 3;
+    case 9:
+    case 10:
+      return 243 * 3 * sqrt3;
+    case 11:
+      return 243 * 9 * sqrt3;
+    default:
+      return 1;
+  }
+}
+
+function antennaeVisionBonus(rarity) {
+  return byRarity(rarity, [0, 0.111, 0.176, 0.25, 0.333, 0.429, 1, 1.857, 4, 13.5, 13.5, 38]);
+}
+
+function goldenLeafReloadReduction(rarity) {
+  return 1 - Math.max(0.05, 1 - rarityLevel(rarity) * 0.033);
+}
+
+function dustReloadReduction(rarity) {
+  return 1 - Math.max(0.05, 1 - rarityLevel(rarity) * 0.03);
+}
+
+function bandageUndeadDuration(rarity) {
+  return byRarity(rarity, [0, 1.5, 2.1, 2.9, 4.1, 5.8, 8.1, 11.3, 15.8, 22.1, 22.1, 31.3]);
+}
+
+function brokenEggSummonHealthBonus(rarity) {
+  return byRarity(rarity, [0, 0.10, 0.20, 0.35, 0.50, 0.75, 1.10, 1.50, 1.80, 2.25, 2.25, 3.00]);
+}
+
+function basilHealingBonus(rarity) {
+  return byRarity(rarity, [0, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.75, 1.00, 1.00, 2.00]);
+}
+
+function relicHealthBonus(rarity) {
+  return byRarity(rarity, [0, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.75, 1.00, 1.50, 1.50, 2.50]);
+}
+
+function antEggReload(rarity) {
+  return byRarity(rarity, [0, 24, 8, 9, 10, 12, 16, 24, 60, 180, 180, 480]);
+}
+
+function beetleEggReload(rarity) {
+  return byRarity(rarity, [0, 12, 4, 4.5, 5, 6, 8, 12, 30, 90, 90, 240]);
+}
+
+function bubbleReload(rarity) {
+  return byRarity(rarity, [0, 1, 0.8, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05, 0.05, 0.025]);
+}
+
+function webRadiusValue(rarity) {
+  return byRarity(rarity, [0, 50, 60, 70, 80, 100, 150, 200, 250, 350, 350, 500]);
+}
+
+function yggdrasilChannelTime(rarity) {
+  if (rarity >= 11) return 0.016;
+  if (rarity >= 9) return 0.33;
+  if (rarity === 8) return 1;
+  const t = (rarityLevel(rarity) - 1) / 6;
+  return 600 + (1 - 600) * clamp(t, 0, 1);
+}
+
+function triangleBonusDamage(rarity) {
+  return byRarity(rarity, [0, 0, 2, 6, 18, 54, 162, 486, 1458, 4374, 4374, 13122]);
+}
+
+function fragmentValue(rarity) {
+  switch (Math.floor(Number(rarity) || 1)) {
+    case 7: return 364.5;
+    case 8: return 729;
+    case 9: return 2187;
+    case 10: return 328000;
+    case 11: return 6561;
+    default: return petalRarityScale(rarity);
+  }
+}
+
+function byRarity(rarity, values) {
+  const index = clamp(Math.floor(Number(rarity) || 1), 1, values.length - 1);
+  return values[index] ?? values[1] ?? 0;
+}
+
+function formatPetalStat(value) {
+  const abs = Math.abs(value);
+  if (abs >= 1000000) return `${formatCompact(value / 1000000)}m`;
+  if (abs >= 10000) return `${formatCompact(value / 1000)}k`;
+  if (abs >= 100) return String(Math.round(value));
+  if (abs >= 10) return trimNumber(value, 1);
+  if (abs >= 1) return trimNumber(value, 2);
+  return trimNumber(value, 3);
+}
+
+function trimNumber(value, digits) {
+  return Number(value.toFixed(digits)).toString();
 }
 
 function petalSingleRadiusFactor(petalType) {
@@ -3080,13 +3695,15 @@ function drawPlayerFlower(snap, pos, radius, angle, isOwner) {
     drawPlayerFlowerFallback(radius, poisoned && !corrupted && !undead ? "poisoned" : texture);
   }
 
-  if (poisoned && !corrupted && !undead) {
-    ctx.globalCompositeOperation = "source-atop";
-    ctx.fillStyle = "rgba(126, 55, 170, 0.42)";
-    ctx.fillRect(-size * 0.5, -size * 0.5, size, size);
-  } else if (hasRelic && !corrupted && !undead) {
+  const allowStatusTint = !corrupted && !undead;
+  if (hasRelic && allowStatusTint) {
     ctx.globalCompositeOperation = "source-atop";
     ctx.fillStyle = "rgba(20, 24, 32, 0.38)";
+    ctx.fillRect(-size * 0.5, -size * 0.5, size, size);
+  }
+  if (poisoned && allowStatusTint) {
+    ctx.globalCompositeOperation = "source-atop";
+    ctx.fillStyle = "rgba(126, 55, 170, 0.42)";
     ctx.fillRect(-size * 0.5, -size * 0.5, size, size);
   }
   ctx.globalCompositeOperation = "source-over";
@@ -3176,7 +3793,7 @@ function drawAntennaeUnderlay(pos, radius) {
   const icon = antennaeOverlayImage();
   const size = Math.max(0.5, radius * 2.8);
   ctx.save();
-  ctx.translate(pos.x, pos.y - radius * 0.34);
+  ctx.translate(pos.x, pos.y - radius * 0.3);
   ctx.globalAlpha *= 0.92;
   if (imageReady(icon)) {
     ctx.drawImage(icon, -size * 0.5, -size * 0.5, size, size);
@@ -4197,6 +4814,16 @@ function drawScene(now = performance.now()) {
     const snap = entity.snapshot;
     if (!snap || !isEntityInRenderView(entity, scale)) continue;
     if (snap.entityId === state.ownerEntityId) continue;
+    if (!isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType) && snap.name === "Missile") {
+      drawEntity(entity);
+    }
+  }
+
+  for (const entity of state.entities.values()) {
+    const snap = entity.snapshot;
+    if (!snap || !isEntityInRenderView(entity, scale)) continue;
+    if (snap.entityId === state.ownerEntityId) continue;
+    if (!isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType) && snap.name === "Missile") continue;
 
     if (isPetalEntity(snap.entityType)) {
       petalEntities.push(entity);
@@ -4231,6 +4858,7 @@ function tick(now) {
   flushInput(dt);
   updateRenderPositions(dt);
   drawScene(now);
+  updateChatVisibility(now);
   updateDebugInfo();
   requestAnimationFrame(tick);
 }
@@ -4247,6 +4875,16 @@ function setupEvents() {
   craftCloseBtn.addEventListener("click", () => toggleCraft(false));
   talentCloseBtn.addEventListener("click", () => toggleTalent(false));
   craftOnceBtn.addEventListener("click", () => submitCraft());
+  quickBackpackBtn?.addEventListener("click", () => toggleBackpack());
+  quickTalentBtn?.addEventListener("click", () => toggleTalent());
+  quickCraftBtn?.addEventListener("click", () => toggleCraft());
+  chatHint?.addEventListener("click", () => openChat(""));
+  chatChannels?.addEventListener("change", (event) => {
+    const input = event.target?.closest?.("input[data-chat-filter]");
+    if (!input) return;
+    state.chatFilters[input.dataset.chatFilter] = input.checked;
+    renderChat();
+  });
   for (const input of [wsUrlInput, accountInput, passwordInput]) {
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") connectAndAuth();

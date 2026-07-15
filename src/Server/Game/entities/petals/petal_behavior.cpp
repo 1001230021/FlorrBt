@@ -337,6 +337,20 @@ void RegisterFaster()
     });
 }
 
+std::once_flag g_leaf_registered;
+void RegisterLeaf()
+{
+    std::call_once(g_leaf_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Leaf;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_leaf_base_radius;
+        proto.m_p_behavior = std::make_unique<CLeafBehavior>();
+        REGISTER_PETAL(EPetalType::Leaf, CPetal, proto);
+    });
+}
+
 std::once_flag g_lentil_registered;
 void RegisterLentil()
 {
@@ -348,6 +362,76 @@ void RegisterLentil()
         proto.m_base_radius = game_config::default_lentil_base_radius;
         proto.m_p_behavior = std::make_unique<CLentilBehavior>();
         REGISTER_PETAL(EPetalType::Lentil, CPetal, proto);
+    });
+}
+
+std::once_flag g_light_registered;
+void RegisterLight()
+{
+    std::call_once(g_light_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Light;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_light_base_radius;
+        proto.m_p_behavior = std::make_unique<CLightBehavior>();
+        REGISTER_PETAL(EPetalType::Light, CPetal, proto);
+    });
+}
+
+std::once_flag g_corn_registered;
+void RegisterCorn()
+{
+    std::call_once(g_corn_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Corn;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_corn_base_radius;
+        proto.m_p_behavior = std::make_unique<CCornBehavior>();
+        REGISTER_PETAL(EPetalType::Corn, CPetal, proto);
+    });
+}
+
+std::once_flag g_rice_registered;
+void RegisterRice()
+{
+    std::call_once(g_rice_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Rice;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_rice_base_radius;
+        proto.m_p_behavior = std::make_unique<CRiceBehavior>();
+        REGISTER_PETAL(EPetalType::Rice, CPetal, proto);
+    });
+}
+
+std::once_flag g_pollen_registered;
+void RegisterPollen()
+{
+    std::call_once(g_pollen_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Pollen;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_pollen_base_radius;
+        proto.m_p_behavior = std::make_unique<CPollenBehavior>();
+        REGISTER_PETAL(EPetalType::Pollen, CThrownPetal, proto);
+    });
+}
+
+std::once_flag g_honey_registered;
+void RegisterHoney()
+{
+    std::call_once(g_honey_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Honey;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_honey_base_radius;
+        proto.m_p_behavior = std::make_unique<CHoneyBehavior>();
+        REGISTER_PETAL(EPetalType::Honey, CThrownPetal, proto);
     });
 }
 
@@ -421,6 +505,34 @@ void RegisterRelic()
     });
 }
 
+std::once_flag g_basil_registered;
+void RegisterBasil()
+{
+    std::call_once(g_basil_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Basil;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_basil_base_radius;
+        proto.m_p_behavior = std::make_unique<CBasilBehavior>();
+        REGISTER_PETAL(EPetalType::Basil, CBasilPetal, proto);
+    });
+}
+
+std::once_flag g_rock_petal_registered;
+void RegisterRockPetal()
+{
+    std::call_once(g_rock_petal_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Rock;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_rock_petal_base_radius;
+        proto.m_p_behavior = std::make_unique<CRockPetalBehavior>();
+        REGISTER_PETAL(EPetalType::Rock, CPetal, proto);
+    });
+}
+
 std::once_flag g_rose_registered;
 void RegisterRose()
 {
@@ -432,6 +544,62 @@ void RegisterRose()
         proto.m_base_radius = game_config::default_rose_base_radius;
         proto.m_p_behavior = std::make_unique<CRoseBehavior>();
         REGISTER_PETAL(EPetalType::Rose, CPetal, proto);
+    });
+}
+
+std::once_flag g_cactus_registered;
+void RegisterCactus()
+{
+    std::call_once(g_cactus_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Cactus;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_cactus_base_radius;
+        proto.m_p_behavior = std::make_unique<CCactusBehavior>();
+        REGISTER_PETAL(EPetalType::Cactus, CPetal, proto);
+    });
+}
+
+std::once_flag g_soil_registered;
+void RegisterSoil()
+{
+    std::call_once(g_soil_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Soil;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_soil_base_radius;
+        proto.m_p_behavior = std::make_unique<CSoilBehavior>();
+        REGISTER_PETAL(EPetalType::Soil, CPetal, proto);
+    });
+}
+
+std::once_flag g_web_registered;
+void RegisterWeb()
+{
+    std::call_once(g_web_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Web;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_web_base_radius;
+        proto.m_p_behavior = std::make_unique<CWebBehavior>();
+        REGISTER_PETAL(EPetalType::Web, CThrownPetal, proto);
+    });
+}
+
+std::once_flag g_wax_registered;
+void RegisterWax()
+{
+    std::call_once(g_wax_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Wax;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = MoonVisibleRadius(ERarity::Common) * 2.f;
+        proto.m_p_behavior = std::make_unique<CWaxBehavior>();
+        REGISTER_PETAL(EPetalType::Wax, CPetal, proto);
     });
 }
 
@@ -526,6 +694,7 @@ void RegisterPetals()
     RegisterAntennae();
     RegisterBloodSacrifice();
     RegisterBandage();
+    RegisterBasil();
     RegisterBasic();
     RegisterBeetleEgg();
     RegisterBrokenEgg();
@@ -535,6 +704,7 @@ void RegisterPetals()
     RegisterCoin();
     RegisterCompass();
     RegisterCogwheel();
+    RegisterCorn();
     RegisterCorruption();
     RegisterDahlia();
     RegisterDust();
@@ -543,17 +713,27 @@ void RegisterPetals()
     RegisterGlass();
     RegisterGoldenLeaf();
     RegisterHeavy();
+    RegisterHoney();
     RegisterIris();
+    RegisterLeaf();
     RegisterLentil();
+    RegisterLight();
     RegisterMimic();
     RegisterMoon();
     RegisterNullification();
     RegisterPincer();
+    RegisterPollen();
     RegisterRelic();
+    RegisterRice();
+    RegisterRockPetal();
     RegisterRose();
     RegisterSawblade();
+    RegisterSoil();
     RegisterStinger();
     RegisterTriangle();
+    RegisterCactus();
+    RegisterWeb();
+    RegisterWax();
     RegisterWing();
     RegisterYinYang();
     RegisterYggdrasil();

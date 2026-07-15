@@ -138,6 +138,7 @@ inline float default_detection_radius = WorldUnits(512.0f);
 inline float default_absorb_range = WorldUnits(64.0f);
 inline float default_drop_lifetime = 30.0f;
 inline float default_drop_mass = 0.01f;
+inline float default_drop_merge_interval = 0.25f;
 inline float default_drop_pickup_delay = 0.5f;
 inline float default_drop_pickup_range = WorldUnits(64.0f);
 inline float default_drop_radius = WorldUnits(8.0f);
@@ -187,6 +188,27 @@ inline float default_lentil_copy = 1.0f;
 inline float default_lentil_mass = 2.0f;
 inline float default_lentil_petal_attraction_range = WorldUnits(8.0f);
 inline float default_lentil_reload = 2.0f;
+inline float default_leaf_base_damage = 16.0f;
+inline float default_leaf_base_health = 12.0f;
+inline float default_leaf_base_radius = WorldUnits(10.0f);
+inline float default_leaf_base_regen = 1.0f;
+inline float default_leaf_mass = 2.0f;
+inline float default_leaf_reload = 1.8f;
+inline float default_light_base_damage = 13.0f;
+inline float default_light_base_health = 5.0f;
+inline float default_light_base_radius = WorldUnits(6.7f);
+inline float default_light_mass = 0.75f;
+inline float default_light_reload = 0.8f;
+inline float default_corn_base_damage = 8.0f;
+inline float default_corn_base_health = 200.0f;
+inline float default_corn_base_radius = WorldUnits(10.0f);
+inline float default_corn_mass = 6.0f;
+inline float default_corn_reload = 7.0f;
+inline float default_rice_base_damage = 4.0f;
+inline float default_rice_base_health = 1.0f;
+inline float default_rice_base_radius = WorldUnits(6.7f);
+inline float default_rice_mass = 0.25f;
+inline float default_rice_reload = 0.1f;
 inline std::string lobby_map_path = "data/maps/garden.tmj";
 inline float default_max_velocity = WorldUnits(75.0f);
 inline float default_moon_base_damage = 3.0f;
@@ -229,6 +251,22 @@ inline float default_pincer_poison_duration = 0.75f;
 inline float default_pincer_poison_total_damage = 15.0f;
 inline float default_pincer_reload = 2.5f;
 inline float default_pincer_slow_duration = 0.8f;
+inline float default_pollen_base_damage = 40.0f;
+inline float default_pollen_base_health = 10.0f;
+inline float default_pollen_base_radius = WorldUnits(10.0f);
+inline float default_pollen_fire_cooldown = 0.5f;
+inline float default_pollen_mass = 0.75f;
+inline float default_pollen_reload = 2.0f;
+inline float default_basil_base_health = 10.0f;
+inline float default_basil_base_radius = WorldUnits(10.0f);
+inline float default_basil_mass = 2.0f;
+inline float default_basil_reload = 2.5f;
+inline float default_honey_base_health = 50.0f;
+inline float default_honey_base_radius = WorldUnits(10.0f);
+inline float default_honey_fire_cooldown = 0.5f;
+inline float default_honey_mass = 0.1f;
+inline float default_honey_reload = 2.0f;
+inline float default_honey_attract_range = WorldUnits(1024.0f);
 inline float default_relic_base_damage = 0.0f;
 inline float default_relic_base_health = 10.0f;
 inline float default_relic_base_radius = WorldUnits(10.0f);
@@ -262,6 +300,37 @@ inline float default_stinger_base_health = 1.0f;
 inline float default_stinger_base_radius = WorldUnits(10.0f);
 inline float default_stinger_mass = 2.0f;
 inline float default_stinger_reload = 10.0f;
+inline float default_rock_petal_base_damage = 25.0f;
+inline float default_rock_petal_base_health = 30.0f;
+inline float default_rock_petal_base_radius = WorldUnits(10.0f);
+inline float default_rock_petal_mass = 2.0f;
+inline float default_rock_petal_reload = 3.0f;
+inline float default_cactus_base_damage = 7.0f;
+inline float default_cactus_base_health = 15.0f;
+inline float default_cactus_base_radius = WorldUnits(10.0f);
+inline float default_cactus_flower_health = 30.0f;
+inline float default_cactus_mass = 2.0f;
+inline float default_cactus_reload = 1.0f;
+inline float default_soil_base_damage = 10.0f;
+inline float default_soil_base_health = 10.0f;
+inline float default_soil_base_radius = WorldUnits(10.0f);
+inline float default_soil_flower_health = 50.0f;
+inline float default_soil_flower_radius = WorldUnits(10.0f);
+inline float default_soil_mass = 2.0f;
+inline float default_soil_reload = 2.5f;
+inline float default_web_base_damage = 5.0f;
+inline float default_web_base_health = 5.0f;
+inline float default_web_base_radius = WorldUnits(10.0f);
+inline float default_web_fire_cooldown = 0.5f;
+inline float default_web_lifetime = 10.0f;
+inline float default_web_mass = 2.0f;
+inline float default_web_reload = 3.0f;
+inline float default_web_throw_deceleration = 0.25f;
+inline float default_web_throw_attack_speed = 4.5f;
+inline float default_web_throw_defend_speed = 0.1f;
+inline float default_wax_base_health = 1000.0f;
+inline float default_wax_mass = 0.1f;
+inline float default_wax_reload = 30.0f;
 inline float default_yinyang_base_damage = 10.0f;
 inline float default_yinyang_base_health = 10.0f;
 inline float default_yinyang_base_radius = WorldUnits(12.0f);
@@ -309,7 +378,7 @@ inline float mob_bumblebee_pollen_base_damage = 10.0f;
 inline float mob_bumblebee_pollen_base_health = 5.0f;
 inline float mob_bumblebee_pollen_interval = 0.25f;
 inline float mob_bumblebee_pollen_lifetime = 2.0f;
-inline float mob_bumblebee_pollen_radius_multiplier = 1.0f;
+inline float mob_bumblebee_pollen_radius_multiplier = 2.0f / 3.0f;
 inline float mob_bumblebee_radius = WorldUnits(12.0f);
 inline int mob_bumblebee_team = 2;
 inline float mob_bumblebee_turn_interval_max = 2.25f;
@@ -362,6 +431,7 @@ inline float mob_spider_poison_total = 40.0f;
 inline float mob_spider_radius = WorldUnits(16.0f);
 inline int mob_spider_team = 2;
 inline float mob_spider_web_interval = 1.0f;
+inline float mob_spider_web_apply_interval = 0.1f;
 inline float mob_spider_web_lifetime = 6.0f;
 inline float mob_spider_web_slow_duration = 0.35f;
 inline float mob_spider_web_speed_multiplier = 0.05f;
@@ -376,6 +446,7 @@ inline float mob_hornet_max_health = 40.0f;
 inline float mob_hornet_max_velocity = default_max_velocity;
 inline float mob_hornet_missile_base_damage = 10.0f;
 inline float mob_hornet_missile_base_health = 5.0f;
+inline float mob_hornet_missile_attach_offset = 2.15f;
 inline float mob_hornet_missile_radius = WorldUnits(10.0f);
 inline float mob_hornet_missile_reload = 0.5f;
 inline float mob_hornet_missile_speed = default_max_velocity * 4.0f;
@@ -475,10 +546,12 @@ inline int mob_summoned_soldier_ant_team = 1;
 inline size_t network_max_receive_buffer_size = 1024;
 inline size_t network_max_send_buffer_size = 1024 * 1024;
 inline size_t network_receive_chunk_size = 256;
+inline float network_snapshot_query_radius_cap = WorldUnits(4096.0f);
 inline float network_snapshot_interval = 1.0f / 30.0f;
 inline uint8_t network_petal_type_offset = 100;
 inline float open_initial_spawn_delay = 5.f;
 inline float open_spawn_interval = 1.f;
+inline float open_spawn_density_area = 1024.0f * 1024.0f;
 inline float open_super_plus_block_radius = 1024.0f * 4.0f;
 inline float open_super_plus_suppress_multiplier = 0.35f;
 inline float open_super_plus_suppress_radius = 1024.0f * 8.0f;
@@ -498,6 +571,8 @@ inline float report_keyword_base_mute_seconds = 60.0f;
 inline float report_scan_window_seconds = 60.0f;
 inline std::string rcon_password = "";
 inline float server_fixed_dt = 0.016f;
+inline float slow_tick_profile_ms = 24.0f;
+inline float simulation_active_view_radius_cap = WorldUnits(2048.0f);
 inline float spatial_grid_cell_size = WorldUnits(200.0f);
 inline float timeout_protection_seconds = 30.0f;
 inline bool gui_console_enabled = false;
@@ -658,6 +733,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("absorb_range", default_absorb_range),
         REGISTER_CONFIG("drop_lifetime", default_drop_lifetime),
         REGISTER_CONFIG("drop_mass", default_drop_mass),
+        REGISTER_CONFIG("drop_merge_interval", default_drop_merge_interval),
         REGISTER_CONFIG("drop_pickup_delay", default_drop_pickup_delay),
         REGISTER_CONFIG("drop_pickup_range", default_drop_pickup_range),
         REGISTER_CONFIG("drop_radius", default_drop_radius),
@@ -708,6 +784,27 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("lentil_mass", default_lentil_mass),
         REGISTER_CONFIG("lentil_petal_attraction_range", default_lentil_petal_attraction_range),
         REGISTER_CONFIG("lentil_reload", default_lentil_reload),
+        REGISTER_CONFIG("leaf_base_damage", default_leaf_base_damage),
+        REGISTER_CONFIG("leaf_base_health", default_leaf_base_health),
+        REGISTER_CONFIG("leaf_base_radius", default_leaf_base_radius),
+        REGISTER_CONFIG("leaf_base_regen", default_leaf_base_regen),
+        REGISTER_CONFIG("leaf_mass", default_leaf_mass),
+        REGISTER_CONFIG("leaf_reload", default_leaf_reload),
+        REGISTER_CONFIG("light_base_damage", default_light_base_damage),
+        REGISTER_CONFIG("light_base_health", default_light_base_health),
+        REGISTER_CONFIG("light_base_radius", default_light_base_radius),
+        REGISTER_CONFIG("light_mass", default_light_mass),
+        REGISTER_CONFIG("light_reload", default_light_reload),
+        REGISTER_CONFIG("corn_base_damage", default_corn_base_damage),
+        REGISTER_CONFIG("corn_base_health", default_corn_base_health),
+        REGISTER_CONFIG("corn_base_radius", default_corn_base_radius),
+        REGISTER_CONFIG("corn_mass", default_corn_mass),
+        REGISTER_CONFIG("corn_reload", default_corn_reload),
+        REGISTER_CONFIG("rice_base_damage", default_rice_base_damage),
+        REGISTER_CONFIG("rice_base_health", default_rice_base_health),
+        REGISTER_CONFIG("rice_base_radius", default_rice_base_radius),
+        REGISTER_CONFIG("rice_mass", default_rice_mass),
+        REGISTER_CONFIG("rice_reload", default_rice_reload),
         REGISTER_CONFIG("lobby_map_path", lobby_map_path),
         REGISTER_CONFIG("max_velocity", default_max_velocity),
         REGISTER_CONFIG("melee_random_idle_chance", melee_random_idle_chance),
@@ -815,6 +912,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_spider_radius", mob_spider_radius),
         REGISTER_CONFIG("mob_spider_team", mob_spider_team),
         REGISTER_CONFIG("mob_spider_web_interval", mob_spider_web_interval),
+        REGISTER_CONFIG("mob_spider_web_apply_interval", mob_spider_web_apply_interval),
         REGISTER_CONFIG("mob_spider_web_lifetime", mob_spider_web_lifetime),
         REGISTER_CONFIG("mob_spider_web_slow_duration", mob_spider_web_slow_duration),
         REGISTER_CONFIG("mob_spider_web_speed_multiplier", mob_spider_web_speed_multiplier),
@@ -829,6 +927,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_hornet_max_velocity", mob_hornet_max_velocity),
         REGISTER_CONFIG("mob_hornet_missile_base_damage", mob_hornet_missile_base_damage),
         REGISTER_CONFIG("mob_hornet_missile_base_health", mob_hornet_missile_base_health),
+        REGISTER_CONFIG("mob_hornet_missile_attach_offset", mob_hornet_missile_attach_offset),
         REGISTER_CONFIG("mob_hornet_missile_radius", mob_hornet_missile_radius),
         REGISTER_CONFIG("mob_hornet_missile_reload", mob_hornet_missile_reload),
         REGISTER_CONFIG("mob_hornet_missile_speed", mob_hornet_missile_speed),
@@ -922,7 +1021,9 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("network_max_send_buffer_size", network_max_send_buffer_size),
         REGISTER_CONFIG("network_petal_type_offset", network_petal_type_offset),
         REGISTER_CONFIG("network_receive_chunk_size", network_receive_chunk_size),
+        REGISTER_CONFIG("network_snapshot_query_radius_cap", network_snapshot_query_radius_cap),
         REGISTER_CONFIG("network_snapshot_interval", network_snapshot_interval),
+        REGISTER_CONFIG("open_spawn_density_area", open_spawn_density_area),
         REGISTER_CONFIG("open_initial_spawn_delay", open_initial_spawn_delay),
         REGISTER_CONFIG("open_spawn_interval", open_spawn_interval),
         REGISTER_CONFIG("open_super_plus_block_radius", open_super_plus_block_radius),
@@ -950,6 +1051,22 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("pincer_poison_total_damage", default_pincer_poison_total_damage),
         REGISTER_CONFIG("pincer_reload", default_pincer_reload),
         REGISTER_CONFIG("pincer_slow_duration", default_pincer_slow_duration),
+        REGISTER_CONFIG("pollen_base_damage", default_pollen_base_damage),
+        REGISTER_CONFIG("pollen_base_health", default_pollen_base_health),
+        REGISTER_CONFIG("pollen_base_radius", default_pollen_base_radius),
+        REGISTER_CONFIG("pollen_fire_cooldown", default_pollen_fire_cooldown),
+        REGISTER_CONFIG("pollen_mass", default_pollen_mass),
+        REGISTER_CONFIG("pollen_reload", default_pollen_reload),
+        REGISTER_CONFIG("basil_base_health", default_basil_base_health),
+        REGISTER_CONFIG("basil_base_radius", default_basil_base_radius),
+        REGISTER_CONFIG("basil_mass", default_basil_mass),
+        REGISTER_CONFIG("basil_reload", default_basil_reload),
+        REGISTER_CONFIG("honey_base_health", default_honey_base_health),
+        REGISTER_CONFIG("honey_base_radius", default_honey_base_radius),
+        REGISTER_CONFIG("honey_fire_cooldown", default_honey_fire_cooldown),
+        REGISTER_CONFIG("honey_mass", default_honey_mass),
+        REGISTER_CONFIG("honey_reload", default_honey_reload),
+        REGISTER_CONFIG("honey_attract_range", default_honey_attract_range),
         REGISTER_CONFIG("pi", pi),
         REGISTER_CONFIG("player_input_axis_max", player_input_axis_max),
         REGISTER_CONFIG("player_move_target_distance", player_move_target_distance),
@@ -990,13 +1107,46 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("rose_mass", default_rose_mass),
         REGISTER_CONFIG("rose_preload", default_rose_preload),
         REGISTER_CONFIG("rose_reload", default_rose_reload),
+        REGISTER_CONFIG("rock_petal_base_damage", default_rock_petal_base_damage),
+        REGISTER_CONFIG("rock_petal_base_health", default_rock_petal_base_health),
+        REGISTER_CONFIG("rock_petal_base_radius", default_rock_petal_base_radius),
+        REGISTER_CONFIG("rock_petal_mass", default_rock_petal_mass),
+        REGISTER_CONFIG("rock_petal_reload", default_rock_petal_reload),
+        REGISTER_CONFIG("cactus_base_damage", default_cactus_base_damage),
+        REGISTER_CONFIG("cactus_base_health", default_cactus_base_health),
+        REGISTER_CONFIG("cactus_base_radius", default_cactus_base_radius),
+        REGISTER_CONFIG("cactus_flower_health", default_cactus_flower_health),
+        REGISTER_CONFIG("cactus_mass", default_cactus_mass),
+        REGISTER_CONFIG("cactus_reload", default_cactus_reload),
+        REGISTER_CONFIG("soil_base_damage", default_soil_base_damage),
+        REGISTER_CONFIG("soil_base_health", default_soil_base_health),
+        REGISTER_CONFIG("soil_base_radius", default_soil_base_radius),
+        REGISTER_CONFIG("soil_flower_health", default_soil_flower_health),
+        REGISTER_CONFIG("soil_flower_radius", default_soil_flower_radius),
+        REGISTER_CONFIG("soil_mass", default_soil_mass),
+        REGISTER_CONFIG("soil_reload", default_soil_reload),
         REGISTER_CONFIG("server_fixed_dt", server_fixed_dt),
+        REGISTER_CONFIG("slow_tick_profile_ms", slow_tick_profile_ms),
+        REGISTER_CONFIG("simulation_active_view_radius_cap", simulation_active_view_radius_cap),
         REGISTER_CONFIG("spatial_grid_cell_size", spatial_grid_cell_size),
         REGISTER_CONFIG("stinger_base_damage", default_stinger_base_damage),
         REGISTER_CONFIG("stinger_base_health", default_stinger_base_health),
         REGISTER_CONFIG("stinger_base_radius", default_stinger_base_radius),
         REGISTER_CONFIG("stinger_mass", default_stinger_mass),
         REGISTER_CONFIG("stinger_reload", default_stinger_reload),
+        REGISTER_CONFIG("web_base_damage", default_web_base_damage),
+        REGISTER_CONFIG("web_base_health", default_web_base_health),
+        REGISTER_CONFIG("web_base_radius", default_web_base_radius),
+        REGISTER_CONFIG("web_fire_cooldown", default_web_fire_cooldown),
+        REGISTER_CONFIG("web_lifetime", default_web_lifetime),
+        REGISTER_CONFIG("web_mass", default_web_mass),
+        REGISTER_CONFIG("web_reload", default_web_reload),
+        REGISTER_CONFIG("web_throw_deceleration", default_web_throw_deceleration),
+        REGISTER_CONFIG("web_throw_attack_speed", default_web_throw_attack_speed),
+        REGISTER_CONFIG("web_throw_defend_speed", default_web_throw_defend_speed),
+        REGISTER_CONFIG("wax_base_health", default_wax_base_health),
+        REGISTER_CONFIG("wax_mass", default_wax_mass),
+        REGISTER_CONFIG("wax_reload", default_wax_reload),
         REGISTER_CONFIG("timeout_protection_seconds", timeout_protection_seconds),
         REGISTER_CONFIG("yinyang_base_damage", default_yinyang_base_damage),
         REGISTER_CONFIG("yinyang_base_health", default_yinyang_base_health),

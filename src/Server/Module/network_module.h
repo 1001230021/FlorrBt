@@ -58,6 +58,7 @@ class INetworkModule : public IModule
     bool IsIpBanned(const std::string& ip) const;
     bool IsNameBanned(const std::string& name) const;
     bool FlushSendBuffer(CPlayer& player);
+    void DropQueuedSnapshots(CPlayer& player);
     bool QueueMessage(CPlayer& player, const ServerMessage& msg);
     bool QueueAuthResult(CPlayer& player, bool success, const std::string& message);
     bool QueueWelcome(CPlayer& player);

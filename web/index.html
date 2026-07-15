@@ -37,8 +37,35 @@
     <button id="reviveBtn" class="revive-button" type="button">Revive</button>
   </section>
 
-  <section id="chatLog" class="chat-log ui"></section>
-  <input id="chatInput" class="chat-input ui hidden" autocomplete="off" spellcheck="false" maxlength="180" placeholder="Chat">
+  <section id="quickActions" class="quick-actions ui hidden" aria-label="Quick actions">
+    <button id="quickBackpackBtn" class="quick-action quick-action-backpack" type="button" title="Inventory [Z]" aria-label="Inventory">
+      <span class="quick-action-icon"></span>
+      <kbd>Z</kbd>
+    </button>
+    <button id="quickTalentBtn" class="quick-action quick-action-talent" type="button" title="Talents [X]" aria-label="Talents">
+      <span class="quick-action-icon"></span>
+      <span id="quickTalentPoints" class="quick-talent-points hidden" aria-hidden="true">0</span>
+      <kbd>X</kbd>
+    </button>
+    <button id="quickCraftBtn" class="quick-action quick-action-craft" type="button" title="Craft [C]" aria-label="Craft">
+      <span class="quick-action-icon"></span>
+      <kbd>C</kbd>
+    </button>
+  </section>
+
+  <section id="chatPanel" class="chat-panel ui hidden" aria-label="Chat">
+    <div id="chatChannels" class="chat-channels hidden">
+      <label class="chat-channel chat-channel-local"><input type="checkbox" data-chat-filter="local" checked><span>Local</span></label>
+      <label class="chat-channel chat-channel-global"><input type="checkbox" data-chat-filter="global" checked><span>Global</span></label>
+      <label class="chat-channel chat-channel-whisper"><input type="checkbox" data-chat-filter="whisper" checked><span>Whisper</span></label>
+      <label class="chat-channel chat-channel-server"><input type="checkbox" data-chat-filter="server" checked><span>Server</span></label>
+    </div>
+    <section id="chatLog" class="chat-log"></section>
+    <button id="chatHint" class="chat-hint" type="button">Press [ENTER] or click here to chat</button>
+    <input id="chatInput" class="chat-input hidden" autocomplete="off" spellcheck="false" maxlength="180" placeholder="[Local]">
+  </section>
+
+  <aside id="petalInfoTooltip" class="petal-info-tooltip ui hidden" aria-hidden="true"></aside>
 
   <section id="consolePanel" class="console-panel ui">
     <div id="debugInfo" class="console-debug"></div>
