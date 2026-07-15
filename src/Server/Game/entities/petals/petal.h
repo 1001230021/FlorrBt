@@ -129,10 +129,29 @@ class CRelicPetal : public CPetal
     int m_state_zone_id = -1;
 };
 
-class CMissilePetal : public CPetal
+class CThrownPetal : public CPetal
 {
   public:
     using CPetal::CPetal;
+
+    void Tick(float dt) override;
+    void BeginThrow(sf::Vector2f direction, float speed, float deceleration_time,
+                    bool destroy_when_stopped, bool tick_from_world, bool decelerates = true);
+    void StopThrow(bool destroy);
+
+    bool m_thrown = false;
+    bool m_throw_decelerates = true;
+    bool m_destroy_when_stopped = false;
+    float m_throw_age = 0.f;
+    float m_throw_deceleration_time = 0.25f;
+    float m_throw_initial_speed = 0.f;
+    sf::Vector2f m_throw_direction = {1.f, 0.f};
+};
+
+class CMissilePetal : public CThrownPetal
+{
+  public:
+    using CThrownPetal::CThrownPetal;
 
     void Tick(float dt) override;
 
@@ -166,6 +185,14 @@ class CGlassPetal : public CPetal
 };
 
 class CBrokenEggPetal : public CPetal
+{
+  public:
+    using CPetal::CPetal;
+
+    bool CanCollide() const override { return false; }
+};
+
+class CBasilPetal : public CPetal
 {
   public:
     using CPetal::CPetal;

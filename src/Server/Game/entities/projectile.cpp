@@ -54,7 +54,7 @@ void CMissile::Tick(float dt)
         if (LengthSq(facing) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
             facing = {1.f, 0.f};
         sf::Vector2f rear = -facing;
-        m_pos = owner->m_pos + rear * (owner->m_radius * 0.72f);
+        m_pos = owner->m_pos + rear * (owner->m_radius * game_config::mob_hornet_missile_attach_offset);
         m_vel = {0.f, 0.f};
         m_facing_angle = std::atan2(rear.y, rear.x);
         m_has_facing = true;
@@ -90,7 +90,7 @@ void CMissile::AttachToOwner()
     if (owner)
     {
         sf::Vector2f rear = {-std::cos(owner->m_facing_angle), -std::sin(owner->m_facing_angle)};
-        m_pos = owner->m_pos + rear * (owner->m_radius * 0.72f);
+        m_pos = owner->m_pos + rear * (owner->m_radius * game_config::mob_hornet_missile_attach_offset);
         m_facing_angle = std::atan2(rear.y, rear.x);
     }
 }

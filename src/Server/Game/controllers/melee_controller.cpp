@@ -1,4 +1,5 @@
 #include "melee_controller.h"
+#include "../entities/petals/petal.h"
 #include "../entities/projectile.h"
 #include "../gameworld.h"
 #include "../state_zone.h"
@@ -23,6 +24,23 @@ bool IsInvalidMeleeTarget(const CMobBase* mob, const CEntity* target, int ignore
     return false;
 }
 
+bool IsValidHoneyTarget(const CMobBase* mob, const CEntity* target, int ignored_id = -1, int ignored_owner_id = -1)
+{
+    if (!mob || !target) return false;
+    if (target->m_is_marked_for_des || target->IsDead() || !target->CanCollide()) return false;
+    if (target == mob) return false;
+    if (target->m_id == ignored_id || target->m_id == ignored_owner_id) return false;
+    if (CheckTeam(target->m_team, mob->m_team)) return false;
+    if (BlocksNullifiedInteraction(mob, target)) return false;
+
+    auto* petal = dynamic_cast<const CPetal*>(target);
+    if (!petal || petal->m_type != EPetalType::Honey) return false;
+
+    int honey_level = std::max(GetLevel(ERarity::Common), GetLevel(petal->m_rarity));
+    int max_attracted_level = std::max(GetLevel(ERarity::Common), honey_level - 1);
+    return GetLevel(mob->GetRarity()) <= max_attracted_level;
+}
+
 bool IsMeleeTargetBlockedByWall(CMobBase* mob, const CEntity* target)
 {
     if (!mob || !target || !mob->GameWorld()) return false;
@@ -31,39 +49,73 @@ bool IsMeleeTargetBlockedByWall(CMobBase* mob, const CEntity* target)
 
 bool IsUnavailableMeleeTarget(CMobBase* mob, const CEntity* target, int ignored_id = -1, int ignored_owner_id = -1)
 {
+    if (IsValidHoneyTarget(mob, target, ignored_id, ignored_owner_id))
+        return IsMeleeTargetBlockedByWall(mob, target);
     return IsInvalidMeleeTarget(mob, target, ignored_id, ignored_owner_id) ||
            IsMeleeTargetBlockedByWall(mob, target);
 }
 
-CEntity* FindClosestMeleeTarget(CMobBase* mob, float search_range)
+CEntity* FindClosestHoneyTarget(CMobBase* mob, float search_range, int ignored_id = -1, int ignored_owner_id = -1)
 {
-    if (!mob || !mob->GameWorld() || search_range <= 0.f) return nullptr;
+    if (!mob || !mob->GameWorld()) return nullptr;
+    if (search_range <= 0.f) return nullptr;
 
-    auto candidates = mob->GameWorld()->GetSpatialGrid().QueryRange(
-        mob->m_pos, search_range,
-        [mob, search_range](const CEntity* entity) -> bool
-        {
-            if (IsUnavailableMeleeTarget(mob, entity)) return false;
-
-            float detection_multiplier = 1.f;
-            if (auto* flower = dynamic_cast<const CFlower*>(entity)) detection_multiplier = flower->m_final_stats.detection_multiplier;
-
-            float range = search_range * detection_multiplier;
-            return DistanceSq(mob->m_pos, entity->m_pos) <= range * range;
-        });
-
+    float search_range_sq = search_range * search_range;
     float best_dist_sq = std::numeric_limits<float>::max();
     CEntity* p_best_target = nullptr;
-    for (auto* candidate : candidates)
+    mob->GameWorld()->GetSpatialGrid().ForEachInRange(mob->m_pos, search_range, [&](CEntity* candidate)
     {
+        if (!IsValidHoneyTarget(mob, candidate, ignored_id, ignored_owner_id)) return;
+        if (IsMeleeTargetBlockedByWall(mob, candidate)) return;
         float dist_sq = DistanceSq(mob->m_pos, candidate->m_pos);
+        if (dist_sq > search_range_sq) return;
         if (dist_sq < best_dist_sq)
         {
             best_dist_sq = dist_sq;
             p_best_target = candidate;
         }
-    }
+    });
     return p_best_target;
+}
+
+CEntity* FindClosestMeleeTarget(CMobBase* mob, float search_range, int ignored_id = -1, int ignored_owner_id = -1)
+{
+    if (!mob || !mob->GameWorld() || search_range <= 0.f) return nullptr;
+
+    float search_range_sq = search_range * search_range;
+    float best_honey_dist_sq = std::numeric_limits<float>::max();
+    CEntity* p_best_honey = nullptr;
+    float best_dist_sq = std::numeric_limits<float>::max();
+    CEntity* p_best_target = nullptr;
+    mob->GameWorld()->GetSpatialGrid().ForEachInRange(mob->m_pos, search_range, [&](CEntity* candidate)
+    {
+        float dist_sq = DistanceSq(mob->m_pos, candidate->m_pos);
+        if (IsValidHoneyTarget(mob, candidate, ignored_id, ignored_owner_id))
+        {
+            if (IsMeleeTargetBlockedByWall(mob, candidate)) return;
+            if (dist_sq > search_range_sq) return;
+            if (dist_sq < best_honey_dist_sq)
+            {
+                best_honey_dist_sq = dist_sq;
+                p_best_honey = candidate;
+            }
+            return;
+        }
+
+        if (IsUnavailableMeleeTarget(mob, candidate, ignored_id, ignored_owner_id)) return;
+
+        float detection_multiplier = 1.f;
+        if (auto* flower = dynamic_cast<const CFlower*>(candidate)) detection_multiplier = flower->m_final_stats.detection_multiplier;
+        float range = search_range * detection_multiplier;
+        if (dist_sq > range * range) return;
+
+        if (dist_sq < best_dist_sq)
+        {
+            best_dist_sq = dist_sq;
+            p_best_target = candidate;
+        }
+    });
+    return p_best_honey ? p_best_honey : p_best_target;
 }
 
 void FaceTarget(CMobBase* mob, const CEntity* target)
@@ -138,30 +190,7 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
         m_random_idle = false;
         m_random_idle_timer = 0.f;
 
-        auto candidates = mob->GameWorld()->GetSpatialGrid().QueryRange(
-            mob->m_pos, stats->horizon,
-            [mob, stats](const CEntity* entity) -> bool
-            {
-                if (IsUnavailableMeleeTarget(mob, entity)) return false;
-
-                float detection_multiplier = 1.f;
-                if (auto* flower = dynamic_cast<const CFlower*>(entity)) detection_multiplier = flower->m_final_stats.detection_multiplier;
-
-                float range = stats->horizon * detection_multiplier;
-                return DistanceSq(mob->m_pos, entity->m_pos) <= range * range;
-            });
-
-        float best_dist_sq = std::numeric_limits<float>::max();
-        CEntity* p_best_target = nullptr;
-        for (auto* candidate : candidates)
-        {
-            float dist_sq = DistanceSq(mob->m_pos, candidate->m_pos);
-            if (dist_sq < best_dist_sq)
-            {
-                best_dist_sq = dist_sq;
-                p_best_target = candidate;
-            }
-        }
+        CEntity* p_best_target = FindClosestMeleeTarget(mob, stats->horizon);
 
         m_p_target = p_best_target;
         if (m_p_target)
@@ -242,31 +271,7 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
         m_random_idle_timer = 0.f;
 
         float search_range = stats->horizon * game_config::mob_summoned_search_range_multiplier;
-        auto candidates = mob->GameWorld()->GetSpatialGrid().QueryRange(
-            mob->m_pos, search_range,
-            [mob, stats, owner, owner_owner_id](const CEntity* entity) -> bool
-            {
-                if (entity == owner) return false;
-                if (IsUnavailableMeleeTarget(mob, entity, owner->m_id, owner_owner_id)) return false;
-
-                float detection_multiplier = 1.f;
-                if (auto* flower = dynamic_cast<const CFlower*>(entity)) detection_multiplier = flower->m_final_stats.detection_multiplier;
-
-                float range = stats->horizon * game_config::mob_summoned_search_range_multiplier * detection_multiplier;
-                return DistanceSq(mob->m_pos, entity->m_pos) <= range * range;
-            });
-
-        float best_dist_sq = std::numeric_limits<float>::max();
-        CEntity* p_best_target = nullptr;
-        for (auto* candidate : candidates)
-        {
-            float dist_sq = DistanceSq(mob->m_pos, candidate->m_pos);
-            if (dist_sq < best_dist_sq)
-            {
-                best_dist_sq = dist_sq;
-                p_best_target = candidate;
-            }
-        }
+        CEntity* p_best_target = FindClosestMeleeTarget(mob, search_range, owner->m_id, owner_owner_id);
 
         m_p_target = p_best_target;
         if (m_p_target)
@@ -295,6 +300,8 @@ void CNeutralMeleeController::OnTick(CMobBase* mob, float dt)
     const SMobStats* stats = mob->GetFinalStats();
     if (!stats) return;
 
+    m_change_target_count += dt;
+
     if (m_p_target && IsUnavailableMeleeTarget(mob, m_p_target))
     {
         m_p_target = nullptr;
@@ -313,9 +320,19 @@ void CNeutralMeleeController::OnTick(CMobBase* mob, float dt)
     bool reached_random_target = m_has_random_target_pos &&
                                  (m_random_idle ? IsRandomIdleDone(dt) :
                                   DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
-    if (!m_has_random_target_pos || reached_random_target)
+    if (!m_has_random_target_pos || reached_random_target || m_change_target_count >= game_config::melee_target_time)
     {
-        PickRandomTargetPos(mob, *stats);
+        m_change_target_count = 0.f;
+        if (CEntity* honey = FindClosestHoneyTarget(mob, stats->horizon))
+        {
+            m_p_target = honey;
+            m_target_pos = honey->m_pos;
+            m_has_random_target_pos = true;
+            m_random_idle = false;
+            m_random_idle_timer = 0.f;
+        } else if (!m_has_random_target_pos || reached_random_target) {
+            PickRandomTargetPos(mob, *stats);
+        }
     }
     mob->MoveTowards(m_target_pos, dt);
 }
@@ -342,14 +359,39 @@ void CRandomWanderController::OnTick(CMobBase* mob, float dt)
     const SMobStats* stats = mob->GetFinalStats();
     if (!stats) return;
 
-    m_p_target = nullptr;
+    m_change_target_count += dt;
+
+    if (m_p_target && IsUnavailableMeleeTarget(mob, m_p_target))
+    {
+        m_p_target = nullptr;
+        m_has_random_target_pos = false;
+        m_random_idle = false;
+        m_random_idle_timer = 0.f;
+    }
+
+    if (m_p_target)
+    {
+        m_target_pos = m_p_target->m_pos;
+        mob->MoveTowards(m_target_pos, dt);
+        return;
+    }
 
     bool reached_random_target = m_has_random_target_pos &&
                                  (m_random_idle ? IsRandomIdleDone(dt) :
                                   DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
-    if (!m_has_random_target_pos || reached_random_target)
+    if (!m_has_random_target_pos || reached_random_target || m_change_target_count >= game_config::melee_target_time)
     {
-        PickRandomTargetPos(mob, *stats);
+        m_change_target_count = 0.f;
+        if (CEntity* honey = FindClosestHoneyTarget(mob, stats->horizon))
+        {
+            m_p_target = honey;
+            m_target_pos = honey->m_pos;
+            m_has_random_target_pos = true;
+            m_random_idle = false;
+            m_random_idle_timer = 0.f;
+        } else if (!m_has_random_target_pos || reached_random_target) {
+            PickRandomTargetPos(mob, *stats);
+        }
     }
     mob->MoveTowards(m_target_pos, dt);
 }
@@ -500,20 +542,38 @@ void CBumbleBeeController::OnTick(CMobBase* mob, float dt)
     if (LengthSq(mob->m_vel) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
         m_heading = std::atan2(mob->m_vel.y, mob->m_vel.x);
 
-    m_turn_timer -= dt;
-    if (m_turn_timer <= 0.f)
+    m_honey_target_timer += dt;
+    if (m_p_honey_target && IsUnavailableMeleeTarget(mob, m_p_honey_target))
     {
-        float max_angle = std::max(0.f, game_config::mob_bumblebee_turn_max_angle);
-        m_heading += GetLimitedRng(-max_angle, max_angle);
-        PickTurnTimer();
+        m_p_honey_target = nullptr;
+        m_honey_target_timer = game_config::melee_target_time;
+    }
+    if (!m_p_honey_target && m_honey_target_timer >= game_config::melee_target_time)
+    {
+        m_honey_target_timer = 0.f;
+        m_p_honey_target = FindClosestHoneyTarget(mob, stats->horizon);
     }
 
-    m_wave_timer += dt;
-    float wave = std::sin(m_wave_timer * game_config::mob_bee_wave_frequency) *
-                 game_config::mob_bee_wave_strength * 0.55f;
-    sf::Vector2f target = mob->m_pos + sf::Vector2f(std::cos(m_heading + wave), std::sin(m_heading + wave)) *
-                          std::max(256.f, stats->max_velocity * 4.f);
-    mob->MoveTowards(target, dt);
+    if (m_p_honey_target)
+    {
+        FaceTarget(mob, m_p_honey_target);
+        mob->MoveTowards(m_p_honey_target->m_pos, dt);
+    } else {
+        m_turn_timer -= dt;
+        if (m_turn_timer <= 0.f)
+        {
+            float max_angle = std::max(0.f, game_config::mob_bumblebee_turn_max_angle);
+            m_heading += GetLimitedRng(-max_angle, max_angle);
+            PickTurnTimer();
+        }
+
+        m_wave_timer += dt;
+        float wave = std::sin(m_wave_timer * game_config::mob_bee_wave_frequency) *
+                     game_config::mob_bee_wave_strength * 0.55f;
+        sf::Vector2f target = mob->m_pos + sf::Vector2f(std::cos(m_heading + wave), std::sin(m_heading + wave)) *
+                              std::max(256.f, stats->max_velocity * 4.f);
+        mob->MoveTowards(target, dt);
+    }
 
     m_pollen_timer += dt;
     float interval = std::max(game_config::server_fixed_dt, game_config::mob_bumblebee_pollen_interval);

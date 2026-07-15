@@ -10,6 +10,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 class CPlayer;
@@ -51,6 +52,19 @@ class CGameWorld
     CEntity* FindClosestEntityByEdge(const sf::Vector2f& center, float max_edge_range,
                                      std::function<bool(const CEntity*)> filter = nullptr) const;
 
+    template <typename TVisitor> void ForEachEntity(TVisitor visitor) const
+    {
+        for (const auto& entity : m_p_entities)
+        {
+            if (entity) visitor(entity.get());
+        }
+        for (CEntity* entity : m_p_entity_refs)
+        {
+            if (entity) visitor(entity);
+        }
+    }
+
+    void CollectEntities(std::vector<CEntity*>& result) const;
     std::vector<CEntity*> GetAllEntities() const;
 
     const entity_spatial_grid& GetSpatialGrid() const { return m_spatial_grid; }
@@ -80,4 +94,8 @@ class CGameWorld
 
     std::vector<std::unique_ptr<CEntity>> m_p_entities;
     std::vector<CEntity*> m_p_entity_refs;
+    std::vector<CEntity*> m_tick_entities;
+    std::vector<CEntity*> m_active_entities;
+    std::uint64_t m_active_tick_marker = 1;
+    float m_cached_max_entity_radius = 0.f;
 };

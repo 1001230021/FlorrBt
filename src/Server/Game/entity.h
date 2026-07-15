@@ -34,6 +34,7 @@ class CEntity
 
     int m_id = -1;
     std::uint64_t m_generation = 0;
+    std::uint64_t m_active_tick_marker = 0;
     bool m_is_marked_for_des = false;
 
     int m_team = 0;

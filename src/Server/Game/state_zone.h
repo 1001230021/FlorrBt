@@ -40,6 +40,8 @@ class CStateZone : public CEntity
 
     state_factory m_state;
     zone_filter m_filter;
+    float m_apply_interval = 0.f;
+    float m_apply_timer = 0.f;
     float m_timer = endless;
 };
 

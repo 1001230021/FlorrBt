@@ -36,7 +36,6 @@ class CMobBase : public CEntity
 
     void AddState(std::unique_ptr<CState> state);
     void TickStates(float dt);
-    void TickPetalContacts();
     bool TickDropPickup(CPlayer* player);
     virtual void MoveTowards(const sf::Vector2f& target_pos, float dt);
     void ApplyDamageDirect(float dmg, CEntity* attacker);
@@ -58,6 +57,49 @@ class CMobBase : public CEntity
             if (casted) states.push_back(casted);
         }
         return states;
+    }
+
+    template <typename TState> TState* FindFirstState()
+    {
+        for (auto& state : m_states)
+        {
+            auto* casted = dynamic_cast<TState*>(state.get());
+            if (casted) return casted;
+        }
+        return nullptr;
+    }
+
+    template <typename TState> const TState* FindFirstState() const
+    {
+        for (const auto& state : m_states)
+        {
+            auto* casted = dynamic_cast<const TState*>(state.get());
+            if (casted) return casted;
+        }
+        return nullptr;
+    }
+
+    template <typename TState> bool HasState() const
+    {
+        return FindFirstState<TState>() != nullptr;
+    }
+
+    template <typename TState, typename TVisitor> void ForEachState(TVisitor visitor)
+    {
+        for (auto& state : m_states)
+        {
+            auto* casted = dynamic_cast<TState*>(state.get());
+            if (casted) visitor(casted);
+        }
+    }
+
+    template <typename TState, typename TVisitor> void ForEachState(TVisitor visitor) const
+    {
+        for (const auto& state : m_states)
+        {
+            auto* casted = dynamic_cast<const TState*>(state.get());
+            if (casted) visitor(casted);
+        }
     }
 
     bool RemoveState(CState* state);
@@ -95,7 +137,6 @@ template <typename TStats = SMobStats> class CMob : public CMobBase
         if (m_p_controller) m_p_controller->OnTick(this, dt);
         m_pos += m_vel * dt;
         TickStates(dt);
-        TickPetalContacts();
     }
 
     const SMobStats* GetBaseStats() const override { return &m_base_stats; }

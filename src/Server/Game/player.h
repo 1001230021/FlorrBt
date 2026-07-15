@@ -2,6 +2,7 @@
 #include "../../Shared/rarity.h"
 #include "../../Shared/talent_type.h"
 #include <SFML/Network/TcpSocket.hpp>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -74,6 +75,7 @@ class CPlayer
     bool IsTimedOut() const { return !m_connected && m_timeout_left <= 0.f; }
 
     std::vector<uint8_t> m_send_buffer;
+    size_t m_send_offset = 0;
     std::vector<uint8_t> m_receive_buffer;
     bool m_logged_missing_entity = false;
 

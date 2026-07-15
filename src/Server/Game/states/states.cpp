@@ -41,10 +41,10 @@ bool MobNullifiesTarget(const CMobBase* nullified, const CMobBase* target)
 {
     if (!nullified || !target) return false;
 
-    auto states = const_cast<CMobBase*>(nullified)->FindStates<CNullificationState>();
-    if (states.empty()) return false;
+    const CNullificationState* state = nullified->FindFirstState<CNullificationState>();
+    if (!state) return false;
 
-    int null_level = GetLevel(states.front()->m_rarity);
+    int null_level = GetLevel(state->m_rarity);
     int target_level = GetLevel(target->GetRarity());
     return target_level <= null_level - game_config::nullification_level_gap;
 }
@@ -55,8 +55,7 @@ CPoisonState::CPoisonState(CMobBase* owner, float timer, float basic_dmg, ERarit
       m_applier_id(applier ? applier->m_id : -1),
       m_applier_generation(applier ? applier->m_generation : 0)
 {
-    auto existing_states = owner ? owner->FindStates<CPoisonState>() : std::vector<CPoisonState*>{};
-    CPoisonState* existing = existing_states.empty() ? nullptr : existing_states[0];
+    CPoisonState* existing = owner ? owner->FindFirstState<CPoisonState>() : nullptr;
 
     if (!existing)
     {
@@ -152,8 +151,7 @@ void CBanSlotState::Tick(float dt)
 CPincerSpeedReduceState::CPincerSpeedReduceState(CMobBase* owner, float timer, ERarity rarity)
     : CState(owner, timer, rarity)
 {
-    auto existing_states = owner ? owner->FindStates<CPincerSpeedReduceState>() : std::vector<CPincerSpeedReduceState*>{};
-    CPincerSpeedReduceState* existing = existing_states.empty() ? nullptr : existing_states[0];
+    CPincerSpeedReduceState* existing = owner ? owner->FindFirstState<CPincerSpeedReduceState>() : nullptr;
 
     if (!existing)
     {
@@ -188,8 +186,7 @@ CWebSpeedReduceState::CWebSpeedReduceState(CMobBase* owner, float timer, float d
     if (owner && owner->m_mob_type == EMobType::Spider)
         m_multiplier = std::clamp(1.f - (1.f - m_multiplier) * 0.5f, 0.f, 1.f);
 
-    auto existing_states = owner ? owner->FindStates<CWebSpeedReduceState>() : std::vector<CWebSpeedReduceState*>{};
-    CWebSpeedReduceState* existing = existing_states.empty() ? nullptr : existing_states[0];
+    CWebSpeedReduceState* existing = owner ? owner->FindFirstState<CWebSpeedReduceState>() : nullptr;
     if (!existing)
     {
         m_is_valid = true;
@@ -207,8 +204,7 @@ CWebSpeedReduceState::CWebSpeedReduceState(CMobBase* owner, float timer, float d
 CPsionicConnectionState::CPsionicConnectionState(CMobBase* owner, float timer, ERarity rarity)
     : CState(owner, timer, rarity)
 {
-    auto existing_states = owner ? owner->FindStates<CPsionicConnectionState>() : std::vector<CPsionicConnectionState*>{};
-    CPsionicConnectionState* existing = existing_states.empty() ? nullptr : existing_states[0];
+    CPsionicConnectionState* existing = owner ? owner->FindFirstState<CPsionicConnectionState>() : nullptr;
 
     if (!existing)
     {
@@ -232,12 +228,11 @@ float GetPincerSpeedMultiplier(const CMobBase* mob)
 {
     if (!mob) return 1.f;
 
-    auto states = const_cast<CMobBase*>(mob)->FindStates<CPincerSpeedReduceState>();
     int mob_level = GetLevel(mob->GetRarity());
     float multiplier = 1.f;
-    for (const auto* state : states)
+    mob->ForEachState<CPincerSpeedReduceState>([&](const CPincerSpeedReduceState* state)
     {
-        if (!state) continue;
+        if (!state) return;
 
         int diff = GetLevel(state->m_rarity) - mob_level;
         if (diff >= 1)
@@ -246,42 +241,40 @@ float GetPincerSpeedMultiplier(const CMobBase* mob)
             multiplier = std::min(multiplier, 0.2f);
         else if (diff == -1)
             multiplier = std::min(multiplier, 0.9f);
-    }
+    });
 
-    for (const auto* state : const_cast<CMobBase*>(mob)->FindStates<CWebSpeedReduceState>())
+    mob->ForEachState<CWebSpeedReduceState>([&](const CWebSpeedReduceState* state)
     {
-        if (!state) continue;
+        if (!state) return;
         multiplier = std::min(multiplier, state->GetMultiplier());
-    }
+    });
     return multiplier;
 }
 
 bool TrySharePsionicDamage(CMobBase* receiver, float dmg, CEntity* attacker, EDamageType dmg_type)
 {
     if (!receiver || dmg <= 0.f) return false;
-    if (receiver->FindStates<CPsionicConnectionState>().empty()) return false;
+    if (!receiver->HasState<CPsionicConnectionState>()) return false;
 
     CGameWorld* world = receiver->GameWorld();
     if (!world) return false;
 
-    std::vector<CEntity*> candidates = world->GetSpatialGrid().QueryRange(
-        receiver->m_pos, game_config::psionic_connection_range,
-        [receiver](const CEntity* entity) -> bool
-        {
-            if (!entity || entity->m_is_marked_for_des) return false;
-            auto* mob = dynamic_cast<const CMobBase*>(entity);
-            if (!mob) return false;
-            if (!CheckTeam(mob->m_team, receiver->m_team)) return false;
-            return !const_cast<CMobBase*>(mob)->FindStates<CPsionicConnectionState>().empty();
-        });
+    std::vector<CMobBase*> candidates;
+    world->GetSpatialGrid().ForEachInRange(receiver->m_pos, game_config::psionic_connection_range, [&](CEntity* entity)
+    {
+        if (!entity || entity->m_is_marked_for_des) return;
+        auto* mob = dynamic_cast<CMobBase*>(entity);
+        if (!mob) return;
+        if (!CheckTeam(mob->m_team, receiver->m_team)) return;
+        if (!mob->HasState<CPsionicConnectionState>()) return;
+        candidates.push_back(mob);
+    });
 
     if (candidates.empty()) return false;
 
     float shared_damage = dmg / static_cast<float>(candidates.size());
-    for (CEntity* entity : candidates)
-    {
-        if (auto* mob = dynamic_cast<CMobBase*>(entity)) mob->ApplyDamageDirect(shared_damage, attacker);
-    }
+    for (CMobBase* mob : candidates)
+        if (mob) mob->ApplyDamageDirect(shared_damage, attacker);
     return true;
 }
 

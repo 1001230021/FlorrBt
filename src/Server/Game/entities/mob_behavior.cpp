@@ -201,14 +201,14 @@ int CountOwnedSummonedSoldierAnts(CGameWorld* world, int owner_id)
     if (!world || owner_id < 0) return 0;
 
     int count = 0;
-    for (CEntity* entity : world->GetAllEntities())
+    world->ForEachEntity([&](CEntity* entity)
     {
         auto* mob = dynamic_cast<CMobBase*>(entity);
-        if (!mob || mob->m_is_marked_for_des || mob->IsDead()) continue;
-        if (mob->m_mob_type != EMobType::SoldierAnt && mob->m_mob_type != EMobType::SummonedSoldierAnt) continue;
+        if (!mob || mob->m_is_marked_for_des || mob->IsDead()) return;
+        if (mob->m_mob_type != EMobType::SoldierAnt && mob->m_mob_type != EMobType::SummonedSoldierAnt) return;
         auto* controller = dynamic_cast<CSummonedMeleeController*>(mob->GetController());
         if (controller && controller->GetOwnerId() == owner_id) ++count;
-    }
+    });
     return count;
 }
 
@@ -224,7 +224,7 @@ class CBandageBeetleMob : public CBasicMob
         if (TrySharePsionicDamage(this, dmg, attacker, dmg_type)) return;
 
         ApplyDamageDirect(dmg, attacker);
-        if (m_is_marked_for_des && FindStates<CUndeadState>().empty())
+        if (m_is_marked_for_des && !HasState<CUndeadState>())
         {
             m_is_marked_for_des = false;
             m_health = std::max(1.f, m_health);
@@ -370,7 +370,7 @@ class CHornetMob : public CAttackableBasicMob
 
     sf::Vector2f LoadedMissilePosition() const
     {
-        return m_pos + LoadedMissileDirection() * (m_radius * 0.72f);
+        return m_pos + LoadedMissileDirection() * (m_radius * game_config::mob_hornet_missile_attach_offset);
     }
 
     void UpdateLoadedMissile(float dt)
@@ -499,7 +499,6 @@ class CQueenAntMob : public CAttackableBasicMob
         {
             m_vel = {0.f, 0.f};
             TickStates(dt);
-            TickPetalContacts();
             return;
         }
 
@@ -581,7 +580,6 @@ class CAntHoleMob : public CBasicMob
     {
         m_vel = {0.f, 0.f};
         TickStates(dt);
-        TickPetalContacts();
         ReleaseQueuedSpawns(dt);
     }
 

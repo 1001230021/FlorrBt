@@ -88,6 +88,12 @@ void CFlower::Tick(float dt)
 {
     CAttackableMob<SFlowerStats>::Tick(dt);
     RebuildFinalStats();
+    if (m_final_stats.health_regen > 0.f && m_final_stats.max_health > 0.f && m_health > 0.f)
+    {
+        float regen = m_final_stats.health_regen * std::max(0.f, m_final_stats.petal_medicine_multiplier) *
+                      std::max(0.f, m_final_stats.healing_received_multiplier);
+        m_health = std::min(m_final_stats.max_health, m_health + regen * dt);
+    }
     RefreshNullificationState();
     RefreshCorruptionState();
 
@@ -428,19 +434,14 @@ void CFlower::RefreshCorruptionState()
         radius = game_config::default_corruption_radius_above_ultra;
     if (radius <= 0.f || !GameWorld()) return;
 
-    auto candidates = GameWorld()->GetSpatialGrid().QueryRange(m_pos, radius, [this](const CEntity* entity)
+    GameWorld()->GetSpatialGrid().ForEachInRange(m_pos, radius, [this, best_rarity](CEntity* entity)
     {
-        if (!entity || entity == this || entity->m_is_marked_for_des || entity->IsDead()) return false;
-        return dynamic_cast<const CFlower*>(entity) != nullptr;
-    });
-
-    for (CEntity* entity : candidates)
-    {
+        if (!entity || entity == this || entity->m_is_marked_for_des || entity->IsDead()) return;
         auto* flower = dynamic_cast<CFlower*>(entity);
-        if (!flower) continue;
-        if (flower->FindStates<CCorruptionState>().empty())
+        if (!flower) return;
+        if (!flower->HasState<CCorruptionState>())
             flower->AddState(std::make_unique<CCorruptionState>(flower, endless, best_rarity));
-    }
+    });
 }
 
 void CFlower::SetBanned(bool banned, int slot_index)
@@ -760,8 +761,8 @@ void CPlayerFlower::ClearCorruptionOnDeath()
 
 bool CPlayerFlower::TryEnterUndeadFromBandage()
 {
-    if (!FindStates<CUndeadState>().empty()) return false;
-    if (!FindStates<CNoReviveState>().empty()) return false;
+    if (HasState<CUndeadState>()) return false;
+    if (HasState<CNoReviveState>()) return false;
 
     auto& slots = GetSlots();
     int best_slot = -1;

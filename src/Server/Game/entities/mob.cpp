@@ -1,7 +1,6 @@
 #include "mob.h"
 #include "drop.h"
 #include "projectile.h"
-#include "petals/petal.h"
 #include "../controllers/melee_controller.h"
 #include "../gamecontext.h"
 #include "../gameworld.h"
@@ -31,7 +30,7 @@ bool IsUndeadDamageSource(CEntity* entity)
 
         if (auto* mob = dynamic_cast<CMobBase*>(entity))
         {
-            if (!mob->FindStates<CUndeadState>().empty()) return true;
+            if (mob->HasState<CUndeadState>()) return true;
 
             auto* controller = dynamic_cast<CSummonedMeleeController*>(mob->GetController());
             CGameWorld* world = mob->GameWorld();
@@ -74,39 +73,6 @@ void CMobBase::TickStates(float dt)
     }
 }
 
-void CMobBase::TickPetalContacts()
-{
-    CGameWorld* world = GameWorld();
-    const SMobStats* stats = GetFinalStats();
-    if (!world || !stats) return;
-
-    float max_petal_radius = std::max({game_config::default_petal_radius, game_config::default_goldenleaf_base_radius,
-                                       game_config::default_yinyang_base_radius, game_config::default_basic_base_radius,
-                                       game_config::default_beetleegg_base_radius, game_config::default_antegg_base_radius,
-                                       game_config::default_bubble_base_radius, game_config::default_cogwheel_base_radius,
-                                       game_config::default_dust_base_radius, game_config::default_iris_base_radius,
-                                       game_config::default_pincer_base_radius, game_config::default_rose_base_radius,
-                                       game_config::default_yggdrasil_base_radius});
-    float query_radius = m_radius + max_petal_radius;
-    auto petals = world->GetSpatialGrid().QueryRange(m_pos, query_radius, [this](const CEntity* entity)
-    {
-        if (!entity || entity->m_is_marked_for_des || entity == this) return false;
-        if (entity->IsDead() || !entity->CanCollide()) return false;
-        if (CheckTeam(entity->m_team, m_team)) return false;
-        if (BlocksNullifiedInteraction(this, entity)) return false;
-        return dynamic_cast<const CPetal*>(entity) != nullptr;
-    });
-
-    for (CEntity* entity : petals)
-    {
-        auto* petal = dynamic_cast<CPetal*>(entity);
-        if (!petal || petal->m_is_marked_for_des) continue;
-        if (BlocksNullifiedInteraction(this, petal)) continue;
-        if (!IsCollision(*petal)) continue;
-        petal->TakeDamage(stats->damage, this, EDamageType::Normal);
-    }
-}
-
 bool CMobBase::TickDropPickup(CPlayer* player)
 {
     if (!player || !player->IsAuthenticated() || player->GetAccountName().empty()) return false;
@@ -117,20 +83,12 @@ bool CMobBase::TickDropPickup(CPlayer* player)
     if (!world || !stats || stats->max_absorb_range <= 0.f) return false;
 
     bool picked_any = false;
-    std::vector<CEntity*> drops = world->GetSpatialGrid().QueryRange(
-        m_pos, stats->max_absorb_range,
-        [player](const CEntity* candidate) -> bool
-        {
-            auto* drop = dynamic_cast<const CDrop*>(candidate);
-            return drop && drop->CanBePickedUpBy(player->GetId());
-        });
-
-    for (CEntity* candidate : drops)
+    world->GetSpatialGrid().ForEachInRange(m_pos, stats->max_absorb_range, [&](CEntity* candidate)
     {
         auto* drop = dynamic_cast<CDrop*>(candidate);
-        if (!drop) continue;
+        if (!drop || !drop->CanBePickedUpBy(player->GetId())) return;
         picked_any = drop->PickUpTo(player->GetAccountName(), player->GetId()) || picked_any;
-    }
+    });
 
     return picked_any;
 }
@@ -138,8 +96,8 @@ bool CMobBase::TickDropPickup(CPlayer* player)
 void CMobBase::ApplyDamageDirect(float dmg, CEntity* attacker)
 {
     if (dmg <= 0.f) return;
-    if (!FindStates<CInvincibleState>().empty()) return;
-    if (!FindStates<CUndeadState>().empty())
+    if (HasState<CInvincibleState>()) return;
+    if (HasState<CUndeadState>())
     {
         m_health = std::max(1.f, m_health);
         return;

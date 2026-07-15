@@ -16,9 +16,47 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <stdexcept>
 #include <SFML/System/Clock.hpp>
 #include <SFML/System/Sleep.hpp>
+
+namespace
+{
+std::string GenerateRconPassword()
+{
+    static const std::string upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    static const std::string lower = "abcdefghijklmnopqrstuvwxyz";
+    static const std::string digits = "0123456789";
+    static const std::string all = upper + lower + digits;
+
+    std::random_device random_device;
+    std::mt19937 rng(random_device());
+    auto pick = [&rng](const std::string& pool)
+    {
+        std::uniform_int_distribution<size_t> dist(0, pool.size() - 1);
+        return pool[dist(rng)];
+    };
+
+    std::string password;
+    password.reserve(6);
+    password.push_back(pick(upper));
+    password.push_back(pick(lower));
+    password.push_back(pick(digits));
+    while (password.size() < 6)
+        password.push_back(pick(all));
+    std::shuffle(password.begin(), password.end(), rng);
+    return password;
+}
+
+void EnsureRconPasswordInitialized()
+{
+    if (!game_config::rcon_password.empty()) return;
+
+    game_config::rcon_password = GenerateRconPassword();
+    LOG_INFO("rcon", "Generated RCON password: " + game_config::rcon_password);
+}
+}
 
 CServer* CServer::s_p_instance = nullptr;
 
@@ -60,6 +98,7 @@ void CServer::Init()
     m_console.InstallCommands();
     ExecuteStartupCommands();
     InstallLogSink();
+    EnsureRconPasswordInitialized();
 
     std::string account_error;
     if (!CAccountDataStore::Load(game_config::account_data_path, &account_error))
@@ -172,6 +211,7 @@ void CServer::Run()
 {
     const float dt = game_config::server_fixed_dt;
     const sf::Time targetFrameTime = sf::seconds(dt);
+    float tick_overrun_log_cooldown = 0.f;
 
     while (m_running)
     {
@@ -195,6 +235,14 @@ void CServer::Run()
         }
 
         sf::Time elapsed = frameClock.getElapsedTime();
+        tick_overrun_log_cooldown = std::max(0.f, tick_overrun_log_cooldown - elapsed.asSeconds());
+        if (elapsed > targetFrameTime && tick_overrun_log_cooldown <= 0.f)
+        {
+            LOG_WARN("server", "Tick overrun: " + std::to_string(elapsed.asMilliseconds()) +
+                                   "ms for " + std::to_string(static_cast<int>(dt * 1000.f)) +
+                                   "ms simulation step");
+            tick_overrun_log_cooldown = 2.f;
+        }
         if (elapsed < targetFrameTime) sf::sleep(targetFrameTime - elapsed);
     }
 }

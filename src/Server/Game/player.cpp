@@ -57,6 +57,7 @@ void CPlayer::AttachSocket(sf::TcpSocket&& socket)
     m_socket = std::move(socket);
     m_socket.setBlocking(false);
     m_send_buffer.clear();
+    m_send_offset = 0;
     m_receive_buffer.clear();
     m_connected = true;
     m_timeout_left = 0.f;
@@ -68,6 +69,7 @@ void CPlayer::DetachSocket()
 
     m_socket.disconnect();
     m_send_buffer.clear();
+    m_send_offset = 0;
     m_receive_buffer.clear();
     m_connected = false;
     m_timeout_left = game_config::timeout_protection_seconds;
