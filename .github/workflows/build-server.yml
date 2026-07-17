@@ -28,7 +28,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -82,7 +82,7 @@ jobs:
           Copy-Item data package/FlorrBt_Server/data -Recurse
 
       - name: Upload server artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: FlorrBt-Server-${{ matrix.platform }}
           path: package/FlorrBt_Server
