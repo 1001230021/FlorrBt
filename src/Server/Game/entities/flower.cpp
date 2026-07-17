@@ -61,9 +61,13 @@ SFlowerStats BuildPlayerFlowerLevelStats(SFlowerStats stats, int level)
 
 int PlayerFlowerExpRequired(int level)
 {
-    if (level <= 1) return 10;
-    if (level >= 29) return std::numeric_limits<int>::max();
-    return 10 * (1 << (level - 1));
+    constexpr double base_exp = 25.0;
+    constexpr double level_growth = 1.05;
+    const int safe_level = std::max(1, level);
+    const double required = base_exp * std::pow(level_growth, static_cast<double>(safe_level - 1));
+    if (!std::isfinite(required) || required >= static_cast<double>(std::numeric_limits<int>::max()))
+        return std::numeric_limits<int>::max();
+    return std::max(1, static_cast<int>(std::llround(required)));
 }
 
 int TalentPointGainForLevel(int level)
@@ -335,7 +339,7 @@ bool CFlower::CanUnequipPetal(int slot_index) const
 void CFlower::ApplyExclusivity(EPetalType type)
 {
     CPetalSlot* p_best_slot = nullptr;
-    int best_rarity = -1;
+    float best_rarity = -1.f;
 
     for (auto& slot : m_slots)
     {
@@ -343,7 +347,7 @@ void CFlower::ApplyExclusivity(EPetalType type)
         if (!slot.m_p_proto->m_p_behavior) continue;
         if (slot.m_p_proto->m_p_behavior->GetPetalStats(slot.m_stored_rarity).stack) continue;
 
-        int rarity_level = static_cast<int>(slot.m_stored_rarity);
+        float rarity_level = GetRaritySortRank(slot.m_stored_rarity);
         if (rarity_level > best_rarity)
         {
             best_rarity = rarity_level;
@@ -374,7 +378,8 @@ void CFlower::RefreshNullificationState()
     {
         if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
         if (slot.m_p_proto->m_type != EPetalType::Nullification) continue;
-        if (GetLevel(slot.m_stored_rarity) > GetLevel(best_rarity)) best_rarity = slot.m_stored_rarity;
+        if (GetRaritySortRank(slot.m_stored_rarity) > GetRaritySortRank(best_rarity))
+            best_rarity = slot.m_stored_rarity;
     }
 
     auto states = FindStates<CNullificationState>();
@@ -405,7 +410,8 @@ void CFlower::RefreshCorruptionState()
     {
         if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
         if (slot.m_p_proto->m_type != EPetalType::Corruption) continue;
-        if (GetLevel(slot.m_stored_rarity) > GetLevel(best_rarity)) best_rarity = slot.m_stored_rarity;
+        if (GetRaritySortRank(slot.m_stored_rarity) > GetRaritySortRank(best_rarity))
+            best_rarity = slot.m_stored_rarity;
     }
 
     auto states = FindStates<CCorruptionState>();
@@ -530,6 +536,8 @@ CPlayerFlower::CPlayerFlower(CGameWorld* pworld, sf::Vector2f pos, float r, ERar
     SetPetalSlotCount(slot_count);
     RebuildFinalStats();
     m_health = m_final_stats.max_health;
+    if (game_config::player_spawn_invincible_duration > 0.f)
+        AddState(std::make_unique<CInvincibleState>(this, game_config::player_spawn_invincible_duration, GetRarity()));
 }
 
 void CPlayerFlower::RebuildFinalStats()
@@ -739,14 +747,20 @@ void CPlayerFlower::ClearCorruptionOnDeath()
     {
         CPetalSlot& slot = slots[i];
         if (!slot.m_p_proto || slot.m_p_proto->m_type != EPetalType::Corruption) continue;
-        if (GetLevel(slot.m_stored_rarity) > GetLevel(ERarity::Ultra)) continue;
+        const uint8_t old_type = static_cast<uint8_t>(slot.m_p_proto->m_type);
+        const uint8_t old_rarity = static_cast<uint8_t>(slot.m_stored_rarity);
+        const bool should_unequip = IsAtLeastRarity(slot.m_stored_rarity, ERarity::Super);
+        if (!should_unequip && GetLevel(slot.m_stored_rarity) > GetLevel(ERarity::Ultra)) continue;
         slot.ClearPetal();
         slot.m_p_proto = nullptr;
         slot.m_stored_rarity = ERarity::Null;
         slot.m_available = true;
         cleared = true;
         if (player && player->IsAuthenticated())
+        {
+            if (should_unequip) CAccountDataStore::AddItem(player->GetAccountName(), old_type, old_rarity, 1);
             CAccountDataStore::ClearSlot(player->GetAccountName(), static_cast<uint8_t>(i));
+        }
     }
 
     if (!cleared) return;
@@ -772,7 +786,7 @@ bool CPlayerFlower::TryEnterUndeadFromBandage()
         const CPetalSlot& slot = slots[i];
         if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
         if (slot.m_p_proto->m_type != EPetalType::Bandage) continue;
-        if (GetLevel(slot.m_stored_rarity) > GetLevel(best_rarity))
+        if (GetRaritySortRank(slot.m_stored_rarity) > GetRaritySortRank(best_rarity))
         {
             best_rarity = slot.m_stored_rarity;
             best_slot = static_cast<int>(i);

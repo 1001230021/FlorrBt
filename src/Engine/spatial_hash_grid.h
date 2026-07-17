@@ -7,6 +7,7 @@
 #include <limits>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 template <typename TObject, typename TId = int> class CSpatialHashGrid
@@ -40,9 +41,34 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         m_grid[HashCell(cell_x, cell_y)].push_back(id);
     }
 
+    void Insert(TObject* object, float radius)
+    {
+        if (!object || !IsValid(*object)) return;
+        if (radius <= 0.f)
+        {
+            Insert(object);
+            return;
+        }
+
+        TId id = m_get_id(*object);
+        sf::Vector2f pos = m_get_position(*object);
+        int min_cell_x = CellX(pos.x - radius);
+        int max_cell_x = CellX(pos.x + radius);
+        int min_cell_y = CellY(pos.y - radius);
+        int max_cell_y = CellY(pos.y + radius);
+        for (int cell_x = min_cell_x; cell_x <= max_cell_x; ++cell_x)
+        {
+            for (int cell_y = min_cell_y; cell_y <= max_cell_y; ++cell_y)
+            {
+                m_grid[HashCell(cell_x, cell_y)].push_back(id);
+            }
+        }
+    }
+
     void Rebuild(const std::vector<TObject*>& objects)
     {
         Clear();
+        m_grid.reserve(objects.size());
         for (TObject* object : objects)
         {
             Insert(object);
@@ -95,6 +121,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
     {
         std::vector<TObject*> result;
         if (radius <= 0.f) return result;
+        result.reserve(8);
 
         ForEachInRange(center, radius, [&](TObject* object)
         {
@@ -115,6 +142,31 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
                 TObject* object = Resolve(id);
                 if (!object || !IsValid(*object)) continue;
                 if (DistanceSq(m_get_position(*object), center) <= radius_sq) visitor(object);
+            }
+        });
+    }
+
+    template <typename TVisitor> void ForEachInRangeBroadphase(const sf::Vector2f& center, float radius, TVisitor visitor) const
+    {
+        std::unordered_set<TId> visited;
+        ForEachInRangeBroadphase(center, radius, visited, visitor);
+    }
+
+    template <typename TVisitor>
+    void ForEachInRangeBroadphase(const sf::Vector2f& center, float radius, std::unordered_set<TId>& visited,
+                                  TVisitor visitor) const
+    {
+        if (radius <= 0.f) return;
+
+        visited.clear();
+        VisitCellsInRange(center, radius, [&](const std::vector<TId>& ids)
+        {
+            for (TId id : ids)
+            {
+                if (!visited.insert(id).second) continue;
+                TObject* object = Resolve(id);
+                if (!object || !IsValid(*object)) continue;
+                visitor(object);
             }
         });
     }

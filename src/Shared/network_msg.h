@@ -37,6 +37,7 @@ constexpr size_t max_chat_message_size = 180;
 constexpr size_t packet_length_prefix_size = 2;
 constexpr uint8_t server_petal_entity_type_offset = 100;
 constexpr uint8_t server_drop_entity_type_offset = 150;
+constexpr uint8_t server_portal_entity_type = 99;
 
 // Client packets:
 // Input:        [type:2 bits][move_x:1 byte][move_y:1 byte]

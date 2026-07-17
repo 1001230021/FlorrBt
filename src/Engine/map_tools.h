@@ -83,6 +83,9 @@ struct FlorrBtMap
     struct Warp
     {
         float x, y;
+        float radius = 0.f;
+        std::string name;
+        std::string point;
         std::string goal;
     };
     std::vector<Warp> warps;
@@ -641,13 +644,23 @@ inline void AddJsonClassObjectLayers(const std::filesystem::path& map_path, Flor
                 FlorrBtMap::Zone zone;
                 if (BuildZoneFromJsonObject(obj, zone)) fbt_map.zones.push_back(std::move(zone));
             }
-            else if (object_type == "warp")
+            else if (object_type == "warp" || object_type == "portal")
             {
                 if (warps_before != 0) continue;
                 FlorrBtMap::Warp warp;
                 warp.x = JsonNumberField(obj, "x", 0.f);
                 warp.y = JsonNumberField(obj, "y", 0.f);
-                warp.goal = JsonPropertyString(obj, "map");
+                warp.name = JsonStringField(obj, "name");
+                warp.radius = JsonPropertyFloat(obj, "radius", 0.f);
+                if (warp.radius <= 0.f)
+                    warp.radius = std::max(JsonNumberField(obj, "width", 0.f), JsonNumberField(obj, "height", 0.f)) * 0.5f;
+                warp.point = JsonPropertyString(obj, "warp_point");
+                if (warp.point.empty()) warp.point = JsonPropertyString(obj, "from");
+                if (warp.point.empty()) warp.point = JsonPropertyString(obj, "point");
+                warp.goal = JsonPropertyString(obj, "world");
+                if (warp.goal.empty()) warp.goal = JsonPropertyString(obj, "world_name");
+                if (warp.goal.empty()) warp.goal = JsonPropertyString(obj, "target");
+                if (warp.goal.empty()) warp.goal = JsonPropertyString(obj, "map");
                 fbt_map.warps.push_back(std::move(warp));
             }
         }
@@ -796,16 +809,27 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
                     }
                     fbt_map->checkpoints.push_back(cp);
                 }
-                else if (object_type == "warp")
+                else if (object_type == "warp" || object_type == "portal")
                 {
                     FlorrBtMap::Warp warp;
                     warp.x = Scale512(static_cast<float>(obj.x));
                     warp.y = Scale512(static_cast<float>(obj.y));
+                    warp.radius = Scale512(static_cast<float>(std::max(obj.width, obj.height) * 0.5));
+                    warp.name = MapObjectText(obj.name);
+                    warp.point = "";
                     warp.goal = "";
 
                     for (size_t p = 0; p < obj.property_count; ++p) {
                         const Property& prop = obj.properties[p];
-                        if (strcmp(prop.name, "map") == 0 && prop.value_string) {
+                        if (strcmp(prop.name, "radius") == 0) {
+                            float radius = 0.f;
+                            if (MapPropertyFloat(prop, radius)) warp.radius = Scale512(radius);
+                        } else if ((strcmp(prop.name, "warp_point") == 0 || strcmp(prop.name, "from") == 0 ||
+                                    strcmp(prop.name, "point") == 0) && prop.value_string) {
+                            warp.point = prop.value_string;
+                        } else if ((strcmp(prop.name, "world") == 0 || strcmp(prop.name, "world_name") == 0 ||
+                                    strcmp(prop.name, "target") == 0 || strcmp(prop.name, "map") == 0) &&
+                                   prop.value_string) {
                             warp.goal = prop.value_string;
                         }
                     }

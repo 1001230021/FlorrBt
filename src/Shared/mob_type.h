@@ -27,11 +27,13 @@ enum class EMobType : int
     QueenAnt,
     AntHole,
     Spider,
+    Sandstorm,
+    Dummy,
 };
 
 using MobType = EMobType;
 
-inline constexpr std::array<std::string_view, 22> mob_type_names = {
+inline constexpr std::array<std::string_view, 24> mob_type_names = {
     "None",
     "Beetle",
     "Gambler",
@@ -54,6 +56,8 @@ inline constexpr std::array<std::string_view, 22> mob_type_names = {
     "QueenAnt",
     "AntHole",
     "Spider",
+    "Sandstorm",
+    "Dummy",
 };
 
 inline std::string_view GetMobTypeName(EMobType type)
@@ -103,6 +107,10 @@ inline bool MatchMobTypeAlias(std::string_view text, EMobType type)
         return text == "ah" || text == "anthole" || text == "ant_hole";
     case EMobType::Spider:
         return text == "spider" || text == "spi";
+    case EMobType::Sandstorm:
+        return text == "sandstorm" || text == "ss";
+    case EMobType::Dummy:
+        return text == "dummy" || text == "training_dummy" || text == "trainingdummy";
     default:
         return false;
     }

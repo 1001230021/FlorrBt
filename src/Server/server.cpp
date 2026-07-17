@@ -10,6 +10,7 @@
 #include "report.h"
 #include "../Shared/drop_rate.h"
 #include "../Shared/game_config.h"
+#include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <exception>
@@ -55,6 +56,7 @@ void EnsureRconPasswordInitialized()
     game_config::rcon_password = GenerateRconPassword();
     LOG_INFO("rcon", "Generated RCON password: " + game_config::rcon_password);
 }
+
 }
 
 CServer* CServer::s_p_instance = nullptr;
@@ -66,6 +68,7 @@ CServer::CServer()
     m_modules.emplace_back(std::make_unique<IServerGuiModule>(m_console));
 
     auto world_mod = std::make_unique<IWorldModule>();
+    m_p_world_module = world_mod.get();
     auto& worlds = world_mod->GetWorlds();
 
     CGameWorld& world = *worlds[0];
@@ -75,7 +78,8 @@ CServer::CServer()
     m_p_network_module = network_mod.get();
     m_modules.emplace_back(std::move(network_mod));
     m_p_game_context = std::make_unique<CGameContext>(world, *m_p_network_module);
-    world.SetGameContext(m_p_game_context.get());
+    for (const auto& game_world : worlds)
+        if (game_world) game_world->SetGameContext(m_p_game_context.get());
 }
 
 CServer::~CServer()
@@ -116,6 +120,16 @@ void CServer::Init()
             return;
         }
     }
+}
+
+std::vector<CGameWorld*> CServer::FindWorldsByMapName(const std::string& map_name) const
+{
+    return m_p_world_module ? m_p_world_module->FindWorldsByMapName(map_name) : std::vector<CGameWorld*>{};
+}
+
+CGameWorld* CServer::FindRandomWorldByMapName(const std::string& map_name) const
+{
+    return m_p_world_module ? m_p_world_module->FindRandomWorldByMapName(map_name) : nullptr;
 }
 
 void CServer::InstallLogSink()

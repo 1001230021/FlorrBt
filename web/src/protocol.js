@@ -3,6 +3,7 @@ const textDecoder = new TextDecoder();
 
 export const NETWORK_PETAL_TYPE_OFFSET = 100;
 export const NETWORK_DROP_TYPE_OFFSET = 150;
+export const NETWORK_PORTAL_ENTITY_TYPE = 99;
 export const MAX_CHAT_MESSAGE_SIZE = 180;
 export const NET_COORD_SCALE = 64;
 export const NET_RADIUS_SCALE = 1;
@@ -32,19 +33,19 @@ export const PetalNames = [
   "Corruption", "Bandage", "Heavy", "Faster", "Yggdrasil", "Dahlia", "Wing", "Triangle",
   "Sawblade", "Fragment", "Mimic", "Glass", "Stinger", "BrokenEgg", "Light",
   "Leaf", "Rock", "Web", "Cactus", "Pollen", "Corn", "Rice", "Basil", "Soil",
-  "Honey", "Wax",
+  "Honey", "Wax", "ThirdEye",
 ];
 
 export const MobNames = [
   "None", "Beetle", "Gambler", "NormalLadybug", "MechaFlower", "NormalFlower", "PlayerFlower",
   "SoldierAnt", "SoldierFireAnt", "SoldierTermite", "SummonedBeetle", "SummonedSoldierAnt",
   "BandageBeetle", "Bee", "Hornet", "BumbleBee", "Rock", "BabyAnt", "WorkerAnt", "QueenAnt",
-  "AntHole", "Spider",
+  "AntHole", "Spider", "Sandstorm", "Dummy",
 ];
 
 export const RarityNames = [
   "Null", "Common", "Unusual", "Rare", "Epic", "Legendary", "Mythic", "Ultra", "Super",
-  "Eternal", "Unique", "Primordial",
+  "Eternal", "Unique", "Primordial", "Exotic",
 ];
 
 export const RarityColors = [
@@ -60,6 +61,7 @@ export const RarityColors = [
   [238, 238, 238, 160, 0, 224],
   [53, 53, 53, 160, 0, 50],
   [110, 110, 110, 0, 0, 103],
+  [180, 180, 180, 126, 126, 126],
 ];
 
 export function rarityColor(rarity, alpha = 1) {

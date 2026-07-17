@@ -16,6 +16,7 @@ class CMeleeController : public IController
     CEntity* m_p_target = nullptr;
     sf::Vector2f m_target_pos = {0.f, 0.f};
     float m_change_target_count = game_config::melee_target_time;
+    float m_target_los_check_timer = 0.f;
     bool m_has_random_target_pos = false;
     bool m_random_idle = false;
     float m_random_idle_timer = 0.f;
@@ -81,6 +82,7 @@ class CBumbleBeeController : public IController
     float m_wave_timer = 0.f;
     float m_pollen_timer = 0.f;
     float m_honey_target_timer = game_config::melee_target_time;
+    float m_honey_los_check_timer = 0.f;
     CEntity* m_p_honey_target = nullptr;
     bool m_initialized = false;
 };

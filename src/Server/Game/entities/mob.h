@@ -281,6 +281,8 @@ void RegisterWorkerAnt();
 void RegisterQueenAnt();
 void RegisterAntHole();
 void RegisterSpider();
+void RegisterSandstorm();
+void RegisterDummy();
 void RegisterMobs();
 
 #define REGISTER_MOB(type, mob_class, proto) RegisterMobPrototype<mob_class>(type, std::move(proto))

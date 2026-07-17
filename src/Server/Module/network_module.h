@@ -1,6 +1,8 @@
 #pragma once
 #include "../server.h"
 #include "../Game/player.h"
+#include "../Game/systems/player_lifecycle_service.h"
+#include "../Game/systems/snapshot_service.h"
 #include "module.h"
 #include <SFML/Network/TcpListener.hpp>
 #include <memory>
@@ -18,10 +20,9 @@ struct ClientCraftRequest;
 struct ClientSecondarySlotRequest;
 struct ClientTalentRequest;
 struct SCraftResult;
-struct ServerEntitySnap;
 struct ServerMessage;
 
-class INetworkModule : public IModule
+class INetworkModule : public IModule, public IPlayerLifecycleNotifier
 {
   public:
     explicit INetworkModule(CGameWorld& lobby) : m_lobby_world(lobby) {}
@@ -39,7 +40,9 @@ class INetworkModule : public IModule
     CGameContext* GameContext() const;
     void BroadcastChat(const CServer::SChatEntry& chat);
     bool SendChatToPlayer(CPlayer& player, const CServer::SChatEntry& chat);
-    bool QueueOwnerStateUpdate(CPlayer& player);
+    bool QueueWelcome(CPlayer& player) override;
+    bool QueueOwnerStateUpdate(CPlayer& player) override;
+    void NotifyPlayerWorldChanged(CPlayer& player);
 
   private:
     enum class EPlayerBufferResult
@@ -51,7 +54,6 @@ class INetworkModule : public IModule
 
     void AcceptConnections();
     void ProcessMessages();
-    void ProcessDropPickups();
     void SendSnapshots();
     void TickTimeouts(float dt);
     void TickBans(float dt);
@@ -61,22 +63,18 @@ class INetworkModule : public IModule
     void DropQueuedSnapshots(CPlayer& player);
     bool QueueMessage(CPlayer& player, const ServerMessage& msg);
     bool QueueAuthResult(CPlayer& player, bool success, const std::string& message);
-    bool QueueWelcome(CPlayer& player);
     bool QueueOwnerState(CPlayer& player);
-    bool QueueInventory(CPlayer& player);
+    bool QueueInventory(CPlayer& player) override;
     bool QueueCraftResult(CPlayer& player, const SCraftResult& result);
     bool QueueChat(CPlayer& player, const CServer::SChatEntry& chat);
-    void RespawnDeadControlledEntities();
     EPlayerBufferResult ProcessPlayerBuffer(CPlayer& player);
     EPlayerBufferResult HandleAuthRequest(CPlayer& player, const ClientAuthRequest& request);
     void HandleChatRequest(CPlayer& player, const ClientChatRequest& request);
     void HandleCraftRequest(CPlayer& player, const ClientCraftRequest& request);
     void HandleSecondarySlotRequest(CPlayer& player, const ClientSecondarySlotRequest& request);
     void HandleTalentRequest(CPlayer& player, const ClientTalentRequest& request);
-    void Respawn(CPlayer& player);
     CPlayer* FindReconnectablePlayer(const std::string& account_name, const CPlayer* pending_player = nullptr) const;
     void DropPlayer(size_t index, const std::string& reason);
-    ServerEntitySnap BuildEntitySnap(const CEntity& entity, const CEntity& owner) const;
 
     int GetNewPlayerId();
     void FreePlayerId(int id);
@@ -91,6 +89,8 @@ class INetworkModule : public IModule
     int m_next_player_id = 1;
     uint32_t m_snapshot_id = 0;
     float m_snapshot_timer = 0.f;
+    CPlayerLifecycleService m_player_lifecycle_service;
+    CSnapshotService m_snapshot_service;
     std::vector<std::pair<std::string, float>> m_ip_bans;
     std::vector<std::pair<std::string, float>> m_name_bans;
 };

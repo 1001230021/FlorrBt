@@ -49,6 +49,12 @@ inline SFlowerStats EmptyFlowerStats()
 
 inline float PetalRarityScale(ERarity rarity)
 {
+    if (rarity == ERarity::Exotic)
+    {
+        float ultra = std::pow(game_config::default_petal_pow, static_cast<float>(GetLevel(ERarity::Ultra) - 1));
+        float super = std::pow(game_config::default_petal_pow, static_cast<float>(GetLevel(ERarity::Super) - 1));
+        return BlendUltraSuper(ultra, super);
+    }
     return std::pow(game_config::default_petal_pow, static_cast<float>(GetLevel(rarity) - 1));
 }
 
@@ -59,8 +65,26 @@ inline int PetalLevel(ERarity rarity)
     return GetLevel(rarity);
 }
 
+inline float PetalValueLevel(ERarity rarity)
+{
+    return GetRarityValueLevel(rarity);
+}
+
+inline constexpr float exotic_special_super_weight = 0.25f;
+
+inline float PetalSpecialValueLevel(ERarity rarity)
+{
+    if (rarity == ERarity::Exotic)
+        return BlendUltraSuper(static_cast<float>(GetLevel(ERarity::Ultra)),
+                               static_cast<float>(GetLevel(ERarity::Super)),
+                               exotic_special_super_weight);
+    return static_cast<float>(GetLevel(rarity));
+}
+
 inline float TriBonusDamage(ERarity rarity)
 {
+    if (rarity == ERarity::Exotic)
+        return BlendUltraSuper(TriBonusDamage(ERarity::Ultra), TriBonusDamage(ERarity::Super));
     return 4.f * std::pow(3.f, static_cast<float>(PetalLevel(rarity) - 1));
 }
 
@@ -206,7 +230,7 @@ inline void PetalOrbitMove(CPetal* owner, CFlower* flower, float orbit_distance,
     if (!global) return;
 
     sf::Vector2f delta = *global - owner->m_pos;
-    float effective_k = k * 2.f;
+    float effective_k = k * 2.f * std::max(0.f, game_config::default_petal_follow_multiplier);
     if (owner->m_spawn_flight_boost)
     {
         if (LengthSq(delta) <= (owner->m_radius * owner->m_radius))
@@ -263,11 +287,21 @@ inline CEntity* PetalFindClosestTarget(CPetal* owner, CFlower* flower, const sf:
     return world->FindClosestEntityByEdge(center, range, filter);
 }
 
+inline float PetalEnemyTargetRange(const CPetal* owner, const CFlower* flower, bool include_final_bonus)
+{
+    if (!owner) return 0.f;
+
+    float range = owner->m_radius + game_config::default_petal_attraction_range;
+    if (include_final_bonus && flower && flower->GetFinalStats())
+        range += flower->GetFinalStats()->petal_attraction_range;
+    return range;
+}
+
 inline CEntity* PetalFindTarget(CPetal* owner, CFlower* flower)
 {
     if (!owner || !flower || !flower->GetFinalStats()) return nullptr;
 
-    float range = flower->GetFinalStats()->petal_attraction_range + owner->m_radius;
+    float range = PetalEnemyTargetRange(owner, flower, owner->m_type != EPetalType::Glass);
     auto filter = [owner, flower](const CEntity* entity) -> bool
     {
         return IsValidPetalEnemyTarget(owner, flower, entity);
@@ -290,23 +324,27 @@ inline void PetalAttractToTarget(CPetal* owner, const CEntity* target, float dt,
     owner->m_vel += delta / len * acceleration;
 }
 
-inline float PetalTargetAcceleration(const CFlower* flower, float multiplier = 4.f)
+inline float PetalTargetAcceleration(const CFlower* flower, float multiplier = 4.f, bool include_range_scale = true)
 {
     float acceleration = game_config::default_acceleration;
     float range_scale = 1.f;
     if (flower && flower->GetFinalStats())
     {
         acceleration = std::max(acceleration, flower->GetFinalStats()->acceleration);
-        float base_range = std::max(game_config::entity_collision_epsilon,
-                                    game_config::default_lentil_petal_attraction_range);
-        range_scale = std::max(1.f, flower->GetFinalStats()->petal_attraction_range / base_range);
+        if (include_range_scale)
+        {
+            float base_range = std::max(game_config::entity_collision_epsilon,
+                                        game_config::default_lentil_petal_attraction_range);
+            range_scale = std::max(1.f, flower->GetFinalStats()->petal_attraction_range / base_range);
+        }
     }
     return acceleration * multiplier * range_scale * 1.25f;
 }
 
-inline float PetalLockedTargetAcceleration(const CFlower* flower, float multiplier = 4.f)
+inline float PetalLockedTargetAcceleration(const CFlower* flower, float multiplier = 4.f,
+                                           bool include_range_scale = true)
 {
-    return PetalTargetAcceleration(flower, multiplier) * 0.8f;
+    return PetalTargetAcceleration(flower, multiplier, include_range_scale) * 0.8f;
 }
 
 inline void PetalClearTarget(CPetal* owner)
@@ -328,7 +366,9 @@ inline void PetalOrbitMoveAndAttract(CPetal* owner, CFlower* flower, float orbit
 
     owner->m_target_entity_id = target->m_id;
     owner->m_vel = {0.f, 0.f};
-    PetalAttractToTarget(owner, target, dt, PetalLockedTargetAcceleration(flower, acceleration_multiplier));
+    PetalAttractToTarget(owner, target, dt,
+                         PetalLockedTargetAcceleration(flower, acceleration_multiplier,
+                                                       owner->m_type != EPetalType::Glass));
 
     std::optional<sf::Vector2f> global = PetalOrbitGlobal(owner, flower, orbit_distance, is_open);
     if (global)
@@ -397,6 +437,7 @@ void RegisterCactus();
 void RegisterPollen();
 void RegisterHoney();
 void RegisterWax();
+void RegisterThirdEye();
 void RegisterPetals();
 
 class CAirBehavior : public CPetalBehavior
@@ -407,7 +448,7 @@ class CAirBehavior : public CPetalBehavior
     SFlowerStats GetStats(ERarity rarity) const override
     {
         SFlowerStats stats = EmptyFlowerStats();
-        int level = GetLevel(rarity);
+        float level = PetalValueLevel(rarity);
         stats.radius = game_config::default_air_base_radius * level;
         stats.mass = game_config::default_air_base_mass;
         return stats;
@@ -513,6 +554,10 @@ inline float AntennaeHorizonMultiplier(ERarity rarity)
         return game_config::default_antennae_horizon_mythic;
     case ERarity::Ultra:
         return game_config::default_antennae_horizon_ultra;
+    case ERarity::Exotic:
+        return BlendUltraSuper(game_config::default_antennae_horizon_ultra,
+                               game_config::default_antennae_horizon_super,
+                               exotic_special_super_weight);
     case ERarity::Super:
         return game_config::default_antennae_horizon_super;
     case ERarity::Eternal:
@@ -544,6 +589,10 @@ inline float AntEggReload(ERarity rarity)
         return game_config::default_antegg_reload_mythic;
     case ERarity::Ultra:
         return game_config::default_antegg_reload_ultra;
+    case ERarity::Exotic:
+        return BlendUltraSuper(game_config::default_antegg_reload_ultra,
+                               game_config::default_antegg_reload_super,
+                               exotic_special_super_weight);
     case ERarity::Super:
         return game_config::default_antegg_reload_super;
     case ERarity::Eternal:
@@ -585,6 +634,60 @@ class CAntennaeBehavior : public CPetalBehavior
     void OnPetalSpawned(CPetal*, ERarity, CFlower*) override {}
     void OnPetalDestroyed(CPetal*, ERarity, CFlower*) override {}
 };
+
+inline float ThirdEyeReachBonus(ERarity rarity)
+{
+    switch (rarity)
+    {
+    case ERarity::Legendary:
+        return 40.f;
+    case ERarity::Mythic:
+        return 90.f;
+    case ERarity::Ultra:
+        return 140.f;
+    case ERarity::Exotic:
+        return BlendUltraSuper(140.f, 190.f, exotic_special_super_weight);
+    case ERarity::Super:
+        return 190.f;
+    case ERarity::Eternal:
+    case ERarity::Unique:
+        return 240.f;
+    case ERarity::Primordial:
+        return 350.f;
+    default:
+        return 0.f;
+    }
+}
+
+class CThirdEyeBehavior : public CPetalBehavior
+{
+  public:
+    bool IsOpen() const override { return true; }
+
+    SFlowerStats GetStats(ERarity rarity) const override
+    {
+        SFlowerStats stats = EmptyFlowerStats();
+        stats.reach = ThirdEyeReachBonus(rarity);
+        return stats;
+    }
+
+    SPetalStats GetPetalStats(ERarity) const override
+    {
+        SPetalStats stats;
+        stats.stack = false;
+        stats.reload = 0.f;
+        stats.preload = 0.f;
+        stats.copy = 0;
+        stats.radius = 0.f;
+        return stats;
+    }
+
+    void OnTick(CPetal*, ERarity, CFlower*, float) override {}
+    void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
+    void OnPetalSpawned(CPetal*, ERarity, CFlower*) override {}
+    void OnPetalDestroyed(CPetal*, ERarity, CFlower*) override {}
+};
+
 class CBasicBehavior : public CPetalBehavior
 {
   public:
@@ -845,6 +948,7 @@ inline float BasilHealingReceivedBonus(ERarity rarity)
     case ERarity::Legendary: return 0.40f;
     case ERarity::Mythic: return 0.45f;
     case ERarity::Ultra: return 0.50f;
+    case ERarity::Exotic: return BlendUltraSuper(0.50f, 0.75f, exotic_special_super_weight);
     case ERarity::Super: return 0.75f;
     case ERarity::Eternal:
     case ERarity::Unique:
@@ -969,14 +1073,18 @@ class CHeavyBehavior : public CPetalBehavior
 
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
-        int level = GetLevel(rarity);
+        float level = PetalValueLevel(rarity);
         SPetalStats stats;
         stats.damage = game_config::default_heavy_base_damage * PetalRarityScale(rarity);
         stats.health = game_config::default_heavy_base_health * PetalRarityScale(rarity);
         stats.reload = game_config::default_heavy_reload;
         stats.preload = game_config::default_heavy_reload;
         stats.copy = 1;
-        stats.mass = static_cast<float>(level * level) * game_config::default_heavy_mass_multiplier;
+        float mass_level_sq = rarity == ERarity::Exotic
+            ? BlendUltraSuper(static_cast<float>(GetLevel(ERarity::Ultra) * GetLevel(ERarity::Ultra)),
+                              static_cast<float>(GetLevel(ERarity::Super) * GetLevel(ERarity::Super)))
+            : level * level;
+        stats.mass = mass_level_sq * game_config::default_heavy_mass_multiplier;
         stats.radius = game_config::default_heavy_base_radius;
         return stats;
     }
@@ -1009,7 +1117,7 @@ class CFasterBehavior : public CPetalBehavior
     {
         SFlowerStats stats = EmptyFlowerStats();
         stats.petal_rotation_speed = game_config::default_faster_rotation_speed_base +
-                                     game_config::default_faster_rotation_speed_level * GetLevel(rarity);
+                                     game_config::default_faster_rotation_speed_level * PetalValueLevel(rarity);
         return stats;
     }
 
@@ -1080,12 +1188,6 @@ class CGlassBehavior : public CPetalBehavior
     {
         auto* glass = dynamic_cast<CGlassPetal*>(owner);
         if (!glass || !target) return;
-        if (auto* mob = dynamic_cast<CMobBase*>(target); mob && mob->HasState<CInvincibleState>())
-        {
-            damage = 0.f;
-            return;
-        }
-
         auto it = glass->m_hit_cooldowns.find(target->m_id);
         if (it != glass->m_hit_cooldowns.end() && it->second > 0.f)
         {
@@ -1154,6 +1256,10 @@ inline float BeetleEggReload(ERarity rarity)
         return game_config::default_beetleegg_reload_mythic;
     case ERarity::Ultra:
         return game_config::default_beetleegg_reload_ultra;
+    case ERarity::Exotic:
+        return BlendUltraSuper(game_config::default_beetleegg_reload_ultra,
+                               game_config::default_beetleegg_reload_super,
+                               exotic_special_super_weight);
     case ERarity::Super:
         return game_config::default_beetleegg_reload_super;
     case ERarity::Eternal:
@@ -1185,6 +1291,8 @@ inline float BrokenEggSummonedHealthMultiplier(ERarity rarity)
         return 2.10f;
     case ERarity::Ultra:
         return 2.50f;
+    case ERarity::Exotic:
+        return BlendUltraSuper(2.50f, 2.80f, exotic_special_super_weight);
     case ERarity::Super:
         return 2.80f;
     case ERarity::Eternal:
@@ -1237,6 +1345,10 @@ inline float BubbleReload(ERarity rarity)
         return game_config::default_bubble_reload_mythic;
     case ERarity::Ultra:
         return game_config::default_bubble_reload_ultra;
+    case ERarity::Exotic:
+        return BlendUltraSuper(game_config::default_bubble_reload_ultra,
+                               game_config::default_bubble_reload_super,
+                               exotic_special_super_weight);
     case ERarity::Super:
         return game_config::default_bubble_reload_super;
     case ERarity::Eternal:
@@ -1362,6 +1474,7 @@ class CSummonEggBehavior : public CPetalBehavior
     {
         if (rarity == ERarity::Primordial) return ERarity::Eternal;
         if (rarity == ERarity::Unique || rarity == ERarity::Eternal) return ERarity::Super;
+        if (rarity == ERarity::Exotic) return ERarity::Ultra;
 
         int value = static_cast<int>(rarity);
         int common = static_cast<int>(ERarity::Common);
@@ -1578,7 +1691,7 @@ class CDustBehavior : public CPetalBehavior
     SFlowerStats GetStats(ERarity rarity) const override
     {
         SFlowerStats stats = EmptyFlowerStats();
-        int level = GetLevel(rarity);
+        float level = PetalSpecialValueLevel(rarity);
         stats.petal_reload_multiplier = std::max(game_config::default_petal_stat_reload_multiplier_min,
                                                  1.0f - level * game_config::default_dust_reload_reduction);
         return stats;
@@ -1620,7 +1733,7 @@ class CGoldenLeafBehavior : public CPetalBehavior
     SFlowerStats GetStats(ERarity rarity) const override
     {
         SFlowerStats stats = EmptyFlowerStats();
-        int level = GetLevel(rarity);
+        float level = PetalSpecialValueLevel(rarity);
         stats.petal_reload_multiplier =
             std::max(game_config::default_petal_stat_reload_multiplier_min,
                      1.0f - level * game_config::default_goldenleaf_base_reload_reduction);
@@ -1706,6 +1819,8 @@ inline float RoseMedicineScale(ERarity rarity)
         return 243.0f;
     case ERarity::Ultra:
         return 243.0f * sqrt3;
+    case ERarity::Exotic:
+        return BlendUltraSuper(243.0f * sqrt3, 243.0f * 3.0f);
     case ERarity::Super:
         return 243.0f * 3.0f;
     case ERarity::Eternal:
@@ -1745,6 +1860,8 @@ inline float YggdrasilChannelTime(ERarity rarity)
 {
     switch (rarity)
     {
+    case ERarity::Exotic:
+        return game_config::default_yggdrasil_channel_super;
     case ERarity::Super:
         return game_config::default_yggdrasil_channel_super;
     case ERarity::Eternal:
@@ -1923,7 +2040,7 @@ class CRoseBehavior : public CPetalBehavior
         {
             owner->m_target_entity_id = target->m_id;
             owner->m_vel = {0.f, 0.f};
-            PetalAttractToTarget(owner, target, dt, PetalLockedTargetAcceleration(flower));
+            PetalAttractToTarget(owner, target, dt, PetalLockedTargetAcceleration(flower, 4.f, false));
             PetalTetherWhileTargeting(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
             return;
         }
@@ -1977,7 +2094,7 @@ class CDahliaBehavior : public CPetalBehavior
         stats.preload = 1.5f;
         stats.copy = 3;
         stats.mass = game_config::default_rose_mass;
-        stats.radius = game_config::default_rose_base_radius;
+        stats.radius = game_config::default_rose_base_radius * 0.75f;
         return stats;
     }
 
@@ -2158,6 +2275,7 @@ inline float FragmentValue(ERarity rarity)
     switch (rarity)
     {
     case ERarity::Ultra: return 364.5f;
+    case ERarity::Exotic: return BlendUltraSuper(364.5f, 729.f);
     case ERarity::Super: return 729.f;
     case ERarity::Eternal: return 2187.f;
     case ERarity::Unique: return 328000.f;
@@ -2406,7 +2524,7 @@ class CLentilBehavior : public CPetalBehavior
     SFlowerStats GetStats(ERarity rarity) const override
     {
         SFlowerStats stats = EmptyFlowerStats();
-        stats.petal_attraction_range = game_config::default_lentil_petal_attraction_range * GetLevel(rarity);
+        stats.petal_attraction_range = game_config::default_lentil_petal_attraction_range * PetalValueLevel(rarity);
         return stats;
     }
 
@@ -2427,7 +2545,7 @@ class CLentilBehavior : public CPetalBehavior
     {
         if (!owner || !flower || !flower->GameWorld() || !flower->GetFinalStats()) return nullptr;
 
-        const float range = flower->GetFinalStats()->petal_attraction_range + owner->m_radius;
+        const float range = PetalEnemyTargetRange(owner, flower, true);
         if (range <= 0.f) return nullptr;
 
         auto filter = [owner, flower](const CEntity* entity) -> bool
@@ -2462,9 +2580,9 @@ class CLentilBehavior : public CPetalBehavior
 };
 inline float MoonVisibleRadius(ERarity rarity)
 {
-    int level = GetLevel(rarity);
+    float level = PetalValueLevel(rarity);
     return game_config::default_flower_radius +
-           static_cast<float>(std::max(0, level - 1)) * game_config::default_moon_radius_step;
+           std::max(0.f, level - 1.f) * game_config::default_moon_radius_step;
 }
 
 class CMoonBehavior : public CPetalBehavior
@@ -2636,7 +2754,7 @@ class CMissileBehavior : public CPetalBehavior
 
         float flower_speed = flower->GetFinalStats() ? flower->GetFinalStats()->max_velocity : game_config::default_max_velocity;
         missile->BeginThrow(direction, flower_speed * game_config::default_missile_speed_multiplier,
-                            0.f, false, false, false);
+                            0.f, false, true, false);
         float fired_angle = std::atan2(direction.y, direction.x);
         owner->m_facing_angle = fired_angle;
         owner->m_has_facing = true;
@@ -2710,13 +2828,20 @@ inline float WebRadius(ERarity rarity)
         50.f, 60.f, 70.f, 80.f, 100.f, 150.f, 200.f, 250.f, 350.f, 350.f, 500.f,
     };
     int count = static_cast<int>(sizeof(radius_units) / sizeof(radius_units[0]));
+    if (rarity == ERarity::Exotic)
+    {
+        float units = BlendUltraSuper(radius_units[GetLevel(ERarity::Ultra) - 1],
+                                      radius_units[GetLevel(ERarity::Super) - 1],
+                                      exotic_special_super_weight);
+        return game_config::default_flower_radius * 2.f * units / 48.f;
+    }
     int index = std::clamp(GetLevel(rarity) - 1, 0, count - 1);
     return game_config::default_flower_radius * 2.f * radius_units[index] / 48.f;
 }
 
 inline float WebDesiredSpeedMultiplier(ERarity rarity)
 {
-    float t = static_cast<float>(std::clamp(GetLevel(rarity) - 1, 0, 10)) / 10.f;
+    float t = std::clamp(PetalSpecialValueLevel(rarity) - 1.f, 0.f, 10.f) / 10.f;
     return 0.40f + 0.20f * t;
 }
 
@@ -3100,6 +3225,10 @@ inline float RelicHealthBonus(ERarity rarity)
         return game_config::default_relic_health_bonus_mythic;
     case ERarity::Ultra:
         return game_config::default_relic_health_bonus_ultra;
+    case ERarity::Exotic:
+        return BlendUltraSuper(game_config::default_relic_health_bonus_ultra,
+                               game_config::default_relic_health_bonus_super,
+                               exotic_special_super_weight);
     case ERarity::Super:
         return game_config::default_relic_health_bonus_super;
     case ERarity::Eternal:
