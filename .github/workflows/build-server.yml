@@ -1,0 +1,90 @@
+name: Build server
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-latest
+            platform: linux-x64
+            executable: build/FlorrBt_Server
+          - name: Windows x64
+            os: windows-latest
+            platform: windows-x64
+            executable: build/Release/FlorrBt_Server.exe
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libegl1-mesa-dev \
+            libfreetype6-dev \
+            libgl1-mesa-dev \
+            libharfbuzz-dev \
+            libjansson-dev \
+            libmbedtls-dev \
+            libssh2-1-dev \
+            libudev-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxrandr-dev \
+            xorg-dev
+
+      - name: Install Windows dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: vcpkg install jansson:x64-windows-static
+
+      - name: Configure Linux build
+        if: runner.os == 'Linux'
+        shell: bash
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_SHARED_LIBS=OFF
+
+      - name: Configure Windows build
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S . -B build -A x64 `
+            -DBUILD_SHARED_LIBS=OFF `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static
+
+      - name: Build server
+        run: cmake --build build --config Release --target FlorrBt_Server --parallel
+
+      - name: Prepare artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force package/FlorrBt_Server | Out-Null
+          Copy-Item "${{ matrix.executable }}" package/FlorrBt_Server/
+          Copy-Item data package/FlorrBt_Server/data -Recurse
+
+      - name: Upload server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FlorrBt-Server-${{ matrix.platform }}
+          path: package/FlorrBt_Server
+          if-no-files-found: error
+          retention-days: 14
