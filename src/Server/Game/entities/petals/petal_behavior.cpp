@@ -43,6 +43,20 @@ void RegisterAntennae()
     });
 }
 
+std::once_flag g_third_eye_registered;
+void RegisterThirdEye()
+{
+    std::call_once(g_third_eye_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::ThirdEye;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = 0.f;
+        proto.m_p_behavior = std::make_unique<CThirdEyeBehavior>();
+        REGISTER_PETAL(EPetalType::ThirdEye, CPetal, proto);
+    });
+}
+
 std::once_flag g_blood_sacrifice_registered;
 void RegisterBloodSacrifice()
 {
@@ -219,7 +233,7 @@ void RegisterDahlia()
         CPetalPrototype proto;
         proto.m_type = EPetalType::Dahlia;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
-        proto.m_base_radius = game_config::default_rose_base_radius;
+        proto.m_base_radius = game_config::default_rose_base_radius * 0.75f;
         proto.m_p_behavior = std::make_unique<CDahliaBehavior>();
         REGISTER_PETAL(EPetalType::Dahlia, CPetal, proto);
     });
@@ -730,6 +744,7 @@ void RegisterPetals()
     RegisterSawblade();
     RegisterSoil();
     RegisterStinger();
+    RegisterThirdEye();
     RegisterTriangle();
     RegisterCactus();
     RegisterWeb();

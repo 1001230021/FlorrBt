@@ -153,7 +153,10 @@ void CPetal::Tick(float dt)
 
     float flower_radius = flower->GetFinalStats() ? flower->GetFinalStats()->radius : flower->m_radius;
     float max_distance = std::max(0.f, flower_radius) * max_petal_owner_distance_multiplier;
-    if (max_distance > 0.f && DistanceSq(m_pos, flower->m_pos) > max_distance * max_distance)
+    bool owner_distance_limited = true;
+    if (const auto* missile = dynamic_cast<const CMissilePetal*>(this); missile && missile->m_fired)
+        owner_distance_limited = false;
+    if (owner_distance_limited && max_distance > 0.f && DistanceSq(m_pos, flower->m_pos) > max_distance * max_distance)
     {
         m_is_marked_for_des = true;
         return;

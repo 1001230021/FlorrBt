@@ -56,8 +56,8 @@ std::optional<ERarity> ParseRarity(std::string_view text)
 {
     if (auto value = ParseInt(text))
     {
-        if (*value > static_cast<int>(ERarity::Null) && *value <= static_cast<int>(ERarity::Primordial))
-            return static_cast<ERarity>(*value);
+        ERarity parsed = static_cast<ERarity>(*value);
+        if (IsKnownRarity(parsed)) return parsed;
         return std::nullopt;
     }
 
@@ -73,6 +73,7 @@ std::optional<ERarity> ParseRarity(std::string_view text)
     if (rarity == "eternal") return ERarity::Eternal;
     if (rarity == "unique") return ERarity::Unique;
     if (rarity == "primordial") return ERarity::Primordial;
+    if (rarity == "ex" || rarity == "exotic") return ERarity::Exotic;
     return std::nullopt;
 }
 
@@ -102,6 +103,8 @@ std::string RarityName(ERarity rarity)
         return "Unique";
     case ERarity::Primordial:
         return "Primordial";
+    case ERarity::Exotic:
+        return "Exotic";
     default:
         return "Null";
     }

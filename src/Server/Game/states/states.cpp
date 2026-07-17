@@ -64,10 +64,10 @@ CPoisonState::CPoisonState(CMobBase* owner, float timer, float basic_dmg, ERarit
     }
 
     bool should_replace = false;
-    if (GetLevel(rarity) > GetLevel(existing->m_rarity))
+    if (GetRaritySortRank(rarity) > GetRaritySortRank(existing->m_rarity))
     {
         should_replace = true;
-    } else if (GetLevel(rarity) == GetLevel(existing->m_rarity)) {
+    } else if (GetRaritySortRank(rarity) == GetRaritySortRank(existing->m_rarity)) {
         if (basic_dmg > existing->m_basic_dmg) should_replace = true;
         else if (basic_dmg == existing->m_basic_dmg && timer > existing->m_timer) should_replace = true;
     }
@@ -160,10 +160,10 @@ CPincerSpeedReduceState::CPincerSpeedReduceState(CMobBase* owner, float timer, E
     }
 
     bool should_replace = false;
-    if (GetLevel(rarity) > GetLevel(existing->m_rarity))
+    if (GetRaritySortRank(rarity) > GetRaritySortRank(existing->m_rarity))
     {
         should_replace = true;
-    } else if (GetLevel(rarity) == GetLevel(existing->m_rarity) && timer > existing->m_timer) {
+    } else if (GetRaritySortRank(rarity) == GetRaritySortRank(existing->m_rarity) && timer > existing->m_timer) {
         should_replace = true;
     }
 
@@ -212,7 +212,7 @@ CPsionicConnectionState::CPsionicConnectionState(CMobBase* owner, float timer, E
         return;
     }
 
-    if (GetLevel(rarity) > GetLevel(existing->m_rarity)) existing->m_rarity = rarity;
+    if (GetRaritySortRank(rarity) > GetRaritySortRank(existing->m_rarity)) existing->m_rarity = rarity;
     if (existing->m_timer != endless && timer == endless) existing->m_timer = endless;
     else if (existing->m_timer != endless) existing->m_timer = std::max(existing->m_timer, timer);
 }
@@ -296,6 +296,10 @@ float GetBandageUndeadDuration(ERarity rarity)
         return game_config::default_bandage_undead_mythic;
     case ERarity::Ultra:
         return game_config::default_bandage_undead_ultra;
+    case ERarity::Exotic:
+        return BlendUltraSuper(game_config::default_bandage_undead_ultra,
+                               game_config::default_bandage_undead_super,
+                               0.25f);
     case ERarity::Super:
         return game_config::default_bandage_undead_super;
     case ERarity::Eternal:

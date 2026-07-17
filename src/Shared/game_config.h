@@ -186,6 +186,7 @@ inline float default_lentil_base_health = 12.0f;
 inline float default_lentil_base_radius = WorldUnits(10.0f);
 inline float default_lentil_copy = 1.0f;
 inline float default_lentil_mass = 2.0f;
+inline float default_petal_attraction_range = 1.0f;
 inline float default_lentil_petal_attraction_range = WorldUnits(8.0f);
 inline float default_lentil_reload = 2.0f;
 inline float default_leaf_base_damage = 16.0f;
@@ -196,7 +197,7 @@ inline float default_leaf_mass = 2.0f;
 inline float default_leaf_reload = 1.8f;
 inline float default_light_base_damage = 13.0f;
 inline float default_light_base_health = 5.0f;
-inline float default_light_base_radius = WorldUnits(6.7f);
+inline float default_light_base_radius = WorldUnits(8.75f);
 inline float default_light_mass = 0.75f;
 inline float default_light_reload = 0.8f;
 inline float default_corn_base_damage = 8.0f;
@@ -234,6 +235,7 @@ inline float default_missile_unfired_damage_multiplier = 0.2f;
 inline float default_petal_attack_offset = WorldUnits(18.0f);
 inline float default_petal_defend_offset = WorldUnits(-20.0f);
 inline float default_petal_neutral_reach = WorldUnits(8.0f);
+inline float default_petal_follow_multiplier = 1.6f;
 inline float default_petal_orbit_k = 5.0f;
 inline float default_petal_orbit_radius = WorldUnits(16.0f);
 inline float default_petal_pow = 3.0f;
@@ -376,8 +378,8 @@ inline float mob_bumblebee_max_health = 25.0f;
 inline float mob_bumblebee_max_velocity = WorldUnits(225.0f);
 inline float mob_bumblebee_pollen_base_damage = 10.0f;
 inline float mob_bumblebee_pollen_base_health = 5.0f;
-inline float mob_bumblebee_pollen_interval = 0.25f;
-inline float mob_bumblebee_pollen_lifetime = 2.0f;
+inline float mob_bumblebee_pollen_interval = 0.5f;
+inline float mob_bumblebee_pollen_lifetime = 1.0f;
 inline float mob_bumblebee_pollen_radius_multiplier = 2.0f / 3.0f;
 inline float mob_bumblebee_radius = WorldUnits(12.0f);
 inline int mob_bumblebee_team = 2;
@@ -435,6 +437,16 @@ inline float mob_spider_web_apply_interval = 0.1f;
 inline float mob_spider_web_lifetime = 6.0f;
 inline float mob_spider_web_slow_duration = 0.35f;
 inline float mob_spider_web_speed_multiplier = 0.05f;
+inline float mob_sandstorm_acceleration = WorldUnits(450.0f);
+inline float mob_sandstorm_armor = 1.0f;
+inline float mob_sandstorm_damage = 40.0f;
+inline float mob_sandstorm_mass = 2.5f;
+inline float mob_sandstorm_max_health = 75.0f;
+inline float mob_sandstorm_max_velocity = WorldUnits(215.0f);
+inline float mob_sandstorm_radius = WorldUnits(12.0f);
+inline int mob_sandstorm_team = 2;
+inline float portal_attraction_acceleration = WorldUnits(360.0f);
+inline float portal_radius = WorldUnits(80.0f);
 inline float mob_hornet_acceleration = WorldUnits(300.0f);
 inline float mob_hornet_armor = 1.0f;
 inline float mob_hornet_attack_interval = 1.75f;
@@ -492,7 +504,8 @@ inline int mob_player_flower_max_petal_slots = 10;
 inline float mob_player_flower_petal_rotation_speed = 1.5f;
 inline float mob_player_flower_radius = WorldUnits(18.0f);
 inline int mob_player_flower_team = 1;
-inline float mob_radius_level_step = 0.05f;
+inline float player_spawn_invincible_duration = 3.0f;
+inline float mob_radius_level_step = 0.15f;
 inline float MobRadiusScaleForLevel(int level)
 {
     float scale = 1.f;
@@ -550,6 +563,8 @@ inline float network_snapshot_query_radius_cap = WorldUnits(4096.0f);
 inline float network_snapshot_interval = 1.0f / 30.0f;
 inline uint8_t network_petal_type_offset = 100;
 inline float open_initial_spawn_delay = 5.f;
+inline int open_idle_spawn_per_zone_tick = 1;
+inline int open_idle_spawn_zones_per_tick = 2;
 inline float open_spawn_interval = 1.f;
 inline float open_spawn_density_area = 1024.0f * 1024.0f;
 inline float open_super_plus_block_radius = 1024.0f * 4.0f;
@@ -782,6 +797,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("lentil_base_radius", default_lentil_base_radius),
         REGISTER_CONFIG("lentil_copy", default_lentil_copy),
         REGISTER_CONFIG("lentil_mass", default_lentil_mass),
+        REGISTER_CONFIG("petal_attraction_range", default_petal_attraction_range),
         REGISTER_CONFIG("lentil_petal_attraction_range", default_lentil_petal_attraction_range),
         REGISTER_CONFIG("lentil_reload", default_lentil_reload),
         REGISTER_CONFIG("leaf_base_damage", default_leaf_base_damage),
@@ -916,6 +932,16 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_spider_web_lifetime", mob_spider_web_lifetime),
         REGISTER_CONFIG("mob_spider_web_slow_duration", mob_spider_web_slow_duration),
         REGISTER_CONFIG("mob_spider_web_speed_multiplier", mob_spider_web_speed_multiplier),
+        REGISTER_CONFIG("mob_sandstorm_acceleration", mob_sandstorm_acceleration),
+        REGISTER_CONFIG("mob_sandstorm_armor", mob_sandstorm_armor),
+        REGISTER_CONFIG("mob_sandstorm_damage", mob_sandstorm_damage),
+        REGISTER_CONFIG("mob_sandstorm_mass", mob_sandstorm_mass),
+        REGISTER_CONFIG("mob_sandstorm_max_health", mob_sandstorm_max_health),
+        REGISTER_CONFIG("mob_sandstorm_max_velocity", mob_sandstorm_max_velocity),
+        REGISTER_CONFIG("mob_sandstorm_radius", mob_sandstorm_radius),
+        REGISTER_CONFIG("mob_sandstorm_team", mob_sandstorm_team),
+        REGISTER_CONFIG("portal_attraction_acceleration", portal_attraction_acceleration),
+        REGISTER_CONFIG("portal_radius", portal_radius),
         REGISTER_CONFIG("mob_hornet_acceleration", mob_hornet_acceleration),
         REGISTER_CONFIG("mob_hornet_armor", mob_hornet_armor),
         REGISTER_CONFIG("mob_hornet_attack_interval", mob_hornet_attack_interval),
@@ -974,6 +1000,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_player_flower_petal_rotation_speed", mob_player_flower_petal_rotation_speed),
         REGISTER_CONFIG("mob_player_flower_radius", mob_player_flower_radius),
         REGISTER_CONFIG("mob_player_flower_team", mob_player_flower_team),
+        REGISTER_CONFIG("player_spawn_invincible_duration", player_spawn_invincible_duration),
         REGISTER_CONFIG("mob_radius_level_step", mob_radius_level_step),
         REGISTER_CONFIG("mob_slow_to_max_velocity_time", mob_slow_to_max_velocity_time),
         REGISTER_CONFIG("mob_stop_damping", mob_stop_damping),
@@ -1024,6 +1051,8 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("network_snapshot_query_radius_cap", network_snapshot_query_radius_cap),
         REGISTER_CONFIG("network_snapshot_interval", network_snapshot_interval),
         REGISTER_CONFIG("open_spawn_density_area", open_spawn_density_area),
+        REGISTER_CONFIG("open_idle_spawn_per_zone_tick", open_idle_spawn_per_zone_tick),
+        REGISTER_CONFIG("open_idle_spawn_zones_per_tick", open_idle_spawn_zones_per_tick),
         REGISTER_CONFIG("open_initial_spawn_delay", open_initial_spawn_delay),
         REGISTER_CONFIG("open_spawn_interval", open_spawn_interval),
         REGISTER_CONFIG("open_super_plus_block_radius", open_super_plus_block_radius),
@@ -1033,6 +1062,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("open_spawn_y", open_spawn_y),
         REGISTER_CONFIG("petal_attack_offset", default_petal_attack_offset),
         REGISTER_CONFIG("petal_defend_offset", default_petal_defend_offset),
+        REGISTER_CONFIG("petal_follow_multiplier", default_petal_follow_multiplier),
         REGISTER_CONFIG("petal_neutral_reach", default_petal_neutral_reach),
         REGISTER_CONFIG("petal_orbit_k", default_petal_orbit_k),
         REGISTER_CONFIG("petal_orbit_radius", default_petal_orbit_radius),

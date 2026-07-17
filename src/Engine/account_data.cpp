@@ -151,10 +151,7 @@ std::vector<SAccountTalent> ParseTalents(const CJsonValue* value)
         if (const CJsonValue* rank = talent_value.Find("rank")) talent.rank = std::max(0, rank->AsInt());
 
         if (talent.id == ETalentId::None) continue;
-        int rarity_value = static_cast<int>(talent.rarity);
-        if (rarity_value <= static_cast<int>(ERarity::Null) ||
-            rarity_value > static_cast<int>(ERarity::Primordial))
-            continue;
+        if (!IsKnownRarity(talent.rarity)) continue;
 
         auto it = std::find_if(talents.begin(), talents.end(),
                                [&talent](const SAccountTalent& existing)

@@ -55,12 +55,13 @@ enum class EPetalType : int
     Basil,
     Soil,
     Honey,
-    Wax
+    Wax,
+    ThirdEye
 };
 
 using PetalType = EPetalType;
 
-inline constexpr std::array<std::string_view, 51> petal_type_names = {
+inline constexpr std::array<std::string_view, 52> petal_type_names = {
     "None",
     "Air",
     "AntEgg",
@@ -112,6 +113,7 @@ inline constexpr std::array<std::string_view, 51> petal_type_names = {
     "Soil",
     "Honey",
     "Wax",
+    "ThirdEye",
 };
 
 inline std::string_view GetPetalTypeName(EPetalType type)
@@ -135,6 +137,7 @@ inline bool PetalIgnoresReachBonus(EPetalType type)
     case EPetalType::Pollen:
     case EPetalType::Honey:
     case EPetalType::Wax:
+    case EPetalType::ThirdEye:
         return true;
     default:
         return false;
@@ -221,6 +224,8 @@ inline bool MatchPetalTypeAlias(std::string_view text, EPetalType type)
         return text == "honey";
     case EPetalType::Wax:
         return text == "wax";
+    case EPetalType::ThirdEye:
+        return text == "third_eye" || text == "thirdeye" || text == "te";
     default:
         return false;
     }

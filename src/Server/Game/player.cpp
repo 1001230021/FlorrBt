@@ -227,7 +227,7 @@ bool CPlayer::TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rari
 {
     if (!m_authenticated) return false;
     if (petal_type == 0) return false;
-    if (rarity == 0 || rarity > static_cast<uint8_t>(ERarity::Primordial)) return false;
+    if (!IsKnownRarity(static_cast<ERarity>(rarity))) return false;
 
     auto* flower = dynamic_cast<CFlower*>(GetEntity());
     if (!flower) return false;
@@ -367,6 +367,12 @@ void CPlayer::ApplyTalents(ETalentEvent event, STalentContext& ctx) const
     for (ITalent* talent : m_talents)
     {
         if (talent) talent->Apply(event, ctx);
+    }
+
+    if (m_p_world)
+    {
+        if (IGameController* controller = m_p_world->GetController())
+            controller->ModifyTalentContext(*m_p_world, const_cast<CPlayer*>(this), event, ctx);
     }
 }
 

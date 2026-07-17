@@ -58,7 +58,7 @@ inline bool RegisterDropRate(EMobType mob_type, ERarity mob_rarity, EPetalType d
     std::sort(drops.begin(), drops.end(), [](const SDropRate& lhs, const SDropRate& rhs)
     {
         if (lhs.type != rhs.type) return static_cast<int>(lhs.type) < static_cast<int>(rhs.type);
-        return GetLevel(lhs.rarity) > GetLevel(rhs.rarity);
+        return GetRaritySortRank(lhs.rarity) > GetRaritySortRank(rhs.rarity);
     });
     return true;
 }
@@ -396,6 +396,50 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::BumbleBee, ERarity::Super, EPetalType::Wax, ERarity::Ultra, 0.897);
     RegisterDropRate(EMobType::BumbleBee, ERarity::Super, EPetalType::Honey, ERarity::Mythic, 0.438);
     RegisterDropRate(EMobType::BumbleBee, ERarity::Super, EPetalType::Honey, ERarity::Ultra, 0.562);
+
+    RegisterDropRate(EMobType::Spider, ERarity::Common, EPetalType::Faster, ERarity::Common, 0.598);
+    RegisterDropRate(EMobType::Spider, ERarity::Common, EPetalType::Faster, ERarity::Unusual, 0.164);
+    RegisterDropRate(EMobType::Spider, ERarity::Common, EPetalType::Web, ERarity::Unusual, 0.164);
+    RegisterDropRate(EMobType::Spider, ERarity::Unusual, EPetalType::Faster, ERarity::Common, 0.485);
+    RegisterDropRate(EMobType::Spider, ERarity::Unusual, EPetalType::Faster, ERarity::Unusual, 0.512);
+    RegisterDropRate(EMobType::Spider, ERarity::Unusual, EPetalType::Web, ERarity::Unusual, 0.512);
+    RegisterDropRate(EMobType::Spider, ERarity::Rare, EPetalType::Faster, ERarity::Unusual, 0.834);
+    RegisterDropRate(EMobType::Spider, ERarity::Rare, EPetalType::Faster, ERarity::Rare, 0.165);
+    RegisterDropRate(EMobType::Spider, ERarity::Rare, EPetalType::Web, ERarity::Unusual, 0.834);
+    RegisterDropRate(EMobType::Spider, ERarity::Rare, EPetalType::Web, ERarity::Rare, 0.165);
+    RegisterDropRate(EMobType::Spider, ERarity::Epic, EPetalType::Faster, ERarity::Unusual, 0.067);
+    RegisterDropRate(EMobType::Spider, ERarity::Epic, EPetalType::Faster, ERarity::Rare, 0.810);
+    RegisterDropRate(EMobType::Spider, ERarity::Epic, EPetalType::Faster, ERarity::Epic, 0.123);
+    RegisterDropRate(EMobType::Spider, ERarity::Epic, EPetalType::Web, ERarity::Unusual, 0.067);
+    RegisterDropRate(EMobType::Spider, ERarity::Epic, EPetalType::Web, ERarity::Rare, 0.810);
+    RegisterDropRate(EMobType::Spider, ERarity::Epic, EPetalType::Web, ERarity::Epic, 0.123);
+    RegisterDropRate(EMobType::Spider, ERarity::Legendary, EPetalType::Faster, ERarity::Rare, 0.072);
+    RegisterDropRate(EMobType::Spider, ERarity::Legendary, EPetalType::Faster, ERarity::Epic, 0.877);
+    RegisterDropRate(EMobType::Spider, ERarity::Legendary, EPetalType::Faster, ERarity::Legendary, 0.050);
+    RegisterDropRate(EMobType::Spider, ERarity::Legendary, EPetalType::Web, ERarity::Rare, 0.072);
+    RegisterDropRate(EMobType::Spider, ERarity::Legendary, EPetalType::Web, ERarity::Epic, 0.877);
+    RegisterDropRate(EMobType::Spider, ERarity::Legendary, EPetalType::Web, ERarity::Legendary, 0.050);
+    RegisterDropRate(EMobType::Spider, ERarity::Mythic, EPetalType::Faster, ERarity::Epic, 0.075);
+    RegisterDropRate(EMobType::Spider, ERarity::Mythic, EPetalType::Faster, ERarity::Legendary, 0.917);
+    RegisterDropRate(EMobType::Spider, ERarity::Mythic, EPetalType::Faster, ERarity::Mythic, 0.008);
+    RegisterDropRate(EMobType::Spider, ERarity::Mythic, EPetalType::Web, ERarity::Epic, 0.075);
+    RegisterDropRate(EMobType::Spider, ERarity::Mythic, EPetalType::Web, ERarity::Legendary, 0.917);
+    RegisterDropRate(EMobType::Spider, ERarity::Mythic, EPetalType::Web, ERarity::Mythic, 0.008);
+    RegisterDropRate(EMobType::Spider, ERarity::Mythic, EPetalType::ThirdEye, ERarity::Mythic, 0.0003);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::Faster, ERarity::Legendary, 0.212);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::Faster, ERarity::Mythic, 0.783);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::Faster, ERarity::Ultra, 0.005);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::Web, ERarity::Legendary, 0.212);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::Web, ERarity::Mythic, 0.783);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::Web, ERarity::Ultra, 0.005);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::ThirdEye, ERarity::Mythic, 0.060);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::ThirdEye, ERarity::Ultra, 0.0002);
+    RegisterDropRate(EMobType::Spider, ERarity::Super, EPetalType::Faster, ERarity::Mythic, 0.356);
+    RegisterDropRate(EMobType::Spider, ERarity::Super, EPetalType::Faster, ERarity::Ultra, 0.644);
+    RegisterDropRate(EMobType::Spider, ERarity::Super, EPetalType::Web, ERarity::Mythic, 0.356);
+    RegisterDropRate(EMobType::Spider, ERarity::Super, EPetalType::Web, ERarity::Ultra, 0.644);
+    RegisterDropRate(EMobType::Spider, ERarity::Super, EPetalType::ThirdEye, ERarity::Mythic, 0.960);
+    RegisterDropRate(EMobType::Spider, ERarity::Super, EPetalType::ThirdEye, ERarity::Ultra, 0.040);
 
     RegisterDropRate(EMobType::Hornet, ERarity::Common, EPetalType::Missile, ERarity::Common, 0.870108);
     RegisterDropRate(EMobType::Hornet, ERarity::Common, EPetalType::Missile, ERarity::Unusual, 0.129892);

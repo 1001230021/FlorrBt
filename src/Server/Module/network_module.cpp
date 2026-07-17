@@ -1,19 +1,13 @@
 #include "network_module.h"
 #include "../../Engine/account_data.h"
 #include "../../Engine/logger.h"
-#include "../Game/controllers/melee_controller.h"
 #include "../Game/controllers/player_controller.h"
-#include "../Game/entities/drop.h"
 #include "../Game/entities/flower.h"
 #include "../Game/entities/petals/petal.h"
-#include "../Game/entities/projectile.h"
 #include "../Game/gamecontext.h"
 #include "../Game/gameworld.h"
 #include "../Game/player.h"
-#include "../Game/state_zone.h"
-#include "../Game/states/states.h"
 #include "../Game/talent.h"
-#include "../Game/zone_mob_tools.h"
 #include "../report.h"
 #include "../../Shared/network_msg.h"
 #include <SFML/Network.hpp>
@@ -23,19 +17,12 @@
 #include <cstddef>
 #include <cctype>
 #include <exception>
-#include <limits>
-#include <random>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 namespace
 {
-constexpr const char* new_player_checkpoint_name = "new_players";
-constexpr size_t snapshot_packet_budget = UINT16_MAX - 1024;
-constexpr size_t snapshot_backlog_skip_bytes = snapshot_packet_budget * 2;
-constexpr size_t snapshot_entity_budget = 900;
-
 size_t PacketLengthAt(const std::vector<uint8_t>& buffer, size_t offset)
 {
     if (offset + packet_length_prefix_size > buffer.size()) return 0;
@@ -70,52 +57,6 @@ size_t PendingSendBytes(const CPlayer& player)
 {
     if (player.m_send_offset >= player.m_send_buffer.size()) return 0;
     return player.m_send_buffer.size() - player.m_send_offset;
-}
-
-uint8_t GetEntityType(const CEntity& entity)
-{
-    if (const auto* mob = dynamic_cast<const CMobBase*>(&entity)) return static_cast<uint8_t>(mob->m_mob_type);
-    if (const auto* drop = dynamic_cast<const CDrop*>(&entity))
-        return server_drop_entity_type_offset + static_cast<uint8_t>(drop->GetType());
-    if (const auto* petal = dynamic_cast<const CPetal*>(&entity))
-        return server_petal_entity_type_offset + static_cast<uint8_t>(petal->m_type);
-    return 0;
-}
-
-std::string GetEntityName(const CEntity& entity)
-{
-    if (const auto* player_flower = dynamic_cast<const CPlayerFlower*>(&entity)) return player_flower->m_name;
-    if (const auto* mob = dynamic_cast<const CMobBase*>(&entity)) return std::string(GetMobTypeName(mob->m_mob_type));
-    if (const auto* drop = dynamic_cast<const CDrop*>(&entity)) return std::string(GetPetalTypeName(drop->GetType()));
-    if (const auto* petal = dynamic_cast<const CPetal*>(&entity)) return std::string(GetPetalTypeName(petal->m_type));
-    if (dynamic_cast<const CSpiderWebZone*>(&entity)) return "SpiderWeb";
-    if (dynamic_cast<const CPollenProjectile*>(&entity)) return "Pollen";
-    if (dynamic_cast<const CMissile*>(&entity)) return "Missile";
-    return "Entity";
-}
-
-float GetHealthPercent(const CEntity& entity)
-{
-    if (const auto* mob = dynamic_cast<const CMobBase*>(&entity))
-    {
-        const SMobStats* stats = mob->GetFinalStats();
-        if (stats && stats->max_health > 0.f) return entity.m_health / stats->max_health;
-    }
-    return entity.m_health;
-}
-
-float GetPrimordialDefaultMobRadius()
-{
-    float base_radius = std::max({game_config::mob_beetle_radius, game_config::mob_normal_ladybug_radius,
-                                  game_config::default_flower_radius, game_config::mob_player_flower_radius,
-                                  game_config::mob_summoned_beetle_radius, game_config::mob_soldier_ant_radius,
-                                  game_config::mob_soldier_fire_ant_radius, game_config::mob_soldier_termite_radius,
-                                  game_config::mob_summoned_soldier_ant_radius, game_config::mob_bee_radius,
-                                  game_config::mob_hornet_radius, game_config::mob_bumblebee_radius,
-                                  game_config::mob_rock_radius, game_config::mob_baby_ant_radius,
-                                  game_config::mob_worker_ant_radius, game_config::mob_queen_ant_radius,
-                                  game_config::mob_ant_hole_radius, game_config::mob_spider_radius});
-    return base_radius * game_config::MobRadiusScaleForLevel(GetLevel(ERarity::Primordial));
 }
 
 std::string ToLower(std::string text)
@@ -263,97 +204,6 @@ bool HandleRconCommand(INetworkModule& network, CPlayer& player, const std::stri
     }
     return true;
 }
-
-bool FlowerHasAvailablePetal(const CFlower& flower, EPetalType type)
-{
-    for (const auto& slot : flower.GetSlots())
-    {
-        if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
-        if (slot.m_p_proto->m_type == type) return true;
-    }
-    return false;
-}
-
-std::mt19937& RespawnRng()
-{
-    static std::mt19937 rng{std::random_device{}()};
-    return rng;
-}
-
-bool RandomPointInCheckpoint(const FlorrBtMap::Checkpoint& checkpoint, sf::Vector2f& out_pos)
-{
-    if (checkpoint.w <= 0.f || checkpoint.h <= 0.f) return false;
-    std::uniform_real_distribution<float> random_x(checkpoint.x, checkpoint.x + checkpoint.w);
-    std::uniform_real_distribution<float> random_y(checkpoint.y, checkpoint.y + checkpoint.h);
-    out_pos = {random_x(RespawnRng()), random_y(RespawnRng())};
-    return true;
-}
-
-bool RandomPointInSpawnZone(const FlorrBtMap::Zone& zone, sf::Vector2f& out_pos)
-{
-    if (zone.vertices.empty()) return false;
-
-    float min_x = std::numeric_limits<float>::max();
-    float min_y = std::numeric_limits<float>::max();
-    float max_x = std::numeric_limits<float>::lowest();
-    float max_y = std::numeric_limits<float>::lowest();
-    for (const auto& vertex : zone.vertices)
-    {
-        min_x = std::min(min_x, vertex.x);
-        min_y = std::min(min_y, vertex.y);
-        max_x = std::max(max_x, vertex.x);
-        max_y = std::max(max_y, vertex.y);
-    }
-    if (min_x >= max_x || min_y >= max_y) return false;
-
-    std::uniform_real_distribution<float> random_x(min_x, max_x);
-    std::uniform_real_distribution<float> random_y(min_y, max_y);
-    for (int attempt = 0; attempt < 32; ++attempt)
-    {
-        sf::Vector2f candidate = {random_x(RespawnRng()), random_y(RespawnRng())};
-        if (!IsPointInZone(zone, candidate)) continue;
-        out_pos = candidate;
-        return true;
-    }
-    return false;
-}
-
-sf::Vector2f PickRespawnPosition(CGameWorld& world)
-{
-    const FlorrBtMap* map = world.GetMap();
-    if (map)
-    {
-        std::vector<size_t> checkpoints;
-        for (size_t i = 0; i < map->checkpoints.size(); ++i)
-        {
-            if (map->checkpoints[i].name == new_player_checkpoint_name) continue;
-            if (map->checkpoints[i].w > 0.f && map->checkpoints[i].h > 0.f) checkpoints.push_back(i);
-        }
-        if (!checkpoints.empty())
-        {
-            std::uniform_int_distribution<size_t> dist(0, checkpoints.size() - 1);
-            sf::Vector2f pos;
-            if (RandomPointInCheckpoint(map->checkpoints[checkpoints[dist(RespawnRng())]], pos)) return pos;
-        }
-
-        std::vector<size_t> zones;
-        for (size_t i = 0; i < map->zones.size(); ++i)
-        {
-            if (map->zones[i].vertices.size() >= 3) zones.push_back(i);
-        }
-        if (!zones.empty())
-        {
-            std::uniform_int_distribution<size_t> dist(0, zones.size() - 1);
-            for (size_t attempt = 0; attempt < zones.size(); ++attempt)
-            {
-                sf::Vector2f pos;
-                if (RandomPointInSpawnZone(map->zones[zones[dist(RespawnRng())]], pos)) return pos;
-            }
-        }
-    }
-
-    return {game_config::player_respawn_x, game_config::player_respawn_y};
-}
 }
 
 bool INetworkModule::Init()
@@ -389,8 +239,8 @@ void INetworkModule::Tick(float dt)
 {
     AcceptConnections();
     ProcessMessages();
-    RespawnDeadControlledEntities();
-    ProcessDropPickups();
+    m_player_lifecycle_service.RespawnDeadControlledEntities(m_players, m_lobby_world, *this);
+    m_player_lifecycle_service.ProcessDropPickups(m_players, *this);
     TickBans(dt);
     m_snapshot_timer += dt;
     if (m_snapshot_timer >= game_config::network_snapshot_interval)
@@ -399,15 +249,6 @@ void INetworkModule::Tick(float dt)
         SendSnapshots();
     }
     TickTimeouts(dt);
-}
-
-void INetworkModule::ProcessDropPickups()
-{
-    for (auto& player : m_players)
-    {
-        if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
-        if (player->TickDropPickup()) QueueInventory(*player);
-    }
 }
 
 void INetworkModule::SendSnapshots()
@@ -434,7 +275,7 @@ void INetworkModule::SendSnapshots()
         if (!owner_mob || !owner_mob->GetFinalStats()) continue;
 
         DropQueuedSnapshots(*player);
-        if (PendingSendBytes(*player) > snapshot_backlog_skip_bytes)
+        if (PendingSendBytes(*player) > CSnapshotService::backlog_skip_bytes)
         {
             if ((m_snapshot_id % 60) == 0)
             {
@@ -452,90 +293,23 @@ void INetworkModule::SendSnapshots()
 
         QueueOwnerState(*player);
 
-        float view_radius = owner_mob->GetFinalStats()->horizon;
-        float snap_view_radius = view_radius * 2.f;
-        if (game_config::network_snapshot_query_radius_cap > 0.f)
-            snap_view_radius = std::min(snap_view_radius, game_config::network_snapshot_query_radius_cap);
-        float snap_radius = snap_view_radius + GetPrimordialDefaultMobRadius();
-        const size_t max_snapshot_candidates = snapshot_entity_budget > 0 ? snapshot_entity_budget - 1 : 0;
-        struct visible_candidate
-        {
-            const CEntity* entity = nullptr;
-            float dist_sq = 0.f;
-        };
-        std::vector<visible_candidate> visible_entities;
-        visible_entities.reserve(std::min<size_t>(max_snapshot_candidates, 128));
-        size_t visible_count = 1;
-        auto farther_to_owner = [](const visible_candidate& lhs, const visible_candidate& rhs)
-        {
-            return lhs.dist_sq < rhs.dist_sq;
-        };
+        CSnapshotService::SBuildResult snapshot;
+        if (!m_snapshot_service.BuildSnapshot(*player, m_snapshot_id, snapshot)) continue;
 
-        owner->GameWorld()->GetSpatialGrid().ForEachInRange(owner->m_pos, snap_radius, [&](CEntity* entity)
-        {
-            if (!entity || !entity->IsVisible() || entity == owner) return;
-            float radius = snap_view_radius + std::max(0.f, entity->m_radius);
-            float dist_sq = DistanceSq(owner->m_pos, entity->m_pos);
-            if (dist_sq > radius * radius) return;
-            ++visible_count;
-
-            if (max_snapshot_candidates == 0) return;
-            visible_candidate candidate{entity, dist_sq};
-            if (visible_entities.size() < max_snapshot_candidates)
-            {
-                visible_entities.push_back(candidate);
-                std::push_heap(visible_entities.begin(), visible_entities.end(), farther_to_owner);
-                return;
-            }
-            if (candidate.dist_sq >= visible_entities.front().dist_sq) return;
-
-            std::pop_heap(visible_entities.begin(), visible_entities.end(), farther_to_owner);
-            visible_entities.back() = candidate;
-            std::push_heap(visible_entities.begin(), visible_entities.end(), farther_to_owner);
-        });
-
-        std::sort(visible_entities.begin(), visible_entities.end(),
-                  [](const visible_candidate& lhs, const visible_candidate& rhs)
-        {
-            return lhs.dist_sq < rhs.dist_sq;
-        });
-
-        ServerMessage msg;
-        msg.type = ServerMessage::Type::Snapshot;
-        msg.snapshot_id = m_snapshot_id;
-        msg.owner_entity_id = static_cast<net_entity_id>(owner->m_id);
-        msg.view_radius = view_radius;
-        msg.entities.reserve(std::min(visible_entities.size() + 1, snapshot_entity_budget));
-        ServerEntitySnap owner_snap = BuildEntitySnap(*owner, *owner);
-        size_t packed_size = 14 + ServerEntitySnap::GetPackedSize(owner_snap);
-        msg.entities.push_back(std::move(owner_snap));
-
-        for (const auto& candidate : visible_entities)
-        {
-            const CEntity* entity = candidate.entity;
-            if (!entity) continue;
-            if (!entity->IsVisible()) continue;
-            if (msg.entities.size() >= snapshot_entity_budget) break;
-            ServerEntitySnap snap = BuildEntitySnap(*entity, *owner);
-            size_t snap_size = ServerEntitySnap::GetPackedSize(snap);
-            if (packed_size + snap_size > snapshot_packet_budget) break;
-            packed_size += snap_size;
-            msg.entities.push_back(std::move(snap));
-        }
-
-        if (msg.entities.size() < visible_count && (m_snapshot_id % 60) == 0)
+        if (snapshot.message.entities.size() < snapshot.visible_count && (m_snapshot_id % 60) == 0)
         {
             LOG_WARN("network", "Trimmed snapshot for player " + std::to_string(player->GetId()) + ": " +
-                                    std::to_string(msg.entities.size()) + "/" + std::to_string(visible_count) +
-                                    " entities, " + std::to_string(packed_size) + " bytes");
+                                    std::to_string(snapshot.message.entities.size()) + "/" +
+                                    std::to_string(snapshot.visible_count) + " entities, " +
+                                    std::to_string(snapshot.packed_size) + " bytes");
         }
 
-        if (!QueueMessage(*player, msg))
+        if (!QueueMessage(*player, snapshot.message))
         {
             LOG_WARN("network", "Failed to queue snapshot for player " + std::to_string(player->GetId()) +
-                                    " (" + std::to_string(msg.entities.size()) + " entities, " +
-                                    std::to_string(ServerMessage::GetPackedSize(msg)) + " bytes, backlog " +
-                                    std::to_string(PendingSendBytes(*player)) + " bytes)");
+                                    " (" + std::to_string(snapshot.message.entities.size()) + " entities, " +
+                                    std::to_string(ServerMessage::GetPackedSize(snapshot.message)) +
+                                    " bytes, backlog " + std::to_string(PendingSendBytes(*player)) + " bytes)");
         }
         if (!FlushSendBuffer(*player))
         {
@@ -1030,7 +804,10 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
             {
                 auto* flower = dynamic_cast<CPlayerFlower*>(player.GetEntity());
                 if (!player.GetEntity() || (flower && flower->m_is_dead))
-                    Respawn(player);
+                {
+                    if (m_player_lifecycle_service.Respawn(player, m_lobby_world))
+                        m_player_lifecycle_service.NotifyPlayerWorldChanged(player, *this);
+                }
                 else
                     player.HandleOperate(op);
             } else {
@@ -1161,9 +938,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
                 controller->OnPlayerConnect(m_lobby_world, reconnect_player);
         }
         QueueAuthResult(*reconnect_player, true, "Reconnected");
-        QueueWelcome(*reconnect_player);
-        QueueInventory(*reconnect_player);
-        QueueOwnerState(*reconnect_player);
+        m_player_lifecycle_service.NotifyPlayerLogin(*reconnect_player, *this);
         LOG_INFO("network", "Account " + request.name + " reconnected as player " + std::to_string(reconnect_player->GetId()));
         return EPlayerBufferResult::RemovePendingPlayer;
     }
@@ -1174,41 +949,9 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
         controller->OnPlayerConnect(m_lobby_world, &player);
 
     QueueAuthResult(player, true, register_mode ? "Registered" : "Logged in");
-    QueueWelcome(player);
-    QueueInventory(player);
-    QueueOwnerState(player);
+    m_player_lifecycle_service.NotifyPlayerLogin(player, *this);
     LOG_INFO("network", "Account " + request.name + " authenticated as player " + std::to_string(player.GetId()));
     return EPlayerBufferResult::Continue;
-}
-
-void INetworkModule::Respawn(CPlayer& player)
-{
-    if (auto* old_flower = dynamic_cast<CPlayerFlower*>(player.GetEntity()))
-    {
-        old_flower->PrepareRespawnDestroy();
-        player.SetOwnedEntity(nullptr);
-    }
-
-    auto entity = CreateMob(EMobType::PlayerFlower, &m_lobby_world, PickRespawnPosition(m_lobby_world), ERarity::Common);
-    auto* raw_flower = dynamic_cast<CPlayerFlower*>(entity.get());
-    if (!raw_flower) return;
-
-    raw_flower->m_name = player.GetName();
-    raw_flower = dynamic_cast<CPlayerFlower*>(m_lobby_world.InsertEntity(std::move(entity)));
-    if (!raw_flower) return;
-
-    if (auto* controller = m_lobby_world.GetController())
-        controller->OnPlayerSpawn(m_lobby_world, &player, raw_flower);
-    else
-    {
-        player.SetOwnedEntity(raw_flower);
-        player.ApplySavedProgress();
-        player.ApplySavedTalents();
-        player.ApplySavedSlots();
-    }
-
-    player.m_logged_missing_entity = false;
-    LOG_INFO("network", "Player " + std::to_string(player.GetId()) + " respawned");
 }
 
 CPlayer* INetworkModule::FindPlayerById(uint32_t player_id) const
@@ -1288,8 +1031,7 @@ bool INetworkModule::AssignPlayerEntity(uint32_t player_id, int entity_id)
     mob->SetController(std::make_unique<CPlayerController>());
     player->SetOwnedEntity(mob);
     player->m_logged_missing_entity = false;
-    QueueWelcome(*player);
-    QueueOwnerState(*player);
+    m_player_lifecycle_service.NotifyPlayerWorldChanged(*player, *this);
     LOG_INFO("network", "Player " + std::to_string(player_id) + " now controls entity " + std::to_string(entity_id));
     return true;
 }
@@ -1299,36 +1041,9 @@ CGameContext* INetworkModule::GameContext() const
     return m_lobby_world.GameContext();
 }
 
-void INetworkModule::RespawnDeadControlledEntities()
+void INetworkModule::NotifyPlayerWorldChanged(CPlayer& player)
 {
-    for (auto& player : m_players)
-    {
-        if (!player || !player->IsAuthenticated()) continue;
-
-        CEntity* entity = player->GetEntity();
-        if (!entity)
-        {
-            if (!player->HasOwnedEntity()) continue;
-            player->SetOwnedEntity(nullptr);
-            Respawn(*player);
-            if (player->IsConnected())
-            {
-                QueueWelcome(*player);
-                QueueOwnerState(*player);
-            }
-            continue;
-        }
-        if (dynamic_cast<CPlayerFlower*>(entity)) continue;
-        if (!entity->IsDead()) continue;
-
-        player->SetOwnedEntity(nullptr);
-        Respawn(*player);
-        if (player->IsConnected())
-        {
-            QueueWelcome(*player);
-            QueueOwnerState(*player);
-        }
-    }
+    m_player_lifecycle_service.NotifyPlayerWorldChanged(player, *this);
 }
 
 CPlayer* INetworkModule::FindReconnectablePlayer(const std::string& account_name, const CPlayer* pending_player) const
@@ -1397,69 +1112,6 @@ void INetworkModule::DropPlayer(size_t index, const std::string& reason)
         entity->m_is_marked_for_des = true;
     FreePlayerId(player.GetId());
     m_players.erase(m_players.begin() + index);
-}
-
-ServerEntitySnap INetworkModule::BuildEntitySnap(const CEntity& entity, const CEntity& owner) const
-{
-    ServerEntitySnap snap;
-    snap.entity_id = static_cast<net_entity_id>(entity.m_id);
-    snap.entity_type = GetEntityType(entity);
-    snap.team = static_cast<uint8_t>(std::clamp(entity.m_team, 0, static_cast<int>(UINT8_MAX)));
-    snap.pos = entity.m_pos;
-    snap.radius = entity.m_radius;
-    snap.hp_percent = GetHealthPercent(entity);
-    snap.name = GetEntityName(entity);
-    snap.angle = PackAngle(entity.m_facing_angle);
-
-    if (const auto* mob = dynamic_cast<const CMobBase*>(&entity)) snap.rarity = static_cast<uint8_t>(mob->GetRarity());
-    if (const auto* player_flower = dynamic_cast<const CPlayerFlower*>(&entity))
-    {
-        snap.rarity = static_cast<uint8_t>(std::clamp(player_flower->m_level, 0, static_cast<int>(UINT8_MAX)));
-        const auto& slots = player_flower->GetSlots();
-        snap.primary_slots.reserve(slots.size());
-        for (const CPetalSlot& slot : slots)
-        {
-            SOwnerPetalSlot primary_slot;
-            if (slot.m_p_proto)
-            {
-                primary_slot.petal_type = static_cast<uint8_t>(slot.m_p_proto->m_type);
-                primary_slot.rarity = static_cast<uint8_t>(slot.m_stored_rarity);
-            }
-            snap.primary_slots.push_back(primary_slot);
-        }
-    }
-    if (const auto* drop = dynamic_cast<const CDrop*>(&entity)) snap.rarity = static_cast<uint8_t>(drop->GetRarity());
-    if (const auto* petal = dynamic_cast<const CPetal*>(&entity)) snap.rarity = static_cast<uint8_t>(petal->m_rarity);
-
-    if (&entity == &owner) snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Owner);
-    if (entity.IsDead()) snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Dead);
-
-    if (const auto* attackable = dynamic_cast<const IAttackableMob*>(&entity))
-    {
-        if (attackable->IsAttacking()) snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Attacking);
-        if (attackable->IsDefending()) snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Defending);
-    }
-
-    if (const auto* flower = dynamic_cast<const CFlower*>(&entity))
-    {
-        if (FlowerHasAvailablePetal(*flower, EPetalType::Relic))
-            snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Relic);
-        if (FlowerHasAvailablePetal(*flower, EPetalType::Antennae))
-            snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Antennae);
-    }
-    if (const auto* mob = dynamic_cast<const CMobBase*>(&entity))
-    {
-        auto& mutable_mob = *const_cast<CMobBase*>(mob);
-        if (dynamic_cast<CSummonedMeleeController*>(mutable_mob.GetController()))
-            snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Summoned);
-        if (mob->HasState<CUndeadState>())
-            snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Undead);
-        if (mob->HasState<CCorruptionState>())
-            snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Corrupted);
-        if (mob->HasState<CPoisonState>())
-            snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Poisoned);
-    }
-    return snap;
 }
 
 int INetworkModule::GetNewPlayerId()

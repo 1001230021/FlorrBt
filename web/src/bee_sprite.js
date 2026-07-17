@@ -142,14 +142,15 @@ function drawInsect(ctx, pos, radius, entityId, angle, motion, time, options) {
 }
 
 function beeAntennaJitter(entityId, motion, time) {
-  const period = 4.4 + (entityId % 7) * 0.28;
+  const move = clamp01(motion);
+  const period = (4.4 + (entityId % 7) * 0.28) / (1 + move * 1.85);
   const phase = (time + entityId * 0.31) % period;
-  const duration = 0.52;
+  const duration = 0.52 / (1 + move * 1.85);
   if (phase > duration) return 0;
 
   const t = phase / duration;
   const envelope = 1 - t;
-  return Math.sin(t * Math.PI * 2) * envelope * (0.09 + clamp01(motion) * 0.04);
+  return Math.sin(t * Math.PI * 2) * envelope * (0.09 + move * 0.04);
 }
 
 function drawAntennae(ctx, spriteSize, jitter, paths) {

@@ -4,35 +4,33 @@ const SVG_CLIP_SIZE = 91.667;
 const ANT_BASE_FACE_ANGLE = -Math.PI * 0.75;
 const ROCK_FILL = "#777";
 const ROCK_STROKE = "#606060";
+const ROCK_EDGE_WIDTH = 5.2;
+const ROCK_VISUAL_SCALE = 1.18;
+const SANDSTORM_VISUAL_SCALE = 1.2;
+const PORTAL_VISUAL_SCALE = 2.15;
 const BASE_CACHE = new Map();
 const PART_CACHE = new Map();
+const ROCK_SHAPE_CACHE = new Map();
 
-export function drawRock(ctx, pos, radius, entityId) {
-  const rng = seededRng((entityId + 1) * 2654435761 + Math.round(radius * 997));
-  const pointCount = 9 + Math.floor(rng() * 8);
-  const smoothness = rng();
-  const angleOffset = rng() * Math.PI * 2;
-
-  const points = [];
-  for (let i = 0; i < pointCount; i += 1) {
-    const t = i / pointCount;
-    const baseAngle = angleOffset + t * Math.PI * 2;
-    const jag = smoothness < 0.45 ? 0.18 : 0.08;
-    const radial = radius * (0.82 + rng() * jag + Math.sin(t * Math.PI * 4 + entityId) * 0.035);
-    points.push({ x: Math.cos(baseAngle) * radial, y: Math.sin(baseAngle) * radial });
-  }
+export function drawRock(ctx, pos, radius, entityId, worldRadius = radius) {
+  if (radius < 0.5) return;
+  const points = rockShapePoints(entityId, worldRadius);
+  const visualRadius = radius * ROCK_VISUAL_SCALE;
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
-  ctx.lineJoin = "round";
-  ctx.lineCap = "round";
-  ctx.lineWidth = Math.max(2, radius * 0.22);
+  ctx.lineJoin = "miter";
+  ctx.lineCap = "butt";
+  ctx.miterLimit = 2.6;
+  ctx.lineWidth = Math.max(1.2, Math.min(ROCK_EDGE_WIDTH, visualRadius * 0.38));
   ctx.fillStyle = ROCK_FILL;
   ctx.strokeStyle = ROCK_STROKE;
   ctx.beginPath();
   points.forEach((point, index) => {
-    if (index === 0) ctx.moveTo(point.x, point.y);
-    else ctx.lineTo(point.x, point.y);
+    const x = point.x * visualRadius;
+    const y = point.y * visualRadius;
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
   });
   ctx.closePath();
   ctx.fill();
@@ -40,11 +38,48 @@ export function drawRock(ctx, pos, radius, entityId) {
   ctx.restore();
 }
 
+function rockShapePoints(entityId, worldRadius) {
+  const radiusKey = Math.max(1, Math.round((worldRadius || 1) * 10));
+  const cacheKey = `${entityId || 0}:${radiusKey}`;
+  const cached = ROCK_SHAPE_CACHE.get(cacheKey);
+  if (cached) return cached;
+
+  const seed = (((entityId || 0) + 1) * 2654435761 + radiusKey * 1597334677) >>> 0;
+  const rng = seededRng(seed);
+  const size01 = clamp01((Math.max(0, worldRadius || 0) - 28) / 240);
+  const pointCount = 10 + Math.floor(size01 * 12) + Math.floor(rng() * (3 + size01 * 4));
+  const angleOffset = rng() * Math.PI * 2;
+  const angleJitter = 0.04 + size01 * 0.13;
+  const radialJitter = 0.045 + size01 * 0.18;
+  const points = [];
+
+  for (let i = 0; i < pointCount; i += 1) {
+    const t = i / pointCount;
+    let angle = angleOffset + t * Math.PI * 2 + (rng() - 0.5) * angleJitter;
+    if (size01 > 0.25 && rng() < size01 * 0.35) {
+      const snap = Math.PI / (4 + Math.floor(rng() * 3));
+      angle = Math.round(angle / snap) * snap + (rng() - 0.5) * 0.025;
+    }
+
+    const wave = Math.sin(t * Math.PI * (4 + Math.floor(size01 * 4)) + seed * 0.000001) * (0.025 + size01 * 0.035);
+    let radial = 0.92 + wave + (rng() - 0.5) * radialJitter;
+    if (rng() < size01 * 0.28) radial -= rng() * (0.08 + size01 * 0.08);
+    if (rng() < size01 * 0.18) radial += rng() * 0.045;
+    radial = Math.max(0.72 + (1 - size01) * 0.12, Math.min(0.995, radial));
+    points.push({ x: Math.cos(angle) * radial, y: Math.sin(angle) * radial });
+  }
+
+  ROCK_SHAPE_CACHE.set(cacheKey, points);
+  if (ROCK_SHAPE_CACHE.size > 640) ROCK_SHAPE_CACHE.delete(ROCK_SHAPE_CACHE.keys().next().value);
+  return points;
+}
+
 export function drawBabyAnt(ctx, pos, radius, entityId, angle, motion, time) {
   drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/baby_ant.svg",
-    sizeScale: 5.0,
+    sizeScale: 5.65,
     stripWings: false,
+    forelimbAmplitude: 0.18,
   });
 }
 
@@ -53,6 +88,7 @@ export function drawWorkerAnt(ctx, pos, radius, entityId, angle, motion, time) {
     src: "./assets/worker_ant.svg",
     sizeScale: 5.3,
     stripWings: false,
+    forelimbAmplitude: 0.18,
   });
 }
 
@@ -62,12 +98,13 @@ export function drawQueenAnt(ctx, pos, radius, entityId, angle, motion, time) {
     sizeScale: 4.3,
     stripWings: true,
     layeredWings: true,
+    forelimbAmplitude: 0.28,
   });
 }
 
 export function drawAntHole(ctx, pos, radius) {
   const image = baseImage("./assets/ant_hole.svg", "plain", false);
-  const size = Math.max(1, radius * 2.55);
+  const size = Math.max(1, radius * 3.05);
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
@@ -85,12 +122,70 @@ export function drawAntHole(ctx, pos, radius) {
   ctx.restore();
 }
 
+export function drawSandstorm(ctx, pos, radius, entityId, time) {
+  if (radius < 0.5) return;
+
+  const image = baseImage("./assets/sandstorm.svg", "sandstorm", "plain");
+  const basePhase = (entityId || 0) * 0.41;
+  const t = time || 0;
+  const layers = [
+    { scale: 2.75, alpha: 0.42, speed: 3.75, phase: 0.2 },
+    { scale: 2.1, alpha: 0.62, speed: -7.5, phase: 1.3 },
+    { scale: 1.48, alpha: 0.92, speed: 15.0, phase: 2.1 },
+  ];
+
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  for (const layer of layers) {
+    const size = Math.max(1, radius * layer.scale * SANDSTORM_VISUAL_SCALE);
+    ctx.save();
+    ctx.rotate(basePhase + layer.phase + t * layer.speed);
+    ctx.globalAlpha *= layer.alpha;
+    if (isImageReady(image)) {
+      ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
+    } else {
+      drawFallbackSandstorm(ctx, radius, layer.scale);
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+export function drawPortal(ctx, pos, radius, entityId, time, angle = 0) {
+  if (radius < 0.5) return;
+
+  const image = baseImage("./assets/portal.svg", "portal", "raw");
+  const basePhase = (entityId || 0) * 0.37 + (Number.isFinite(angle) ? angle : 0);
+  const t = time || 0;
+  const layers = [
+    { scale: 1.3, alpha: 0.5, speed: 1.8, phase: 0.4 },
+    { scale: 1.0, alpha: 0.72, speed: -3.2, phase: 1.7 },
+    { scale: 0.72, alpha: 0.95, speed: 5.8, phase: 2.5 },
+  ];
+
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  for (const layer of layers) {
+    const size = Math.max(1, radius * layer.scale * PORTAL_VISUAL_SCALE);
+    ctx.save();
+    ctx.rotate(basePhase + layer.phase + t * layer.speed);
+    ctx.globalAlpha *= layer.alpha;
+    if (isImageReady(image)) {
+      ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
+    } else {
+      drawFallbackPortal(ctx, radius, layer.scale);
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
 function drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, options) {
   const spriteSize = Math.max(1, radius * options.sizeScale);
   const spriteHalf = spriteSize * 0.5;
   const forelimbs = svgParts(options.src, "forelimbs");
   const wings = options.stripWings ? svgParts(options.src, "wings") : [];
-  const animation = antAnimation(entityId, motion || 0, time || 0);
+  const animation = antAnimation(entityId, motion || 0, time || 0, options.forelimbAmplitude);
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
@@ -124,13 +219,13 @@ function drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, options)
   ctx.restore();
 }
 
-function antAnimation(entityId, motion, time) {
+function antAnimation(entityId, motion, time, forelimbAmplitude = 0.28) {
   const move = clamp01(motion);
   const activeMove = move < 0.12 ? 0 : move;
-  const forelimbPhase = time * (8 + activeMove * 16) + entityId * 0.73;
-  const wingPhase = time * (7.5 + move * 10) + entityId * 0.47;
+  const forelimbPhase = time * (4.5 + activeMove * 30) + entityId * 0.73;
+  const wingPhase = time * (4.5 + move * 20) + entityId * 0.47;
   return {
-    forelimb: Math.sin(forelimbPhase) * activeMove * 0.28,
+    forelimb: Math.sin(forelimbPhase) * activeMove * forelimbAmplitude,
     wing: Math.sin(wingPhase) * Math.max(0.22, move) * 0.16,
   };
 }
@@ -226,6 +321,7 @@ function stripAnimatedSvg(svgText, stripWings) {
   if (!root || root.tagName.toLowerCase() !== "svg") return svgText;
 
   const mode = typeof stripWings === "string" ? stripWings : (stripWings ? "no-limbs-wings" : "no-limbs");
+  if (mode === "raw") return svgText;
   const paths = Array.from(root.querySelectorAll("path"));
   const firstWing = paths.findIndex((path) => isWingPath(path));
   const lastForelimb = paths.reduce((last, path, index) => (isForelimbPath(path) ? index : last), -1);
@@ -322,4 +418,35 @@ function drawFallbackAnt(ctx, radius) {
   ctx.arc(radius * 0.42, radius * 0.42, radius * 0.95, 0, Math.PI * 2);
   ctx.arc(-radius * 0.26, -radius * 0.26, radius * 0.72, 0, Math.PI * 2);
   ctx.fill();
+}
+
+function drawFallbackSandstorm(ctx, radius, scale) {
+  const size = radius * scale * 0.34;
+  ctx.strokeStyle = "#cabb99";
+  ctx.lineWidth = Math.max(1.2, radius * 0.13);
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  for (let i = 0; i < 6; i += 1) {
+    const a = i * Math.PI / 3;
+    const x = Math.cos(a) * size;
+    const y = Math.sin(a) * size;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+}
+
+function drawFallbackPortal(ctx, radius, scale) {
+  const size = radius * scale * 0.58;
+  ctx.strokeStyle = "#7a5dff";
+  ctx.lineWidth = Math.max(1.4, radius * 0.12);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, size * 0.9, size * 0.55, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = "#55e7ff";
+  ctx.lineWidth *= 0.65;
+  ctx.beginPath();
+  ctx.arc(0, 0, size * 0.35, 0, Math.PI * 2);
+  ctx.stroke();
 }

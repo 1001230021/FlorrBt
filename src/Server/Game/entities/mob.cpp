@@ -258,4 +258,6 @@ void RegisterMobs()
     RegisterQueenAnt();
     RegisterAntHole();
     RegisterSpider();
+    RegisterSandstorm();
+    RegisterDummy();
 }

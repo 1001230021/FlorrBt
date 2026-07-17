@@ -14,6 +14,7 @@
 class CGameWorld;
 class CGameContext;
 class INetworkModule;
+class IWorldModule;
 
 class CServer
 {
@@ -41,6 +42,8 @@ class CServer
     bool IsRunning() const { return m_running; }
     CConsole& GetConsole() { return m_console; }
     CGameWorld* GetMainWorld() const { return m_p_main_world; }
+    std::vector<CGameWorld*> FindWorldsByMapName(const std::string& map_name) const;
+    CGameWorld* FindRandomWorldByMapName(const std::string& map_name) const;
     INetworkModule* GetNetworkModule() const { return m_p_network_module; }
     CGameContext* GameContext() const { return m_p_game_context.get(); }
     const std::vector<SChatEntry>& GetChats() const { return m_chats; }
@@ -55,6 +58,7 @@ class CServer
     static CServer* s_p_instance;
     CConsole m_console;
     CGameWorld* m_p_main_world = nullptr;
+    IWorldModule* m_p_world_module = nullptr;
     INetworkModule* m_p_network_module = nullptr;
     std::unique_ptr<CGameContext> m_p_game_context;
     std::vector<SChatEntry> m_chats;
