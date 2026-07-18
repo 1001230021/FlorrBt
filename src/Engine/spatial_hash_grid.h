@@ -67,11 +67,23 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
 
     void Rebuild(const std::vector<TObject*>& objects)
     {
-        Clear();
-        m_grid.reserve(objects.size());
+        for (auto& [cell, ids] : m_grid)
+        {
+            (void)cell;
+            ids.clear();
+        }
+        if (m_grid.bucket_count() < objects.size()) m_grid.reserve(objects.size());
         for (TObject* object : objects)
         {
             Insert(object);
+        }
+        if (m_grid.size() > objects.size() * 4 + 64)
+        {
+            for (auto it = m_grid.begin(); it != m_grid.end();)
+            {
+                if (it->second.empty()) it = m_grid.erase(it);
+                else ++it;
+            }
         }
     }
 

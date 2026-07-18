@@ -239,6 +239,20 @@ void RegisterDahlia()
     });
 }
 
+std::once_flag g_dandelion_registered;
+void RegisterDandelionPetal()
+{
+    std::call_once(g_dandelion_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Dandelion;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_dandelion_base_radius;
+        proto.m_p_behavior = std::make_unique<CDandelionBehavior>();
+        REGISTER_PETAL(EPetalType::Dandelion, CPetal, proto);
+    });
+}
+
 std::once_flag g_dust_registered;
 void RegisterDust()
 {
@@ -617,6 +631,34 @@ void RegisterWax()
     });
 }
 
+std::once_flag g_orange_registered;
+void RegisterOrange()
+{
+    std::call_once(g_orange_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Orange;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_orange_base_radius;
+        proto.m_p_behavior = std::make_unique<COrangeBehavior>();
+        REGISTER_PETAL(EPetalType::Orange, CPetal, proto);
+    });
+}
+
+std::once_flag g_shovel_registered;
+void RegisterShovel()
+{
+    std::call_once(g_shovel_registered, []()
+    {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Shovel;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_shovel_base_radius;
+        proto.m_p_behavior = std::make_unique<CShovelBehavior>();
+        REGISTER_PETAL(EPetalType::Shovel, CShovelPetal, proto);
+    });
+}
+
 std::once_flag g_yin_yang_registered;
 void RegisterYinYang()
 {
@@ -721,6 +763,7 @@ void RegisterPetals()
     RegisterCorn();
     RegisterCorruption();
     RegisterDahlia();
+    RegisterDandelionPetal();
     RegisterDust();
     RegisterFaster();
     RegisterFragment();
@@ -749,6 +792,8 @@ void RegisterPetals()
     RegisterCactus();
     RegisterWeb();
     RegisterWax();
+    RegisterOrange();
+    RegisterShovel();
     RegisterWing();
     RegisterYinYang();
     RegisterYggdrasil();

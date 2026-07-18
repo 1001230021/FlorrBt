@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <sstream>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace
@@ -479,7 +480,14 @@ bool CAccountDataStore::LoginOrRegister(const std::string& name, const std::stri
             return false;
         }
 
-        g_accounts.push_back({name, std::string(hash), 1, 0, {}, DefaultSlots(), {}, "{}"});
+        SPlayerAccount new_account;
+        new_account.name = name;
+        new_account.password = std::string(hash);
+        new_account.level = 1;
+        new_account.exp = 0;
+        new_account.slots = DefaultSlots();
+        new_account.extra_json = "{}";
+        g_accounts.push_back(std::move(new_account));
         Save(error);
         return true;
     }

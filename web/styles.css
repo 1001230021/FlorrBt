@@ -563,6 +563,58 @@ body.mobile-mode-forced .quick-actions {
   user-select: text;
 }
 
+.slider-panel {
+  top: 12px;
+  right: 12px;
+  width: min(320px, calc(100vw - 24px));
+  z-index: 40;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(48, 68, 96, 0.18);
+  border-radius: 8px;
+  background: #f8fbfd;
+  color: var(--ink);
+}
+
+.slider-panel-header {
+  display: grid;
+  grid-template-columns: 1fr 28px;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider-title,
+.slider-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 12px/1.25 Consolas, "Cascadia Mono", monospace;
+  font-weight: 800;
+}
+
+.slider-close {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(50, 88, 138, 0.25);
+  border-radius: 6px;
+  background: #fff;
+  color: #344255;
+  font-weight: 900;
+}
+
+.slider-control {
+  display: grid;
+  gap: 6px;
+}
+
+.slider-input {
+  width: 100%;
+  touch-action: auto;
+  pointer-events: auto;
+}
+
 .slots-panel {
   left: 50%;
   bottom: 12px;

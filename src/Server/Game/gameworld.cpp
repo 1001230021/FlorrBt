@@ -8,8 +8,8 @@
 #include "entities/projectile.h"
 #include "gamecontext.h"
 #include "player.h"
+#include "state_zone.h"
 #include "states/states.h"
-#include "zone_mob_tools.h"
 #include "../../Engine/logger.h"
 #include "../Module/network_module.h"
 #include "../../Shared/game_config.h"
@@ -18,15 +18,20 @@
 #include <cstdint>
 #include <cctype>
 #include <filesystem>
+#include <iomanip>
 #include <limits>
+#include <mutex>
 #include <random>
+#include <sstream>
 #include <utility>
 
 namespace
 {
 constexpr const char* default_map_path = "data/maps/garden.tmj";
-constexpr const char* new_player_checkpoint_name = "new_players";
 constexpr int transfer_spawn_position_attempts = 32;
+constexpr float wall_contact_skin = 0.5f;
+std::mutex g_server_crash_context_mutex;
+std::string g_last_server_crash_context = "startup";
 
 struct summon_owner_link
 {
@@ -51,39 +56,16 @@ std::string WarpKey(std::string text)
     return text;
 }
 
-bool RandomPointInTransferCheckpoint(const FlorrBtMap::Checkpoint& checkpoint, sf::Vector2f& out_pos)
+bool RandomPointInTransferCheckpoint(const CGameWorld& world, const FlorrBtMap::Checkpoint& checkpoint, sf::Vector2f& out_pos)
 {
     if (checkpoint.w <= 0.f || checkpoint.h <= 0.f) return false;
 
     std::uniform_real_distribution<float> random_x(checkpoint.x, checkpoint.x + checkpoint.w);
     std::uniform_real_distribution<float> random_y(checkpoint.y, checkpoint.y + checkpoint.h);
-    out_pos = {random_x(GetRng()), random_y(GetRng())};
-    return true;
-}
-
-bool RandomPointInTransferZone(const FlorrBtMap::Zone& zone, sf::Vector2f& out_pos)
-{
-    if (zone.vertices.size() < 3) return false;
-
-    float min_x = std::numeric_limits<float>::max();
-    float min_y = std::numeric_limits<float>::max();
-    float max_x = std::numeric_limits<float>::lowest();
-    float max_y = std::numeric_limits<float>::lowest();
-    for (const auto& vertex : zone.vertices)
-    {
-        min_x = std::min(min_x, vertex.x);
-        min_y = std::min(min_y, vertex.y);
-        max_x = std::max(max_x, vertex.x);
-        max_y = std::max(max_y, vertex.y);
-    }
-    if (min_x >= max_x || min_y >= max_y) return false;
-
-    std::uniform_real_distribution<float> random_x(min_x, max_x);
-    std::uniform_real_distribution<float> random_y(min_y, max_y);
     for (int attempt = 0; attempt < transfer_spawn_position_attempts; ++attempt)
     {
         sf::Vector2f candidate = {random_x(GetRng()), random_y(GetRng())};
-        if (!IsPointInZone(zone, candidate)) continue;
+        if (world.CircleBlockedByWall(candidate, game_config::mob_player_flower_radius)) continue;
         out_pos = candidate;
         return true;
     }
@@ -98,7 +80,7 @@ sf::Vector2f PickDefaultTransferSpawnPosition(const CGameWorld& world)
         std::vector<const FlorrBtMap::Checkpoint*> checkpoints;
         for (const FlorrBtMap::Checkpoint& checkpoint : map->checkpoints)
         {
-            if (checkpoint.name == new_player_checkpoint_name) continue;
+            if (!checkpoint.is_respawn_area) continue;
             if (checkpoint.w <= 0.f || checkpoint.h <= 0.f) continue;
             checkpoints.push_back(&checkpoint);
         }
@@ -106,22 +88,7 @@ sf::Vector2f PickDefaultTransferSpawnPosition(const CGameWorld& world)
         {
             std::uniform_int_distribution<size_t> dist(0, checkpoints.size() - 1);
             sf::Vector2f pos;
-            if (RandomPointInTransferCheckpoint(*checkpoints[dist(GetRng())], pos)) return pos;
-        }
-
-        std::vector<const FlorrBtMap::Zone*> zones;
-        for (const FlorrBtMap::Zone& zone : map->zones)
-        {
-            if (zone.vertices.size() >= 3) zones.push_back(&zone);
-        }
-        if (!zones.empty())
-        {
-            std::uniform_int_distribution<size_t> dist(0, zones.size() - 1);
-            for (size_t attempt = 0; attempt < zones.size(); ++attempt)
-            {
-                sf::Vector2f pos;
-                if (RandomPointInTransferZone(*zones[dist(GetRng())], pos)) return pos;
-            }
+            if (RandomPointInTransferCheckpoint(world, *checkpoints[dist(GetRng())], pos)) return pos;
         }
     }
 
@@ -143,9 +110,21 @@ summon_owner_link GetSummonOwnerLink(const CEntity* entity)
     link.root_owner_id = link.direct_owner_id;
 
     CGameWorld* world = const_cast<CMobBase*>(mob)->GameWorld();
-    CEntity* owner = world ? world->GetEntity(link.direct_owner_id) : nullptr;
+    CEntity* owner = controller->GetOwner(world);
+    if (!owner)
+    {
+        link.direct_owner_id = -1;
+        link.root_owner_id = -1;
+        return link;
+    }
+    link.direct_owner_id = owner->m_id;
+    link.root_owner_id = owner->m_id;
     auto* owner_projectile = dynamic_cast<CProjectile*>(owner);
-    if (owner_projectile) link.root_owner_id = owner_projectile->m_owner_id;
+    if (owner_projectile)
+    {
+        if (CEntity* root_owner = owner_projectile->GetOwner())
+            link.root_owner_id = root_owner->m_id;
+    }
     return link;
 }
 
@@ -157,7 +136,16 @@ bool HasSummonOwnerLink(const summon_owner_link& link)
 bool IsPetalOwnedBy(const CEntity* entity, int owner_id)
 {
     auto* projectile = dynamic_cast<const CProjectile*>(entity);
-    return projectile && projectile->m_owner_id == owner_id;
+    CEntity* owner = projectile ? projectile->GetOwner() : nullptr;
+    return owner && owner->m_id == owner_id;
+}
+
+bool IsProjectileOwnerCollision(const CProjectile* projectile, const CEntity* target)
+{
+    if (!projectile || !target || projectile->m_owner_id < 0) return false;
+    if (projectile->m_owner_id != target->m_id) return false;
+    return projectile->m_owner_generation == 0 || projectile->m_owner_generation == target->m_generation ||
+           projectile->GetOwner() == target;
 }
 
 bool IsSummonOwnerLink(const summon_owner_link& link, const CEntity* other)
@@ -229,6 +217,58 @@ bool ApplyWeakSummonCollision(CEntity* lhs, CEntity* rhs)
     return true;
 }
 
+std::string EntityDebugName(const CEntity* entity)
+{
+    if (!entity) return "null";
+    if (const auto* mob = dynamic_cast<const CMobBase*>(entity))
+        return std::string(GetMobTypeName(mob->m_mob_type));
+    if (const auto* petal = dynamic_cast<const CPetal*>(entity))
+        return std::string(GetPetalTypeName(petal->m_type));
+    if (dynamic_cast<const CPollenProjectile*>(entity)) return "PollenProjectile";
+    if (dynamic_cast<const CDandelionMissile*>(entity)) return "DandelionMissile";
+    if (dynamic_cast<const CMissile*>(entity)) return "Missile";
+    if (const auto* drop = dynamic_cast<const CDrop*>(entity))
+        return "Drop(" + std::string(GetPetalTypeName(drop->GetType())) + ")";
+    if (dynamic_cast<const CStateZone*>(entity)) return "StateZone";
+    if (dynamic_cast<const CPortal*>(entity)) return "Portal";
+    return "Entity";
+}
+
+std::string DescribeEntityForCrash(const CEntity* entity)
+{
+    if (!entity) return "null";
+
+    std::ostringstream oss;
+    oss << EntityDebugName(entity)
+        << "#" << entity->m_id
+        << " gen=" << entity->m_generation
+        << " team=" << entity->m_team
+        << " hp=" << std::fixed << std::setprecision(2) << entity->m_health
+        << " r=" << entity->m_radius
+        << " pos=(" << entity->m_pos.x << "," << entity->m_pos.y << ")"
+        << " marked=" << (entity->m_is_marked_for_des ? "true" : "false");
+
+    if (const auto* mob = dynamic_cast<const CMobBase*>(entity))
+        oss << " rarity=" << GetRarityName(mob->GetRarity());
+    if (const auto* petal = dynamic_cast<const CPetal*>(entity))
+        oss << " rarity=" << GetRarityName(petal->m_rarity);
+    if (const auto* projectile = dynamic_cast<const CProjectile*>(entity))
+        oss << " owner=" << projectile->m_owner_id << " owner_gen=" << projectile->m_owner_generation;
+    return oss.str();
+}
+
+void SetLastServerCrashContext(std::string context)
+{
+    std::lock_guard<std::mutex> lock(g_server_crash_context_mutex);
+    g_last_server_crash_context = std::move(context);
+}
+
+void SetLastCollisionCrashContext(const CEntity* entity, const CEntity* other)
+{
+    SetLastServerCrashContext("collision " + DescribeEntityForCrash(entity) + " <-> " +
+                              DescribeEntityForCrash(other));
+}
+
 bool IsSameTeamSandstormMobCollision(const CMobBase* lhs, const CMobBase* rhs)
 {
     if (!lhs || !rhs) return false;
@@ -286,6 +326,18 @@ bool IsWaxPair(const CEntity* lhs, const CEntity* rhs)
     return IsWaxPetal(lhs) || IsWaxPetal(rhs);
 }
 
+bool CollidesWithWalls(const CEntity* entity)
+{
+    const auto* petal = dynamic_cast<const CPetal*>(entity);
+    return !petal || petal->CollidesWithWalls();
+}
+
+bool IsFiredCarrotPetal(const CEntity* entity)
+{
+    const auto* missile = dynamic_cast<const CMissilePetal*>(entity);
+    return missile && missile->m_type == EPetalType::Carrot && missile->m_fired;
+}
+
 bool IsSameTeamPetalWaxPair(const CEntity* lhs, const CEntity* rhs)
 {
     if (!IsWaxPair(lhs, rhs)) return false;
@@ -325,10 +377,12 @@ bool IsRoseTeamHealCollision(const CEntity* lhs, const CEntity* rhs)
     const auto* rhs_mob = dynamic_cast<const CMobBase*>(rhs);
 
     if (lhs_petal && IsHealPetalType(lhs_petal->m_type) && rhs_mob &&
-        lhs_petal->m_target_entity_id == rhs->m_id)
+        lhs_petal->m_target_entity_id == rhs->m_id &&
+        (lhs_petal->m_target_entity_generation == 0 || lhs_petal->m_target_entity_generation == rhs->m_generation))
         return true;
     if (rhs_petal && IsHealPetalType(rhs_petal->m_type) && lhs_mob &&
-        rhs_petal->m_target_entity_id == lhs->m_id)
+        rhs_petal->m_target_entity_id == lhs->m_id &&
+        (rhs_petal->m_target_entity_generation == 0 || rhs_petal->m_target_entity_generation == lhs->m_generation))
         return true;
     return false;
 }
@@ -353,6 +407,62 @@ sf::Vector2f NormalizeOrZero(sf::Vector2f value)
     float len = Length(value);
     if (len <= game_config::entity_collision_epsilon) return {0.f, 0.f};
     return value / len;
+}
+
+sf::Vector2f GetEntityVelocity(CEntity& entity)
+{
+    if (auto* mob = dynamic_cast<CMobBase*>(&entity)) return mob->m_vel;
+    if (auto* projectile = dynamic_cast<CProjectile*>(&entity)) return projectile->m_vel;
+    return {0.f, 0.f};
+}
+
+void SetEntityVelocity(CEntity& entity, sf::Vector2f velocity)
+{
+    if (auto* mob = dynamic_cast<CMobBase*>(&entity))
+    {
+        mob->m_vel = velocity;
+        return;
+    }
+    if (auto* projectile = dynamic_cast<CProjectile*>(&entity))
+        projectile->m_vel = velocity;
+}
+
+float CollisionKnockbackSpeedFor(const CEntity* entity)
+{
+    if (!dynamic_cast<const CFlower*>(entity)) return 0.f;
+
+    // Keep the config knobs registered, but disable flower body-contact bounce for now.
+    (void)game_config::entity_collision_knockback_speed;
+    (void)game_config::player_collision_knockback_multiplier;
+    return 0.f;
+}
+
+void PushEntityVelocityOutward(CEntity* entity, sf::Vector2f outward, float speed)
+{
+    if (!entity || speed <= 0.f) return;
+
+    sf::Vector2f velocity = GetEntityVelocity(*entity);
+    float outward_speed = Dot(velocity, outward);
+    if (outward_speed < speed)
+        SetEntityVelocity(*entity, velocity + outward * (speed - outward_speed));
+}
+
+void ApplyCollisionKnockback(CEntity* lhs, CEntity* rhs)
+{
+    if (!lhs || !rhs) return;
+
+    sf::Vector2f delta = rhs->m_pos - lhs->m_pos;
+    sf::Vector2f normal = NormalizeOrZero(delta);
+    if (LengthSq(normal) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+    {
+        uint32_t seed = static_cast<uint32_t>(lhs->m_id) * 1103515245u +
+                        static_cast<uint32_t>(rhs->m_id) * 2654435761u;
+        float angle = static_cast<float>(seed % 6283u) / 1000.f;
+        normal = {std::cos(angle), std::sin(angle)};
+    }
+
+    PushEntityVelocityOutward(lhs, -normal, CollisionKnockbackSpeedFor(lhs));
+    PushEntityVelocityOutward(rhs, normal, CollisionKnockbackSpeedFor(rhs));
 }
 
 bool BounceFiredCarrotFromEntity(CPetal* petal, const CEntity* target)
@@ -438,6 +548,8 @@ bool PetalUsesPhysicalHitCompensation(const CPetal* petal)
     case EPetalType::Rock:
     case EPetalType::Cactus:
     case EPetalType::Corn:
+    case EPetalType::Dandelion:
+    case EPetalType::Orange:
     case EPetalType::Rice:
     case EPetalType::Soil:
         return true;
@@ -479,6 +591,17 @@ void ApplyPhysicalDamageHits(CEntity* target, float damage, CEntity* attacker, i
     }
 }
 
+void RefreshAttachedMissileTransforms(const std::vector<CEntity*>& entities)
+{
+    for (CEntity* entity : entities)
+    {
+        auto* missile = dynamic_cast<CMissile*>(entity);
+        if (!missile || !missile->IsAttachedToOwner() || missile->m_is_marked_for_des) continue;
+        if (!missile->RefreshAttachedTransform())
+            missile->m_is_marked_for_des = true;
+    }
+}
+
 void ApplyPetalHits(CPetal* petal, CMobBase* target, float dt)
 {
     if (!petal || !target) return;
@@ -509,9 +632,13 @@ void ApplyMobHitToPetal(CMobBase* mob, CPetal* petal)
     ApplyPhysicalDamageHits(petal, stats->damage, mob, PhysicalHitCountForTick(mob, petal));
 }
 
-bool DamageAttachedMissile(CMissile* missile, CEntity* target, float dt)
+bool ApplyAttachedMissileContact(CMissile* missile, CEntity* target, float dt)
 {
     if (!missile || !target || !missile->IsAttachedToOwner() || target == missile->GetOwner()) return false;
+
+    const int missile_hit_count = PhysicalHitCountForTick(missile, target);
+    if (missile->m_damage > 0.f)
+        ApplyPhysicalDamageHits(target, missile->m_damage, missile->GetOwner(), missile_hit_count);
 
     if (auto* petal = dynamic_cast<CPetal*>(target))
     {
@@ -544,7 +671,12 @@ bool ApplyMissileHit(CMissile* missile, CEntity* target, float dt)
 {
     if (!missile || !target || dynamic_cast<CDrop*>(target)) return false;
     if (!dynamic_cast<CMobBase*>(target) && !dynamic_cast<CPetal*>(target)) return false;
-    if (missile->IsAttachedToOwner()) return DamageAttachedMissile(missile, target, dt);
+    if (auto* dandelion = dynamic_cast<CDandelionMissile*>(missile))
+    {
+        if (auto* mob = dynamic_cast<CMobBase*>(target))
+            ApplyDandelionAntiHeal(mob, dandelion->GetRarity());
+    }
+    if (missile->IsAttachedToOwner()) return ApplyAttachedMissileContact(missile, target, dt);
     return missile->ApplyHit(target);
 }
 
@@ -569,6 +701,12 @@ bool ApplyPollenHit(CPollenProjectile* pollen, CEntity* target)
     if (retaliation > 0.f)
         pollen->TakeDamage(retaliation, retaliation_owner, EDamageType::Normal);
     return true;
+}
+
+bool CollisionPairAlive(const CEntity* lhs, const CEntity* rhs)
+{
+    return lhs && rhs && !lhs->m_is_marked_for_des && !rhs->m_is_marked_for_des &&
+           lhs->GameWorld() && lhs->GameWorld() == rhs->GameWorld();
 }
 
 void ApplyBodyPoison(CMobBase* attacker, CEntity* target)
@@ -711,6 +849,25 @@ int FindBlockingWallSegment(sf::Vector2f start, sf::Vector2f end, float radius, 
     return best_segment;
 }
 
+int FindClosestWallSegment(sf::Vector2f point, const FlorrBtMap::Wall& wall)
+{
+    int segment_count = WallSegmentCount(wall);
+    int best_segment = -1;
+    float best_dist_sq = std::numeric_limits<float>::max();
+    for (int i = 0; i < segment_count; ++i)
+    {
+        sf::Vector2f a = WallPoint(wall.vertices[i]);
+        sf::Vector2f b = WallPoint(wall.vertices[(i + 1) % wall.vertices.size()]);
+        float dist_sq = DistanceSq(point, ClosestPointOnSegment(point, a, b));
+        if (dist_sq < best_dist_sq)
+        {
+            best_dist_sq = dist_sq;
+            best_segment = i;
+        }
+    }
+    return best_segment;
+}
+
 sf::Vector2f WallSegmentTangent(const FlorrBtMap::Wall& wall, int segment_index)
 {
     if (segment_index < 0 || wall.vertices.empty()) return {0.f, 0.f};
@@ -719,19 +876,19 @@ sf::Vector2f WallSegmentTangent(const FlorrBtMap::Wall& wall, int segment_index)
     return NormalizeOrZero(b - a);
 }
 
-sf::Vector2f ProjectMobVelocityAlongWall(CEntity& entity, const FlorrBtMap::Wall& wall, int segment_index)
+sf::Vector2f ProjectEntityVelocityAlongWall(CEntity& entity, const FlorrBtMap::Wall& wall, int segment_index)
 {
-    auto* mob = dynamic_cast<CMobBase*>(&entity);
-    if (!mob) return {0.f, 0.f};
-
     sf::Vector2f tangent = WallSegmentTangent(wall, segment_index);
     if (LengthSq(tangent) <= game_config::entity_collision_epsilon) return {0.f, 0.f};
 
-    mob->m_vel = tangent * Dot(mob->m_vel, tangent);
-    return mob->m_vel;
+    sf::Vector2f velocity = GetEntityVelocity(entity);
+    sf::Vector2f projected = tangent * Dot(velocity, tangent);
+    SetEntityVelocity(entity, projected);
+    return projected;
 }
 
-sf::Vector2f ChooseWallNormal(const FlorrBtMap::Wall& wall, int segment_index, sf::Vector2f point)
+sf::Vector2f ChooseWallNormal(const FlorrBtMap::Wall& wall, int segment_index, sf::Vector2f point,
+                              sf::Vector2f motion = {0.f, 0.f})
 {
     sf::Vector2f a = WallPoint(wall.vertices[segment_index]);
     sf::Vector2f b = WallPoint(wall.vertices[(segment_index + 1) % wall.vertices.size()]);
@@ -747,8 +904,16 @@ sf::Vector2f ChooseWallNormal(const FlorrBtMap::Wall& wall, int segment_index, s
         if (n1_outside != n2_outside) return n1_outside ? n1 : n2;
     }
 
+    if (LengthSq(motion) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+    {
+        float n1_dot = Dot(motion, n1);
+        float n2_dot = Dot(motion, n2);
+        if (std::abs(n1_dot - n2_dot) > game_config::entity_collision_epsilon)
+            return n1_dot < n2_dot ? n1 : n2;
+    }
+
     float side = Cross(edge, point - a);
-    if (std::abs(side) <= game_config::entity_collision_epsilon) return CheckChance(0.5f) ? n1 : n2;
+    if (std::abs(side) <= game_config::entity_collision_epsilon) return n1;
     return side > 0.f ? n1 : n2;
 }
 
@@ -773,8 +938,13 @@ bool HandleFiredMissileWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, in
 
         if (segment_index < 0)
             segment_index = FindBlockingWallSegment(start, end, entity.m_radius, wall);
+        if (segment_index < 0)
+            segment_index = FindClosestWallSegment(start, wall);
 
-        sf::Vector2f normal = segment_index >= 0 ? ChooseWallNormal(wall, segment_index, start) :
+        sf::Vector2f motion = end - start;
+        if (LengthSq(motion) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+            motion = missile->m_vel;
+        sf::Vector2f normal = segment_index >= 0 ? ChooseWallNormal(wall, segment_index, start, motion) :
                                                   NormalizeOrZero(start - end);
         if (LengthSq(normal) <= game_config::entity_collision_epsilon)
             normal = NormalizeOrZero(-missile->m_vel);
@@ -787,7 +957,7 @@ bool HandleFiredMissileWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, in
         sf::Vector2f old_vel = missile->m_vel;
         float speed = Length(old_vel);
         float into_wall = Dot(old_vel, normal);
-        missile->m_pos = start + normal * 0.02f;
+        missile->m_pos = start + normal * wall_contact_skin;
         missile->m_vel = old_vel - normal * (2.f * into_wall);
         if (LengthSq(missile->m_vel) <= game_config::entity_collision_epsilon && speed > game_config::entity_collision_epsilon)
             missile->m_vel = normal * speed;
@@ -818,7 +988,10 @@ bool HandleBumbleBeeWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, int s
     if (segment_index < 0)
         segment_index = FindBlockingWallSegment(start, end, entity.m_radius, wall);
 
-    sf::Vector2f normal = segment_index >= 0 ? ChooseWallNormal(wall, segment_index, start) :
+    sf::Vector2f motion = end - start;
+    if (LengthSq(motion) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+        motion = mob->m_vel;
+    sf::Vector2f normal = segment_index >= 0 ? ChooseWallNormal(wall, segment_index, start, motion) :
                                               NormalizeOrZero(start - end);
     if (LengthSq(normal) <= game_config::entity_collision_epsilon)
         normal = NormalizeOrZero(-mob->m_vel);
@@ -838,7 +1011,7 @@ bool HandleBumbleBeeWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, int s
     }
 
     float into_wall = Dot(old_vel, normal);
-    mob->m_pos = start + normal * (entity.m_radius * 0.05f + 0.02f);
+    mob->m_pos = start + normal * (entity.m_radius * 0.05f + wall_contact_skin);
     mob->m_vel = old_vel - normal * (2.f * into_wall);
     if (LengthSq(mob->m_vel) <= game_config::entity_collision_epsilon)
         mob->m_vel = normal * speed;
@@ -875,23 +1048,42 @@ bool PushEntityOutOfWall(CEntity& entity, const FlorrBtMap::Wall& wall)
     float dist = std::sqrt(std::max(0.f, best_dist_sq));
     if (!inside && dist >= entity.m_radius) return false;
 
-    sf::Vector2f normal = inside ? ChooseWallNormal(wall, best_segment, best_point) : NormalizeOrZero(entity.m_pos - best_point);
+    sf::Vector2f motion = entity.m_pos - entity.m_prev_pos;
+    if (LengthSq(motion) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+        motion = GetEntityVelocity(entity);
+    sf::Vector2f normal = inside ? ChooseWallNormal(wall, best_segment, best_point, motion) :
+                                   NormalizeOrZero(entity.m_pos - best_point);
     if (LengthSq(normal) <= game_config::entity_collision_epsilon)
-        normal = ChooseWallNormal(wall, best_segment, entity.m_pos);
+        normal = ChooseWallNormal(wall, best_segment, entity.m_pos, motion);
 
     float penetration = inside ? entity.m_radius + dist : entity.m_radius - dist;
-    entity.m_pos += normal * (penetration + 0.01f);
+    entity.m_pos += normal * (penetration + wall_contact_skin);
 
+    sf::Vector2f velocity = GetEntityVelocity(entity);
+    if (!IsFiredCarrotPetal(&entity) &&
+        LengthSq(velocity) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+    {
+        float into_wall = Dot(velocity, normal);
+        if (into_wall < 0.f)
+        {
+            velocity -= normal * into_wall;
+            SetEntityVelocity(entity, velocity);
+        }
+    }
     if (auto* mob = dynamic_cast<CMobBase*>(&entity))
     {
-        float into_wall = Dot(mob->m_vel, normal);
-        if (into_wall < 0.f) mob->m_vel -= normal * into_wall;
         if (LengthSq(mob->m_vel) <= game_config::entity_collision_epsilon && penetration > 0.f)
             mob->m_vel = normal * 0.01f;
     }
     return true;
 }
 
+}
+
+std::string GetLastServerCrashContext()
+{
+    std::lock_guard<std::mutex> lock(g_server_crash_context_mutex);
+    return g_last_server_crash_context;
 }
 
 CGameWorld::CGameWorld()
@@ -1161,6 +1353,7 @@ void CGameWorld::Tick(float dt)
         if (entity && !entity->m_is_marked_for_des)
             m_cached_max_entity_radius = std::max(m_cached_max_entity_radius, std::max(0.f, entity->m_radius));
     }
+
     m_spatial_grid.Rebuild(entities);
 
     std::vector<active_tick_view> active_tick_views = BuildActiveTickViews(*this);
@@ -1226,6 +1419,8 @@ void CGameWorld::Tick(float dt)
     m_spatial_grid.Rebuild(entities);
 
     ResolveCollisions(active_entities, dt);
+
+    RefreshAttachedMissileTransforms(active_entities);
 
     Cleanup();
 }
@@ -1355,6 +1550,20 @@ bool CGameWorld::SegmentBlockedByWall(sf::Vector2f start, sf::Vector2f end) cons
     return blocked;
 }
 
+bool CGameWorld::CircleBlockedByWall(sf::Vector2f center, float radius) const
+{
+    if (!m_map || m_map->walls.empty()) return false;
+
+    float query_radius = std::max(0.f, radius) + 1.f;
+    bool blocked = false;
+    m_wall_grid.ForEachInRangeBroadphase(center, query_radius, [&](FlorrBtMap::Wall* wall)
+    {
+        if (blocked || !wall) return;
+        if (SweptCircleHitsWall(center, center, std::max(0.f, radius), *wall)) blocked = true;
+    });
+    return blocked;
+}
+
 void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
 {
     if (!m_map || m_map->walls.empty()) return;
@@ -1426,6 +1635,7 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
     for (CEntity* entity : entities)
     {
         if (!entity || entity->GameWorld() != this || entity->m_is_marked_for_des || !entity->CanCollide()) continue;
+        if (!CollidesWithWalls(entity)) continue;
         if (auto* raw_missile = dynamic_cast<CMissile*>(entity);
             raw_missile && raw_missile->IsAttachedToOwner())
             continue;
@@ -1449,22 +1659,35 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
             {
                 if (entity->m_is_marked_for_des) continue;
             } else {
-                entity->m_pos = start;
+                sf::Vector2f motion = end - start;
+                sf::Vector2f wall_normal = {0.f, 0.f};
+                if (blocking_wall && blocking_segment >= 0)
+                    wall_normal = ChooseWallNormal(*blocking_wall, blocking_segment, start, motion);
+                if (LengthSq(wall_normal) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+                    wall_normal = NormalizeOrZero(start - end);
+                if (LengthSq(wall_normal) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+                    wall_normal = NormalizeOrZero(-GetEntityVelocity(*entity));
+                if (LengthSq(wall_normal) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+                    wall_normal = {1.f, 0.f};
+
+                sf::Vector2f slide_start = start + wall_normal * wall_contact_skin;
+                entity->m_pos = slide_start;
                 if (blocking_wall)
                 {
-                    sf::Vector2f slide_vel = ProjectMobVelocityAlongWall(*entity, *blocking_wall, blocking_segment);
-                    if (LengthSq(slide_vel) > game_config::entity_collision_epsilon)
+                    sf::Vector2f slide_vel = ProjectEntityVelocityAlongWall(*entity, *blocking_wall, blocking_segment);
+                    if (LengthSq(slide_vel) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
                     {
-                        sf::Vector2f slide_end = start + slide_vel * game_config::server_fixed_dt;
+                        sf::Vector2f slide_end = slide_start + slide_vel * game_config::server_fixed_dt;
                         const FlorrBtMap::Wall* slide_wall = nullptr;
                         int slide_segment = -1;
-                        if (!find_swept_wall_hit(start, slide_end, entity->m_radius, slide_wall, slide_segment))
+                        if (!find_swept_wall_hit(slide_start, slide_end, entity->m_radius, slide_wall, slide_segment))
                         {
                             entity->m_pos = slide_end;
-                        } else if (auto* mob = dynamic_cast<CMobBase*>(entity))
-                        {
-                            mob->m_vel = {0.f, 0.f};
+                        } else {
+                            SetEntityVelocity(*entity, {0.f, 0.f});
                         }
+                    } else {
+                        SetEntityVelocity(*entity, {0.f, 0.f});
                     }
                 }
             }
@@ -1504,14 +1727,16 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
     {
         if (!other || other->GameWorld() != entity->GameWorld() || other->m_is_marked_for_des) return;
         if (!other->CanCollide() || other == entity) return;
+        if (ShouldSkipDiggingCollision(entity, other)) return;
         if (!entity->IsCollision(*other)) return;
+        SetLastCollisionCrashContext(entity, other);
 
         bool rose_team_heal_collision = IsRoseTeamHealCollision(entity, other);
         if (const auto* projectile = dynamic_cast<const CProjectile*>(entity);
-            projectile && projectile->GetOwner() == other && !rose_team_heal_collision && !IsWaxPetal(projectile))
+            IsProjectileOwnerCollision(projectile, other) && !rose_team_heal_collision && !IsWaxPetal(projectile))
             return;
         if (const auto* projectile = dynamic_cast<const CProjectile*>(other);
-            projectile && projectile->GetOwner() == entity && !rose_team_heal_collision && !IsWaxPetal(projectile))
+            IsProjectileOwnerCollision(projectile, entity) && !rose_team_heal_collision && !IsWaxPetal(projectile))
             return;
         auto* entity_petal = dynamic_cast<CPetal*>(entity);
         auto* other_petal = dynamic_cast<CPetal*>(other);
@@ -1541,14 +1766,29 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
         auto* entity_mob = dynamic_cast<CMobBase*>(entity);
         auto* other_mob = dynamic_cast<CMobBase*>(other);
         if (IsSameTeamSandstormMobCollision(entity_mob, other_mob) && !rose_team_heal_collision) return;
+        const bool attached_missile_collision =
+            (entity_missile && entity_missile->IsAttachedToOwner()) ||
+            (other_missile && other_missile->IsAttachedToOwner());
+        const bool fired_missile_collision =
+            (entity_missile && !entity_missile->IsAttachedToOwner()) ||
+            (other_missile && !other_missile->IsAttachedToOwner());
+        bool same_team = CheckTeam(entity->m_team, other->m_team);
+        if (same_team && fired_missile_collision && !rose_team_heal_collision) return;
 
-        if (!rose_team_heal_collision && ((!entity_missile && !other_missile) || wax_pair))
+        if (!rose_team_heal_collision && ((!entity_missile && !other_missile) || attached_missile_collision || wax_pair))
         {
-            entity->OnCollision(other);
-            other->OnCollision(entity);
+            if (entity_missile && entity_missile->IsAttachedToOwner())
+            {
+                other->OnCollision(entity);
+            } else if (other_missile && other_missile->IsAttachedToOwner()) {
+                entity->OnCollision(other);
+            } else {
+                entity->OnCollision(other);
+                other->OnCollision(entity);
+            }
+            ApplyCollisionKnockback(entity, other);
         }
 
-        bool same_team = CheckTeam(entity->m_team, other->m_team);
         if (same_team && !rose_team_heal_collision) return;
 
         if (entity_missile)
@@ -1584,7 +1824,9 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
             }
 
             ApplyPetalHits(entity_petal, other_mob, dt);
+            if (!CollisionPairAlive(entity_petal, other_mob)) return;
             ApplyMobHitToPetal(other_mob, entity_petal);
+            if (!CollisionPairAlive(entity_petal, other_mob)) return;
             BounceFiredCarrotFromEntity(entity_petal, other);
             return;
         }
@@ -1598,7 +1840,9 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
             }
 
             ApplyPetalHits(other_petal, entity_mob, dt);
+            if (!CollisionPairAlive(other_petal, entity_mob)) return;
             ApplyMobHitToPetal(entity_mob, other_petal);
+            if (!CollisionPairAlive(other_petal, entity_mob)) return;
             BounceFiredCarrotFromEntity(other_petal, entity);
             return;
         }
@@ -1611,6 +1855,7 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
                 {
                     ApplyPhysicalDamageHits(other, stats->damage, entity,
                                             PhysicalHitCountForTick(entity, other));
+                    if (!CollisionPairAlive(entity, other)) return;
                     ApplyBodyPoison(mob, other);
                 }
             }
@@ -1623,6 +1868,7 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
                 {
                     ApplyPhysicalDamageHits(entity, stats->damage, other,
                                             PhysicalHitCountForTick(other, entity));
+                    if (!CollisionPairAlive(entity, other)) return;
                     ApplyBodyPoison(mob, entity);
                 }
             }

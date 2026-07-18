@@ -24,6 +24,7 @@ struct CDamageData
 
 class CMobBase;
 bool TrySharePsionicDamage(CMobBase* receiver, float dmg, CEntity* attacker, EDamageType dmg_type);
+bool ShouldBlockDiggingDamage(CMobBase* receiver, CEntity* attacker, EDamageType dmg_type);
 
 class CMobBase : public CEntity
 {
@@ -145,6 +146,7 @@ template <typename TStats = SMobStats> class CMob : public CMobBase
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {
+        if (ShouldBlockDiggingDamage(this, attacker, dmg_type)) return;
         if (dmg_type == EDamageType::Normal) dmg = std::max(0.f, dmg - m_base_stats.armor);
         if (dmg <= 0.f) return;
         if (TrySharePsionicDamage(this, dmg, attacker, dmg_type)) return;
@@ -175,6 +177,17 @@ class IAttackableMob
     }
 };
 
+class ISkillCasterMob
+{
+  public:
+    virtual ~ISkillCasterMob() = default;
+
+    virtual int GetSkillCount() const = 0;
+    virtual bool CanCastSkill(int skill_index) const = 0;
+    virtual bool TryCastSkill(int skill_index, CEntity* target) = 0;
+    virtual uint8_t GetWindupSkillId() const = 0;
+};
+
 template <typename TStats = SMobStats> class CAttackableMob : public CMob<TStats>, public IAttackableMob
 {
   public:
@@ -189,6 +202,18 @@ template <typename TStats = SMobStats> class CAttackableMob : public CMob<TStats
 
     bool m_attacking = false;
     bool m_defending = false;
+};
+
+template <typename TStats = SMobStats> class CSkillCasterMob : public CAttackableMob<TStats>, public ISkillCasterMob
+{
+  public:
+    using stats_type = TStats;
+    using CAttackableMob<TStats>::CAttackableMob;
+
+    int GetSkillCount() const override { return 0; }
+    bool CanCastSkill(int) const override { return false; }
+    bool TryCastSkill(int, CEntity*) override { return false; }
+    uint8_t GetWindupSkillId() const override { return 0; }
 };
 
 class CMobPrototype
@@ -283,6 +308,7 @@ void RegisterAntHole();
 void RegisterSpider();
 void RegisterSandstorm();
 void RegisterDummy();
+void RegisterDandelion();
 void RegisterMobs();
 
 #define REGISTER_MOB(type, mob_class, proto) RegisterMobPrototype<mob_class>(type, std::move(proto))

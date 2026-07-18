@@ -74,6 +74,7 @@ class CGameWorld
     const std::string& GetMapPath() const { return m_map_path; }
     std::string GetMapName() const;
     bool SegmentBlockedByWall(sf::Vector2f start, sf::Vector2f end) const;
+    bool CircleBlockedByWall(sf::Vector2f center, float radius) const;
 
   private:
     void SpawnMapPortals();

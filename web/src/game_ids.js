@@ -1,4 +1,10 @@
-import { NETWORK_PORTAL_ENTITY_TYPE } from "./protocol.js";
+import {
+  NETWORK_DANDELION_MISSILE_ENTITY_TYPE,
+  NETWORK_MISSILE_ENTITY_TYPE,
+  NETWORK_POLLEN_ENTITY_TYPE,
+  NETWORK_PORTAL_ENTITY_TYPE,
+  NETWORK_SPIDER_WEB_ENTITY_TYPE,
+} from "./protocol.js";
 
 export const flagAttacking = 1 << 0;
 export const flagDefending = 1 << 1;
@@ -10,6 +16,14 @@ export const flagRelic = 1 << 6;
 export const flagAntennae = 1 << 7;
 export const flagSummoned = 1 << 8;
 export const flagPoisoned = 1 << 9;
+export const flagAttached = 1 << 10;
+export const flagDigging = 1 << 11;
+export const flagSkillWindupShift = 12;
+export const flagSkillWindupMask = 0xf000;
+
+export function skillWindupIdFromFlags(flags) {
+  return ((flags || 0) & flagSkillWindupMask) >>> flagSkillWindupShift;
+}
 
 export const beetleType = 1;
 export const normalLadybugType = 3;
@@ -28,6 +42,11 @@ export const antHoleType = 20;
 export const spiderType = 21;
 export const sandstormType = 22;
 export const dummyType = 23;
+export const dandelionType = 24;
+export const dandelionMissileType = NETWORK_DANDELION_MISSILE_ENTITY_TYPE;
+export const pollenProjectileType = NETWORK_POLLEN_ENTITY_TYPE;
+export const spiderWebZoneType = NETWORK_SPIDER_WEB_ENTITY_TYPE;
+export const hornetMissileType = NETWORK_MISSILE_ENTITY_TYPE;
 export const portalType = NETWORK_PORTAL_ENTITY_TYPE;
 export const playerFlowerType = 6;
 export const bossRarity = 8;
@@ -84,16 +103,19 @@ export const petalSoilType = 48;
 export const petalHoneyType = 49;
 export const petalWaxType = 50;
 export const petalThirdEyeType = 51;
+export const petalDandelionType = 52;
+export const petalOrangeType = 53;
+export const petalShovelType = 54;
 
 export const stingerSplitIconMinRarity = 6;
 export const compassUltraIconMinRarity = 7;
-export const flowerTextureVersion = "20260715b";
+export const flowerTextureVersion = "20260717a";
 
 export const PetalIconIds = [
   0, 48, 51, 17, 1, 16, 58, 13, 57, 74, 71, 98, 72, 111, 97, 7, 113, 77,
   "nullification", 27, 53, 5, 19, 9, 108, 80, 103, 18, 12, 30, 38, 8, 106,
   109, 94, 93, "glass", 6, "broken_egg", 2, 22, 3, 20, 11, 14,
-  25, 24, 49, 41, 21, 96, 43,
+  25, 24, 49, 41, 21, 96, 43, 15, 50, 73,
 ];
 
 export const worldPetalSizeScale = 6;
@@ -114,7 +136,9 @@ export const nonStackPetalTypes = new Set([
   petalCorruptionType,
   petalBandageType,
   petalBrokenEggType,
+  petalWaxType,
   petalThirdEyeType,
+  petalShovelType,
 ]);
 
 export const rarityExotic = 12;

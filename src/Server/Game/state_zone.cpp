@@ -41,6 +41,8 @@ void CStateZone::Apply()
     world->GetSpatialGrid().ForEachInRange(m_pos, m_radius, [this](CEntity* entity)
     {
         if (!entity || entity == this || entity->m_is_marked_for_des) return;
+        float radius = m_radius + std::max(0.f, entity->m_radius);
+        if (DistanceSq(m_pos, entity->m_pos) > radius * radius) return;
         if (m_filter && !m_filter(entity)) return;
         auto* mob = dynamic_cast<CMobBase*>(entity);
         if (!mob) return;

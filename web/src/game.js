@@ -15,6 +15,7 @@ import {
   packEquip,
   packInput,
   packSecondarySlot,
+  packStateRequest,
   packTalentRequest,
   packUnequip,
   parseServerMessage,
@@ -28,11 +29,19 @@ import { clearLadybugPattern, drawNormalLadybug } from "./ladybug_sprite.js";
 import { drawBeetle } from "./beetle_sprite.js";
 import { drawSoldierAnt } from "./soldier_ant_sprite.js";
 import { drawBee, drawBumbleBee, drawHornet, drawHornetMissile, drawPollen } from "./bee_sprite.js";
-import { drawAntHole, drawBabyAnt, drawPortal, drawQueenAnt, drawRock, drawSandstorm, drawWorkerAnt } from "./garden_mob_sprite.js";
+import { drawAntHole, drawBabyAnt, drawDandelion, drawPortal, drawQueenAnt, drawRock, drawSandstorm, drawWorkerAnt } from "./garden_mob_sprite.js";
 import { drawSpider, drawSpiderWeb } from "./spider_sprite.js";
 import { dom, emptySlot, slotHasItem, state } from "./app_context.js";
 import { createChatUi, isTextInputActive } from "./chat_ui.js";
 import { loadClientSettings, normalizeMobileControlMode, saveClientSettings } from "./client_settings.js";
+import {
+  formatClientConfigValue,
+  getClientConfigEntry,
+  getClientConfigValue,
+  listClientConfigEntries,
+  resetClientConfig,
+  setClientConfigValue,
+} from "./client_config.js";
 import { createConsoleUi } from "./console_ui.js";
 import { createMapRenderer } from "./map_renderer.js";
 import { createMobileControls } from "./mobile_controls.js";
@@ -47,18 +56,22 @@ import {
   bossRarity,
   bumbleBeeType,
   compassUltraIconMinRarity,
+  dandelionMissileType,
+  dandelionType,
   dummyType,
   flagAntennae,
   flagAttacking,
   flagCorrupted,
   flagDead,
   flagDefending,
+  flagDigging,
   flagOwner,
   flagPoisoned,
   flagRelic,
   flagSummoned,
   flagUndead,
   flowerTextureVersion,
+  hornetMissileType,
   hornetType,
   maxBossBars,
   mobSpriteCoverScale,
@@ -85,6 +98,7 @@ import {
   petalCornType,
   petalCorruptionType,
   petalDahliaType,
+  petalDandelionType,
   petalDiscType,
   petalDustType,
   petalFasterType,
@@ -101,6 +115,7 @@ import {
   petalMissileType,
   petalMoonType,
   petalNullificationType,
+  petalOrangeType,
   petalPincerType,
   petalPollenType,
   petalRelicType,
@@ -108,6 +123,7 @@ import {
   petalRockType,
   petalRoseType,
   petalSawbladeType,
+  petalShovelType,
   petalSoilType,
   petalStingerType,
   petalThirdEyeType,
@@ -119,6 +135,7 @@ import {
   petalYinYangType,
   petalCardIconScale,
   playerFlowerType,
+  pollenProjectileType,
   portalType,
   queenAntType,
   rarityDisplayOrder,
@@ -127,7 +144,9 @@ import {
   raritySortRanks,
   rockType,
   sandstormType,
+  skillWindupIdFromFlags,
   soldierAntType,
+  spiderWebZoneType,
   spiderType,
   stingerSplitIconMinRarity,
   summonedBeetleType,
@@ -165,6 +184,11 @@ const {
   chatHint,
   chatInput,
   petalInfoTooltip,
+  sliderPanel,
+  sliderTitle,
+  sliderValue,
+  sliderInput,
+  sliderCloseBtn,
   debugInfo,
   consoleInput,
   backpackPanel,
@@ -192,8 +216,9 @@ const chatUi = createChatUi({
     if (state.consoleOpen) toggleConsole(false);
     state.attacking = false;
     state.defending = false;
+    state.digging = false;
     mobileControls?.reset();
-    sendBytes(packChores(false, false));
+    sendBytes(packChores(false, false, false, false, false));
   },
   executeCommand: (line) => executeClientCommand(line),
   focusTarget: canvas,
@@ -213,10 +238,8 @@ const mapRenderer = createMapRenderer({
   worldScale,
   worldToScreen,
 });
+let pendingSnapshot = null;
 const packetInterval = 1 / 30;
-const predictionSnapDistance = 260;
-const ownerPredictionCorrectionRate = 12;
-const ownerCameraFollowRate = 24;
 const deathFadeDuration = 0.25;
 const deathScaleBoost = 0.72;
 const hurtFlashDuration = 0.14;
@@ -231,6 +254,7 @@ const entityPixelMinScreenRadius = 0.45;
 const entityDetailMinScreenRadius = 2.4;
 const petalDetailMinScreenRadius = 0.9;
 const dropDetailMinScreenRadius = 1.15;
+const directionalPetalAngleOffset = -Math.PI * 0.25;
 const renderCullPaddingPx = 120;
 const minimapMarginPx = 12;
 const minimapLocalMaxPx = 164;
@@ -272,6 +296,7 @@ function addConsoleLine(text, kind = "") {
 
 function toggleConsole(force) {
   consoleUi.toggle(force);
+  if (!state.consoleOpen) closeSliderPanel();
 }
 
 function updateQuickActionButtons() {
@@ -341,6 +366,7 @@ async function connectAndAuth() {
 
   saveSettings();
   closeSocket(false);
+  resetNetworkScene();
   setStatus("Preparing map...");
   await loadMap(defaultMapName);
   setStatus("Connecting...");
@@ -368,6 +394,7 @@ async function connectAndAuth() {
   ws.addEventListener("close", () => {
     state.connected = false;
     state.authenticated = false;
+    resetNetworkScene();
     updatePlayUiVisibility();
     authPanel.classList.remove("hidden");
     setStatus("Disconnected");
@@ -388,6 +415,7 @@ function closeSocket(sendDisconnect = true) {
   state.ws = null;
   state.connected = false;
   state.authenticated = false;
+  resetNetworkScene();
   updatePlayUiVisibility();
 }
 
@@ -410,7 +438,6 @@ function sendAuth() {
 
 function receiveBytes(bytes) {
   state.receiveBuffer = appendBytes(state.receiveBuffer, bytes);
-  let latestSnapshot = null;
   for (;;) {
     const frame = popFrame(state.receiveBuffer);
     if (!frame) break;
@@ -418,19 +445,18 @@ function receiveBytes(bytes) {
     if (frame.payload.length === 0) continue;
     const msg = parseServerMessage(frame.payload);
     if (msg?.type === ServerType.Snapshot) {
-      if (!latestSnapshot || (msg.snapshotId || 0) > (latestSnapshot.snapshotId || 0))
-        latestSnapshot = msg;
+      queueSnapshot(msg);
       continue;
     }
     handleServerMessage(msg);
   }
-  if (latestSnapshot) handleServerMessage(latestSnapshot);
 }
 
 function handleServerMessage(msg) {
   if (!msg || msg.type === 0xff) return;
 
   if (msg.type === ServerType.Welcome) {
+    resetNetworkScene();
     state.playerId = msg.playerId;
     state.ownerEntityId = msg.ownerEntityId;
     if (msg.mapName) loadMap(msg.mapName);
@@ -441,14 +467,21 @@ function handleServerMessage(msg) {
   if (msg.type === ServerType.AuthResult) {
     state.authenticated = !!msg.success;
     setStatus(msg.message || (msg.success ? "Authenticated" : "Auth failed"), msg.success);
-    if (msg.success) authPanel.classList.add("hidden");
+    if (msg.success) {
+      state.ownerStateLoaded = false;
+      state.inventoryLoaded = false;
+      renderInventoryPanel();
+      renderCraftPanel();
+      sendBytes(packStateRequest());
+      authPanel.classList.add("hidden");
+    }
     updatePlayUiVisibility();
     addConsoleLine(msg.message || (msg.success ? "Authenticated" : "Auth failed"), msg.success ? "" : "error");
     return;
   }
 
   if (msg.type === ServerType.Snapshot) {
-    applySnapshot(msg);
+    queueSnapshot(msg);
     return;
   }
 
@@ -463,6 +496,7 @@ function handleServerMessage(msg) {
     state.ownerSlots = normalizeSlots(msg.ownerSlots, primaryCount);
     state.secondarySlots = normalizeSlots(msg.secondarySlots, primaryCount);
     state.selectedSlot = clamp(state.selectedSlot, 0, state.ownerSlots.length - 1);
+    state.ownerStateLoaded = true;
     renderInventoryPanel();
     renderCraftPanel();
     renderTalentPanel();
@@ -471,6 +505,7 @@ function handleServerMessage(msg) {
 
   if (msg.type === ServerType.Inventory) {
     state.inventory = msg.inventory || [];
+    state.inventoryLoaded = true;
     renderInventoryPanel();
     renderCraftPanel();
     return;
@@ -485,6 +520,29 @@ function handleServerMessage(msg) {
     chatUi.append(msg.chat);
     addConsoleLine(`${msg.chat.playerName || msg.chat.playerId}: ${msg.chat.message || ""}`);
   }
+}
+
+function resetNetworkScene() {
+  pendingSnapshot = null;
+  state.receiveBuffer = new Uint8Array();
+  state.entities.clear();
+  state.snapshotId = -1;
+  state.ownerStateLoaded = false;
+  state.inventoryLoaded = false;
+}
+
+function queueSnapshot(msg) {
+  if (!msg || msg.type !== ServerType.Snapshot) return;
+  if ((msg.snapshotId || 0) <= (state.snapshotId || 0)) return;
+  if (!pendingSnapshot || (msg.snapshotId || 0) >= (pendingSnapshot.snapshotId || 0))
+    pendingSnapshot = msg;
+}
+
+function flushPendingSnapshot() {
+  if (!pendingSnapshot) return;
+  const msg = pendingSnapshot;
+  pendingSnapshot = null;
+  applySnapshot(msg);
 }
 
 function normalizeSlots(slots, size) {
@@ -518,6 +576,7 @@ function applySnapshot(msg) {
       const previousHp = Number.isFinite(existing.snapshot.hpPercent) ? existing.snapshot.hpPercent : snap.hpPercent;
       existing.snapshotMove = Math.hypot(snap.pos.x - existing.snapshot.pos.x, snap.pos.y - existing.snapshot.pos.y);
       existing.snapshot = snap;
+      syncEntityRenderToSnapshot(existing, snap);
       existing.dying = false;
       existing.deathAge = 0;
       if (!isDead && snap.hpPercent < previousHp - hurtFlashMinDelta) existing.hurtFlashAge = 0;
@@ -538,6 +597,12 @@ function applySnapshot(msg) {
       });
     }
   }
+  const owner = state.entities.get(state.ownerEntityId);
+  syncOwnerSlotsFromSnapshot(owner?.snapshot);
+  if (owner?.renderPos && !owner.dying) {
+    state.camera.x = owner.renderPos.x;
+    state.camera.y = owner.renderPos.y;
+  }
   for (const id of state.entities.keys()) {
     if (live.has(id)) continue;
     const entity = state.entities.get(id);
@@ -553,6 +618,28 @@ function applySnapshot(msg) {
     entity.hurtFlashAge = hurtFlashDuration;
     if (entity.deathAngle == null) entity.deathAngle = Math.random() * Math.PI * 2;
   }
+}
+
+function syncOwnerSlotsFromSnapshot(ownerSnap) {
+  if (state.ownerStateLoaded || !ownerSnap || !Array.isArray(ownerSnap.primarySlots) || ownerSnap.primarySlots.length <= 0)
+    return;
+
+  const primaryCount = Math.max(1, ownerSnap.primarySlots.length);
+  state.ownerSlots = normalizeSlots(ownerSnap.primarySlots, primaryCount);
+  state.secondarySlots = normalizeSlots(state.secondarySlots, primaryCount);
+  state.selectedSlot = clamp(state.selectedSlot, 0, state.ownerSlots.length - 1);
+  renderInventoryPanel();
+  renderCraftPanel();
+}
+
+function syncEntityRenderToSnapshot(entity, snap) {
+  if (!entity || !snap?.pos) return;
+  if (!entity.renderPos) entity.renderPos = { x: snap.pos.x, y: snap.pos.y };
+  else {
+    entity.renderPos.x = snap.pos.x;
+    entity.renderPos.y = snap.pos.y;
+  }
+  if (Number.isFinite(snap.angle)) entity.renderAngle = snap.angle;
 }
 
 function shouldFadeMissingEntity(entity) {
@@ -648,10 +735,16 @@ function flushInput(dt) {
 
   const attacking = state.attacking || !!mobileControls?.isAttacking();
   const defending = state.defending || !!mobileControls?.isDefending();
-  if (attacking !== state.lastInput.attacking || defending !== state.lastInput.defending) {
-    sendBytes(packChores(attacking, defending));
-    state.lastInput.attacking = attacking;
-    state.lastInput.defending = defending;
+  const digging = state.digging;
+  const effectiveAttacking = digging ? false : attacking;
+  const effectiveDefending = digging ? false : defending;
+  if (effectiveAttacking !== state.lastInput.attacking ||
+      effectiveDefending !== state.lastInput.defending ||
+      digging !== state.lastInput.digging) {
+    sendBytes(packChores(effectiveAttacking, effectiveDefending, false, false, digging));
+    state.lastInput.attacking = effectiveAttacking;
+    state.lastInput.defending = effectiveDefending;
+    state.lastInput.digging = digging;
   }
 }
 
@@ -668,9 +761,10 @@ function requestRevive() {
   if (!state.connected || !state.authenticated || !isOwnerDead()) return;
   state.attacking = false;
   state.defending = false;
+  state.digging = false;
   mobileControls?.reset();
   state.keys.clear();
-  sendBytes(packChores(false, false, true));
+  sendBytes(packChores(false, false, true, false, false));
 }
 
 function isTyping() {
@@ -729,6 +823,19 @@ function executeClientCommand(line) {
     addConsoleLine(`Debug grid ${state.debugGrid ? "on" : "off"}`);
     return;
   }
+  if (name === "hitbox" || name === "hitboxes") {
+    state.debugHitbox = args.length ? args[0] !== "0" && args[0].toLowerCase() !== "off" : !state.debugHitbox;
+    addConsoleLine(`Hitbox debug ${state.debugHitbox ? "on" : "off"}`);
+    return;
+  }
+  if (name === "set") {
+    executeClientSetCommand(args);
+    return;
+  }
+  if (name === "slider") {
+    executeClientSliderCommand(args);
+    return;
+  }
   if (name === "keyboard_control") {
     if (args.length) {
       const value = String(args[0]).toLowerCase();
@@ -753,6 +860,128 @@ function executeClientCommand(line) {
   }
 
   sendChat(ChatFlag.Local, `/${line}`);
+}
+
+function executeClientSliderCommand(args) {
+  if (args.length < 3) {
+    addConsoleLine("Usage: slider [config] [start] [end] [step]", "error");
+    return;
+  }
+
+  const key = args[0];
+  const entry = getClientConfigEntry(key);
+  if (!entry) {
+    addConsoleLine(`Unknown client config: ${key}`, "error");
+    return;
+  }
+
+  const start = Number(args[1]);
+  const end = Number(args[2]);
+  const explicitStep = args.length >= 4 ? Number(args[3]) : NaN;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start === end) {
+    addConsoleLine(`Invalid slider range for ${entry.name}`, "error");
+    return;
+  }
+
+  const span = Math.abs(end - start);
+  const step = Number.isFinite(explicitStep) && explicitStep > 0 ? explicitStep : span / 200;
+  state.slider = {
+    name: entry.name,
+    min: Math.min(start, end),
+    max: Math.max(start, end),
+    step,
+  };
+  renderSliderPanel();
+  addConsoleLine(`Slider ${entry.name}: ${formatClientConfigValue(state.slider.min)}..${formatClientConfigValue(state.slider.max)} step ${formatClientConfigValue(step)}`);
+}
+
+function executeClientSetCommand(args) {
+  if (!args.length) {
+    for (const entry of listClientConfigEntries()) {
+      const value = getClientConfigValue(state.clientConfig, entry.name);
+      addConsoleLine(`${entry.name} = ${formatClientConfigValue(value)}`);
+    }
+    return;
+  }
+
+  const key = args.shift();
+  if (String(key || "").toLowerCase() === "reset") {
+    const result = resetClientConfig(state.clientConfig, args[0]);
+    if (!result.ok) {
+      addConsoleLine(`Unknown client config: ${result.name}`);
+      return;
+    }
+    state.clientConfig = result.config;
+    saveSettings();
+    requestAnimationFrame(drawScene);
+    addConsoleLine(result.name === "all" ? "Client config reset" : `${result.name} reset`);
+    return;
+  }
+
+  if (!args.length) {
+    const entry = getClientConfigEntry(key);
+    if (!entry) {
+      addConsoleLine(`Unknown client config: ${key}`);
+      return;
+    }
+    const value = getClientConfigValue(state.clientConfig, entry.name);
+    addConsoleLine(`${entry.name} = ${formatClientConfigValue(value)}`);
+    return;
+  }
+
+  const rawValue = String(args[0] || "").trim().toLowerCase();
+  const result = rawValue === "reset" ?
+    resetClientConfig(state.clientConfig, key) :
+    setClientConfigValue(state.clientConfig, key, rawValue);
+  if (!result.ok) {
+    addConsoleLine(result.error === "unknown" ?
+      `Unknown client config: ${result.name}` :
+      `Invalid value for ${result.name}: ${args[0]}`);
+    return;
+  }
+
+  state.clientConfig = result.config;
+  saveSettings();
+  requestAnimationFrame(drawScene);
+  addConsoleLine(`${result.name} = ${formatClientConfigValue(getClientConfigValue(state.clientConfig, result.name))}`);
+}
+
+function closeSliderPanel() {
+  state.slider = null;
+  sliderPanel?.classList.add("hidden");
+  sliderPanel?.setAttribute("aria-hidden", "true");
+}
+
+function renderSliderPanel() {
+  if (!state.slider || !sliderPanel || !sliderInput || !sliderTitle || !sliderValue) return;
+
+  const { name, min, max, step } = state.slider;
+  const current = getClientConfigValue(state.clientConfig, name);
+  const value = Math.max(min, Math.min(max, Number.isFinite(current) ? current : min));
+
+  sliderPanel.classList.remove("hidden");
+  sliderPanel.setAttribute("aria-hidden", "false");
+  sliderTitle.textContent = name;
+  sliderValue.textContent = formatClientConfigValue(value);
+  sliderInput.min = String(min);
+  sliderInput.max = String(max);
+  sliderInput.step = String(step);
+  sliderInput.value = String(value);
+}
+
+function applySliderValue(rawValue) {
+  if (!state.slider) return;
+  const result = setClientConfigValue(state.clientConfig, state.slider.name, rawValue);
+  if (!result.ok) return;
+
+  state.clientConfig = result.config;
+  saveSettings();
+  sliderValue.textContent = formatClientConfigValue(getClientConfigValue(state.clientConfig, result.name));
+  requestAnimationFrame(drawScene);
+}
+
+function stopSliderEvent(event) {
+  event.stopPropagation();
 }
 
 function sendChat(flag, message) {
@@ -1417,6 +1646,13 @@ function petalBaseCopy(petalType, rarity) {
       return 3;
     case petalDahliaType:
       return 3;
+    case petalDandelionType:
+      return raritySortRank(rarity) >= raritySortRank(8) ? 3 :
+        (raritySortRank(rarity) >= raritySortRank(6) ? 2 : 1);
+    case petalOrangeType:
+      return 3;
+    case petalShovelType:
+      return 1;
     case petalStingerType:
       return rarity >= 6 ? 3 : 1;
     case petalLightType:
@@ -1693,6 +1929,13 @@ function buildPetalInfo(petalType, rarity) {
       addNumber("Durability", 1000 * scale);
       addSeconds("Reload", 30);
       break;
+    case petalOrangeType:
+      addCombat(8 * scale, 6.7 * scale, 3.5, { copy: 3 });
+      break;
+    case petalShovelType:
+      addSeconds("Preload", shovelPreload(rarity));
+      addSeconds("Burrow", 2);
+      break;
     case petalRoseType:
       addCombat(5 * scale, 5 * scale, 3.5, { preload: 1.5 });
       addNumber("Heal", 7.5 * roseMedicineScale(rarity));
@@ -1701,6 +1944,13 @@ function buildPetalInfo(petalType, rarity) {
       addCombat(1.7 * scale, 1.7 * scale, 1.5, { copy: 3 });
       addNumber("Heal", 1.2 * roseMedicineScale(rarity));
       break;
+    case petalDandelionType: {
+      const copy = petalBaseCopy(petalType, rarity);
+      addCombat(8 * scale, 8 * scale, 1, { copy });
+      addSeconds("Anti-heal", 30);
+      addRow("Healing", "x0.8 per hit");
+      break;
+    }
     case petalStingerType: {
       const copy = petalBaseCopy(petalType, rarity);
       addCombat(100 * scale / copy, 1, 10, { copy });
@@ -1905,6 +2155,10 @@ function beetleEggReload(rarity) {
 
 function bubbleReload(rarity) {
   return bySpecialRarity(rarity, [0, 1, 0.8, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05, 0.05, 0.025]);
+}
+
+function shovelPreload(rarity) {
+  return bySpecialRarity(rarity, [0, 15, 13.1, 11.8, 10.1, 8.5, 6.9, 5.2, 3.6, 2, 2, 1]);
 }
 
 function webRadiusValue(rarity) {
@@ -2593,13 +2847,11 @@ function updateRenderPositions(dt) {
   const owner = state.entities.get(state.ownerEntityId);
   if (owner && !owner.dying) {
     updateEntityMotion(owner, dt);
-    const distance = Math.hypot(owner.snapshot.pos.x - owner.renderPos.x, owner.snapshot.pos.y - owner.renderPos.y);
-    const blend = distance > predictionSnapDistance ? 1 : smoothFactor(ownerPredictionCorrectionRate, dt);
-    owner.renderPos.x += (owner.snapshot.pos.x - owner.renderPos.x) * blend;
-    owner.renderPos.y += (owner.snapshot.pos.y - owner.renderPos.y) * blend;
-    owner.renderAngle = smoothAngle(owner.renderAngle, owner.snapshot.angle, 14, dt);
-    state.camera.x += (owner.renderPos.x - state.camera.x) * smoothFactor(ownerCameraFollowRate, dt);
-    state.camera.y += (owner.renderPos.y - state.camera.y) * smoothFactor(ownerCameraFollowRate, dt);
+    syncEntityRenderToSnapshot(owner, owner.snapshot);
+    if (owner.renderPos) {
+      state.camera.x = owner.renderPos.x;
+      state.camera.y = owner.renderPos.y;
+    }
   }
 
   const dead = [];
@@ -2614,10 +2866,7 @@ function updateRenderPositions(dt) {
     }
     updateEntityMotion(entity, dt);
     if (id === state.ownerEntityId) continue;
-    entity.renderPos.x += (entity.snapshot.pos.x - entity.renderPos.x) * smoothFactor(16, dt);
-    entity.renderPos.y += (entity.snapshot.pos.y - entity.renderPos.y) * smoothFactor(16, dt);
-    entity.renderAngle = smoothAngle(entity.renderAngle, entity.snapshot.angle,
-                                     (entity.snapshot.entityType === hornetType || entity.snapshot.entityType === queenAntType) ? 40 : 10, dt);
+    syncEntityRenderToSnapshot(entity, entity.snapshot);
   }
 
   for (const id of dead) {
@@ -2637,13 +2886,6 @@ function updateEntityMotion(entity, dt) {
 
 function smoothFactor(rate, dt) {
   return 1 - Math.exp(-rate * dt);
-}
-
-function smoothAngle(current, target, rate, dt) {
-  if (!Number.isFinite(current)) return Number.isFinite(target) ? target : 0;
-  if (!Number.isFinite(target)) return current;
-  const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
-  return current + delta * smoothFactor(rate, dt);
 }
 
 function screenViewRadius() {
@@ -2924,13 +3166,25 @@ function drawEntity(entity) {
     return;
   }
 
-  if (!isPetal && !isDrop && snap.name === "Pollen") {
+  if (!isPetal && snap.entityType === dandelionType) {
+    drawDandelion(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle, {
+      scale: getClientConfigValue(state.clientConfig, "dande_base_scale"),
+      angle: getClientConfigValue(state.clientConfig, "dande_base_angle"),
+      x: getClientConfigValue(state.clientConfig, "dande_base_x"),
+      y: getClientConfigValue(state.clientConfig, "dande_base_y"),
+    });
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && !isDrop && snap.entityType === pollenProjectileType) {
     drawPollen(ctx, pos, radius * deathScale, snap.entityId, currentRenderTimeSeconds);
     ctx.restore();
     return;
   }
 
-  if (!isPetal && !isDrop && snap.name === "SpiderWeb") {
+  if (!isPetal && !isDrop && snap.entityType === spiderWebZoneType) {
     drawSpiderWeb(ctx, pos, radius * deathScale, snap.entityId, currentRenderTimeSeconds, {
       playerOwned: snap.team === playerTeam,
     });
@@ -2938,8 +3192,15 @@ function drawEntity(entity) {
     return;
   }
 
-  if (!isPetal && !isDrop && snap.name === "Missile") {
+  if (!isPetal && !isDrop && snap.entityType === hornetMissileType) {
     drawHornetMissile(ctx, pos, radius * deathScale, entity.renderAngle ?? snap.angle);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && !isDrop && snap.entityType === dandelionMissileType) {
+    drawDandelionMissile(pos, radius * deathScale, entity.renderAngle ?? snap.angle, snap.rarity, snap.entityId);
+    if (state.debugHitbox) drawCollisionHitbox(pos, radius);
     ctx.restore();
     return;
   }
@@ -2947,7 +3208,7 @@ function drawEntity(entity) {
   if (!isPetal && snap.entityType === playerFlowerType) {
     const flowerAngle = dead ? (entity.deathAngle ?? entity.renderAngle ?? snap.angle) : (entity.renderAngle ?? snap.angle);
     drawPlayerFlower(snap, pos, radius * deathScale, flowerAngle, isOwner);
-    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    if (!entity.dying && (snap.flags & flagDigging) === 0) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
@@ -2992,12 +3253,24 @@ function drawEntity(entity) {
 
 function drawPlayerFlower(snap, pos, radius, angle, isOwner) {
   const flags = snap.flags || 0;
+  const digging = (flags & flagDigging) !== 0;
+  if (digging) {
+    ctx.save();
+    ctx.translate(pos.x, pos.y);
+    ctx.globalAlpha *= 0.58;
+    ctx.fillStyle = "#6b7280";
+    ctx.beginPath();
+    ctx.arc(0, 0, Math.max(0.5, radius * 1.02), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+
   const hasAntennae = (flags & flagAntennae) !== 0 || playerSnapHasPetal(snap, petalAntennaeType) ||
     (isOwner && ownerHasPetal(petalAntennaeType));
   const hasThirdEye = playerSnapHasPetal(snap, petalThirdEyeType) || (isOwner && ownerHasPetal(petalThirdEyeType));
   const hasBandage = playerSnapHasPetal(snap, petalBandageType) || (isOwner && ownerHasPetal(petalBandageType));
-  const hasRelic = (flags & flagRelic) !== 0 || playerSnapHasPetal(snap, petalRelicType) ||
-    (isOwner && ownerHasPetal(petalRelicType));
+  const hasRelic = (flags & flagRelic) !== 0;
   const nullified = playerSnapHasPetal(snap, petalNullificationType) || (isOwner && ownerHasPetal(petalNullificationType));
   const corrupted = (flags & flagCorrupted) !== 0;
   const undead = (flags & flagUndead) !== 0;
@@ -3293,7 +3566,7 @@ function drawLivePetal(petalType, rarity, pos, radius, angle, entityId = 0) {
   ctx.save();
   ctx.translate(pos.x, pos.y);
   if (petalHasMultiCopyVisual(petalType, rarity)) ctx.translate(0, -size * 0.035);
-  if (petalType !== petalMoonType && Number.isFinite(angle)) ctx.rotate(angle);
+  if (petalType !== petalMoonType && Number.isFinite(angle)) ctx.rotate(livePetalRenderAngle(petalType, angle));
 
   if (petalType === petalDustType) {
     drawDustParticlePetal(size, rarity);
@@ -3312,17 +3585,55 @@ function drawLivePetal(petalType, rarity, pos, radius, angle, entityId = 0) {
     icon = livePetalIconImage(petalType, rarity, extractSingleAntEggLiveSvg, "single-ant-egg");
   } else if (petalType === petalWaxType) {
     icon = livePetalIconImage(petalType, rarity, extractWaxLiveSvg, "wax-petal");
+  } else if (petalType === petalShovelType) {
+    icon = livePetalIconImage(petalType, rarity);
+  } else if (petalType === petalDandelionType) {
+    icon = livePetalIconImage(petalType, rarity, extractDandelionLiveSvg, "dandelion-petal");
   } else {
     icon = livePetalIconImage(petalType, rarity);
   }
 
   if (imageReady(icon)) {
-    drawCenteredImage(icon, size, 1);
+    drawCenteredImage(icon, size, petalType === petalWaxType ? 0.82 : 1);
   } else {
     drawPetalSilhouette(size, rarity);
   }
 
   ctx.restore();
+}
+
+function drawDandelionMissile(pos, radius, angle, rarity, entityId = 0) {
+  const safeRarity = rarity || 1;
+  const visualScale = getClientConfigValue(state.clientConfig, "dande_missile_scale");
+  const angleOffset = getClientConfigValue(state.clientConfig, "dande_missile_angle");
+  const radialOffset = getClientConfigValue(state.clientConfig, "dande_missile_offset");
+  const yOffset = getClientConfigValue(state.clientConfig, "dande_missile_y_offset");
+  const anchorX = getClientConfigValue(state.clientConfig, "dande_missile_anchor_x");
+  const anchorY = getClientConfigValue(state.clientConfig, "dande_missile_anchor_y");
+  const size = Math.max(1, radius * visualScale);
+  const radialAngle = Number.isFinite(angle) ? angle : 0;
+
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  ctx.rotate(radialAngle);
+  ctx.translate(radius * radialOffset, radius * yOffset);
+  ctx.rotate(angleOffset);
+  ctx.translate(radius * anchorX, radius * anchorY);
+
+  const icon = livePetalIconImage(petalDandelionType, safeRarity, extractDandelionLiveSvg, "dandelion-missile");
+  if (imageReady(icon)) {
+    drawCenteredImage(icon, size, 1);
+  } else {
+    drawPetalSilhouette(size, safeRarity);
+  }
+
+  ctx.restore();
+}
+
+function livePetalRenderAngle(petalType, angle) {
+  if (petalType === petalMissileType || petalType === petalCarrotType || petalType === petalDandelionType)
+    return angle + directionalPetalAngleOffset;
+  return angle;
 }
 
 function drawProceduralMoonPetal(size, rarity, entityId) {
@@ -3581,7 +3892,11 @@ function extractSingleAntEggLiveSvg(svgText) {
 }
 
 function extractWaxLiveSvg(svgText) {
-  return extractFirstLivePetalPathsSvg(svgText, 1, "31 24 49 47");
+  return extractFirstLivePetalPathsSvg(svgText, 2, "28 24 52 48");
+}
+
+function extractDandelionLiveSvg(svgText) {
+  return extractFirstLivePetalPathsSvg(svgText, 3, "22 14 68 68");
 }
 
 function extractFirstLivePetalPathsSvg(svgText, pathCount, viewBox) {
@@ -3813,7 +4128,7 @@ function drawPetalSilhouette(size, rarity) {
 
 function isMobSnap(snap) {
   return snap && snap.entityType > 0 && !isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType) &&
-         snap.entityType !== playerFlowerType && snap.entityType !== portalType;
+         snap.entityType !== playerFlowerType && snap.entityType !== portalType && !isProjectileSnap(snap);
 }
 
 function isSummonedMobSnap(snap) {
@@ -3821,9 +4136,18 @@ function isSummonedMobSnap(snap) {
     snap.entityType === summonedBeetleType || snap.entityType === summonedSoldierAntType);
 }
 
+function isProjectileSnap(snap) {
+  return !!snap && (
+    snap.entityType === dandelionMissileType ||
+    snap.entityType === hornetMissileType ||
+    snap.entityType === pollenProjectileType ||
+    snap.entityType === spiderWebZoneType
+  );
+}
+
 function hasHealthFrame(snap) {
   return snap && snap.entityType > 0 && !isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType) &&
-         snap.entityType !== portalType;
+         snap.entityType !== portalType && !isProjectileSnap(snap);
 }
 
 function mobDisplayName(snap) {
@@ -3943,6 +4267,30 @@ function drawOutlinedText(text, x, y, {
   ctx.fillStyle = fill;
   ctx.strokeText(text, x, y);
   ctx.fillText(text, x, y);
+}
+
+function drawCollisionHitbox(pos, radius) {
+  if (radius < 0.5) return;
+
+  ctx.save();
+  ctx.lineWidth = Math.max(1.25, Math.min(3, radius * 0.08));
+  ctx.strokeStyle = "rgba(255, 32, 32, 0.92)";
+  ctx.fillStyle = "rgba(255, 32, 32, 0.08)";
+  ctx.beginPath();
+  ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  const cross = Math.max(3, Math.min(10, radius * 0.38));
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+  ctx.lineWidth = Math.max(1, Math.min(2, radius * 0.05));
+  ctx.beginPath();
+  ctx.moveTo(pos.x - cross, pos.y);
+  ctx.lineTo(pos.x + cross, pos.y);
+  ctx.moveTo(pos.x, pos.y - cross);
+  ctx.lineTo(pos.x, pos.y + cross);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawMobFrame(snap, pos, radius) {
@@ -4121,13 +4469,12 @@ function drawSelfHud() {
 }
 
 function minimapLayout() {
-  const hudScale = Math.min(1, Math.max(0.7, state.canvasWidth / 320));
-  const y = state.authenticated ? Math.round(105 * hudScale + minimapHudGapPx) : minimapMarginPx;
+  const y = minimapMarginPx;
   const maxByScreen = Math.max(96, Math.min(state.canvasWidth - minimapMarginPx * 2, state.canvasHeight - y - minimapMarginPx));
   const localSize = clamp(Math.min(state.canvasWidth * 0.28, minimapLocalMaxPx, maxByScreen), 104, minimapLocalMaxPx);
   const fullSize = clamp(Math.min(state.canvasWidth * 0.38, state.canvasHeight * 0.42, minimapFullMaxPx, maxByScreen), 132, minimapFullMaxPx);
   const size = state.minimapMode === "full" ? fullSize : localSize;
-  return { x: minimapMarginPx, y, size };
+  return { x: state.canvasWidth - minimapMarginPx - size, y, size };
 }
 
 function minimapWorldBounds(map) {
@@ -4165,6 +4512,8 @@ function drawMinimap() {
   ctx.beginPath();
   ctx.rect(layout.x, layout.y, layout.size, layout.size);
   ctx.clip();
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(layout.x, layout.y, layout.size, layout.size);
   if (cache?.canvas) ctx.drawImage(cache.canvas, layout.x, layout.y, layout.size, layout.size);
 
   const owner = state.entities.get(state.ownerEntityId);
@@ -4202,6 +4551,8 @@ function getMinimapCache(map, layout, bounds, scale) {
   canvas.height = size;
   const target = canvas.getContext("2d");
   if (!target) return null;
+  target.fillStyle = "#fff";
+  target.fillRect(0, 0, size, size);
 
   const right = bounds.left + bounds.width;
   const bottom = bounds.top + bounds.height;
@@ -4294,6 +4645,7 @@ function tick(now) {
     const instantFps = 1 / dt;
     state.fps = state.fps <= 0 ? instantFps : state.fps + (instantFps - state.fps) * 0.08;
   }
+  flushPendingSnapshot();
   flushInput(dt);
   updateRenderPositions(dt);
   drawScene(now);
@@ -4363,6 +4715,16 @@ function setupEvents() {
       toggleConsole(false);
     }
   });
+  sliderInput?.addEventListener("input", () => applySliderValue(sliderInput.value));
+  sliderInput?.addEventListener("change", () => applySliderValue(sliderInput.value));
+  sliderInput?.addEventListener("keydown", (event) => event.stopPropagation());
+  sliderCloseBtn?.addEventListener("click", () => closeSliderPanel());
+  for (const eventName of ["pointerdown", "pointermove", "pointerup", "pointercancel", "mousedown", "mousemove", "mouseup", "wheel"]) {
+    sliderPanel?.addEventListener(eventName, stopSliderEvent, { capture: true });
+  }
+  for (const eventName of ["touchstart", "touchmove", "touchend"]) {
+    sliderPanel?.addEventListener(eventName, stopSliderEvent, { capture: true, passive: false });
+  }
 
   window.addEventListener("keydown", (event) => {
     if (event.key === "F1") {
@@ -4432,9 +4794,10 @@ function setupEvents() {
     state.keys.clear();
     state.attacking = false;
     state.defending = false;
+    state.digging = false;
     mobileControls?.reset();
     sendBytes(packInput(0, 0));
-    sendBytes(packChores(false, false));
+    sendBytes(packChores(false, false, false, false, false));
   });
 
   window.addEventListener("mousedown", (event) => {

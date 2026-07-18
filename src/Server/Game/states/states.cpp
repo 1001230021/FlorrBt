@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <vector>
 
 namespace
@@ -18,10 +19,10 @@ const CMobBase* GetInteractionMob(const CEntity* entity)
         if (!controller) return mob;
 
         CGameWorld* world = const_cast<CMobBase*>(mob)->GameWorld();
-        CEntity* owner = world ? world->GetEntity(controller->GetOwnerId()) : nullptr;
+        CEntity* owner = controller->GetOwner(world);
         if (const auto* owner_projectile = dynamic_cast<const CProjectile*>(owner))
         {
-            CEntity* root_owner = world ? world->GetEntity(owner_projectile->m_owner_id) : nullptr;
+            CEntity* root_owner = owner_projectile->GetOwner();
             if (const auto* root_mob = dynamic_cast<const CMobBase*>(root_owner)) return root_mob;
         }
 
@@ -32,8 +33,7 @@ const CMobBase* GetInteractionMob(const CEntity* entity)
     const auto* projectile = dynamic_cast<const CProjectile*>(entity);
     if (!projectile) return nullptr;
 
-    CGameWorld* world = const_cast<CProjectile*>(projectile)->GameWorld();
-    CEntity* owner = world ? world->GetEntity(projectile->m_owner_id) : nullptr;
+    CEntity* owner = projectile->GetOwner();
     return dynamic_cast<const CMobBase*>(owner);
 }
 
@@ -109,6 +109,12 @@ CUndeadState::~CUndeadState()
     m_p_owner->m_is_marked_for_des = true;
 }
 
+CDiggingState::~CDiggingState()
+{
+    if (auto* flower = dynamic_cast<CFlower*>(m_p_owner))
+        flower->ReloadAllPetals();
+}
+
 CCorruptionState::CCorruptionState(CMobBase* owner, float timer, ERarity rarity)
     : CState(owner, timer, rarity)
 {
@@ -177,12 +183,7 @@ CPincerSpeedReduceState::CPincerSpeedReduceState(CMobBase* owner, float timer, E
 CWebSpeedReduceState::CWebSpeedReduceState(CMobBase* owner, float timer, float desired_multiplier)
     : CState(owner, timer, ERarity::Common)
 {
-    desired_multiplier = std::clamp(desired_multiplier, 0.f, 1.f);
-    float reference_mass = std::max(0.01f, game_config::mob_player_flower_mass);
-    float mass = owner ? owner->m_mass : reference_mass;
-    float normalized_mass = std::isfinite(mass) ? std::max(0.01f, mass / reference_mass)
-                                                : std::numeric_limits<float>::infinity();
-    m_multiplier = std::clamp(1.f - (1.f - desired_multiplier) / normalized_mass, 0.f, 1.f);
+    m_multiplier = std::clamp(desired_multiplier, 0.f, 1.f);
     if (owner && owner->m_mob_type == EMobType::Spider)
         m_multiplier = std::clamp(1.f - (1.f - m_multiplier) * 0.5f, 0.f, 1.f);
 
@@ -199,6 +200,19 @@ CWebSpeedReduceState::CWebSpeedReduceState(CMobBase* owner, float timer, float d
         owner->RemoveState(existing);
         m_is_valid = true;
     }
+}
+
+CAntiHealState::CAntiHealState(CMobBase* owner, float timer, ERarity rarity, float medic_mult)
+    : CState(owner, timer, rarity)
+{
+    m_medic_mult = std::clamp(medic_mult, 0.f, 1.f);
+}
+
+void CAntiHealState::Refresh(float timer, ERarity rarity, float medic_mult)
+{
+    m_timer = timer;
+    if (GetRaritySortRank(rarity) > GetRaritySortRank(m_rarity)) m_rarity = rarity;
+    m_medic_mult = std::clamp(m_medic_mult * std::clamp(medic_mult, 0.f, 1.f), 0.f, 1.f);
 }
 
 CPsionicConnectionState::CPsionicConnectionState(CMobBase* owner, float timer, ERarity rarity)
@@ -222,6 +236,17 @@ bool BlocksNullifiedInteraction(const CEntity* lhs, const CEntity* rhs)
     const CMobBase* lhs_mob = GetInteractionMob(lhs);
     const CMobBase* rhs_mob = GetInteractionMob(rhs);
     return MobNullifiesTarget(lhs_mob, rhs_mob) || MobNullifiesTarget(rhs_mob, lhs_mob);
+}
+
+bool IsDiggingEntity(const CEntity* entity)
+{
+    const auto* mob = dynamic_cast<const CMobBase*>(entity);
+    return mob && mob->HasState<CDiggingState>();
+}
+
+bool ShouldSkipDiggingCollision(const CEntity* lhs, const CEntity* rhs)
+{
+    return IsDiggingEntity(lhs) != IsDiggingEntity(rhs);
 }
 
 float GetPincerSpeedMultiplier(const CMobBase* mob)
@@ -249,6 +274,36 @@ float GetPincerSpeedMultiplier(const CMobBase* mob)
         multiplier = std::min(multiplier, state->GetMultiplier());
     });
     return multiplier;
+}
+
+float GetMedicMultiplier(const CMobBase* mob)
+{
+    if (!mob) return 1.f;
+
+    float multiplier = 1.f;
+    mob->ForEachState<CAntiHealState>([&](const CAntiHealState* state)
+    {
+        if (!state) return;
+        multiplier *= std::clamp(state->GetMedicMultiplier(), 0.f, 1.f);
+    });
+    return std::clamp(multiplier, 0.f, 1.f);
+}
+
+void ApplyDandelionAntiHeal(CMobBase* mob, ERarity rarity)
+{
+    if (!mob) return;
+
+    const float timer = std::max(0.f, game_config::default_dandelion_medic_timer);
+    const float multiplier = std::clamp(game_config::default_dandelion_heal_multiplier, 0.f, 1.f);
+    if (timer <= 0.f || multiplier >= 1.f) return;
+
+    if (auto* existing = mob->FindFirstState<CAntiHealState>())
+    {
+        existing->Refresh(timer, rarity, multiplier);
+        return;
+    }
+
+    mob->AddState(std::make_unique<CAntiHealState>(mob, timer, rarity, multiplier));
 }
 
 bool TrySharePsionicDamage(CMobBase* receiver, float dmg, CEntity* attacker, EDamageType dmg_type)

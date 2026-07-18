@@ -8,6 +8,8 @@ const ROCK_EDGE_WIDTH = 5.2;
 const ROCK_VISUAL_SCALE = 1.18;
 const SANDSTORM_VISUAL_SCALE = 1.2;
 const PORTAL_VISUAL_SCALE = 2.15;
+const DANDELION_VISUAL_SCALE = 4;
+const DANDELION_BASE_IMAGE_ANGLE_OFFSET = Math.PI * 0.5;
 const BASE_CACHE = new Map();
 const PART_CACHE = new Map();
 const ROCK_SHAPE_CACHE = new Map();
@@ -118,6 +120,28 @@ export function drawAntHole(ctx, pos, radius) {
     ctx.arc(0, 0, radius * 0.95, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+  }
+  ctx.restore();
+}
+
+export function drawDandelion(ctx, pos, radius, _entityId, angle, options = {}) {
+  const image = baseImage("./assets/dandelion_base.svg", "dandelion-base", "raw");
+  const visualScale = Number.isFinite(options.scale) ? options.scale : DANDELION_VISUAL_SCALE;
+  const angleOffset = Number.isFinite(options.angle) ? options.angle : DANDELION_BASE_IMAGE_ANGLE_OFFSET;
+  const offsetX = Number.isFinite(options.x) ? options.x : 0;
+  const offsetY = Number.isFinite(options.y) ? options.y : 0;
+  const size = Math.max(1, radius * visualScale);
+  const facing = Number.isFinite(angle) ? angle : 0;
+
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  ctx.rotate(facing);
+  ctx.translate(radius * offsetX, radius * offsetY);
+  ctx.rotate(angleOffset);
+  if (isImageReady(image)) {
+    ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
+  } else {
+    drawFallbackDandelion(ctx, radius);
   }
   ctx.restore();
 }
@@ -417,6 +441,21 @@ function drawFallbackAnt(ctx, radius) {
   ctx.beginPath();
   ctx.arc(radius * 0.42, radius * 0.42, radius * 0.95, 0, Math.PI * 2);
   ctx.arc(-radius * 0.26, -radius * 0.26, radius * 0.72, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawFallbackDandelion(ctx, radius) {
+  ctx.fillStyle = "#f3d851";
+  ctx.strokeStyle = "#a48e2a";
+  ctx.lineWidth = Math.max(1.4, radius * 0.12);
+  ctx.beginPath();
+  ctx.arc(0, 0, radius * 1.25, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = "#7fb96b";
+  ctx.beginPath();
+  ctx.arc(0, radius * 0.08, radius * 0.38, 0, Math.PI * 2);
   ctx.fill();
 }
 
