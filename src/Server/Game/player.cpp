@@ -417,11 +417,13 @@ void CPlayer::SetOwnedEntity(CEntity* entity)
     {
         m_p_world = nullptr;
         m_entity_id = -1;
+        m_entity_generation = 0;
         return;
     }
 
     m_p_world = entity->GameWorld();
     m_entity_id = entity->m_id;
+    m_entity_generation = entity->m_generation;
 }
 
 void CPlayer::Authenticate(const std::string& account_name)
@@ -429,11 +431,14 @@ void CPlayer::Authenticate(const std::string& account_name)
     m_account_name = account_name;
     m_name = account_name;
     m_authenticated = true;
+    m_cp_history.clear();
+    m_cp_check_phase = static_cast<uint8_t>(m_player_id & 0x07);
 }
 
 CEntity* CPlayer::GetEntity() const
 {
     if (!m_p_world || m_entity_id < 0) return nullptr;
+    if (m_entity_generation != 0) return m_p_world->GetEntity(m_entity_id, m_entity_generation);
     return m_p_world->GetEntity(m_entity_id);
 }
 

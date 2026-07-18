@@ -17,6 +17,7 @@ sf::Vector2f PickWaitingSpawnPosition(CGameWorld& world)
 
     for (const FlorrBtMap::Checkpoint& checkpoint : map->checkpoints)
     {
+        if (!checkpoint.is_respawn_area) continue;
         if (checkpoint.w <= 0.f || checkpoint.h <= 0.f) continue;
         return {
             checkpoint.x + GetLimitedRng(0.f, checkpoint.w),

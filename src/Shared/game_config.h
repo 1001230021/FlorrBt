@@ -143,6 +143,14 @@ inline float default_drop_pickup_delay = 0.5f;
 inline float default_drop_pickup_range = WorldUnits(64.0f);
 inline float default_drop_radius = WorldUnits(8.0f);
 inline float default_drop_stack_range = WorldUnits(128.0f);
+inline float default_dandelion_attack_extra_reach = WorldUnits(128.0f);
+inline float default_dandelion_base_damage = 8.0f;
+inline float default_dandelion_base_health = 8.0f;
+inline float default_dandelion_base_radius = WorldUnits(10.0f);
+inline float default_dandelion_heal_multiplier = 0.8f;
+inline float default_dandelion_mass = 1.0f;
+inline float default_dandelion_medic_timer = 30.0f;
+inline float default_dandelion_reload = 1.0f;
 inline float default_dust_base_damage = 4.3f;
 inline float default_dust_base_health = 1.7f;
 inline float default_dust_base_radius = WorldUnits(7.5f);
@@ -333,6 +341,25 @@ inline float default_web_throw_defend_speed = 0.1f;
 inline float default_wax_base_health = 1000.0f;
 inline float default_wax_mass = 0.1f;
 inline float default_wax_reload = 30.0f;
+inline float default_orange_base_damage = 8.0f;
+inline float default_orange_base_health = 6.7f;
+inline float default_orange_base_radius = WorldUnits(10.0f);
+inline float default_orange_copy = 3.0f;
+inline float default_orange_mass = 2.0f;
+inline float default_orange_reload = 3.5f;
+inline float default_shovel_base_radius = WorldUnits(12.0f);
+inline float default_shovel_dig_duration = 2.0f;
+inline float default_shovel_preload_common = 15.0f;
+inline float default_shovel_preload_unusual = 13.1f;
+inline float default_shovel_preload_rare = 11.8f;
+inline float default_shovel_preload_epic = 10.1f;
+inline float default_shovel_preload_legendary = 8.5f;
+inline float default_shovel_preload_mythic = 6.9f;
+inline float default_shovel_preload_ultra = 5.2f;
+inline float default_shovel_preload_super = 3.6f;
+inline float default_shovel_preload_eternal = 2.0f;
+inline float default_shovel_preload_unique = 2.0f;
+inline float default_shovel_preload_primordial = 1.0f;
 inline float default_yinyang_base_damage = 10.0f;
 inline float default_yinyang_base_health = 10.0f;
 inline float default_yinyang_base_radius = WorldUnits(12.0f);
@@ -348,6 +375,8 @@ inline float default_yggdrasil_channel_primordial = 0.016f;
 inline float default_yggdrasil_heal_fraction = 1.0f;
 inline float default_yggdrasil_preload = 5.0f;
 inline float entity_collision_epsilon = 0.001f;
+inline float entity_collision_knockback_speed = WorldUnits(180.0f);
+inline float player_collision_knockback_multiplier = 1.0001f;
 inline float melee_random_idle_chance = 0.5f;
 inline float melee_random_idle_time = 2.0f;
 inline float melee_random_wander_divisor = 4.0f;
@@ -436,7 +465,7 @@ inline float mob_spider_web_interval = 1.0f;
 inline float mob_spider_web_apply_interval = 0.1f;
 inline float mob_spider_web_lifetime = 6.0f;
 inline float mob_spider_web_slow_duration = 0.35f;
-inline float mob_spider_web_speed_multiplier = 0.05f;
+inline float mob_spider_web_speed_multiplier = 0.75f;
 inline float mob_sandstorm_acceleration = WorldUnits(450.0f);
 inline float mob_sandstorm_armor = 1.0f;
 inline float mob_sandstorm_damage = 40.0f;
@@ -465,6 +494,22 @@ inline float mob_hornet_missile_speed = default_max_velocity * 4.0f;
 inline float mob_hornet_radius = WorldUnits(12.0f);
 inline float mob_hornet_recoil_speed = default_max_velocity * 2.0f;
 inline int mob_hornet_team = 2;
+inline float mob_dandelion_acceleration = default_acceleration;
+inline float mob_dandelion_armor = 1.0f;
+inline float mob_dandelion_damage = 15.0f;
+inline float mob_dandelion_mass = 2.5f;
+inline float mob_dandelion_max_health = 25.0f;
+inline float mob_dandelion_max_velocity = default_max_velocity;
+inline float mob_dandelion_missile_attach_offset = 1.4167f;
+inline float mob_dandelion_missile_base_damage = 15.0f;
+inline float mob_dandelion_missile_base_health = 25.0f;
+inline float mob_dandelion_missile_fire_interval = 0.12f;
+inline float mob_dandelion_missile_lifetime = 30.0f;
+inline int mob_dandelion_missile_count = 10;
+inline float mob_dandelion_missile_radius = WorldUnits(5.0f);
+inline float mob_dandelion_missile_speed = default_max_velocity * 4.0f;
+inline float mob_dandelion_radius = WorldUnits(12.0f);
+inline int mob_dandelion_team = 2;
 inline float mob_bandage_beetle_armor = 1.0f;
 inline float mob_bandage_beetle_damage = 30.0f;
 inline float mob_bandage_beetle_mass = 10.0f;
@@ -753,6 +798,14 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("drop_pickup_range", default_drop_pickup_range),
         REGISTER_CONFIG("drop_radius", default_drop_radius),
         REGISTER_CONFIG("drop_stack_range", default_drop_stack_range),
+        REGISTER_CONFIG("dandelion_attack_extra_reach", default_dandelion_attack_extra_reach),
+        REGISTER_CONFIG("dandelion_base_damage", default_dandelion_base_damage),
+        REGISTER_CONFIG("dandelion_base_health", default_dandelion_base_health),
+        REGISTER_CONFIG("dandelion_base_radius", default_dandelion_base_radius),
+        REGISTER_CONFIG("dandelion_heal_multiplier", default_dandelion_heal_multiplier),
+        REGISTER_CONFIG("dandelion_mass", default_dandelion_mass),
+        REGISTER_CONFIG("dandelion_medic_timer", default_dandelion_medic_timer),
+        REGISTER_CONFIG("dandelion_reload", default_dandelion_reload),
         REGISTER_CONFIG("dust_base_damage", default_dust_base_damage),
         REGISTER_CONFIG("dust_base_health", default_dust_base_health),
         REGISTER_CONFIG("dust_base_radius", default_dust_base_radius),
@@ -760,6 +813,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("dust_mass", default_dust_mass),
         REGISTER_CONFIG("dust_reload_reduction", default_dust_reload_reduction),
         REGISTER_CONFIG("entity_collision_epsilon", entity_collision_epsilon),
+        REGISTER_CONFIG("entity_collision_knockback_speed", entity_collision_knockback_speed),
         REGISTER_CONFIG("faster_base_damage", default_faster_base_damage),
         REGISTER_CONFIG("faster_base_health", default_faster_base_health),
         REGISTER_CONFIG("faster_base_radius", default_faster_base_radius),
@@ -960,6 +1014,22 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_hornet_radius", mob_hornet_radius),
         REGISTER_CONFIG("mob_hornet_recoil_speed", mob_hornet_recoil_speed),
         REGISTER_CONFIG("mob_hornet_team", mob_hornet_team),
+        REGISTER_CONFIG("mob_dandelion_acceleration", mob_dandelion_acceleration),
+        REGISTER_CONFIG("mob_dandelion_armor", mob_dandelion_armor),
+        REGISTER_CONFIG("mob_dandelion_damage", mob_dandelion_damage),
+        REGISTER_CONFIG("mob_dandelion_mass", mob_dandelion_mass),
+        REGISTER_CONFIG("mob_dandelion_max_health", mob_dandelion_max_health),
+        REGISTER_CONFIG("mob_dandelion_max_velocity", mob_dandelion_max_velocity),
+        REGISTER_CONFIG("mob_dandelion_missile_attach_offset", mob_dandelion_missile_attach_offset),
+        REGISTER_CONFIG("mob_dandelion_missile_base_damage", mob_dandelion_missile_base_damage),
+        REGISTER_CONFIG("mob_dandelion_missile_base_health", mob_dandelion_missile_base_health),
+        REGISTER_CONFIG("mob_dandelion_missile_fire_interval", mob_dandelion_missile_fire_interval),
+        REGISTER_CONFIG("mob_dandelion_missile_lifetime", mob_dandelion_missile_lifetime),
+        REGISTER_CONFIG("mob_dandelion_missile_count", mob_dandelion_missile_count),
+        REGISTER_CONFIG("mob_dandelion_missile_radius", mob_dandelion_missile_radius),
+        REGISTER_CONFIG("mob_dandelion_missile_speed", mob_dandelion_missile_speed),
+        REGISTER_CONFIG("mob_dandelion_radius", mob_dandelion_radius),
+        REGISTER_CONFIG("mob_dandelion_team", mob_dandelion_team),
         REGISTER_CONFIG("mob_bandage_beetle_armor", mob_bandage_beetle_armor),
         REGISTER_CONFIG("mob_bandage_beetle_damage", mob_bandage_beetle_damage),
         REGISTER_CONFIG("mob_bandage_beetle_mass", mob_bandage_beetle_mass),
@@ -1081,6 +1151,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("pincer_poison_total_damage", default_pincer_poison_total_damage),
         REGISTER_CONFIG("pincer_reload", default_pincer_reload),
         REGISTER_CONFIG("pincer_slow_duration", default_pincer_slow_duration),
+        REGISTER_CONFIG("player_collision_knockback_multiplier", player_collision_knockback_multiplier),
         REGISTER_CONFIG("pollen_base_damage", default_pollen_base_damage),
         REGISTER_CONFIG("pollen_base_health", default_pollen_base_health),
         REGISTER_CONFIG("pollen_base_radius", default_pollen_base_radius),
@@ -1177,6 +1248,25 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("wax_base_health", default_wax_base_health),
         REGISTER_CONFIG("wax_mass", default_wax_mass),
         REGISTER_CONFIG("wax_reload", default_wax_reload),
+        REGISTER_CONFIG("orange_base_damage", default_orange_base_damage),
+        REGISTER_CONFIG("orange_base_health", default_orange_base_health),
+        REGISTER_CONFIG("orange_base_radius", default_orange_base_radius),
+        REGISTER_CONFIG("orange_copy", default_orange_copy),
+        REGISTER_CONFIG("orange_mass", default_orange_mass),
+        REGISTER_CONFIG("orange_reload", default_orange_reload),
+        REGISTER_CONFIG("shovel_base_radius", default_shovel_base_radius),
+        REGISTER_CONFIG("shovel_dig_duration", default_shovel_dig_duration),
+        REGISTER_CONFIG("shovel_preload_common", default_shovel_preload_common),
+        REGISTER_CONFIG("shovel_preload_unusual", default_shovel_preload_unusual),
+        REGISTER_CONFIG("shovel_preload_rare", default_shovel_preload_rare),
+        REGISTER_CONFIG("shovel_preload_epic", default_shovel_preload_epic),
+        REGISTER_CONFIG("shovel_preload_legendary", default_shovel_preload_legendary),
+        REGISTER_CONFIG("shovel_preload_mythic", default_shovel_preload_mythic),
+        REGISTER_CONFIG("shovel_preload_ultra", default_shovel_preload_ultra),
+        REGISTER_CONFIG("shovel_preload_super", default_shovel_preload_super),
+        REGISTER_CONFIG("shovel_preload_eternal", default_shovel_preload_eternal),
+        REGISTER_CONFIG("shovel_preload_unique", default_shovel_preload_unique),
+        REGISTER_CONFIG("shovel_preload_primordial", default_shovel_preload_primordial),
         REGISTER_CONFIG("timeout_protection_seconds", timeout_protection_seconds),
         REGISTER_CONFIG("yinyang_base_damage", default_yinyang_base_damage),
         REGISTER_CONFIG("yinyang_base_health", default_yinyang_base_health),

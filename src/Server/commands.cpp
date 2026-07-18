@@ -384,6 +384,44 @@ REGISTER_CONSOLE_COMMAND(query_entity_id, {
                             " entity_id=" + std::to_string(entity ? entity->m_id : -1));
 })
 
+REGISTER_CONSOLE_COMMAND(tele, {
+    if (args.size() < 2)
+    {
+        LOG_INFO("console", "Usage: tele [player id/name] [x,y] or tele [player id/name] [x] [y]");
+        return;
+    }
+
+    std::optional<sf::Vector2f> pos = ParsePosition(args, 1);
+    if (!pos)
+    {
+        LOG_WARN("console", "Invalid position. Usage: tele [player id/name] [x,y] or tele [player id/name] [x] [y]");
+        return;
+    }
+
+    auto* server = CServer::GetInstance();
+    CGameContext* context = server ? server->GameContext() : nullptr;
+    CPlayer* player = FindPlayerByIdOrName(context, args[0]);
+    if (!player)
+    {
+        LOG_WARN("console", "Player not found: " + args[0]);
+        return;
+    }
+
+    CEntity* entity = player->GetEntity();
+    if (!entity)
+    {
+        LOG_WARN("console", "Player has no controlled entity: " + args[0]);
+        return;
+    }
+
+    sf::Vector2f old_pos = entity->m_pos;
+    entity->m_pos = *pos;
+    entity->m_prev_pos = *pos;
+    LOG_INFO("console", "Teleported " + player->GetName() + " from " + std::to_string(old_pos.x) + "," +
+                            std::to_string(old_pos.y) + " to " + std::to_string(pos->x) + "," +
+                            std::to_string(pos->y));
+})
+
 REGISTER_CONSOLE_COMMAND(set_team, {
     if (args.size() < 2)
     {

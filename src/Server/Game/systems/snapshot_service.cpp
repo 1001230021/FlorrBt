@@ -23,6 +23,10 @@ namespace
 uint8_t GetEntityType(const CEntity& entity)
 {
     if (dynamic_cast<const CPortal*>(&entity)) return server_portal_entity_type;
+    if (dynamic_cast<const CDandelionMissile*>(&entity)) return server_dandelion_missile_entity_type;
+    if (dynamic_cast<const CPollenProjectile*>(&entity)) return server_pollen_entity_type;
+    if (dynamic_cast<const CSpiderWebZone*>(&entity)) return server_spider_web_entity_type;
+    if (dynamic_cast<const CMissile*>(&entity)) return server_missile_entity_type;
     if (const auto* mob = dynamic_cast<const CMobBase*>(&entity)) return static_cast<uint8_t>(mob->m_mob_type);
     if (const auto* drop = dynamic_cast<const CDrop*>(&entity))
         return server_drop_entity_type_offset + static_cast<uint8_t>(drop->GetType());
@@ -34,14 +38,7 @@ uint8_t GetEntityType(const CEntity& entity)
 std::string GetEntityName(const CEntity& entity)
 {
     if (const auto* player_flower = dynamic_cast<const CPlayerFlower*>(&entity)) return player_flower->m_name;
-    if (const auto* mob = dynamic_cast<const CMobBase*>(&entity)) return std::string(GetMobTypeName(mob->m_mob_type));
-    if (const auto* drop = dynamic_cast<const CDrop*>(&entity)) return std::string(GetPetalTypeName(drop->GetType()));
-    if (const auto* petal = dynamic_cast<const CPetal*>(&entity)) return std::string(GetPetalTypeName(petal->m_type));
-    if (dynamic_cast<const CPortal*>(&entity)) return "Portal";
-    if (dynamic_cast<const CSpiderWebZone*>(&entity)) return "SpiderWeb";
-    if (dynamic_cast<const CPollenProjectile*>(&entity)) return "Pollen";
-    if (dynamic_cast<const CMissile*>(&entity)) return "Missile";
-    return "Entity";
+    return "";
 }
 
 float GetHealthPercent(const CEntity& entity)
@@ -63,6 +60,7 @@ float GetPrimordialDefaultMobRadius()
                                   game_config::mob_soldier_fire_ant_radius, game_config::mob_soldier_termite_radius,
                                   game_config::mob_summoned_soldier_ant_radius, game_config::mob_bee_radius,
                                   game_config::mob_hornet_radius, game_config::mob_bumblebee_radius,
+                                  game_config::mob_dandelion_radius,
                                   game_config::mob_rock_radius, game_config::mob_baby_ant_radius,
                                   game_config::mob_worker_ant_radius, game_config::mob_queen_ant_radius,
                                   game_config::mob_ant_hole_radius, game_config::mob_spider_radius,
@@ -78,6 +76,15 @@ bool FlowerHasAvailablePetal(const CFlower& flower, EPetalType type)
         if (slot.m_p_proto->m_type == type) return true;
     }
     return false;
+}
+
+bool CanSnapshotEntityForPlayer(const CEntity& entity, const CPlayer& player)
+{
+    const auto* drop = dynamic_cast<const CDrop*>(&entity);
+    if (!drop) return true;
+
+    const int owner_id = drop->GetOwnerId();
+    return owner_id == drop_owner_all || owner_id == static_cast<int>(player.GetId());
 }
 
 struct visible_candidate
@@ -115,6 +122,7 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
     owner->GameWorld()->GetSpatialGrid().ForEachInRange(owner->m_pos, snap_radius, [&](CEntity* entity)
     {
         if (!entity || !entity->IsVisible() || entity == owner) return;
+        if (!CanSnapshotEntityForPlayer(*entity, player)) return;
         float radius = snap_view_radius + std::max(0.f, entity->m_radius);
         float dist_sq = DistanceSq(owner->m_pos, entity->m_pos);
         if (dist_sq > radius * radius) return;
@@ -149,13 +157,14 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
     msg.entities.reserve(std::min(visible_entities.size() + 1, entity_budget));
 
     ServerEntitySnap owner_snap = BuildEntitySnap(*owner, *owner);
-    size_t packed_size = 14 + ServerEntitySnap::GetPackedSize(owner_snap);
+    size_t packed_size = 13 + ServerEntitySnap::GetPackedSize(owner_snap);
     msg.entities.push_back(std::move(owner_snap));
 
     for (const visible_candidate& candidate : visible_entities)
     {
         const CEntity* entity = candidate.entity;
         if (!entity || !entity->IsVisible()) continue;
+        if (!CanSnapshotEntityForPlayer(*entity, player)) continue;
         if (msg.entities.size() >= entity_budget) break;
 
         ServerEntitySnap snap = BuildEntitySnap(*entity, *owner);
@@ -202,6 +211,11 @@ ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const 
     }
     if (const auto* drop = dynamic_cast<const CDrop*>(&entity)) snap.rarity = static_cast<uint8_t>(drop->GetRarity());
     if (const auto* petal = dynamic_cast<const CPetal*>(&entity)) snap.rarity = static_cast<uint8_t>(petal->m_rarity);
+    if (const auto* missile = dynamic_cast<const CDandelionMissile*>(&entity))
+    {
+        snap.rarity = static_cast<uint8_t>(missile->GetRarity());
+        if (missile->IsAttachedToOwner()) snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Attached);
+    }
 
     if (&entity == &owner) snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Owner);
     if (entity.IsDead()) snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Dead);
@@ -211,11 +225,11 @@ ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const 
         if (attackable->IsAttacking()) snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Attacking);
         if (attackable->IsDefending()) snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Defending);
     }
+    if (const auto* skill_caster = dynamic_cast<const ISkillCasterMob*>(&entity))
+        snap.flags |= PackServerEntitySkillWindup(skill_caster->GetWindupSkillId());
 
     if (const auto* flower = dynamic_cast<const CFlower*>(&entity))
     {
-        if (FlowerHasAvailablePetal(*flower, EPetalType::Relic))
-            snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Relic);
         if (FlowerHasAvailablePetal(*flower, EPetalType::Antennae))
             snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Antennae);
     }
@@ -224,12 +238,16 @@ ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const 
         auto& mutable_mob = *const_cast<CMobBase*>(mob);
         if (dynamic_cast<CSummonedMeleeController*>(mutable_mob.GetController()))
             snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Summoned);
+        if (mob->HasState<CPsionicConnectionState>())
+            snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Relic);
         if (mob->HasState<CUndeadState>())
             snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Undead);
         if (mob->HasState<CCorruptionState>())
             snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Corrupted);
         if (mob->HasState<CPoisonState>())
             snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Poisoned);
+        if (mob->HasState<CDiggingState>())
+            snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Digging);
     }
     return snap;
 }

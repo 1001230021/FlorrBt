@@ -59,6 +59,18 @@ class CWebSpeedReduceState : public CState
     bool m_is_valid = false;
 };
 
+class CAntiHealState : public CState
+{
+  public:
+    CAntiHealState(CMobBase* owner, float timer, ERarity rarity, float medic_mult);
+
+    void Tick(float dt) override { m_timer -= dt; }
+    void Refresh(float timer, ERarity rarity, float medic_mult);
+    float GetMedicMultiplier() const { return m_medic_mult; }
+
+    float m_medic_mult = 1.f;
+};
+
 class CNullificationState : public CState
 {
   public:
@@ -110,6 +122,15 @@ class CInvincibleState : public CState
     void Tick(float dt) override { m_timer -= dt; }
 };
 
+class CDiggingState : public CState
+{
+  public:
+    CDiggingState(CMobBase* owner, float timer, ERarity rarity) : CState(owner, timer, rarity) {}
+    ~CDiggingState() override;
+
+    void Tick(float dt) override { if (m_timer != endless) m_timer -= dt; }
+};
+
 class CPsionicConnectionState : public CState
 {
   public:
@@ -123,6 +144,10 @@ class CPsionicConnectionState : public CState
 };
 
 bool BlocksNullifiedInteraction(const CEntity* lhs, const CEntity* rhs);
+bool IsDiggingEntity(const CEntity* entity);
+bool ShouldSkipDiggingCollision(const CEntity* lhs, const CEntity* rhs);
 float GetPincerSpeedMultiplier(const CMobBase* mob);
+float GetMedicMultiplier(const CMobBase* mob);
+void ApplyDandelionAntiHeal(CMobBase* mob, ERarity rarity);
 bool TrySharePsionicDamage(CMobBase* receiver, float dmg, CEntity* attacker, EDamageType dmg_type);
 float GetBandageUndeadDuration(ERarity rarity);

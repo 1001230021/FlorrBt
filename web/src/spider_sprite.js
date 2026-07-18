@@ -3,7 +3,7 @@ const SPIDER_VIEWBOX = 110;
 const SPIDER_CLIP_X = 9.167;
 const SPIDER_CLIP_SIZE = 91.667;
 const SPIDER_BASE_FACE_ANGLE = -Math.PI * 0.75;
-const SPIDER_SPRITE_SCALE = 5.1;
+const SPIDER_SPRITE_SCALE = 5.8;
 const SPIDER_LEG_GROUP_A = new Set([1, 3, 5, 7]);
 const SPIDER_CACHE = {
   started: false,

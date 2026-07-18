@@ -291,8 +291,6 @@ void INetworkModule::SendSnapshots()
             continue;
         }
 
-        QueueOwnerState(*player);
-
         CSnapshotService::SBuildResult snapshot;
         if (!m_snapshot_service.BuildSnapshot(*player, m_snapshot_id, snapshot)) continue;
 
@@ -512,14 +510,23 @@ bool INetworkModule::QueueMessage(CPlayer& player, const ServerMessage& msg)
         return false;
     }
 
-    std::vector<uint8_t> buffer(len);
-    size_t packed_len = ServerMessage::pack(msg, buffer.data());
-    if (packed_len == 0 || packed_len > UINT16_MAX) return false;
+    thread_local std::vector<uint8_t> payload(UINT16_MAX);
+    if (payload.size() < UINT16_MAX) payload.resize(UINT16_MAX);
+    size_t packed_len = ServerMessage::pack(msg, payload.data());
+    if (packed_len == 0 || packed_len > UINT16_MAX)
+        return false;
+    if (PendingSendBytes(player) + packed_len + packet_length_prefix_size > game_config::network_max_send_buffer_size)
+    {
+        LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " output buffer overflow");
+        return false;
+    }
 
+    const size_t begin = player.m_send_buffer.size();
     uint16_t packet_len = static_cast<uint16_t>(packed_len);
-    player.m_send_buffer.push_back(static_cast<uint8_t>(packet_len & 0xff));
-    player.m_send_buffer.push_back(static_cast<uint8_t>((packet_len >> 8) & 0xff));
-    player.m_send_buffer.insert(player.m_send_buffer.end(), buffer.begin(), buffer.begin() + packed_len);
+    player.m_send_buffer.resize(begin + packet_length_prefix_size);
+    player.m_send_buffer[begin] = static_cast<uint8_t>(packet_len & 0xff);
+    player.m_send_buffer[begin + 1] = static_cast<uint8_t>((packet_len >> 8) & 0xff);
+    player.m_send_buffer.insert(player.m_send_buffer.end(), payload.begin(), payload.begin() + packed_len);
     return true;
 }
 
@@ -783,6 +790,21 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
             continue;
         }
 
+        if (player.m_receive_buffer[0] == client_state_request_packet_type)
+        {
+            player.m_receive_buffer.erase(player.m_receive_buffer.begin());
+            if (!player.IsAuthenticated())
+            {
+                QueueAuthResult(player, false, "Please login first");
+                return EPlayerBufferResult::RequestedDisconnect;
+            }
+            QueueInventory(player);
+            QueueOwnerState(player);
+            if (!FlushSendBuffer(player))
+                return EPlayerBufferResult::RequestedDisconnect;
+            continue;
+        }
+
         if (!player.IsAuthenticated())
         {
             QueueAuthResult(player, false, "Please login first");
@@ -939,6 +961,11 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
         }
         QueueAuthResult(*reconnect_player, true, "Reconnected");
         m_player_lifecycle_service.NotifyPlayerLogin(*reconnect_player, *this);
+        if (!FlushSendBuffer(*reconnect_player))
+        {
+            reconnect_player->DetachSocket();
+            return EPlayerBufferResult::RemovePendingPlayer;
+        }
         LOG_INFO("network", "Account " + request.name + " reconnected as player " + std::to_string(reconnect_player->GetId()));
         return EPlayerBufferResult::RemovePendingPlayer;
     }
@@ -950,6 +977,11 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
 
     QueueAuthResult(player, true, register_mode ? "Registered" : "Logged in");
     m_player_lifecycle_service.NotifyPlayerLogin(player, *this);
+    if (!FlushSendBuffer(player))
+    {
+        player.DetachSocket();
+        return EPlayerBufferResult::RequestedDisconnect;
+    }
     LOG_INFO("network", "Account " + request.name + " authenticated as player " + std::to_string(player.GetId()));
     return EPlayerBufferResult::Continue;
 }

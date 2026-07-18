@@ -19,12 +19,15 @@ class CFlower : public CAttackableMob<SFlowerStats>
         m_health = base.max_health;
         InitSlots();
     }
+    ~CFlower() override;
 
     void Tick(float dt) override;
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
     void ClearPetals();
     void DestroyPetalEntities();
+    void ReloadAllPetals();
+    bool TryStartBurrowFromShovel();
 
     const SFlowerStats* GetBaseStats() const override { return &m_base_stats; }
     const SFlowerStats* GetFinalStats() const override { return &m_final_stats; }

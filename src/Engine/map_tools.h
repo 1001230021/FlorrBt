@@ -77,6 +77,8 @@ struct FlorrBtMap
         float x, y, w, h;
         int level;
         std::string name;
+        bool is_save = false;
+        bool is_respawn_area = false;
     };
     std::vector<Checkpoint> checkpoints;
 
@@ -610,6 +612,42 @@ inline bool BuildZoneFromJsonObject(const CJsonValue& obj, FlorrBtMap::Zone& zon
     return zone.vertices.size() >= 3;
 }
 
+inline bool BuildCheckpointFromJsonObject(const CJsonValue& obj, const std::string& object_type,
+                                          FlorrBtMap::Checkpoint& checkpoint)
+{
+    checkpoint = {};
+    checkpoint.x = Scale512(JsonNumberField(obj, "x", 0.f));
+    checkpoint.y = Scale512(JsonNumberField(obj, "y", 0.f));
+    checkpoint.w = Scale512(JsonNumberField(obj, "width", 0.f));
+    checkpoint.h = Scale512(JsonNumberField(obj, "height", 0.f));
+    checkpoint.level = std::max(0, static_cast<int>(JsonPropertyFloat(obj, "level", 0.f)));
+    checkpoint.name = JsonStringField(obj, "name");
+    if (checkpoint.name.empty() && object_type == "new_players") checkpoint.name = "new_players";
+    checkpoint.is_save = object_type == "checkpoint";
+    checkpoint.is_respawn_area = object_type == "respawn_area";
+    return object_type == "checkpoint" || object_type == "respawn_area" || object_type == "new_players";
+}
+
+inline bool SameCheckpointObject(const FlorrBtMap::Checkpoint& lhs, const FlorrBtMap::Checkpoint& rhs)
+{
+    constexpr float epsilon = 0.5f;
+    return std::abs(lhs.x - rhs.x) <= epsilon &&
+           std::abs(lhs.y - rhs.y) <= epsilon &&
+           std::abs(lhs.w - rhs.w) <= epsilon &&
+           std::abs(lhs.h - rhs.h) <= epsilon &&
+           lhs.is_save == rhs.is_save &&
+           lhs.is_respawn_area == rhs.is_respawn_area;
+}
+
+inline bool HasCheckpointObject(const FlorrBtMap& map, const FlorrBtMap::Checkpoint& checkpoint)
+{
+    for (const FlorrBtMap::Checkpoint& existing : map.checkpoints)
+    {
+        if (SameCheckpointObject(existing, checkpoint)) return true;
+    }
+    return false;
+}
+
 inline void AddJsonClassObjectLayers(const std::filesystem::path& map_path, FlorrBtMap& fbt_map)
 {
     std::string error;
@@ -643,6 +681,13 @@ inline void AddJsonClassObjectLayers(const std::filesystem::path& map_path, Flor
                 if (zones_before != 0) continue;
                 FlorrBtMap::Zone zone;
                 if (BuildZoneFromJsonObject(obj, zone)) fbt_map.zones.push_back(std::move(zone));
+            }
+            else if (object_type == "checkpoint" || object_type == "respawn_area" || object_type == "new_players")
+            {
+                FlorrBtMap::Checkpoint checkpoint;
+                if (BuildCheckpointFromJsonObject(obj, object_type, checkpoint) &&
+                    !HasCheckpointObject(fbt_map, checkpoint))
+                    fbt_map.checkpoints.push_back(std::move(checkpoint));
             }
             else if (object_type == "warp" || object_type == "portal")
             {
@@ -790,8 +835,8 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
                     }
                     fbt_map->zones.push_back(zone);
                 }
-                else if (object_type == "respawn_area" ||
-                         (layer_name == "checkpoints" && obj.width > 0.0 && obj.height > 0.0))
+                else if (object_type == "checkpoint" || object_type == "respawn_area" ||
+                         object_type == "new_players")
                 {
                     FlorrBtMap::Checkpoint cp;
                     cp.x = Scale512(static_cast<float>(obj.x));
@@ -800,6 +845,9 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
                     cp.h = Scale512(static_cast<float>(obj.height));
                     cp.level = 0;
                     cp.name = MapObjectText(obj.name);
+                    if (cp.name.empty() && object_type == "new_players") cp.name = "new_players";
+                    cp.is_save = object_type == "checkpoint";
+                    cp.is_respawn_area = object_type == "respawn_area";
 
                     for (size_t p = 0; p < obj.property_count; ++p) {
                         const Property& prop = obj.properties[p];
@@ -843,8 +891,7 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
     AddTileCollisionWalls(*map, *fbt_map);
     if (fbt_map->walls.size() == walls_before_tiles)
         AddJsonTileCollisionWalls(resolved_path, *fbt_map);
-    if (fbt_map->zones.empty() || fbt_map->warps.empty())
-        AddJsonClassObjectLayers(resolved_path, *fbt_map);
+    AddJsonClassObjectLayers(resolved_path, *fbt_map);
     LOG_INFO("maploader", "Map collision walls registered: " + std::to_string(fbt_map->walls.size()));
     return fbt_map;
 }

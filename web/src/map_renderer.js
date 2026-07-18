@@ -65,6 +65,7 @@ export function createMapRenderer({
           tiles: await decodeTileLayer(layer),
         });
       }
+      const decorations = await loadMapDecorations(tmj, path, token);
 
       if (token !== state.mapLoadToken) return;
       state.map = {
@@ -74,6 +75,7 @@ export function createMapRenderer({
         tileWidth: tmj.tilewidth || 512,
         tileHeight: tmj.tileheight || 512,
         layers,
+        decorations,
         tileImages,
         collidableGids,
         collisionTiles: buildCollisionTiles(layers, collidableGids),
@@ -170,6 +172,7 @@ export function createMapRenderer({
     ctx.fillStyle = state.map ? "#20aa63" : "#edf3f7";
     ctx.fillRect(0, 0, state.canvasWidth, state.canvasHeight);
     drawMapTiles();
+    drawMapDecorations();
 
     if (!state.map) {
       ctx.save();
@@ -271,6 +274,53 @@ export function createMapRenderer({
         }
       }
     }
+  }
+
+  function drawMapDecorations() {
+    const map = state.map;
+    if (!map?.decorations?.length) return;
+
+    const scale = worldScale();
+    const visibleBounds = {
+      left: state.camera.x - state.canvasWidth * 0.5 / scale,
+      top: state.camera.y - state.canvasHeight * 0.5 / scale,
+      right: state.camera.x + state.canvasWidth * 0.5 / scale,
+      bottom: state.camera.y + state.canvasHeight * 0.5 / scale,
+    };
+
+    for (const decor of map.decorations) {
+      if (!imageReady(decor.image)) continue;
+      if (!rectsOverlap(decor, visibleBounds)) continue;
+
+      const pos = worldToScreen({ x: decor.x, y: decor.y });
+      const frame = decorationFrame(decor);
+      ctx.save();
+      ctx.globalAlpha *= decor.opacity;
+      if (decor.rotation) {
+        ctx.translate(pos.x + decor.width * scale * 0.5, pos.y + decor.height * scale * 0.5);
+        ctx.rotate(decor.rotation);
+        drawDecorationImage(decor, frame, -decor.width * scale * 0.5, -decor.height * scale * 0.5, decor.width * scale, decor.height * scale);
+      } else {
+        drawDecorationImage(decor, frame, pos.x, pos.y, decor.width * scale, decor.height * scale);
+      }
+      ctx.restore();
+    }
+  }
+
+  function decorationFrame(decor) {
+    if (!decor || decor.frameCount <= 1 || decor.frameWidth <= 0 || decor.frameHeight <= 0) return null;
+    const index = Math.floor(performance.now() / decor.frameMs) % decor.frameCount;
+    return {
+      sx: (index % decor.frameColumns) * decor.frameWidth,
+      sy: Math.floor(index / decor.frameColumns) * decor.frameHeight,
+      sw: decor.frameWidth,
+      sh: decor.frameHeight,
+    };
+  }
+
+  function drawDecorationImage(decor, frame, x, y, width, height) {
+    if (frame) ctx.drawImage(decor.image, frame.sx, frame.sy, frame.sw, frame.sh, x, y, width, height);
+    else ctx.drawImage(decor.image, x, y, width, height);
   }
 
   function drawTileDebugGrid(scale) {
@@ -394,6 +444,88 @@ export function createMapRenderer({
     drawGrid,
     loadMap,
   };
+}
+
+async function loadMapDecorations(tmj, mapPath, token) {
+  const decorations = [];
+  const loadPromises = [];
+
+  for (const layer of tmj.layers || []) {
+    if (layer.type !== "objectgroup") continue;
+    const layerName = String(layer.name || "").toLowerCase();
+    if (layerName !== "img" && layerName !== "images" && layerName !== "decor") continue;
+
+    const layerOpacity = Number.isFinite(layer.opacity) ? layer.opacity : 1;
+    for (const obj of layer.objects || []) {
+      if (obj.visible === false) continue;
+      const imagePath = objectProperty(obj, "image") || objectProperty(obj, "src");
+      if (!imagePath) continue;
+
+      const width = Math.max(1, Number(obj.width) || 1);
+      const height = Math.max(1, Number(obj.height) || 1);
+      const anchor = String(objectProperty(obj, "anchor") || "top-left").toLowerCase();
+      const x = Number(obj.x) || 0;
+      const y = Number(obj.y) || 0;
+      const decor = {
+        image: new Image(),
+        src: joinAssetPath(mapPath, imagePath),
+        x: anchor === "center" ? x - width * 0.5 : x,
+        y: anchor === "center" ? y - height * 0.5 : y,
+        width,
+        height,
+        frameWidth: objectNumberProperty(obj, "frame_width", 0),
+        frameHeight: objectNumberProperty(obj, "frame_height", 0),
+        frameCount: Math.max(1, Math.floor(objectNumberProperty(obj, "frame_count", 1))),
+        frameColumns: Math.max(1, Math.floor(objectNumberProperty(obj, "frame_columns", 1))),
+        frameMs: Math.max(1, objectNumberProperty(obj, "frame_ms", 100)),
+        rotation: ((Number(obj.rotation) || 0) * Math.PI) / 180,
+        opacity: clamp(layerOpacity * objectNumberProperty(obj, "opacity", 1), 0, 1),
+      };
+      loadPromises.push(loadMapDecorationImage(decor.image, decor.src).then((ok) => {
+        if (!ok && token === state.mapLoadToken) decor.image.failed = true;
+      }));
+      decorations.push(decor);
+    }
+  }
+
+  await Promise.all(loadPromises);
+  decorations.sort((a, b) => (a.y + a.height) - (b.y + b.height));
+  return decorations;
+}
+
+async function loadMapDecorationImage(image, src) {
+  return new Promise((resolve) => {
+    image.decoding = "async";
+    image.onload = async () => {
+      if (image.decode) {
+        try {
+          await image.decode();
+        } catch {
+          // Animated formats can reject decode while still being drawable.
+        }
+      }
+      resolve(true);
+    };
+    image.onerror = () => resolve(false);
+    image.src = src;
+  });
+}
+
+function objectProperty(obj, name) {
+  for (const prop of obj?.properties || []) {
+    if (String(prop?.name || "").toLowerCase() === name) return prop.value;
+  }
+  return undefined;
+}
+
+function objectNumberProperty(obj, name, fallback = 0) {
+  const value = objectProperty(obj, name);
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function rectsOverlap(a, b) {
+  return a.x <= b.right && a.x + a.width >= b.left && a.y <= b.bottom && a.y + a.height >= b.top;
 }
 
 function normalizeMapPath(path) {

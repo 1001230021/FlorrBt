@@ -1,6 +1,9 @@
 import { dom, state } from "./app_context.js";
+import { defaultClientConfig, normalizeClientConfig } from "./client_config.js";
 
 const settingsKey = "florrbt.web.settings";
+const settingsVersion = 7;
+const dandelionRightFacingConfigVersion = 7;
 
 const {
   wsUrlInput,
@@ -28,14 +31,32 @@ export function loadClientSettings() {
   passwordInput.value = saved.password || "";
   state.keyboardControl = saved.keyboardControl === true;
   state.mobileControlMode = normalizeMobileControlMode(saved.mobileControlMode || "auto");
+  state.clientConfig = normalizeClientConfig(saved.clientConfig);
+  if ((saved.version || 0) < dandelionRightFacingConfigVersion) {
+    state.clientConfig = {
+      ...state.clientConfig,
+      dandeMissileScale: defaultClientConfig.dandeMissileScale,
+      dandeMissileAngle: defaultClientConfig.dandeMissileAngle,
+      dandeMissileOffset: defaultClientConfig.dandeMissileOffset,
+      dandeMissileYOffset: defaultClientConfig.dandeMissileYOffset,
+      dandeMissileAnchorX: defaultClientConfig.dandeMissileAnchorX,
+      dandeMissileAnchorY: defaultClientConfig.dandeMissileAnchorY,
+      dandeBaseX: defaultClientConfig.dandeBaseX,
+      dandeBaseY: defaultClientConfig.dandeBaseY,
+      dandeBaseScale: defaultClientConfig.dandeBaseScale,
+      dandeBaseAngle: defaultClientConfig.dandeBaseAngle,
+    };
+  }
 }
 
 export function saveClientSettings() {
   localStorage.setItem(settingsKey, JSON.stringify({
+    version: settingsVersion,
     wsUrl: wsUrlInput.value.trim(),
     account: accountInput.value,
     password: passwordInput.value,
     keyboardControl: state.keyboardControl,
     mobileControlMode: state.mobileControlMode,
+    clientConfig: normalizeClientConfig(state.clientConfig),
   }));
 }

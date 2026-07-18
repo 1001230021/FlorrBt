@@ -31,7 +31,7 @@ CPlayer* FindPlayerFromEntity(CEntity* entity, const std::vector<std::unique_ptr
             CGameWorld* world = mob->GameWorld();
             if (controller && world)
             {
-                entity = world->GetEntity(controller->GetOwnerId());
+                entity = controller->GetOwner(world);
                 continue;
             }
         }

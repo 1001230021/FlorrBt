@@ -51,6 +51,7 @@ bool IsInvalidMeleeTarget(const CMobBase* mob, const CEntity* target, int ignore
     if (target->m_is_marked_for_des || target->IsDead() || !target->CanCollide()) return true;
     if (target == mob) return true;
     if (target->m_id == ignored_id || target->m_id == ignored_owner_id) return true;
+    if (IsDiggingEntity(target)) return true;
     if (CheckTeam(target->m_team, mob->m_team)) return true;
     if (BlocksNullifiedInteraction(mob, target)) return true;
     if (dynamic_cast<const CProjectile*>(target)) return true;
@@ -63,6 +64,7 @@ bool IsValidHoneyTarget(const CMobBase* mob, const CEntity* target, int ignored_
     if (target->m_is_marked_for_des || target->IsDead() || !target->CanCollide()) return false;
     if (target == mob) return false;
     if (target->m_id == ignored_id || target->m_id == ignored_owner_id) return false;
+    if (IsDiggingEntity(target)) return false;
     if (CheckTeam(target->m_team, mob->m_team)) return false;
     if (BlocksNullifiedInteraction(mob, target)) return false;
 
@@ -201,6 +203,32 @@ bool CMeleeController::IsRandomIdleDone(float dt)
     return m_random_idle_timer >= game_config::melee_random_idle_time;
 }
 
+void CMeleeController::SetTarget(CEntity* target)
+{
+    m_p_target = target;
+    m_target_id = target ? target->m_id : -1;
+    m_target_generation = target ? target->m_generation : 0;
+}
+
+void CMeleeController::ClearTarget()
+{
+    SetTarget(nullptr);
+}
+
+CEntity* CMeleeController::ResolveTarget(CMobBase* mob)
+{
+    if (!m_p_target && m_target_id < 0) return nullptr;
+    CGameWorld* world = mob ? mob->GameWorld() : nullptr;
+    CEntity* resolved = world && m_target_id >= 0 ? world->GetEntity(m_target_id, m_target_generation) : nullptr;
+    if (!resolved)
+    {
+        ClearTarget();
+        return nullptr;
+    }
+    m_p_target = resolved;
+    return m_p_target;
+}
+
 void CMeleeController::OnTick(CMobBase* mob, float dt)
 {
     if (!mob || !mob->GameWorld()) return;
@@ -209,13 +237,14 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
     if (!stats) return;
 
     m_change_target_count += dt;
+    CEntity* target = ResolveTarget(mob);
 
-    bool target_invalid = m_p_target &&
-                          IsCurrentMeleeTargetUnavailable(mob, m_p_target, dt, m_target_los_check_timer);
-    bool reached_random_target = !m_p_target && m_has_random_target_pos &&
+    bool target_invalid = target &&
+                          IsCurrentMeleeTargetUnavailable(mob, target, dt, m_target_los_check_timer);
+    bool reached_random_target = !target && m_has_random_target_pos &&
                                  (m_random_idle ? IsRandomIdleDone(dt) :
                                   DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
-    bool can_random_retarget = !m_p_target && m_change_target_count >= game_config::melee_target_time;
+    bool can_random_retarget = !target && m_change_target_count >= game_config::melee_target_time;
     float retarget_chance = game_config::melee_retarget_chance_multiplier * m_change_target_count * dt /
                             (game_config::melee_target_time * game_config::melee_target_time);
     retarget_chance = std::clamp(retarget_chance, 0.f, 1.f);
@@ -231,10 +260,11 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
 
         CEntity* p_best_target = FindClosestMeleeTarget(mob, stats->horizon);
 
-        m_p_target = p_best_target;
-        if (m_p_target)
+        SetTarget(p_best_target);
+        target = ResolveTarget(mob);
+        if (target)
         {
-            m_target_pos = m_p_target->m_pos;
+            m_target_pos = target->m_pos;
             m_has_random_target_pos = true;
             m_random_idle = false;
             m_random_idle_timer = 0.f;
@@ -243,11 +273,25 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
         }
     }
 
-    if (m_p_target) m_target_pos = m_p_target->m_pos;
+    if ((target = ResolveTarget(mob))) m_target_pos = target->m_pos;
     mob->MoveTowards(m_target_pos, dt);
 }
 
 // ============ Summoned ============
+
+CEntity* CSummonedMeleeController::GetOwner(CGameWorld* world) const
+{
+    if (!world || m_owner_id < 0) return nullptr;
+    if (m_owner_generation != 0) return world->GetEntity(m_owner_id, m_owner_generation);
+    return world->GetEntity(m_owner_id);
+}
+
+bool CSummonedMeleeController::IsOwnedBy(const CEntity* entity) const
+{
+    if (!entity || m_owner_id < 0) return false;
+    if (entity->m_id != m_owner_id) return false;
+    return m_owner_generation == 0 || entity->m_generation == m_owner_generation;
+}
 
 void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
 {
@@ -256,7 +300,7 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
         return;
     }
 
-    CEntity* owner = mob->GameWorld()->GetEntity(m_owner_id);
+    CEntity* owner = GetOwner(mob->GameWorld());
     if (!owner || owner->m_is_marked_for_des)
     {
         mob->m_is_marked_for_des = true;
@@ -275,7 +319,7 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
     float follow_range = game_config::mob_summoned_beetle_follow_range * range_scale;
     if (owner_dist_sq > follow_range * follow_range)
     {
-        m_p_target = owner;
+        SetTarget(owner);
         m_target_pos = owner->m_pos;
         m_has_random_target_pos = true;
         m_random_idle = false;
@@ -289,17 +333,22 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
     if (!stats) return;
 
     m_change_target_count += dt;
+    CEntity* target = ResolveTarget(mob);
 
     int owner_owner_id = -1;
-    if (auto* owner_projectile = dynamic_cast<CProjectile*>(owner)) owner_owner_id = owner_projectile->m_owner_id;
+    if (auto* owner_projectile = dynamic_cast<CProjectile*>(owner))
+    {
+        CEntity* root_owner = owner_projectile->GetOwner();
+        owner_owner_id = root_owner ? root_owner->m_id : -1;
+    }
 
-    bool target_invalid = m_p_target &&
-                          IsCurrentMeleeTargetUnavailable(mob, m_p_target, dt, m_target_los_check_timer,
+    bool target_invalid = target &&
+                          IsCurrentMeleeTargetUnavailable(mob, target, dt, m_target_los_check_timer,
                                                           m_owner_id, owner_owner_id);
-    bool reached_random_target = !m_p_target && m_has_random_target_pos &&
+    bool reached_random_target = !target && m_has_random_target_pos &&
                                  (m_random_idle ? IsRandomIdleDone(dt) :
                                   DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
-    bool can_random_retarget = !m_p_target && m_change_target_count >= game_config::melee_target_time;
+    bool can_random_retarget = !target && m_change_target_count >= game_config::melee_target_time;
     float retarget_chance = game_config::melee_retarget_chance_multiplier * m_change_target_count * dt /
                             (game_config::melee_target_time * game_config::melee_target_time);
     retarget_chance = std::clamp(retarget_chance, 0.f, 1.f);
@@ -315,10 +364,11 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
         float search_range = stats->horizon * game_config::mob_summoned_search_range_multiplier;
         CEntity* p_best_target = FindClosestMeleeTarget(mob, search_range, owner->m_id, owner_owner_id);
 
-        m_p_target = p_best_target;
-        if (m_p_target)
+        SetTarget(p_best_target);
+        target = ResolveTarget(mob);
+        if (target)
         {
-            m_target_pos = m_p_target->m_pos;
+            m_target_pos = target->m_pos;
             m_has_random_target_pos = true;
             m_random_idle = false;
             m_random_idle_timer = 0.f;
@@ -329,7 +379,7 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
         }
     }
 
-    if (m_p_target) m_target_pos = m_p_target->m_pos;
+    if ((target = ResolveTarget(mob))) m_target_pos = target->m_pos;
     mob->MoveTowards(m_target_pos, dt);
 }
 
@@ -343,19 +393,21 @@ void CNeutralMeleeController::OnTick(CMobBase* mob, float dt)
     if (!stats) return;
 
     m_change_target_count += dt;
+    CEntity* target = ResolveTarget(mob);
 
-    if (m_p_target && IsCurrentMeleeTargetUnavailable(mob, m_p_target, dt, m_target_los_check_timer))
+    if (target && IsCurrentMeleeTargetUnavailable(mob, target, dt, m_target_los_check_timer))
     {
-        m_p_target = nullptr;
+        ClearTarget();
+        target = nullptr;
         m_target_los_check_timer = 0.f;
         m_has_random_target_pos = false;
         m_random_idle = false;
         m_random_idle_timer = 0.f;
     }
 
-    if (m_p_target)
+    if (target)
     {
-        m_target_pos = m_p_target->m_pos;
+        m_target_pos = target->m_pos;
         mob->MoveTowards(m_target_pos, dt);
         return;
     }
@@ -368,8 +420,9 @@ void CNeutralMeleeController::OnTick(CMobBase* mob, float dt)
         m_change_target_count = 0.f;
         if (CEntity* honey = FindClosestHoneyTarget(mob, stats->horizon))
         {
-            m_p_target = honey;
-            m_target_pos = honey->m_pos;
+            SetTarget(honey);
+            target = ResolveTarget(mob);
+            m_target_pos = target ? target->m_pos : honey->m_pos;
             m_has_random_target_pos = true;
             m_random_idle = false;
             m_random_idle_timer = 0.f;
@@ -385,7 +438,7 @@ void CNeutralMeleeController::OnDamaged(CMobBase* mob, CEntity* attacker)
     if (!mob || !attacker) return;
     if (IsUnavailableMeleeTarget(mob, attacker)) return;
 
-    m_p_target = attacker;
+    SetTarget(attacker);
     m_target_pos = attacker->m_pos;
     m_has_random_target_pos = true;
     m_random_idle = false;
@@ -403,19 +456,21 @@ void CRandomWanderController::OnTick(CMobBase* mob, float dt)
     if (!stats) return;
 
     m_change_target_count += dt;
+    CEntity* target = ResolveTarget(mob);
 
-    if (m_p_target && IsCurrentMeleeTargetUnavailable(mob, m_p_target, dt, m_target_los_check_timer))
+    if (target && IsCurrentMeleeTargetUnavailable(mob, target, dt, m_target_los_check_timer))
     {
-        m_p_target = nullptr;
+        ClearTarget();
+        target = nullptr;
         m_target_los_check_timer = 0.f;
         m_has_random_target_pos = false;
         m_random_idle = false;
         m_random_idle_timer = 0.f;
     }
 
-    if (m_p_target)
+    if (target)
     {
-        m_target_pos = m_p_target->m_pos;
+        m_target_pos = target->m_pos;
         mob->MoveTowards(m_target_pos, dt);
         return;
     }
@@ -428,8 +483,9 @@ void CRandomWanderController::OnTick(CMobBase* mob, float dt)
         m_change_target_count = 0.f;
         if (CEntity* honey = FindClosestHoneyTarget(mob, stats->horizon))
         {
-            m_p_target = honey;
-            m_target_pos = honey->m_pos;
+            SetTarget(honey);
+            target = ResolveTarget(mob);
+            m_target_pos = target ? target->m_pos : honey->m_pos;
             m_has_random_target_pos = true;
             m_random_idle = false;
             m_random_idle_timer = 0.f;
@@ -445,17 +501,18 @@ void CRandomWanderController::OnTick(CMobBase* mob, float dt)
 void CQueenAntController::OnTick(CMobBase* mob, float dt)
 {
     CMeleeController::OnTick(mob, dt);
-    if (!mob || !m_p_target || m_p_target->m_is_marked_for_des || m_p_target->IsDead()) return;
+    CEntity* target = ResolveTarget(mob);
+    if (!mob || !target || target->m_is_marked_for_des || target->IsDead()) return;
 
     const SMobStats* stats = mob->GetFinalStats();
     if (!stats) return;
 
     float attack_range = std::max(mob->m_radius * 4.f, stats->horizon);
-    if (DistanceSq(mob->m_pos, m_p_target->m_pos) > attack_range * attack_range) return;
+    if (DistanceSq(mob->m_pos, target->m_pos) > attack_range * attack_range) return;
 
     if (auto* attackable = dynamic_cast<IAttackableMob*>(mob))
     {
-        if (attackable->TryAttack(m_p_target))
+        if (attackable->TryAttack(target))
             mob->m_vel = {0.f, 0.f};
     }
 }
@@ -467,7 +524,8 @@ void CSpiderController::OnTick(CMobBase* mob, float dt)
     CMeleeController::OnTick(mob, dt);
     if (!mob || !mob->GameWorld()) return;
     if (GetLevel(mob->GetRarity()) < GetLevel(ERarity::Legendary)) return;
-    if (!m_p_target || m_p_target->m_is_marked_for_des || m_p_target->IsDead()) return;
+    CEntity* target = ResolveTarget(mob);
+    if (!target || target->m_is_marked_for_des || target->IsDead()) return;
 
     m_web_timer += dt;
     float interval = std::max(game_config::server_fixed_dt, game_config::mob_spider_web_interval);
@@ -490,13 +548,14 @@ void CHornetRangedController::OnTick(CMobBase* mob, float dt)
     if (!stats) return;
 
     m_change_target_count += dt;
+    CEntity* target = ResolveTarget(mob);
 
-    bool target_invalid = m_p_target &&
-                          IsCurrentMeleeTargetUnavailable(mob, m_p_target, dt, m_target_los_check_timer);
-    bool reached_random_target = !m_p_target && m_has_random_target_pos &&
+    bool target_invalid = target &&
+                          IsCurrentMeleeTargetUnavailable(mob, target, dt, m_target_los_check_timer);
+    bool reached_random_target = !target && m_has_random_target_pos &&
                                  (m_random_idle ? IsRandomIdleDone(dt) :
                                   DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
-    bool can_random_retarget = !m_p_target && m_change_target_count >= game_config::melee_target_time;
+    bool can_random_retarget = !target && m_change_target_count >= game_config::melee_target_time;
     float retarget_chance = game_config::melee_retarget_chance_multiplier * m_change_target_count * dt /
                             (game_config::melee_target_time * game_config::melee_target_time);
     retarget_chance = std::clamp(retarget_chance, 0.f, 1.f);
@@ -511,26 +570,27 @@ void CHornetRangedController::OnTick(CMobBase* mob, float dt)
         m_random_idle = false;
         m_random_idle_timer = 0.f;
 
-        m_p_target = FindClosestMeleeTarget(mob, stats->horizon);
-        if (m_p_target)
+        SetTarget(FindClosestMeleeTarget(mob, stats->horizon));
+        target = ResolveTarget(mob);
+        if (target)
         {
-            m_target_pos = m_p_target->m_pos;
+            m_target_pos = target->m_pos;
             m_has_random_target_pos = true;
         } else {
             PickRandomTargetPos(mob, *stats);
         }
     }
 
-    if (!m_p_target)
+    if (!(target = ResolveTarget(mob)))
     {
         mob->MoveTowards(m_target_pos, dt);
         return;
     }
 
-    m_target_pos = m_p_target->m_pos;
-    FaceTarget(mob, m_p_target);
+    m_target_pos = target->m_pos;
+    FaceTarget(mob, target);
 
-    sf::Vector2f to_target = m_p_target->m_pos - mob->m_pos;
+    sf::Vector2f to_target = target->m_pos - mob->m_pos;
     float target_dist = Length(to_target);
     float stop_distance = 128.f + mob->m_radius;
     if (target_dist <= stop_distance)
@@ -541,8 +601,8 @@ void CHornetRangedController::OnTick(CMobBase* mob, float dt)
     float missile_range = game_config::mob_hornet_missile_speed * game_config::default_missile_lifetime;
     if (target_dist <= missile_range * 0.5f)
     {
-        if (auto* attackable = dynamic_cast<IAttackableMob*>(mob))
-            attackable->TryAttack(m_p_target);
+        if (auto* skill_caster = dynamic_cast<ISkillCasterMob*>(mob))
+            skill_caster->TryCastSkill(0, target);
     }
 }
 
@@ -571,6 +631,33 @@ void CBumbleBeeController::SpawnPollen(CMobBase* mob) const
     mob->GameWorld()->InsertEntity(std::move(pollen));
 }
 
+void CBumbleBeeController::SetHoneyTarget(CEntity* target)
+{
+    m_p_honey_target = target;
+    m_honey_target_id = target ? target->m_id : -1;
+    m_honey_target_generation = target ? target->m_generation : 0;
+}
+
+void CBumbleBeeController::ClearHoneyTarget()
+{
+    SetHoneyTarget(nullptr);
+}
+
+CEntity* CBumbleBeeController::ResolveHoneyTarget(CMobBase* mob)
+{
+    if (!m_p_honey_target && m_honey_target_id < 0) return nullptr;
+    CGameWorld* world = mob ? mob->GameWorld() : nullptr;
+    CEntity* resolved = world && m_honey_target_id >= 0 ?
+        world->GetEntity(m_honey_target_id, m_honey_target_generation) : nullptr;
+    if (!resolved)
+    {
+        ClearHoneyTarget();
+        return nullptr;
+    }
+    m_p_honey_target = resolved;
+    return m_p_honey_target;
+}
+
 void CBumbleBeeController::OnTick(CMobBase* mob, float dt)
 {
     if (!mob || !mob->GameWorld()) return;
@@ -589,23 +676,26 @@ void CBumbleBeeController::OnTick(CMobBase* mob, float dt)
         m_heading = std::atan2(mob->m_vel.y, mob->m_vel.x);
 
     m_honey_target_timer += dt;
-    if (m_p_honey_target &&
-        IsCurrentMeleeTargetUnavailable(mob, m_p_honey_target, dt, m_honey_los_check_timer))
+    CEntity* honey_target = ResolveHoneyTarget(mob);
+    if (honey_target &&
+        IsCurrentMeleeTargetUnavailable(mob, honey_target, dt, m_honey_los_check_timer))
     {
-        m_p_honey_target = nullptr;
+        ClearHoneyTarget();
+        honey_target = nullptr;
         m_honey_los_check_timer = 0.f;
         m_honey_target_timer = game_config::melee_target_time;
     }
-    if (!m_p_honey_target && m_honey_target_timer >= game_config::melee_target_time)
+    if (!honey_target && m_honey_target_timer >= game_config::melee_target_time)
     {
         m_honey_target_timer = 0.f;
-        m_p_honey_target = FindClosestHoneyTarget(mob, stats->horizon);
+        SetHoneyTarget(FindClosestHoneyTarget(mob, stats->horizon));
+        honey_target = ResolveHoneyTarget(mob);
     }
 
-    if (m_p_honey_target)
+    if (honey_target)
     {
-        FaceTarget(mob, m_p_honey_target);
-        mob->MoveTowards(m_p_honey_target->m_pos, dt);
+        FaceTarget(mob, honey_target);
+        mob->MoveTowards(honey_target->m_pos, dt);
     } else {
         m_turn_timer -= dt;
         if (m_turn_timer <= 0.f)

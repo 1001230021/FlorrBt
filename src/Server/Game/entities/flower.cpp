@@ -88,6 +88,12 @@ void SyncFlowerRadiusWithStats(CFlower& flower, SFlowerStats& stats)
 
 }
 
+CFlower::~CFlower()
+{
+    for (CBanSlotState* state : FindStates<CBanSlotState>())
+        RemoveState(state);
+}
+
 void CFlower::Tick(float dt)
 {
     CAttackableMob<SFlowerStats>::Tick(dt);
@@ -95,11 +101,18 @@ void CFlower::Tick(float dt)
     if (m_final_stats.health_regen > 0.f && m_final_stats.max_health > 0.f && m_health > 0.f)
     {
         float regen = m_final_stats.health_regen * std::max(0.f, m_final_stats.petal_medicine_multiplier) *
-                      std::max(0.f, m_final_stats.healing_received_multiplier);
+                      std::max(0.f, m_final_stats.healing_received_multiplier) *
+                      std::max(0.f, GetMedicMultiplier(this));
         m_health = std::min(m_final_stats.max_health, m_health + regen * dt);
     }
     RefreshNullificationState();
     RefreshCorruptionState();
+
+    if (HasState<CDiggingState>())
+    {
+        DestroyPetalEntities();
+        return;
+    }
 
     for (auto& slot : m_slots)
     {
@@ -194,6 +207,55 @@ void CFlower::DestroyPetalEntities()
         slot.m_start_copy_index = -1;
     }
     m_total_copies = 0;
+}
+
+void CFlower::ReloadAllPetals()
+{
+    for (auto& slot : m_slots)
+    {
+        if (!slot.m_p_proto || !slot.m_p_proto->m_p_behavior) continue;
+
+        SPetalStats stats = slot.m_p_proto->m_p_behavior->GetPetalStatsForSlot(slot.m_stored_rarity, &slot, this);
+        const float reload = std::max(0.f, slot.m_p_proto->m_type == EPetalType::Shovel ? stats.preload : stats.reload);
+        for (size_t i = 0; i < slot.m_p_petals.size(); ++i)
+        {
+            if (slot.m_p_petals[i])
+            {
+                slot.m_p_petals[i]->m_is_marked_for_des = true;
+                slot.m_p_petals[i] = nullptr;
+            }
+            if (i < slot.m_bonus_active.size()) slot.m_bonus_active[i] = false;
+            if (i < slot.m_reload_timers.size()) slot.m_reload_timers[i] = reload;
+            if (i < slot.m_reload_ignore_multiplier.size()) slot.m_reload_ignore_multiplier[i] = false;
+        }
+        slot.m_start_copy_index = -1;
+    }
+    m_total_copies = 0;
+}
+
+bool CFlower::TryStartBurrowFromShovel()
+{
+    if (HasState<CDiggingState>()) return false;
+
+    for (auto& slot : m_slots)
+    {
+        if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
+        if (slot.m_p_proto->m_type != EPetalType::Shovel) continue;
+
+        for (size_t i = 0; i < slot.m_p_petals.size(); ++i)
+        {
+            CPetal* petal = slot.m_p_petals[i];
+            if (!petal || petal->m_is_marked_for_des || petal->m_health <= 0.f || petal->m_hidden) continue;
+
+            float duration = std::max(game_config::server_fixed_dt, petal->m_final_petal_stats.reload);
+            petal->m_reload_override = std::max(0.f, petal->m_final_petal_stats.preload);
+            petal->m_health = 0.f;
+            if (auto* attackable = dynamic_cast<IAttackableMob*>(this)) attackable->ClearAttackState();
+            AddState(std::make_unique<CDiggingState>(this, duration, slot.m_stored_rarity));
+            return true;
+        }
+    }
+    return false;
 }
 
 int CFlower::GetStartCopyIndex(int slot_index) const

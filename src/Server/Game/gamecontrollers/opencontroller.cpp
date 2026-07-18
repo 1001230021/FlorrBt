@@ -21,12 +21,13 @@ constexpr float spawn_query_radius = game_config::WorldUnits(512.f);
 constexpr float min_spawn_distance = game_config::WorldUnits(128.f);
 constexpr size_t max_spawn_num = 12;
 constexpr int max_spawn_per_zone_tick = 8;
+constexpr size_t active_spawn_zones_per_tick = 8;
 constexpr int max_zone_spawn_target = 512;
 constexpr int spawn_position_attempts = 32;
 constexpr float rarity_difficulty_scale = 10.f;
 constexpr float rarity_gaussian_sigma = 0.36f;
 constexpr float drop_spread_radius = game_config::WorldUnits(32.f);
-constexpr const char* new_player_checkpoint_name = "new_players";
+constexpr float zone_density_spatial_cell_cutoff = 4096.f;
 
 struct lootable_player
 {
@@ -214,37 +215,19 @@ bool RandomPointInZone(const FlorrBtMap::Zone& zone, sf::Vector2f& out_pos)
     return false;
 }
 
-bool RandomPointInCheckpoint(const FlorrBtMap::Checkpoint& checkpoint, sf::Vector2f& out_pos)
+bool RandomPointInCheckpoint(const CGameWorld& world, const FlorrBtMap::Checkpoint& checkpoint, sf::Vector2f& out_pos)
 {
     if (checkpoint.w <= 0.f || checkpoint.h <= 0.f) return false;
     std::uniform_real_distribution<float> random_x(checkpoint.x, checkpoint.x + checkpoint.w);
     std::uniform_real_distribution<float> random_y(checkpoint.y, checkpoint.y + checkpoint.h);
-    out_pos = {random_x(SpawnRng()), random_y(SpawnRng())};
-    return true;
-}
-
-sf::Vector2f PickNewPlayerSpawnPosition(CGameWorld& world)
-{
-    const FlorrBtMap* map = world.GetMap();
-    if (map)
+    for (int attempt = 0; attempt < spawn_position_attempts; ++attempt)
     {
-        std::vector<const FlorrBtMap::Checkpoint*> candidates;
-        for (const FlorrBtMap::Checkpoint& checkpoint : map->checkpoints)
-        {
-            if (checkpoint.name != new_player_checkpoint_name) continue;
-            if (checkpoint.w <= 0.f || checkpoint.h <= 0.f) continue;
-            candidates.push_back(&checkpoint);
-        }
-
-        if (!candidates.empty())
-        {
-            std::uniform_int_distribution<size_t> dist(0, candidates.size() - 1);
-            sf::Vector2f pos;
-            if (RandomPointInCheckpoint(*candidates[dist(SpawnRng())], pos)) return pos;
-        }
+        sf::Vector2f candidate = {random_x(SpawnRng()), random_y(SpawnRng())};
+        if (world.CircleBlockedByWall(candidate, game_config::mob_player_flower_radius)) continue;
+        out_pos = candidate;
+        return true;
     }
-
-    return {game_config::player_respawn_x, game_config::player_respawn_y};
+    return false;
 }
 
 sf::Vector2f PickReturningPlayerSpawnPosition(CGameWorld& world)
@@ -255,7 +238,7 @@ sf::Vector2f PickReturningPlayerSpawnPosition(CGameWorld& world)
         std::vector<const FlorrBtMap::Checkpoint*> candidates;
         for (const FlorrBtMap::Checkpoint& checkpoint : map->checkpoints)
         {
-            if (checkpoint.name == new_player_checkpoint_name) continue;
+            if (!checkpoint.is_respawn_area) continue;
             if (checkpoint.w <= 0.f || checkpoint.h <= 0.f) continue;
             candidates.push_back(&checkpoint);
         }
@@ -264,23 +247,7 @@ sf::Vector2f PickReturningPlayerSpawnPosition(CGameWorld& world)
         {
             std::uniform_int_distribution<size_t> dist(0, candidates.size() - 1);
             sf::Vector2f pos;
-            if (RandomPointInCheckpoint(*candidates[dist(SpawnRng())], pos)) return pos;
-        }
-
-        std::vector<const FlorrBtMap::Zone*> zones;
-        for (const FlorrBtMap::Zone& zone : map->zones)
-        {
-            if (zone.vertices.size() >= 3) zones.push_back(&zone);
-        }
-
-        if (!zones.empty())
-        {
-            std::uniform_int_distribution<size_t> dist(0, zones.size() - 1);
-            for (size_t attempt = 0; attempt < zones.size(); ++attempt)
-            {
-                sf::Vector2f pos;
-                if (RandomPointInZone(*zones[dist(SpawnRng())], pos)) return pos;
-            }
+            if (RandomPointInCheckpoint(world, *candidates[dist(SpawnRng())], pos)) return pos;
         }
     }
 
@@ -337,12 +304,34 @@ bool CountsForZoneDensity(const CMobBase* mob)
     return true;
 }
 
-int CountMobsInZone(CGameWorld& world, const FlorrBtMap::Zone& zone)
+bool ShouldScanZoneDensityLinearly(const zone_bounds& bounds)
+{
+    const float cell_size = std::max(1.f, game_config::spatial_grid_cell_size);
+    const float diameter_cells = (bounds.radius * 2.f) / cell_size;
+    return diameter_cells * diameter_cells > zone_density_spatial_cell_cutoff;
+}
+
+int CountMobsInZone(CGameWorld& world, const FlorrBtMap::Zone& zone,
+                    int stop_at = std::numeric_limits<int>::max())
 {
     int count = 0;
     zone_bounds bounds = ZoneBounds(zone);
+    if (ShouldScanZoneDensityLinearly(bounds))
+    {
+        world.ForEachEntity([&](const CEntity* entity)
+        {
+            if (count >= stop_at) return;
+            const auto* mob = dynamic_cast<const CMobBase*>(entity);
+            if (!CountsForZoneDensity(mob)) return;
+            if (!IsPointInZone(zone, mob->m_pos)) return;
+            ++count;
+        });
+        return count;
+    }
+
     world.GetSpatialGrid().ForEachInRange(bounds.center, bounds.radius, [&](const CEntity* entity)
     {
+        if (count >= stop_at) return;
         const auto* mob = dynamic_cast<const CMobBase*>(entity);
         if (!CountsForZoneDensity(mob)) return;
         if (!IsPointInZone(zone, mob->m_pos)) return;
@@ -497,7 +486,20 @@ void COpenController::SpawnMobs(CGameWorld& world)
 
     const size_t idle_zones_per_tick = static_cast<size_t>(
         std::max(1, game_config::open_idle_spawn_zones_per_tick));
-    const size_t zones_to_visit = has_players ? zone_count : std::min(zone_count, idle_zones_per_tick);
+    std::vector<size_t> active_zone_indices;
+    if (has_players)
+    {
+        active_zone_indices.reserve(zone_count);
+        for (size_t zone_index = 0; zone_index < zone_count; ++zone_index)
+        {
+            if (ZoneIsNearPlayer(map->zones[zone_index], player_positions))
+                active_zone_indices.push_back(zone_index);
+        }
+    }
+
+    const size_t zones_to_visit = has_players
+                                      ? std::min(active_zone_indices.size(), active_spawn_zones_per_tick)
+                                      : std::min(zone_count, idle_zones_per_tick);
 
     int spawned = 0;
     int skipped_density = 0;
@@ -507,10 +509,10 @@ void COpenController::SpawnMobs(CGameWorld& world)
     int skipped_create = 0;
     for (size_t visit_index = 0; visit_index < zones_to_visit; ++visit_index)
     {
-        const size_t zone_index = has_players ? visit_index : (m_idle_spawn_zone_cursor + visit_index) % zone_count;
+        const size_t zone_index = has_players
+                                      ? active_zone_indices[(m_spawn_zone_cursor + visit_index) % active_zone_indices.size()]
+                                      : (m_idle_spawn_zone_cursor + visit_index) % zone_count;
         const FlorrBtMap::Zone& zone = map->zones[zone_index];
-
-        if (has_players && !ZoneIsNearPlayer(zone, player_positions)) continue;
 
         const int target_mobs = ZoneTargetMobCount(zone);
         if (target_mobs <= 0)
@@ -519,7 +521,7 @@ void COpenController::SpawnMobs(CGameWorld& world)
             continue;
         }
 
-        int current_mobs = CountMobsInZone(world, zone);
+        int current_mobs = CountMobsInZone(world, zone, target_mobs);
         if (current_mobs >= target_mobs)
         {
             continue;
@@ -575,7 +577,9 @@ void COpenController::SpawnMobs(CGameWorld& world)
         }
     }
 
-    if (!has_players)
+    if (has_players && !active_zone_indices.empty())
+        m_spawn_zone_cursor = (m_spawn_zone_cursor + zones_to_visit) % active_zone_indices.size();
+    else if (!has_players)
         m_idle_spawn_zone_cursor = (m_idle_spawn_zone_cursor + zones_to_visit) % zone_count;
 }
 
@@ -583,9 +587,8 @@ void COpenController::OnPlayerConnect(CGameWorld& world, CPlayer* player)
 {
     if (!player) return;
 
-    sf::Vector2f spawn_pos = player->ConsumeUseNewPlayerSpawn()
-                                 ? PickNewPlayerSpawnPosition(world)
-                                 : PickReturningPlayerSpawnPosition(world);
+    player->ConsumeUseNewPlayerSpawn();
+    sf::Vector2f spawn_pos = PickReturningPlayerSpawnPosition(world);
     auto entity = CreateMob(EMobType::PlayerFlower, &world, spawn_pos, ERarity::Common);
     CEntity* raw_entity = world.InsertEntity(std::move(entity));
     if (raw_entity) OnPlayerSpawn(world, player, raw_entity);
@@ -617,15 +620,15 @@ void COpenController::OnEntityDie(CGameWorld& world, CEntity* entity)
 
     std::vector<SDropRate> drops = RollDrops(mob->m_mob_type, mob->GetRarity());
     std::vector<lootable_player> lootable_players = FindLootablePlayers(*mob);
-    const size_t total_drop_count = drops.size() * lootable_players.size();
-    size_t drop_index = 0;
     for (const lootable_player& lootable : lootable_players)
     {
         if (!lootable.player) continue;
         auto* player_flower = dynamic_cast<CPlayerFlower*>(lootable.player->GetEntity());
+        size_t drop_index = 0;
+        const size_t player_drop_count = drops.size();
         for (const SDropRate& drop : drops)
         {
-            sf::Vector2f drop_pos = mob->m_pos + DropSpreadOffset(drop_index++, total_drop_count);
+            sf::Vector2f drop_pos = mob->m_pos + DropSpreadOffset(drop_index++, player_drop_count);
             auto drop_entity = std::make_unique<CDrop>(&world, drop_pos, drop.type, drop.rarity, lootable.player->GetId());
             world.InsertEntity(std::move(drop_entity));
             if (player_flower) player_flower->TakeExp(ExpForDropRarity(drop.rarity));

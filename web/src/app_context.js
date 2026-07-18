@@ -1,3 +1,5 @@
+import { defaultClientConfig } from "./client_config.js";
+
 export function emptySlot() {
   return { petalType: 0, rarity: 0 };
 }
@@ -28,6 +30,11 @@ export const dom = {
   chatHint: document.getElementById("chatHint"),
   chatInput: document.getElementById("chatInput"),
   petalInfoTooltip: document.getElementById("petalInfoTooltip"),
+  sliderPanel: document.getElementById("sliderPanel"),
+  sliderTitle: document.getElementById("sliderTitle"),
+  sliderValue: document.getElementById("sliderValue"),
+  sliderInput: document.getElementById("sliderInput"),
+  sliderCloseBtn: document.getElementById("sliderCloseBtn"),
   consolePanel: document.getElementById("consolePanel"),
   debugInfo: document.getElementById("debugInfo"),
   consoleLog: document.getElementById("consoleLog"),
@@ -64,7 +71,7 @@ export const state = {
   ownerLevel: 1,
   ownerExp: 0,
   ownerExpRequired: 10,
-  snapshotId: 0,
+  snapshotId: -1,
   viewRadius: 0,
   map: null,
   mapName: "",
@@ -74,6 +81,8 @@ export const state = {
   ownerSlots: Array.from({ length: 5 }, () => emptySlot()),
   secondarySlots: Array.from({ length: 5 }, () => emptySlot()),
   inventory: [],
+  ownerStateLoaded: false,
+  inventoryLoaded: false,
   chats: [],
   selectedSlot: 0,
   camera: { x: 0, y: 0 },
@@ -81,9 +90,11 @@ export const state = {
   mouse: { x: 0, y: 0, seen: false, inUi: false },
   keyboardControl: false,
   mobileControlMode: "auto",
+  clientConfig: { ...defaultClientConfig },
   attacking: false,
   defending: false,
-  lastInput: { x: 99, y: 99, attacking: false, defending: false },
+  digging: false,
+  lastInput: { x: 99, y: 99, attacking: false, defending: false, digging: false },
   sendTimer: 1,
   lastFrameTime: performance.now(),
   fps: 0,
@@ -92,6 +103,8 @@ export const state = {
   chatFilters: { local: true, global: true, whisper: true, server: true },
   lastChatRenderAt: 0,
   debugGrid: false,
+  debugHitbox: false,
+  slider: null,
   minimapMode: "local",
   backpackOpen: false,
   craftOpen: false,

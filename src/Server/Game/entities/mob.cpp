@@ -9,9 +9,14 @@
 #include "../../../Shared/game_config.h"
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <unordered_set>
 
-CMobBase::~CMobBase() = default;
+CMobBase::~CMobBase()
+{
+    for (auto& state : m_states)
+        if (state) state->m_p_owner = nullptr;
+}
 
 template <typename TStats> CMob<TStats>::~CMob() = default;
 
@@ -36,7 +41,7 @@ bool IsUndeadDamageSource(CEntity* entity)
             CGameWorld* world = mob->GameWorld();
             if (controller && world)
             {
-                entity = world->GetEntity(controller->GetOwnerId());
+                entity = controller->GetOwner(world);
                 continue;
             }
         }
@@ -54,6 +59,11 @@ bool IsUndeadDamageSource(CEntity* entity)
 }
 }
 
+bool ShouldBlockDiggingDamage(CMobBase* receiver, CEntity* attacker, EDamageType dmg_type)
+{
+    return receiver && receiver->HasState<CDiggingState>() && dmg_type != EDamageType::Poison && !IsDiggingEntity(attacker);
+}
+
 void CMobBase::AddState(std::unique_ptr<CState> state)
 {
     if (state) m_states.push_back(std::move(state));
@@ -61,14 +71,26 @@ void CMobBase::AddState(std::unique_ptr<CState> state)
 
 void CMobBase::TickStates(float dt)
 {
-    for (auto it = m_states.begin(); it != m_states.end();)
+    for (size_t index = 0; index < m_states.size();)
     {
-        (*it)->Tick(dt);
-        if ((*it)->m_timer != endless && (*it)->m_timer <= 0.0f)
+        CState* state = m_states[index].get();
+        if (!state)
         {
-            it = m_states.erase(it);
+            m_states.erase(m_states.begin() + static_cast<std::ptrdiff_t>(index));
+            continue;
+        }
+
+        state->Tick(dt);
+        if (index >= m_states.size() || m_states[index].get() != state)
+            continue;
+
+        if (state->m_timer != endless && state->m_timer <= 0.0f)
+        {
+            std::unique_ptr<CState> expired = std::move(m_states[index]);
+            m_states.erase(m_states.begin() + static_cast<std::ptrdiff_t>(index));
+            expired.reset();
         } else {
-            ++it;
+            ++index;
         }
     }
 }
@@ -137,6 +159,7 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
     if (!stats) return;
 
     float speed_multiplier = GetPincerSpeedMultiplier(this) * game_config::mob_velocity_multiplier;
+    if (HasState<CDiggingState>()) speed_multiplier *= 0.5f;
     float max_velocity = stats->max_velocity * speed_multiplier;
     float acceleration = stats->acceleration * speed_multiplier;
 
@@ -214,7 +237,9 @@ bool CMobBase::RemoveState(CState* state)
     {
         if (it->get() == state)
         {
+            std::unique_ptr<CState> removed = std::move(*it);
             m_states.erase(it);
+            removed.reset();
             return true;
         }
     }
@@ -260,4 +285,5 @@ void RegisterMobs()
     RegisterSpider();
     RegisterSandstorm();
     RegisterDummy();
+    RegisterDandelion();
 }

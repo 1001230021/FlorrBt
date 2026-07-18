@@ -8,6 +8,7 @@
 #include "Module/server_gui_module.h"
 #include "Module/world_module.h"
 #include "report.h"
+#include "../Engine/logger.h"
 #include "../Shared/drop_rate.h"
 #include "../Shared/game_config.h"
 #include <algorithm>
@@ -233,7 +234,9 @@ void CServer::Run()
         {
             report::ProcessAsyncResults();
             for (auto& module : m_modules)
+            {
                 module->Tick(dt);
+            }
         }
         catch (const std::exception& e)
         {

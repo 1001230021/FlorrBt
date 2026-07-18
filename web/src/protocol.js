@@ -2,7 +2,11 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 export const NETWORK_PETAL_TYPE_OFFSET = 100;
-export const NETWORK_DROP_TYPE_OFFSET = 150;
+export const NETWORK_DROP_TYPE_OFFSET = 180;
+export const NETWORK_DANDELION_MISSILE_ENTITY_TYPE = 95;
+export const NETWORK_POLLEN_ENTITY_TYPE = 96;
+export const NETWORK_SPIDER_WEB_ENTITY_TYPE = 97;
+export const NETWORK_MISSILE_ENTITY_TYPE = 98;
 export const NETWORK_PORTAL_ENTITY_TYPE = 99;
 export const MAX_CHAT_MESSAGE_SIZE = 180;
 export const NET_COORD_SCALE = 64;
@@ -33,14 +37,14 @@ export const PetalNames = [
   "Corruption", "Bandage", "Heavy", "Faster", "Yggdrasil", "Dahlia", "Wing", "Triangle",
   "Sawblade", "Fragment", "Mimic", "Glass", "Stinger", "BrokenEgg", "Light",
   "Leaf", "Rock", "Web", "Cactus", "Pollen", "Corn", "Rice", "Basil", "Soil",
-  "Honey", "Wax", "ThirdEye",
+  "Honey", "Wax", "ThirdEye", "Dandelion", "Orange", "Shovel",
 ];
 
 export const MobNames = [
   "None", "Beetle", "Gambler", "NormalLadybug", "MechaFlower", "NormalFlower", "PlayerFlower",
   "SoldierAnt", "SoldierFireAnt", "SoldierTermite", "SummonedBeetle", "SummonedSoldierAnt",
   "BandageBeetle", "Bee", "Hornet", "BumbleBee", "Rock", "BabyAnt", "WorkerAnt", "QueenAnt",
-  "AntHole", "Spider", "Sandstorm", "Dummy",
+  "AntHole", "Spider", "Sandstorm", "Dummy", "Dandelion",
 ];
 
 export const RarityNames = [
@@ -338,12 +342,13 @@ export function packInput(moveX, moveY) {
   return out;
 }
 
-export function packChores(attacking, defending, agree = false, disconnect = false) {
+export function packChores(attacking, defending, agree = false, disconnect = false, digging = false) {
   let value = 0x03;
   if (attacking) value |= 1 << 2;
   if (defending) value |= 1 << 3;
   if (agree) value |= 1 << 4;
   if (disconnect) value |= 1 << 5;
+  if (digging) value |= 1 << 6;
   return new Uint8Array([value]);
 }
 
@@ -368,6 +373,10 @@ export function packCraft(petalType, rarity, count) {
   const view = new DataView(out.buffer);
   view.setUint32(3, safeCount, true);
   return out;
+}
+
+export function packStateRequest() {
+  return new Uint8Array([0xf5]);
 }
 
 export function packTalentRequest(action, talents) {

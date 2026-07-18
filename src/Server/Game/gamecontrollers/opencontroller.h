@@ -16,5 +16,6 @@ class COpenController : public IGameController
 
   private:
     float m_count = game_config::open_initial_spawn_delay;
+    size_t m_spawn_zone_cursor = 0;
     size_t m_idle_spawn_zone_cursor = 0;
 };
