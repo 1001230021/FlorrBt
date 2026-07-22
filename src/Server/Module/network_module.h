@@ -42,6 +42,7 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
     bool SendChatToPlayer(CPlayer& player, const CServer::SChatEntry& chat);
     bool QueueWelcome(CPlayer& player) override;
     bool QueueOwnerStateUpdate(CPlayer& player) override;
+    bool QueueInventoryUpdate(CPlayer& player);
     void NotifyPlayerWorldChanged(CPlayer& player);
 
   private:

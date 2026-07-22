@@ -40,6 +40,7 @@ class CGameWorld
 
     void RemoveEntity(int id);
     void DestroyProjectilesOwnedBy(int owner_id);
+    void DestroySummonedMobsOwnedBy(int owner_id, std::uint64_t owner_generation = 0);
     CEntity* TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& target_world,
                                          std::optional<sf::Vector2f> target_pos = std::nullopt,
                                          std::optional<std::string> from = std::nullopt);
@@ -70,6 +71,7 @@ class CGameWorld
     std::vector<CEntity*> GetAllEntities() const;
 
     const entity_spatial_grid& GetSpatialGrid() const { return m_spatial_grid; }
+    float GetMaxEntityRadius() const { return m_cached_max_entity_radius; }
     const FlorrBtMap* GetMap() const { return m_map.get(); }
     const std::string& GetMapPath() const { return m_map_path; }
     std::string GetMapName() const;

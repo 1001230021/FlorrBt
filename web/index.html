@@ -34,7 +34,10 @@
   <section id="hud" class="hud ui" aria-hidden="true"></section>
 
   <section id="deathOverlay" class="death-overlay ui hidden" aria-label="Death screen">
-    <button id="reviveBtn" class="revive-button" type="button">Revive</button>
+    <div class="death-stack">
+      <button id="reviveBtn" class="revive-button" type="button">Revive</button>
+      <button id="deathCloseBtn" class="death-close-button" type="button">Close</button>
+    </div>
   </section>
 
   <section id="quickActions" class="quick-actions ui hidden" aria-label="Quick actions">

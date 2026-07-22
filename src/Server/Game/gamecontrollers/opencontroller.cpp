@@ -1,4 +1,5 @@
 #include "opencontroller.h"
+#include "../controllers/melee_controller.h"
 #include "../entities/drop.h"
 #include "../player.h"
 #include "../gameworld.h"
@@ -38,6 +39,12 @@ struct lootable_player
 struct zone_bounds
 {
     sf::Vector2f center = {0.f, 0.f};
+    float radius = 0.f;
+};
+
+struct pending_spawn
+{
+    sf::Vector2f pos = {0.f, 0.f};
     float radius = 0.f;
 };
 
@@ -81,38 +88,6 @@ bool IsAboveUltra(ERarity rarity)
 bool IsSuperOrHigher(ERarity rarity)
 {
     return IsAtLeastRarity(rarity, ERarity::Super);
-}
-
-int ExpForDropRarity(ERarity rarity)
-{
-    switch (rarity)
-    {
-    case ERarity::Common:
-        return 1;
-    case ERarity::Unusual:
-        return 1;
-    case ERarity::Rare:
-        return 9;
-    case ERarity::Epic:
-        return 108;
-    case ERarity::Legendary:
-        return 1857;
-    case ERarity::Mythic:
-        return 11142;
-    case ERarity::Ultra:
-        return 44568;
-    case ERarity::Exotic:
-        return 89136;
-    case ERarity::Super:
-        return 178272;
-    case ERarity::Eternal:
-    case ERarity::Unique:
-        return 534816;
-    case ERarity::Primordial:
-        return 1604448;
-    default:
-        return 0;
-    }
 }
 
 sf::Vector2f DropSpreadOffset(size_t index, size_t count)
@@ -218,11 +193,12 @@ bool RandomPointInZone(const FlorrBtMap::Zone& zone, sf::Vector2f& out_pos)
 bool RandomPointInCheckpoint(const CGameWorld& world, const FlorrBtMap::Checkpoint& checkpoint, sf::Vector2f& out_pos)
 {
     if (checkpoint.w <= 0.f || checkpoint.h <= 0.f) return false;
-    std::uniform_real_distribution<float> random_x(checkpoint.x, checkpoint.x + checkpoint.w);
-    std::uniform_real_distribution<float> random_y(checkpoint.y, checkpoint.y + checkpoint.h);
+    std::uniform_real_distribution<float> random_x(0.f, checkpoint.w);
+    std::uniform_real_distribution<float> random_y(0.f, checkpoint.h);
     for (int attempt = 0; attempt < spawn_position_attempts; ++attempt)
     {
-        sf::Vector2f candidate = {random_x(SpawnRng()), random_y(SpawnRng())};
+        const FlorrBtMap::Point point = CheckpointLocalToWorldPoint(checkpoint, random_x(SpawnRng()), random_y(SpawnRng()));
+        sf::Vector2f candidate = {point.x, point.y};
         if (world.CircleBlockedByWall(candidate, game_config::mob_player_flower_radius)) continue;
         out_pos = candidate;
         return true;
@@ -301,6 +277,7 @@ bool CountsForZoneDensity(const CMobBase* mob)
     if (!mob || mob->m_is_marked_for_des || mob->IsDead()) return false;
     if (mob->m_mob_type == EMobType::PlayerFlower) return false;
     if (mob->m_mob_type == EMobType::SummonedBeetle || mob->m_mob_type == EMobType::SummonedSoldierAnt) return false;
+    if (dynamic_cast<const CSummonedMeleeController*>(mob->GetController())) return false;
     return true;
 }
 
@@ -340,29 +317,80 @@ int CountMobsInZone(CGameWorld& world, const FlorrBtMap::Zone& zone,
     return count;
 }
 
-bool IsFarFromPendingSpawns(const sf::Vector2f& pos, const std::vector<sf::Vector2f>& pending_spawns)
+float SpawnSpacingDistance(float lhs_radius, float rhs_radius)
 {
-    for (const sf::Vector2f& pending_pos : pending_spawns)
-        if (Length(pending_pos - pos) <= min_spawn_distance)
+    return std::max(0.f, lhs_radius) + std::max(0.f, rhs_radius) + min_spawn_distance;
+}
+
+float SpawnRadiusFor(const CMobPrototype& proto, ERarity rarity)
+{
+    return std::max(0.f, proto.BuildFlowerStats(rarity).radius);
+}
+
+bool IsFarFromPendingSpawns(const sf::Vector2f& pos, float spawn_radius,
+                            const std::vector<pending_spawn>& pending_spawns)
+{
+    for (const pending_spawn& pending : pending_spawns)
+    {
+        const float min_distance = SpawnSpacingDistance(spawn_radius, pending.radius);
+        if (DistanceSq(pending.pos, pos) <= min_distance * min_distance)
             return false;
+    }
     return true;
 }
 
-bool CanSpawnAt(CGameWorld& world, const sf::Vector2f& pos)
+bool CanSpawnAt(CGameWorld& world, const sf::Vector2f& pos, float spawn_radius)
 {
+    if (world.CircleBlockedByWall(pos, spawn_radius)) return false;
+
     int nearby_mobs = 0;
-    CEntity* closest_mob = world.FindClosestEntity(pos, spawn_query_radius, [&nearby_mobs](const CEntity* entity)
+    bool too_close_to_mob = false;
+    const float spawn_query_radius_sq = spawn_query_radius * spawn_query_radius;
+
+    world.GetSpatialGrid().ForEachInRange(pos, spawn_query_radius, [&](const CEntity* entity)
     {
         const auto* mob = dynamic_cast<const CMobBase*>(entity);
-        if (!mob || mob->m_is_marked_for_des || mob->IsDead()) return false;
-        if (mob->m_mob_type == EMobType::PlayerFlower) return false;
-        ++nearby_mobs;
-        return true;
+        if (!mob || mob->m_is_marked_for_des || mob->IsDead()) return;
+
+        const float dist_sq = DistanceSq(mob->m_pos, pos);
+        if (dist_sq <= spawn_query_radius_sq && CountsForZoneDensity(mob))
+            ++nearby_mobs;
+
+        if (!mob->CanCollide()) return;
+        const float min_distance = SpawnSpacingDistance(spawn_radius, mob->m_radius);
+        if (dist_sq <= min_distance * min_distance)
+            too_close_to_mob = true;
     });
 
     if (nearby_mobs >= static_cast<int>(max_spawn_num)) return false;
-    if (!closest_mob) return true;
-    return Length(closest_mob->m_pos - pos) > min_spawn_distance;
+    return !too_close_to_mob;
+}
+
+enum class spawn_position_status
+{
+    Found,
+    NoPosition,
+    Blocked,
+};
+
+spawn_position_status PickSpawnPosition(CGameWorld& world, const FlorrBtMap::Zone& zone, float spawn_radius,
+                                        const std::vector<pending_spawn>& pending_spawns, sf::Vector2f& out_pos)
+{
+    bool found_zone_position = false;
+    for (int attempt = 0; attempt < spawn_position_attempts; ++attempt)
+    {
+        sf::Vector2f candidate;
+        if (!RandomPointInZone(zone, candidate)) continue;
+        found_zone_position = true;
+
+        if (!CanSpawnAt(world, candidate, spawn_radius)) continue;
+        if (!IsFarFromPendingSpawns(candidate, spawn_radius, pending_spawns)) continue;
+
+        out_pos = candidate;
+        return spawn_position_status::Found;
+    }
+
+    return found_zone_position ? spawn_position_status::Blocked : spawn_position_status::NoPosition;
 }
 
 std::vector<sf::Vector2f> PlayerFlowerPositions(CGameWorld& world)
@@ -507,6 +535,7 @@ void COpenController::SpawnMobs(CGameWorld& world)
     int skipped_spacing = 0;
     int skipped_pool = 0;
     int skipped_create = 0;
+    std::vector<pending_spawn> pending_spawns;
     for (size_t visit_index = 0; visit_index < zones_to_visit; ++visit_index)
     {
         const size_t zone_index = has_players
@@ -535,24 +564,11 @@ void COpenController::SpawnMobs(CGameWorld& world)
             continue;
         }
 
-        std::vector<sf::Vector2f> pending_spawns;
         const int max_spawn_for_zone = has_players ? max_spawn_per_zone_tick :
                                       std::max(1, game_config::open_idle_spawn_per_zone_tick);
         const int spawn_budget = std::min(target_mobs - current_mobs, max_spawn_for_zone);
         for (int i = 0; i < spawn_budget; ++i)
         {
-            sf::Vector2f pos;
-            if (!RandomPointInZone(zone, pos))
-            {
-                ++skipped_position;
-                continue;
-            }
-            if (!CanSpawnAt(world, pos) || !IsFarFromPendingSpawns(pos, pending_spawns))
-            {
-                ++skipped_spacing;
-                continue;
-            }
-
             EMobType mob_type = PickZoneMobType(mob_entries);
             if (mob_type == EMobType::None)
             {
@@ -561,6 +577,27 @@ void COpenController::SpawnMobs(CGameWorld& world)
             }
 
             ERarity rarity = PickRarityForDifficulty(zone.difficulty);
+            const CMobPrototype* proto = FindMobPrototype(mob_type);
+            if (!proto)
+            {
+                ++skipped_create;
+                continue;
+            }
+
+            const float spawn_radius = SpawnRadiusFor(*proto, rarity);
+            sf::Vector2f pos;
+            switch (PickSpawnPosition(world, zone, spawn_radius, pending_spawns, pos))
+            {
+            case spawn_position_status::Found:
+                break;
+            case spawn_position_status::NoPosition:
+                ++skipped_position;
+                continue;
+            case spawn_position_status::Blocked:
+                ++skipped_spacing;
+                continue;
+            }
+
             if (ShouldSkipSuperOrHigherSpawn(world, pos, rarity))
                 continue;
 
@@ -568,7 +605,7 @@ void COpenController::SpawnMobs(CGameWorld& world)
             if (mob)
             {
                 world.InsertEntity(std::move(mob));
-                pending_spawns.push_back(pos);
+                pending_spawns.push_back({pos, spawn_radius});
                 ++current_mobs;
                 ++spawned;
             } else {
@@ -617,13 +654,14 @@ void COpenController::OnEntityDie(CGameWorld& world, CEntity* entity)
 {
     auto* mob = dynamic_cast<CMobBase*>(entity);
     if (!mob) return;
+    if (mob->m_mob_type == EMobType::SummonedBeetle || mob->m_mob_type == EMobType::SummonedSoldierAnt) return;
+    if (dynamic_cast<const CSummonedMeleeController*>(mob->GetController())) return;
 
     std::vector<SDropRate> drops = RollDrops(mob->m_mob_type, mob->GetRarity());
     std::vector<lootable_player> lootable_players = FindLootablePlayers(*mob);
     for (const lootable_player& lootable : lootable_players)
     {
         if (!lootable.player) continue;
-        auto* player_flower = dynamic_cast<CPlayerFlower*>(lootable.player->GetEntity());
         size_t drop_index = 0;
         const size_t player_drop_count = drops.size();
         for (const SDropRate& drop : drops)
@@ -631,11 +669,6 @@ void COpenController::OnEntityDie(CGameWorld& world, CEntity* entity)
             sf::Vector2f drop_pos = mob->m_pos + DropSpreadOffset(drop_index++, player_drop_count);
             auto drop_entity = std::make_unique<CDrop>(&world, drop_pos, drop.type, drop.rarity, lootable.player->GetId());
             world.InsertEntity(std::move(drop_entity));
-            if (player_flower) player_flower->TakeExp(ExpForDropRarity(drop.rarity));
-        }
-        if (player_flower)
-        {
-            if (CGameContext* context = world.GameContext()) context->Network().QueueOwnerStateUpdate(*lootable.player);
         }
     }
 }

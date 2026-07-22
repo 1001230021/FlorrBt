@@ -29,7 +29,26 @@ import { clearLadybugPattern, drawNormalLadybug } from "./ladybug_sprite.js";
 import { drawBeetle } from "./beetle_sprite.js";
 import { drawSoldierAnt } from "./soldier_ant_sprite.js";
 import { drawBee, drawBumbleBee, drawHornet, drawHornetMissile, drawPollen } from "./bee_sprite.js";
-import { drawAntHole, drawBabyAnt, drawDandelion, drawPortal, drawQueenAnt, drawRock, drawSandstorm, drawWorkerAnt } from "./garden_mob_sprite.js";
+import {
+  drawAntEggMob,
+  drawAntHole,
+  drawBabyAnt,
+  drawBabyFireAnt,
+  drawBabyTermite,
+  drawDandelion,
+  drawFireQueenAnt,
+  drawLeafPiece,
+  drawPortal,
+  drawQueenAnt,
+  drawRock,
+  drawSandstorm,
+  drawSoldierFireAntMob,
+  drawSoldierTermite,
+  drawTermiteOvermind,
+  drawWorkerAnt,
+  drawWorkerFireAnt,
+  drawWorkerTermite,
+} from "./garden_mob_sprite.js";
 import { drawSpider, drawSpiderWeb } from "./spider_sprite.js";
 import { dom, emptySlot, slotHasItem, state } from "./app_context.js";
 import { createChatUi, isTextInputActive } from "./chat_ui.js";
@@ -47,24 +66,31 @@ import { createMapRenderer } from "./map_renderer.js";
 import { createMobileControls } from "./mobile_controls.js";
 import {
   PetalIconIds,
+  antEggMobType,
   antHoleType,
   babyAntType,
+  babyFireAntType,
+  babyTermiteType,
   bandageBeetleType,
   beeType,
   beetleSpriteForwardOffsetScale,
   beetleType,
+  bloodSacrificeEffectType,
   bossRarity,
   bumbleBeeType,
   compassUltraIconMinRarity,
   dandelionMissileType,
   dandelionType,
   dummyType,
+  fireAntEggType,
+  fireQueenAntType,
   flagAntennae,
   flagAttacking,
   flagCorrupted,
   flagDead,
   flagDefending,
   flagDigging,
+  flagAttached,
   flagOwner,
   flagPoisoned,
   flagRelic,
@@ -73,6 +99,7 @@ import {
   flowerTextureVersion,
   hornetMissileType,
   hornetType,
+  leafPieceType,
   maxBossBars,
   mobSpriteCoverScale,
   mobSpriteEffectiveBox,
@@ -146,12 +173,20 @@ import {
   sandstormType,
   skillWindupIdFromFlags,
   soldierAntType,
+  soldierFireAntType,
+  soldierTermiteType,
   spiderWebZoneType,
   spiderType,
   stingerSplitIconMinRarity,
   summonedBeetleType,
   summonedSoldierAntType,
+  queenAntEggType,
+  queenFireAntEggType,
+  termiteEggType,
+  termiteOvermindType,
   workerAntType,
+  workerFireAntType,
+  workerTermiteType,
   worldDropSizeScale,
   worldPetalSizeScale,
 } from "./game_ids.js";
@@ -175,6 +210,7 @@ const {
   connectBtn,
   deathOverlay,
   reviveBtn,
+  deathCloseBtn,
   quickActions,
   quickBackpackBtn,
   quickTalentBtn,
@@ -254,13 +290,54 @@ const entityPixelMinScreenRadius = 0.45;
 const entityDetailMinScreenRadius = 2.4;
 const petalDetailMinScreenRadius = 0.9;
 const dropDetailMinScreenRadius = 1.15;
+const bloodSacrificeDrawPhaseEnd = 0.5;
+const bloodSacrificeInitialHeading = Math.PI * 0.5;
+const bloodSacrificeInnerRadiusScale = 0.5;
+const bloodSacrificeOuterAlpha = 0.25;
+const bloodSacrificeShakeAmplitudePx = 9;
 const directionalPetalAngleOffset = -Math.PI * 0.25;
 const renderCullPaddingPx = 120;
+const renderLoadMediumEntityCount = 260;
+const renderLoadHighEntityCount = 520;
+const ownerRenderLerpRate = 44;
+const entityRenderLerpRate = 24;
+const ownerAngleLerpRate = 48;
+const entityAngleLerpRate = 28;
+const renderSnapBaseDistance = 220;
+const ownerRenderSnapBaseDistance = 120;
+const serverFixedDt = 0.016;
+const ownerBaseMaxVelocity = 150 * 1.25;
+const ownerBaseAcceleration = 300 * 1.25;
+const ownerDiggingSpeedMultiplier = 0.5;
+const ownerStopDampingPerTick = 0.9;
+const ownerStopVelocityEpsilon = 0.00001;
+const ownerSlowToMaxVelocityTime = 0.35;
+const ownerPredictionTeleportDistance = 320;
+const ownerPredictionHardCorrectionDistance = 144;
+const ownerPredictionSoftCorrectionRate = 12;
+const ownerPredictionHardCorrectionRate = 34;
+const ownerPredictionSpeedSampleMinDt = 0.005;
+const ownerPredictionSpeedScaleBlend = 0.08;
+const ownerPredictionSpeedScaleMin = 0.8;
+const ownerPredictionSpeedScaleMax = 1.35;
+const ownerPredictionSnapshotStaleLimit = 0.22;
+const entitySnapshotVelocityBlend = 0.35;
+const entityExtrapolateMaxSeconds = 0.05;
+const entityExtrapolateMaxDistance = 32;
+const petalRenderLerpRate = 18;
+const petalAngleLerpRate = 16;
+const petalExtrapolateMaxSeconds = 0.016;
+const petalExtrapolateMaxDistance = 10;
+const slotTransactionTimeoutMs = 3500;
+const craftRarityDisplayOrder = rarityDisplayOrder.filter((rarity) => canCraftRarity(rarity));
 const minimapMarginPx = 12;
 const minimapLocalMaxPx = 164;
 const minimapFullMaxPx = 272;
 const minimapHudGapPx = 12;
 let currentRenderTimeSeconds = 0;
+let currentVisibleEntityCount = 0;
+let currentRenderLoad = 0;
+let currentHornetSkill2WindupOwners = [];
 let minimapHitRect = null;
 let minimapCache = null;
 const PetalNameToType = new Map(PetalNames.map((name, index) => [normalizePetalName(name), index]));
@@ -327,6 +404,7 @@ function toggleBackpack(force) {
   }
   backpackPanel.classList.toggle("open", state.backpackOpen);
   updateQuickActionButtons();
+  if (state.backpackOpen) renderInventoryPanel({ forceInventory: true });
 }
 
 function toggleCraft(force) {
@@ -425,6 +503,21 @@ function sendBytes(bytes) {
   return true;
 }
 
+function sendPacketBatch(...packets) {
+  const parts = packets.filter((packet) => packet && packet.length > 0);
+  if (parts.length === 0) return false;
+  if (parts.length === 1) return sendBytes(parts[0]);
+
+  const totalBytes = parts.reduce((sum, packet) => sum + packet.length, 0);
+  const out = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const packet of parts) {
+    out.set(packet, offset);
+    offset += packet.length;
+  }
+  return sendBytes(out);
+}
+
 function sendAuth() {
   const packet = packAuth(accountInput.value.trim(), passwordInput.value, registerModeInput.checked);
   if (!packet) {
@@ -438,6 +531,7 @@ function sendAuth() {
 
 function receiveBytes(bytes) {
   state.receiveBuffer = appendBytes(state.receiveBuffer, bytes);
+  let latestSnapshot = null;
   for (;;) {
     const frame = popFrame(state.receiveBuffer);
     if (!frame) break;
@@ -445,10 +539,20 @@ function receiveBytes(bytes) {
     if (frame.payload.length === 0) continue;
     const msg = parseServerMessage(frame.payload);
     if (msg?.type === ServerType.Snapshot) {
-      queueSnapshot(msg);
+      if (!latestSnapshot || (msg.snapshotId || 0) >= (latestSnapshot.snapshotId || 0))
+        latestSnapshot = msg;
       continue;
     }
+    if (latestSnapshot) {
+      applySnapshot(latestSnapshot);
+      latestSnapshot = null;
+      pendingSnapshot = null;
+    }
     handleServerMessage(msg);
+  }
+  if (latestSnapshot) {
+    applySnapshot(latestSnapshot);
+    pendingSnapshot = null;
   }
 }
 
@@ -471,7 +575,7 @@ function handleServerMessage(msg) {
       state.ownerStateLoaded = false;
       state.inventoryLoaded = false;
       renderInventoryPanel();
-      renderCraftPanel();
+      if (state.craftOpen) renderCraftPanel();
       sendBytes(packStateRequest());
       authPanel.classList.add("hidden");
     }
@@ -481,14 +585,14 @@ function handleServerMessage(msg) {
   }
 
   if (msg.type === ServerType.Snapshot) {
-    queueSnapshot(msg);
+    applySnapshot(msg);
+    pendingSnapshot = null;
     return;
   }
 
   if (msg.type === ServerType.OwnerState) {
     state.ownerLevel = Math.max(1, msg.level || 1);
-    state.ownerExp = Math.max(0, msg.exp || 0);
-    state.ownerExpRequired = Math.max(1, msg.expRequired || 10);
+    state.ownerExpProgress = clamp(msg.expProgress || 0, 0, 1);
     state.talentPoints = Math.max(0, msg.talentPoints || 0);
     state.talents = msg.talents || [];
     updateQuickActionButtons();
@@ -497,17 +601,19 @@ function handleServerMessage(msg) {
     state.secondarySlots = normalizeSlots(msg.secondarySlots, primaryCount);
     state.selectedSlot = clamp(state.selectedSlot, 0, state.ownerSlots.length - 1);
     state.ownerStateLoaded = true;
+    pruneSlotTransactions();
     renderInventoryPanel();
-    renderCraftPanel();
-    renderTalentPanel();
+    if (state.craftOpen) renderCraftPanel();
+    if (state.talentOpen) renderTalentPanel();
     return;
   }
 
   if (msg.type === ServerType.Inventory) {
     state.inventory = msg.inventory || [];
     state.inventoryLoaded = true;
+    pruneSlotTransactions();
     renderInventoryPanel();
-    renderCraftPanel();
+    if (state.craftOpen) renderCraftPanel();
     return;
   }
 
@@ -524,11 +630,17 @@ function handleServerMessage(msg) {
 
 function resetNetworkScene() {
   pendingSnapshot = null;
+  clearSlotTransactions();
   state.receiveBuffer = new Uint8Array();
   state.entities.clear();
   state.snapshotId = -1;
   state.ownerStateLoaded = false;
   state.inventoryLoaded = false;
+  state.localMoveInput = { x: 0, y: 0 };
+  state.predictionDebug = { errorDistance: 0, speedScale: 1, staleTime: 0, snapped: false };
+  state.screenShake = { x: 0, y: 0 };
+  state.deathOverlayClosed = false;
+  state.wasOwnerDead = false;
 }
 
 function queueSnapshot(msg) {
@@ -553,12 +665,202 @@ function normalizeSlots(slots, size) {
   return out;
 }
 
+function sameSlot(a, b) {
+  return (a?.petalType || 0) === (b?.petalType || 0) && (a?.rarity || 0) === (b?.rarity || 0);
+}
+
+function copySlots(slots, size = slots?.length || 0) {
+  return normalizeSlots(slots, size);
+}
+
+function inventoryKey(petalType, rarity) {
+  return `${petalType || 0}:${rarity || 0}`;
+}
+
+function inventoryCountForKey(items, key) {
+  let total = 0;
+  for (const item of items || []) {
+    if (!slotHasItem(item) || (item.count || 0) <= 0) continue;
+    if (inventoryKey(item.petalType, item.rarity) === key) total += item.count || 0;
+  }
+  return total;
+}
+
+function copyInventoryItems(items) {
+  const merged = new Map();
+  for (const item of items || []) {
+    if (!slotHasItem(item) || (item.count || 0) <= 0) continue;
+    const key = inventoryKey(item.petalType, item.rarity);
+    const existing = merged.get(key) || { petalType: item.petalType, rarity: item.rarity, count: 0 };
+    existing.count = clamp(existing.count + Math.max(0, item.count || 0), 0, 1000000000);
+    merged.set(key, existing);
+  }
+  return Array.from(merged.values()).filter((item) => item.count > 0);
+}
+
+function touchedInventoryKeysFrom(...items) {
+  const keys = new Set();
+  for (const item of items) {
+    if (slotHasItem(item)) keys.add(inventoryKey(item.petalType, item.rarity));
+  }
+  return Array.from(keys);
+}
+
+function inventoryTouchedEqual(current, target, keys = []) {
+  if (!keys.length) return inventoryArraysEqual(current, target);
+  return keys.every((key) => inventoryCountForKey(current, key) === inventoryCountForKey(target, key));
+}
+
+function mergeTouchedInventory(current, target, keys = []) {
+  if (!keys.length) return copyInventoryItems(target);
+  const out = copyInventoryItems(current);
+  for (const key of keys) {
+    const [petalText, rarityText] = String(key).split(":");
+    const petalType = Number(petalText) || 0;
+    const rarity = Number(rarityText) || 0;
+    if (!petalType || !rarity) continue;
+    const targetCount = inventoryCountForKey(target, key);
+    const existing = out.find((item) => item.petalType === petalType && item.rarity === rarity);
+    if (existing) existing.count = targetCount;
+    else if (targetCount > 0) out.push({ petalType, rarity, count: targetCount });
+  }
+  return out.filter((item) => item.count > 0);
+}
+
+function applyInventoryDelta(items, petalType, rarity, delta) {
+  if (!petalType || !rarity || delta === 0) return items;
+  const out = copyInventoryItems(items);
+  const existing = out.find((item) => item.petalType === petalType && item.rarity === rarity);
+  if (existing) {
+    existing.count = clamp(Math.max(0, (existing.count || 0) + delta), 0, 1000000000);
+    return out.filter((item) => item.count > 0);
+  }
+  if (delta > 0) out.push({ petalType, rarity, count: clamp(delta, 0, 1000000000) });
+  return out;
+}
+
+function slotArraysEqual(a, b) {
+  if ((a?.length || 0) !== (b?.length || 0)) return false;
+  for (let i = 0; i < (a?.length || 0); i += 1) {
+    if (!sameSlot(a[i], b[i])) return false;
+  }
+  return true;
+}
+
+function inventoryArraysEqual(a, b) {
+  const counts = new Map();
+  for (const item of a || []) {
+    if (!slotHasItem(item) || (item.count || 0) <= 0) continue;
+    const key = inventoryKey(item.petalType, item.rarity);
+    counts.set(key, (counts.get(key) || 0) + (item.count || 0));
+  }
+  for (const item of b || []) {
+    if (!slotHasItem(item) || (item.count || 0) <= 0) continue;
+    const key = inventoryKey(item.petalType, item.rarity);
+    counts.set(key, (counts.get(key) || 0) - (item.count || 0));
+  }
+  return Array.from(counts.values()).every((count) => count === 0);
+}
+
+function pruneSlotTransactions(now = performance.now()) {
+  const ownerCount = Math.max(1, state.ownerSlots.length || 5);
+  const currentOwner = copySlots(state.ownerSlots, ownerCount);
+  const currentSecondary = copySlots(state.secondarySlots, ownerCount);
+  const currentInventory = copyInventoryItems(state.inventory);
+  state.slotTransactions = (state.slotTransactions || []).filter((tx) => {
+    if (!tx) return false;
+    if (now - (tx.createdAt || 0) > slotTransactionTimeoutMs) return false;
+    const targetOwner = copySlots(tx.ownerSlots || [], ownerCount);
+    const targetSecondary = copySlots(tx.secondarySlots || [], ownerCount);
+    const targetInventory = copyInventoryItems(tx.inventory || []);
+    const ownerConfirmed = slotArraysEqual(currentOwner, targetOwner) &&
+      slotArraysEqual(currentSecondary, targetSecondary);
+    const inventoryConfirmed = inventoryTouchedEqual(currentInventory, targetInventory, tx.inventoryTouchedKeys || []);
+    if (ownerConfirmed && inventoryConfirmed) return false;
+
+    return true;
+  });
+}
+
+function makeDisplaySlotState() {
+  pruneSlotTransactions();
+  const ownerCount = Math.max(1, state.ownerSlots.length || 5);
+  if (!state.slotTransactions.length) {
+    return {
+      ownerSlots: copySlots(state.ownerSlots, ownerCount),
+      secondarySlots: copySlots(state.secondarySlots, ownerCount),
+      inventory: copyInventoryItems(state.inventory),
+    };
+  }
+  const latest = state.slotTransactions[state.slotTransactions.length - 1];
+  return {
+    ownerSlots: copySlots(latest.ownerSlots, ownerCount),
+    secondarySlots: copySlots(latest.secondarySlots, ownerCount),
+    inventory: mergeTouchedInventory(state.inventory, latest.inventory, latest.inventoryTouchedKeys || []),
+  };
+}
+
+function displayOwnerSlots() {
+  return makeDisplaySlotState().ownerSlots;
+}
+
+function displaySecondarySlots() {
+  return makeDisplaySlotState().secondarySlots;
+}
+
+function highestSlotRarity(slots) {
+  let best = 0;
+  for (const slot of slots || []) {
+    if (!slotHasItem(slot)) continue;
+    best = Math.max(best, slot.rarity || 0);
+  }
+  return best;
+}
+
+function highestOwnerSlotRarity() {
+  return Math.max(highestSlotRarity(state.ownerSlots), highestSlotRarity(state.secondarySlots));
+}
+
+function playerLevelRarity(snap) {
+  const cachedRarity = snap?.entityId ? state.entities.get(snap.entityId)?.playerPrimarySlotRarity || 0 : 0;
+  const ownerRarity = snap?.entityId === state.ownerEntityId ? highestOwnerSlotRarity() : 0;
+  return Math.max(1, highestSlotRarity(snap?.primarySlots), cachedRarity, ownerRarity);
+}
+
+function displayInventory() {
+  return makeDisplaySlotState().inventory;
+}
+
+function enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, touchedItems = []) {
+  const tx = {
+    id: ++state.slotTxSeq,
+    createdAt: performance.now(),
+    ownerSlots: copySlots(ownerSlots, Math.max(1, ownerSlots?.length || state.ownerSlots.length || 5)),
+    secondarySlots: copySlots(secondarySlots, Math.max(1, secondarySlots?.length || state.ownerSlots.length || 5)),
+    inventory: copyInventoryItems(inventory),
+    inventoryTouchedKeys: touchedInventoryKeysFrom(...touchedItems),
+  };
+  state.slotTransactions = [tx];
+  window.setTimeout(() => {
+    if (!state.slotTransactions.some((entry) => entry?.id === tx.id)) return;
+    pruneSlotTransactions();
+    renderInventoryPanel();
+    if (state.craftOpen) renderCraftPanel();
+  }, slotTransactionTimeoutMs + 25);
+  return tx;
+}
+
+function clearSlotTransactions() {
+  state.slotTransactions = [];
+}
+
 async function loadMap(mapName) {
   return mapRenderer.loadMap(mapName);
 }
 
 function applySnapshot(msg) {
   if ((msg.snapshotId || 0) <= (state.snapshotId || 0)) return;
+  const snapshotNow = performance.now() / 1000;
   state.snapshotId = msg.snapshotId;
   state.ownerEntityId = msg.ownerEntityId || state.ownerEntityId;
   const nextViewRadius = msg.viewRadius || state.viewRadius;
@@ -571,12 +873,20 @@ function applySnapshot(msg) {
     live.add(snap.entityId);
     const existing = state.entities.get(snap.entityId);
     if (existing) {
+      const previousSnapshot = existing.snapshot;
       const wasDead = (existing.snapshot.flags & flagDead) !== 0;
       const isDead = (snap.flags & flagDead) !== 0;
       const previousHp = Number.isFinite(existing.snapshot.hpPercent) ? existing.snapshot.hpPercent : snap.hpPercent;
       existing.snapshotMove = Math.hypot(snap.pos.x - existing.snapshot.pos.x, snap.pos.y - existing.snapshot.pos.y);
+      existing.lastSnapshotAt = existing.snapshotAt || snapshotNow;
+      existing.snapshotAt = snapshotNow;
+      updateEntitySnapshotVelocity(existing, snap, previousSnapshot);
       existing.snapshot = snap;
-      syncEntityRenderToSnapshot(existing, snap);
+      const slotRarity = highestSlotRarity(snap.primarySlots);
+      if (snap.entityType === playerFlowerType && slotRarity > 0) existing.playerPrimarySlotRarity = slotRarity;
+      if (snap.entityId === state.ownerEntityId) handleOwnerSnapshot(existing, snap, snapshotNow, previousSnapshot, wasDead, isDead);
+      if (!existing.renderPos || !Number.isFinite(existing.renderPos.x) || !Number.isFinite(existing.renderPos.y))
+        syncEntityRenderToSnapshot(existing, snap);
       existing.dying = false;
       existing.deathAge = 0;
       if (!isDead && snap.hpPercent < previousHp - hurtFlashMinDelta) existing.hurtFlashAge = 0;
@@ -589,15 +899,22 @@ function applySnapshot(msg) {
         renderPos: { x: snap.pos.x, y: snap.pos.y },
         renderAngle: snap.angle || 0,
         snapshotMove: 0,
+        snapshotVelocity: { x: 0, y: 0 },
+        snapshotAt: snapshotNow,
+        lastSnapshotAt: snapshotNow,
+        playerPrimarySlotRarity: snap.entityType === playerFlowerType ? highestSlotRarity(snap.primarySlots) : 0,
         motionBlend: 0,
         dying: false,
         deathAge: 0,
         hurtFlashAge: hurtFlashDuration,
         deathAngle: isDead ? Math.random() * Math.PI * 2 : null,
       });
+      const created = state.entities.get(snap.entityId);
+      if (snap.entityId === state.ownerEntityId) initOwnerPrediction(created, snap, true);
     }
   }
   const owner = state.entities.get(state.ownerEntityId);
+  state.digging = !!(owner?.snapshot && (owner.snapshot.flags & flagDigging));
   syncOwnerSlotsFromSnapshot(owner?.snapshot);
   if (owner?.renderPos && !owner.dying) {
     state.camera.x = owner.renderPos.x;
@@ -640,6 +957,238 @@ function syncEntityRenderToSnapshot(entity, snap) {
     entity.renderPos.y = snap.pos.y;
   }
   if (Number.isFinite(snap.angle)) entity.renderAngle = snap.angle;
+}
+
+function updateEntitySnapshotVelocity(entity, snap, previousSnapshot) {
+  if (!entity || !snap?.pos || !previousSnapshot?.pos) return;
+  const dt = Math.max(ownerPredictionSpeedSampleMinDt, (entity.snapshotAt || 0) - (entity.lastSnapshotAt || 0));
+  const sample = {
+    x: (snap.pos.x - previousSnapshot.pos.x) / dt,
+    y: (snap.pos.y - previousSnapshot.pos.y) / dt,
+  };
+  const previous = entity.snapshotVelocity || { x: sample.x, y: sample.y };
+  entity.snapshotVelocity = {
+    x: previous.x + (sample.x - previous.x) * entitySnapshotVelocityBlend,
+    y: previous.y + (sample.y - previous.y) * entitySnapshotVelocityBlend,
+  };
+}
+
+function initOwnerPrediction(entity, snap = entity?.snapshot, forceSnap = false) {
+  if (!entity || !snap?.pos) return null;
+  const prediction = entity.ownerPrediction || {};
+  const shouldSnap = forceSnap || !prediction.pos ||
+    !Number.isFinite(prediction.pos.x) || !Number.isFinite(prediction.pos.y);
+
+  if (shouldSnap) {
+    prediction.pos = { x: snap.pos.x, y: snap.pos.y };
+    prediction.vel = { x: 0, y: 0 };
+    prediction.correction = { x: 0, y: 0 };
+    prediction.lastServerPos = { x: snap.pos.x, y: snap.pos.y };
+    prediction.speedScale = 1;
+    prediction.lastSnapshotAt = entity.snapshotAt || performance.now() / 1000;
+    prediction.staleTime = 0;
+    prediction.snapped = true;
+    entity.renderPos = { x: snap.pos.x, y: snap.pos.y };
+    entity.serverRenderPos = { x: snap.pos.x, y: snap.pos.y };
+  } else {
+    if (!prediction.vel) prediction.vel = { x: 0, y: 0 };
+    if (!prediction.correction) prediction.correction = { x: 0, y: 0 };
+    if (!prediction.lastServerPos) prediction.lastServerPos = { x: snap.pos.x, y: snap.pos.y };
+  }
+
+  entity.ownerPrediction = prediction;
+  if (!Number.isFinite(entity.renderAngle) && Number.isFinite(snap.angle)) entity.renderAngle = snap.angle;
+  return prediction;
+}
+
+function handleOwnerSnapshot(entity, snap, snapshotNow, previousSnapshot, wasDead, isDead) {
+  const prediction = initOwnerPrediction(entity, snap, false);
+  if (!prediction || !snap?.pos) return;
+
+  const previousPos = previousSnapshot?.pos || prediction.lastServerPos || snap.pos;
+  const snapshotDt = Math.max(ownerPredictionSpeedSampleMinDt,
+    snapshotNow - (entity.lastSnapshotAt || prediction.lastSnapshotAt || snapshotNow));
+  const serverDx = snap.pos.x - previousPos.x;
+  const serverDy = snap.pos.y - previousPos.y;
+  const serverSpeed = Math.hypot(serverDx, serverDy) / snapshotDt;
+  const localSpeed = Math.hypot(prediction.vel?.x || 0, prediction.vel?.y || 0);
+  if (serverSpeed > 1 && localSpeed > 1) {
+    const targetScale = clamp(serverSpeed / Math.max(1, localSpeed),
+      ownerPredictionSpeedScaleMin, ownerPredictionSpeedScaleMax);
+    prediction.speedScale = clamp(
+      (prediction.speedScale || 1) + (targetScale - (prediction.speedScale || 1)) * ownerPredictionSpeedScaleBlend,
+      ownerPredictionSpeedScaleMin,
+      ownerPredictionSpeedScaleMax,
+    );
+  }
+
+  const dx = snap.pos.x - prediction.pos.x;
+  const dy = snap.pos.y - prediction.pos.y;
+  const errorDistance = Math.hypot(dx, dy);
+  const largeStateChange = wasDead !== isDead || (snap.flags & flagDead) !== 0;
+  const shouldSnap = largeStateChange || errorDistance >= ownerPredictionTeleportDistance ||
+    !Number.isFinite(errorDistance);
+
+  if (shouldSnap) {
+    initOwnerPrediction(entity, snap, true);
+    state.predictionDebug = {
+      errorDistance: Number.isFinite(errorDistance) ? errorDistance : 0,
+      speedScale: entity.ownerPrediction?.speedScale || 1,
+      staleTime: 0,
+      snapped: true,
+    };
+    return;
+  }
+
+  prediction.correction = { x: dx, y: dy };
+  prediction.lastServerPos = { x: snap.pos.x, y: snap.pos.y };
+  prediction.lastSnapshotAt = snapshotNow;
+  prediction.staleTime = 0;
+  prediction.snapped = false;
+  state.predictionDebug = {
+    errorDistance,
+    speedScale: prediction.speedScale || 1,
+    staleTime: 0,
+    snapped: false,
+  };
+}
+
+function stepOwnerPrediction(entity, dt) {
+  const snap = entity?.snapshot;
+  if (!snap?.pos || dt <= 0) return;
+  const prediction = initOwnerPrediction(entity, snap, false);
+  if (!prediction) return;
+
+  const staleNow = Math.max(0, performance.now() / 1000 - (prediction.lastSnapshotAt || entity.snapshotAt || 0));
+  prediction.staleTime = staleNow;
+  const staleMultiplier = staleNow > ownerPredictionSnapshotStaleLimit ? 0 : 1;
+  const diggingMultiplier = (snap.flags & flagDigging) !== 0 ? ownerDiggingSpeedMultiplier : 1;
+  const speedScale = clamp(prediction.speedScale || 1, ownerPredictionSpeedScaleMin, ownerPredictionSpeedScaleMax);
+  const maxVelocity = ownerBaseMaxVelocity * diggingMultiplier * speedScale * staleMultiplier;
+  const acceleration = ownerBaseAcceleration * diggingMultiplier * speedScale * staleMultiplier;
+
+  let vel = prediction.vel || { x: 0, y: 0 };
+  const speed = Math.hypot(vel.x, vel.y);
+  if (speed > maxVelocity && ownerSlowToMaxVelocityTime > 0) {
+    const slowAmount = (speed - maxVelocity) * dt / ownerSlowToMaxVelocityTime;
+    const nextSpeed = Math.max(maxVelocity, speed - slowAmount);
+    const scale = speed > 0 ? nextSpeed / speed : 0;
+    vel = { x: vel.x * scale, y: vel.y * scale };
+  }
+
+  const move = state.localMoveInput || { x: 0, y: 0 };
+  const moveLength = Math.hypot(move.x, move.y);
+  if (moveLength > 0.0001 && maxVelocity > 0 && acceleration > 0) {
+    const desired = {
+      x: (move.x / moveLength) * maxVelocity,
+      y: (move.y / moveLength) * maxVelocity,
+    };
+    const diff = { x: desired.x - vel.x, y: desired.y - vel.y };
+    const diffLength = Math.hypot(diff.x, diff.y);
+    const maxAccel = acceleration * dt;
+    if (diffLength <= maxAccel || diffLength <= 0.000001) {
+      vel = desired;
+    } else {
+      vel = {
+        x: vel.x + diff.x / diffLength * maxAccel,
+        y: vel.y + diff.y / diffLength * maxAccel,
+      };
+    }
+  } else {
+    const damping = Math.pow(ownerStopDampingPerTick, dt / serverFixedDt);
+    vel = { x: vel.x * damping, y: vel.y * damping };
+    if (vel.x * vel.x + vel.y * vel.y <= ownerStopVelocityEpsilon) vel = { x: 0, y: 0 };
+  }
+
+  prediction.vel = vel;
+  prediction.pos.x += vel.x * dt;
+  prediction.pos.y += vel.y * dt;
+
+  const correctionDistance = Math.hypot(prediction.correction?.x || 0, prediction.correction?.y || 0);
+  if (correctionDistance > 0) {
+    const correctionRate = correctionDistance >= ownerPredictionHardCorrectionDistance ?
+      ownerPredictionHardCorrectionRate : ownerPredictionSoftCorrectionRate;
+    const amount = smoothFactor(correctionRate, dt);
+    prediction.pos.x += prediction.correction.x * amount;
+    prediction.pos.y += prediction.correction.y * amount;
+    prediction.correction.x *= 1 - amount;
+    prediction.correction.y *= 1 - amount;
+    if (Math.hypot(prediction.correction.x, prediction.correction.y) < 0.01)
+      prediction.correction = { x: 0, y: 0 };
+  }
+
+  entity.renderPos = { x: prediction.pos.x, y: prediction.pos.y };
+  entity.serverRenderPos = { x: snap.pos.x, y: snap.pos.y };
+  if (Number.isFinite(snap.angle)) {
+    if (!Number.isFinite(entity.renderAngle)) entity.renderAngle = snap.angle;
+    else entity.renderAngle = lerpAngle(entity.renderAngle, snap.angle, smoothFactor(ownerAngleLerpRate, dt));
+  }
+
+  state.predictionDebug = {
+    errorDistance: Math.hypot(snap.pos.x - prediction.pos.x, snap.pos.y - prediction.pos.y),
+    speedScale: prediction.speedScale || 1,
+    staleTime: prediction.staleTime || 0,
+    snapped: !!prediction.snapped,
+  };
+  prediction.snapped = false;
+}
+
+function stepEntityRenderToSnapshot(entity, dt, isOwner = false) {
+  const snap = entity?.snapshot;
+  if (!snap?.pos) return;
+
+  if (!entity.renderPos || !Number.isFinite(entity.renderPos.x) || !Number.isFinite(entity.renderPos.y)) {
+    syncEntityRenderToSnapshot(entity, snap);
+    return;
+  }
+
+  const petalType = isPetalEntity(snap.entityType) ? petalTypeFromEntity(snap.entityType) : 0;
+  const target = entityInterpolationTarget(entity, snap, isOwner, petalType);
+  const dx = target.x - entity.renderPos.x;
+  const dy = target.y - entity.renderPos.y;
+  const dist = Math.hypot(dx, dy);
+  const snapDistance = (isOwner ? ownerRenderSnapBaseDistance : renderSnapBaseDistance) + Math.max(0, snap.radius || 0) * 3;
+  if (dist >= snapDistance) {
+    syncEntityRenderToSnapshot(entity, snap);
+  } else if (dist > 0) {
+    const renderRate = petalType > 0 ? petalRenderLerpRate : (isOwner ? ownerRenderLerpRate : entityRenderLerpRate);
+    const factor = smoothFactor(renderRate, dt);
+    entity.renderPos.x += dx * factor;
+    entity.renderPos.y += dy * factor;
+  }
+
+  if (Number.isFinite(snap.angle)) {
+    if (!Number.isFinite(entity.renderAngle)) {
+      entity.renderAngle = snap.angle;
+    } else {
+      const angleRate = petalType > 0 ? petalAngleLerpRate : (isOwner ? ownerAngleLerpRate : entityAngleLerpRate);
+      entity.renderAngle = lerpAngle(entity.renderAngle, snap.angle, smoothFactor(angleRate, dt));
+    }
+  }
+}
+
+function entityInterpolationTarget(entity, snap, isOwner, petalType = 0) {
+  if (isOwner || !entity?.snapshotVelocity || !snap?.pos)
+    return snap?.pos || { x: 0, y: 0 };
+
+  const age = Math.max(0, performance.now() / 1000 - (entity.snapshotAt || 0));
+  if (petalType === petalYinYangType) return snap.pos;
+  const maxLead = petalType > 0 ? petalExtrapolateMaxSeconds : entityExtrapolateMaxSeconds;
+  const lead = Math.min(maxLead, age + serverFixedDt);
+  const vx = entity.snapshotVelocity.x || 0;
+  const vy = entity.snapshotVelocity.y || 0;
+  let ex = vx * lead;
+  let ey = vy * lead;
+  const distance = Math.hypot(ex, ey);
+  const maxDistance = petalType > 0 ?
+    Math.max(petalExtrapolateMaxDistance, Math.max(0, snap.radius || 0) * 0.4) :
+    Math.max(entityExtrapolateMaxDistance, Math.max(0, snap.radius || 0) * 1.5);
+  if (distance > maxDistance && distance > 0) {
+    const scale = maxDistance / distance;
+    ex *= scale;
+    ey *= scale;
+  }
+  return { x: snap.pos.x + ex, y: snap.pos.y + ey };
 }
 
 function shouldFadeMissingEntity(entity) {
@@ -717,10 +1266,14 @@ function updateMousePointer(event) {
 }
 
 function flushInput(dt) {
-  if (!state.connected || !state.authenticated || isTyping() || isOwnerDead()) return;
+  if (!state.connected || !state.authenticated || isTyping() || isOwnerDead()) {
+    state.localMoveInput = { x: 0, y: 0 };
+    return;
+  }
 
   state.sendTimer += dt;
   const move = readMoveInput();
+  state.localMoveInput = { x: clamp(move.x, -1, 1), y: clamp(move.y, -1, 1) };
   const packetMoveX = move.y;
   const packetMoveY = move.x;
   const px = Math.round(clamp(packetMoveX, -1, 1) * 127);
@@ -735,9 +1288,9 @@ function flushInput(dt) {
 
   const attacking = state.attacking || !!mobileControls?.isAttacking();
   const defending = state.defending || !!mobileControls?.isDefending();
-  const digging = state.digging;
-  const effectiveAttacking = digging ? false : attacking;
-  const effectiveDefending = digging ? false : defending;
+  const digging = false;
+  const effectiveAttacking = attacking;
+  const effectiveDefending = defending;
   if (effectiveAttacking !== state.lastInput.attacking ||
       effectiveDefending !== state.lastInput.defending ||
       digging !== state.lastInput.digging) {
@@ -754,7 +1307,12 @@ function isOwnerDead() {
 }
 
 function updateDeathOverlay() {
-  deathOverlay.classList.toggle("hidden", !isOwnerDead());
+  const dead = isOwnerDead();
+  if (dead && !state.wasOwnerDead) state.deathOverlayClosed = false;
+  if (!dead) state.deathOverlayClosed = false;
+  state.wasOwnerDead = dead;
+  deathOverlay.classList.toggle("hidden", !dead);
+  deathOverlay.classList.toggle("closed", dead && state.deathOverlayClosed);
 }
 
 function requestRevive() {
@@ -765,6 +1323,12 @@ function requestRevive() {
   mobileControls?.reset();
   state.keys.clear();
   sendBytes(packChores(false, false, true, false, false));
+}
+
+function closeDeathOverlay() {
+  if (!isOwnerDead()) return;
+  state.deathOverlayClosed = true;
+  updateDeathOverlay();
 }
 
 function isTyping() {
@@ -1029,22 +1593,49 @@ function shouldSuppressClick() {
   return performance.now() < state.suppressClickUntil;
 }
 
-function renderInventoryPanel() {
+function renderInventoryPanel(options = {}) {
+  const forceInventory = !!options.forceInventory;
   hidePetalInfoTooltip();
-  primarySlots.replaceChildren();
-  secondarySlots.replaceChildren();
-  inventoryList.replaceChildren();
-  primarySlots.style.setProperty("--slot-count", state.ownerSlots.length);
-  secondarySlots.style.setProperty("--slot-count", state.ownerSlots.length);
+  const display = makeDisplaySlotState();
+  renderSlotRow(primarySlots, display.ownerSlots, "primary", display.ownerSlots);
+  renderSlotRow(secondarySlots, display.secondarySlots, "secondary", display.ownerSlots);
 
-  state.ownerSlots.forEach((slot, index) => {
-    primarySlots.appendChild(makeSlotButton(slot, index, "primary"));
-  });
-  normalizeSlots(state.secondarySlots, state.ownerSlots.length).forEach((slot, index) => {
-    secondarySlots.appendChild(makeSlotButton(slot, index, "secondary"));
-  });
+  if (state.backpackOpen || forceInventory) {
+    inventoryList.replaceChildren();
+    renderInventoryGroups(inventoryList, display.inventory, "inventory");
+  }
+}
 
-  renderInventoryGroups(inventoryList, state.inventory, "inventory");
+function slotButtonRenderKey(slot, index, kind, primaryForVisual) {
+  const petalType = slot?.petalType || 0;
+  const rarity = slot?.rarity || 0;
+  const count = slot?.count || 0;
+  const visualType = slotHasItem(slot) ? slotVisualPetalType(slot, index, kind, primaryForVisual) : 0;
+  return `${kind}:${petalType}:${rarity}:${count}:${visualType}`;
+}
+
+function renderSlotRow(container, slots, kind, primaryForVisual) {
+  const slotCount = Math.max(0, primaryForVisual?.length || slots?.length || 0);
+  const rowSlots = normalizeSlots(slots, slotCount);
+  container.style.setProperty("--slot-count", rowSlots.length);
+
+  for (let index = 0; index < rowSlots.length; index += 1) {
+    const slot = rowSlots[index];
+    const key = slotButtonRenderKey(slot, index, kind, primaryForVisual);
+    let button = container.children[index];
+    if (!button || button.dataset.renderKey !== key) {
+      const nextButton = makeSlotButton(slot, index, kind, primaryForVisual);
+      nextButton.dataset.renderKey = key;
+      if (button) container.replaceChild(nextButton, button);
+      else container.appendChild(nextButton);
+      button = nextButton;
+    }
+    button.classList.toggle("selected", kind === "primary" && index === state.selectedSlot);
+  }
+
+  while (container.children.length > rowSlots.length) {
+    container.lastElementChild?.remove();
+  }
 }
 
 function renderCraftPanel() {
@@ -1226,7 +1817,7 @@ function submitTalentNode(node) {
   addConsoleLine(`${owned ? "Removing" : "Learning"} ${talentDisplayName(node)}`);
 }
 
-function selectCraftPetal(petalType, rarity) {
+function selectCraftPetal(petalType, rarity, options = {}) {
   if (state.craftPhase === "spinning") return;
   if (!canCraftRarity(rarity)) return;
   if (state.craftPhase === "success" || state.craftPhase === "returned") clearCraftDisplay();
@@ -1238,7 +1829,7 @@ function selectCraftPetal(petalType, rarity) {
   if (available <= 0) return;
   if (available < 5 && stagedSame + available < 5) return;
 
-  const addCount = Math.min(5, available);
+  const addCount = options.all ? available : Math.min(5, available);
   const total = stagedSame + addCount;
 
   state.craftPhase = "staged";
@@ -1283,7 +1874,7 @@ function renderInventoryGroups(container, items, mode) {
         button.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
-          if (lit) selectCraftPetal(item.petalType, item.rarity);
+          if (lit) selectCraftPetal(item.petalType, item.rarity, { all: event.shiftKey });
         });
       }
       grid.appendChild(button);
@@ -1300,13 +1891,14 @@ function renderCraftMatrix() {
 
   const matrix = document.createElement("div");
   matrix.className = "craft-matrix";
+  matrix.style.setProperty("--craft-rarity-count", String(craftRarityDisplayOrder.length));
 
   const corner = document.createElement("div");
   corner.className = "craft-matrix-corner";
   corner.textContent = "type / rarity";
   matrix.appendChild(corner);
 
-  for (const rarity of rarityDisplayOrder) {
+  for (const rarity of craftRarityDisplayOrder) {
     const header = document.createElement("div");
     header.className = "craft-matrix-rarity";
     header.style.color = rarityColor(rarity, 1);
@@ -1321,7 +1913,7 @@ function renderCraftMatrix() {
     label.textContent = petalTypeName(row.petalType);
     matrix.appendChild(label);
 
-    for (const rarity of rarityDisplayOrder) {
+    for (const rarity of craftRarityDisplayOrder) {
       const baseCount = row.counts.get(rarity) || 0;
       const heldCount = getCraftHeldCount(row.petalType, rarity);
       const count = Math.max(0, baseCount - heldCount);
@@ -1339,9 +1931,10 @@ function renderCraftMatrix() {
         cell.appendChild(makePetalStack(row.petalType, rarity, displayCount));
         attachPetalInfoTooltip(cell, row.petalType, rarity);
         cell.addEventListener("pointerdown", (event) => {
+          if (event.button !== undefined && event.button !== 0) return;
           event.preventDefault();
           event.stopPropagation();
-          if (lit) selectCraftPetal(row.petalType, rarity);
+          if (lit) selectCraftPetal(row.petalType, rarity, { all: event.shiftKey });
         });
       }
       matrix.appendChild(cell);
@@ -1353,8 +1946,9 @@ function renderCraftMatrix() {
 
 function buildCraftRows() {
   const rows = new Map();
-  for (const item of state.inventory) {
+  for (const item of displayInventory()) {
     if (!slotHasItem(item) || item.count <= 0) continue;
+    if (!canCraftRarity(item.rarity)) continue;
     if (!rows.has(item.petalType)) rows.set(item.petalType, new Map());
     rows.get(item.petalType).set(item.rarity, item.count);
   }
@@ -1379,7 +1973,8 @@ function groupInventoryItems(items) {
 }
 
 function getCraftInventoryItems() {
-  return state.inventory
+  return displayInventory()
+    .filter((item) => canCraftRarity(item.rarity))
     .map((item) => ({
       ...item,
       count: Math.max(0, (item.count || 0) - getCraftHeldCount(item.petalType, item.rarity)),
@@ -1388,7 +1983,7 @@ function getCraftInventoryItems() {
 }
 
 function getInventoryCount(petalType, rarity) {
-  const item = state.inventory.find((entry) => entry.petalType === petalType && entry.rarity === rarity);
+  const item = displayInventory().find((entry) => entry.petalType === petalType && entry.rarity === rarity);
   return item ? item.count || 0 : 0;
 }
 
@@ -1585,7 +2180,7 @@ function clearCraftDisplay() {
   state.craftBurstUntil = 0;
 }
 
-function makeSlotButton(slot, index, kind) {
+function makeSlotButton(slot, index, kind, primaryForVisual = displayOwnerSlots()) {
   const button = document.createElement("button");
   button.className = `slot${slotHasItem(slot) ? "" : " empty"}${kind === "primary" && index === state.selectedSlot ? " selected" : ""}`;
   button.type = "button";
@@ -1625,11 +2220,11 @@ function makeSlotButton(slot, index, kind) {
   return button;
 }
 
-function slotVisualPetalType(slot, index, kind) {
+function slotVisualPetalType(slot, index, kind, primaryForVisual = displayOwnerSlots()) {
   if (!slotHasItem(slot) || slot.petalType !== petalMimicType) return slot ? slot.petalType : 0;
   if (kind === "secondary") return slot.petalType;
 
-  const slots = state.ownerSlots;
+  const slots = primaryForVisual;
   if (!slots.length) return slot.petalType;
 
   const targetIndex = index <= 0 ? slots.length - 1 : index - 1;
@@ -1856,6 +2451,7 @@ function buildPetalInfo(petalType, rarity) {
       break;
     case petalBrokenEggType:
       addPercent("Summon HP", brokenEggSummonHealthBonus(rarity), { sign: true });
+      addPercent("Summon DMG", brokenEggSummonDamageBonus(rarity), { sign: true });
       break;
     case petalRelicType:
       addPercent("Linked HP", relicHealthBonus(rarity), { sign: true });
@@ -2134,7 +2730,23 @@ function bandageUndeadDuration(rarity) {
 }
 
 function brokenEggSummonHealthBonus(rarity) {
-  return bySpecialRarity(rarity, [0, 0.10, 0.20, 0.35, 0.50, 0.75, 1.10, 1.50, 1.80, 2.25, 2.25, 3.00]);
+  const level = clamp(raritySpecialLevel(rarity), 1, 10);
+  if (level <= 8) {
+    const t = (level - 1) / 7;
+    return (0.90 + (0.25 - 0.90) * t) - 1;
+  }
+  const t = (level - 8) / 2;
+  return (0.25 + (0.02 - 0.25) * t) - 1;
+}
+
+function brokenEggSummonDamageBonus(rarity) {
+  const level = clamp(raritySpecialLevel(rarity), 1, 10);
+  if (level <= 8) {
+    const t = (level - 1) / 7;
+    return (1.12 + (7.50 - 1.12) * t) - 1;
+  }
+  const t = (level - 8) / 2;
+  return (7.50 + (25.00 - 7.50) * t) - 1;
 }
 
 function basilHealingBonus(rarity) {
@@ -2560,7 +3172,7 @@ function imageReady(image) {
 }
 
 function ownerHasPetal(petalType) {
-  return state.ownerSlots.some((slot) => slotHasItem(slot) && slot.petalType === petalType);
+  return displayOwnerSlots().some((slot) => slotHasItem(slot) && slot.petalType === petalType);
 }
 
 function playerSnapHasPetal(snap, petalType) {
@@ -2568,56 +3180,79 @@ function playerSnapHasPetal(snap, petalType) {
 }
 
 function equipFromInventory(item) {
-  const index = clamp(state.selectedSlot, 0, state.ownerSlots.length - 1);
+  const slots = displayOwnerSlots();
+  const index = clamp(state.selectedSlot, 0, slots.length - 1);
   equipFromInventoryAt(index, item);
 }
 
 function equipFromInventoryAt(index, item) {
   if (!state.authenticated || !slotHasItem(item)) return;
-  if (index < 0 || index >= state.ownerSlots.length) return;
-  const oldSlot = copySlot(state.ownerSlots[index]);
+  const ownerSlots = displayOwnerSlots();
+  const secondarySlots = displaySecondarySlots();
+  let inventory = displayInventory();
+  if (index < 0 || index >= ownerSlots.length) return;
+  if (getDisplayInventoryCount(item.petalType, item.rarity, inventory) <= 0) return;
+  const oldSlot = copySlot(ownerSlots[index]);
   sendBytes(packEquip(index, item.petalType, item.rarity));
-  state.ownerSlots[index] = copySlot(item);
-  adjustInventory(item.petalType, item.rarity, -1);
-  if (slotHasItem(oldSlot)) adjustInventory(oldSlot.petalType, oldSlot.rarity, 1);
+  ownerSlots[index] = copySlot(item);
+  inventory = applyInventoryDelta(inventory, item.petalType, item.rarity, -1);
+  if (slotHasItem(oldSlot)) inventory = applyInventoryDelta(inventory, oldSlot.petalType, oldSlot.rarity, 1);
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [item, oldSlot]);
   renderInventoryPanel();
 }
 
 function unequipSlot(index) {
-  if (!state.authenticated || !state.ownerSlots[index] || !slotHasItem(state.ownerSlots[index])) return;
-  const oldSlot = copySlot(state.ownerSlots[index]);
+  const ownerSlots = displayOwnerSlots();
+  const secondarySlots = displaySecondarySlots();
+  let inventory = displayInventory();
+  if (!state.authenticated || !ownerSlots[index] || !slotHasItem(ownerSlots[index])) return;
+  const oldSlot = copySlot(ownerSlots[index]);
   sendBytes(packUnequip(index));
-  state.ownerSlots[index] = emptySlot();
-  adjustInventory(oldSlot.petalType, oldSlot.rarity, 1);
+  ownerSlots[index] = emptySlot();
+  inventory = applyInventoryDelta(inventory, oldSlot.petalType, oldSlot.rarity, 1);
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [oldSlot]);
   renderInventoryPanel();
 }
 
 function setSecondaryFromInventory(index, item) {
   if (!state.authenticated || !slotHasItem(item)) return;
-  if (index < 0 || index >= state.ownerSlots.length) return;
-  const oldSlot = copySlot(state.secondarySlots[index]);
+  const ownerSlots = displayOwnerSlots();
+  const secondarySlots = displaySecondarySlots();
+  let inventory = displayInventory();
+  if (index < 0 || index >= ownerSlots.length) return;
+  if (getDisplayInventoryCount(item.petalType, item.rarity, inventory) <= 0) return;
+  const oldSlot = copySlot(secondarySlots[index]);
   sendBytes(packSecondarySlot(index, item.petalType, item.rarity));
-  state.secondarySlots[index] = copySlot(item);
-  adjustInventory(item.petalType, item.rarity, -1);
-  if (slotHasItem(oldSlot)) adjustInventory(oldSlot.petalType, oldSlot.rarity, 1);
+  secondarySlots[index] = copySlot(item);
+  inventory = applyInventoryDelta(inventory, item.petalType, item.rarity, -1);
+  if (slotHasItem(oldSlot)) inventory = applyInventoryDelta(inventory, oldSlot.petalType, oldSlot.rarity, 1);
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [item, oldSlot]);
   renderInventoryPanel();
 }
 
 function clearSecondarySlot(index) {
-  if (!state.authenticated || !state.secondarySlots[index] || !slotHasItem(state.secondarySlots[index])) return;
-  const oldSlot = copySlot(state.secondarySlots[index]);
+  const ownerSlots = displayOwnerSlots();
+  const secondarySlots = displaySecondarySlots();
+  let inventory = displayInventory();
+  if (!state.authenticated || !secondarySlots[index] || !slotHasItem(secondarySlots[index])) return;
+  const oldSlot = copySlot(secondarySlots[index]);
   sendBytes(packSecondarySlot(index, 0, 0));
-  state.secondarySlots[index] = emptySlot();
-  adjustInventory(oldSlot.petalType, oldSlot.rarity, 1);
+  secondarySlots[index] = emptySlot();
+  inventory = applyInventoryDelta(inventory, oldSlot.petalType, oldSlot.rarity, 1);
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [oldSlot]);
   renderInventoryPanel();
 }
 
 function quickSwapSlot(index) {
-  if (index < 0 || index >= state.ownerSlots.length) return;
+  const display = makeDisplaySlotState();
+  const ownerSlots = display.ownerSlots;
+  const secondarySlots = display.secondarySlots;
+  const inventory = display.inventory;
+  if (index < 0 || index >= ownerSlots.length) return;
   if (!state.authenticated) return;
 
-  const oldPrimary = copySlot(state.ownerSlots[index]);
-  const oldSecondary = copySlot(state.secondarySlots[index]);
+  const oldPrimary = copySlot(ownerSlots[index]);
+  const oldSecondary = copySlot(secondarySlots[index]);
   const hasPrimary = slotHasItem(oldPrimary);
   const hasSecondary = slotHasItem(oldSecondary);
   state.selectedSlot = index;
@@ -2625,90 +3260,132 @@ function quickSwapSlot(index) {
     renderInventoryPanel();
     return;
   }
+  if (hasPrimary && !hasSecondary) {
+    sendPacketBatch(
+      packUnequip(index),
+      packSecondarySlot(index, oldPrimary.petalType, oldPrimary.rarity),
+    );
+    ownerSlots[index] = emptySlot();
+    secondarySlots[index] = oldPrimary;
+    enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [oldPrimary]);
+    renderInventoryPanel();
+    return;
+  }
+  if (!hasPrimary && hasSecondary) {
+    sendPacketBatch(
+      packSecondarySlot(index, 0, 0),
+      packEquip(index, oldSecondary.petalType, oldSecondary.rarity),
+    );
+    ownerSlots[index] = oldSecondary;
+    secondarySlots[index] = emptySlot();
+    enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [oldSecondary]);
+    renderInventoryPanel();
+    return;
+  }
 
-  if (hasSecondary) sendBytes(packSecondarySlot(index, 0, 0));
-  if (hasPrimary) sendBytes(packUnequip(index));
-  if (hasSecondary) sendBytes(packEquip(index, oldSecondary.petalType, oldSecondary.rarity));
-  if (hasPrimary) sendBytes(packSecondarySlot(index, oldPrimary.petalType, oldPrimary.rarity));
-  state.ownerSlots[index] = hasSecondary ? oldSecondary : emptySlot();
-  state.secondarySlots[index] = hasPrimary ? oldPrimary : emptySlot();
+  sendPacketBatch(
+    packSecondarySlot(index, 0, 0),
+    packEquip(index, oldSecondary.petalType, oldSecondary.rarity),
+    packSecondarySlot(index, oldPrimary.petalType, oldPrimary.rarity),
+  );
+
+  ownerSlots[index] = oldSecondary;
+  secondarySlots[index] = oldPrimary;
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [oldPrimary, oldSecondary]);
   renderInventoryPanel();
 }
 
-function adjustInventory(petalType, rarity, delta) {
-  if (!petalType || !rarity || delta === 0) return;
-  const existing = state.inventory.find((item) => item.petalType === petalType && item.rarity === rarity);
-  if (existing) {
-    existing.count = clamp(Math.max(0, (existing.count || 0) + delta), 0, 1000000000);
-    if (existing.count <= 0) state.inventory = state.inventory.filter((item) => item !== existing);
-    return;
-  }
-  if (delta > 0) state.inventory.push({ petalType, rarity, count: clamp(delta, 0, 1000000000) });
+function getDisplayInventoryCount(petalType, rarity, items = displayInventory()) {
+  const item = items.find((entry) => entry.petalType === petalType && entry.rarity === rarity);
+  return item ? item.count || 0 : 0;
 }
 
 function movePrimaryToPrimary(fromIndex, toIndex) {
   if (fromIndex === toIndex) return;
-  if (!state.authenticated || !slotHasItem(state.ownerSlots[fromIndex])) return;
-  if (toIndex < 0 || toIndex >= state.ownerSlots.length) return;
+  const ownerSlots = displayOwnerSlots();
+  const secondarySlots = displaySecondarySlots();
+  const inventory = displayInventory();
+  if (!state.authenticated || !slotHasItem(ownerSlots[fromIndex])) return;
+  if (toIndex < 0 || toIndex >= ownerSlots.length) return;
 
-  const source = copySlot(state.ownerSlots[fromIndex]);
-  const target = copySlot(state.ownerSlots[toIndex]);
-  sendBytes(packUnequip(fromIndex));
-  if (slotHasItem(target)) sendBytes(packUnequip(toIndex));
-  sendBytes(packEquip(toIndex, source.petalType, source.rarity));
-  if (slotHasItem(target)) sendBytes(packEquip(fromIndex, target.petalType, target.rarity));
+  const source = copySlot(ownerSlots[fromIndex]);
+  const target = copySlot(ownerSlots[toIndex]);
+  sendPacketBatch(
+    packUnequip(fromIndex),
+    slotHasItem(target) ? packUnequip(toIndex) : null,
+    packEquip(toIndex, source.petalType, source.rarity),
+    slotHasItem(target) ? packEquip(fromIndex, target.petalType, target.rarity) : null,
+  );
 
-  state.ownerSlots[toIndex] = source;
-  state.ownerSlots[fromIndex] = target;
+  ownerSlots[toIndex] = source;
+  ownerSlots[fromIndex] = target;
   state.selectedSlot = toIndex;
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [source, target]);
   renderInventoryPanel();
 }
 
 function movePrimaryToSecondary(fromIndex, toIndex) {
-  if (!state.authenticated || !slotHasItem(state.ownerSlots[fromIndex])) return;
-  if (toIndex < 0 || toIndex >= state.ownerSlots.length) return;
+  const ownerSlots = displayOwnerSlots();
+  const secondarySlots = displaySecondarySlots();
+  const inventory = displayInventory();
+  if (!state.authenticated || !slotHasItem(ownerSlots[fromIndex])) return;
+  if (toIndex < 0 || toIndex >= ownerSlots.length) return;
 
-  const source = copySlot(state.ownerSlots[fromIndex]);
-  const oldSecondary = copySlot(state.secondarySlots[toIndex]);
-  sendBytes(packUnequip(fromIndex));
-  sendBytes(packSecondarySlot(toIndex, source.petalType, source.rarity));
-  if (slotHasItem(oldSecondary)) sendBytes(packEquip(fromIndex, oldSecondary.petalType, oldSecondary.rarity));
+  const source = copySlot(ownerSlots[fromIndex]);
+  const oldSecondary = copySlot(secondarySlots[toIndex]);
+  sendPacketBatch(
+    packUnequip(fromIndex),
+    packSecondarySlot(toIndex, source.petalType, source.rarity),
+    slotHasItem(oldSecondary) ? packEquip(fromIndex, oldSecondary.petalType, oldSecondary.rarity) : null,
+  );
 
-  state.ownerSlots[fromIndex] = oldSecondary;
-  state.secondarySlots[toIndex] = source;
+  ownerSlots[fromIndex] = oldSecondary;
+  secondarySlots[toIndex] = source;
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [source, oldSecondary]);
   renderInventoryPanel();
 }
 
 function moveSecondaryToPrimary(fromIndex, toIndex) {
-  if (!state.authenticated || !slotHasItem(state.secondarySlots[fromIndex])) return;
-  if (toIndex < 0 || toIndex >= state.ownerSlots.length) return;
+  const ownerSlots = displayOwnerSlots();
+  const secondarySlots = displaySecondarySlots();
+  const inventory = displayInventory();
+  if (!state.authenticated || !slotHasItem(secondarySlots[fromIndex])) return;
+  if (toIndex < 0 || toIndex >= ownerSlots.length) return;
 
-  const source = copySlot(state.secondarySlots[fromIndex]);
-  const oldPrimary = copySlot(state.ownerSlots[toIndex]);
-  sendBytes(packSecondarySlot(fromIndex, 0, 0));
-  if (slotHasItem(oldPrimary)) sendBytes(packUnequip(toIndex));
-  sendBytes(packEquip(toIndex, source.petalType, source.rarity));
-  if (slotHasItem(oldPrimary)) sendBytes(packSecondarySlot(fromIndex, oldPrimary.petalType, oldPrimary.rarity));
+  const source = copySlot(secondarySlots[fromIndex]);
+  const oldPrimary = copySlot(ownerSlots[toIndex]);
+  sendPacketBatch(
+    packSecondarySlot(fromIndex, 0, 0),
+    packEquip(toIndex, source.petalType, source.rarity),
+    slotHasItem(oldPrimary) ? packSecondarySlot(fromIndex, oldPrimary.petalType, oldPrimary.rarity) : null,
+  );
 
-  state.ownerSlots[toIndex] = source;
-  state.secondarySlots[fromIndex] = oldPrimary;
+  ownerSlots[toIndex] = source;
+  secondarySlots[fromIndex] = oldPrimary;
   state.selectedSlot = toIndex;
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [source, oldPrimary]);
   renderInventoryPanel();
 }
 
 function moveSecondaryToSecondary(fromIndex, toIndex) {
   if (fromIndex === toIndex) return;
-  if (!state.authenticated || !slotHasItem(state.secondarySlots[fromIndex])) return;
-  if (toIndex < 0 || toIndex >= state.ownerSlots.length) return;
+  const ownerSlots = displayOwnerSlots();
+  const secondarySlots = displaySecondarySlots();
+  const inventory = displayInventory();
+  if (!state.authenticated || !slotHasItem(secondarySlots[fromIndex])) return;
+  if (toIndex < 0 || toIndex >= ownerSlots.length) return;
 
-  const source = copySlot(state.secondarySlots[fromIndex]);
-  const target = copySlot(state.secondarySlots[toIndex]);
-  sendBytes(packSecondarySlot(fromIndex, 0, 0));
-  sendBytes(packSecondarySlot(toIndex, source.petalType, source.rarity));
-  if (slotHasItem(target)) sendBytes(packSecondarySlot(fromIndex, target.petalType, target.rarity));
+  const source = copySlot(secondarySlots[fromIndex]);
+  const target = copySlot(secondarySlots[toIndex]);
+  sendPacketBatch(
+    packSecondarySlot(fromIndex, 0, 0),
+    packSecondarySlot(toIndex, source.petalType, source.rarity),
+    slotHasItem(target) ? packSecondarySlot(fromIndex, target.petalType, target.rarity) : null,
+  );
 
-  state.secondarySlots[fromIndex] = target;
-  state.secondarySlots[toIndex] = source;
+  secondarySlots[fromIndex] = target;
+  secondarySlots[toIndex] = source;
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [source, target]);
   renderInventoryPanel();
 }
 
@@ -2847,7 +3524,7 @@ function updateRenderPositions(dt) {
   const owner = state.entities.get(state.ownerEntityId);
   if (owner && !owner.dying) {
     updateEntityMotion(owner, dt);
-    syncEntityRenderToSnapshot(owner, owner.snapshot);
+    stepOwnerPrediction(owner, dt);
     if (owner.renderPos) {
       state.camera.x = owner.renderPos.x;
       state.camera.y = owner.renderPos.y;
@@ -2866,7 +3543,7 @@ function updateRenderPositions(dt) {
     }
     updateEntityMotion(entity, dt);
     if (id === state.ownerEntityId) continue;
-    syncEntityRenderToSnapshot(entity, entity.snapshot);
+    stepEntityRenderToSnapshot(entity, dt, false);
   }
 
   for (const id of dead) {
@@ -2888,6 +3565,25 @@ function smoothFactor(rate, dt) {
   return 1 - Math.exp(-rate * dt);
 }
 
+function normalizeAngle(angle) {
+  const full = Math.PI * 2;
+  let value = angle % full;
+  if (value < 0) value += full;
+  return value;
+}
+
+function lerpAngle(start, end, amount) {
+  const full = Math.PI * 2;
+  const t = clamp(amount, 0, 1);
+  let from = normalizeAngle(start);
+  let to = normalizeAngle(end);
+  if (Math.abs(to - from) > Math.PI) {
+    if (to > from) from += full;
+    else to += full;
+  }
+  return normalizeAngle(from + (to - from) * t);
+}
+
 function screenViewRadius() {
   const shortSide = Math.max(1, Math.min(state.canvasWidth, state.canvasHeight));
   return Math.max(96, shortSide * viewScreenFill - viewScreenPadding);
@@ -2906,19 +3602,29 @@ function worldLengthToScreen(value) {
   return value * worldScale();
 }
 
+function currentScreenShake() {
+  const shake = state.screenShake || { x: 0, y: 0 };
+  return {
+    x: Number.isFinite(shake.x) ? shake.x : 0,
+    y: Number.isFinite(shake.y) ? shake.y : 0,
+  };
+}
+
 function worldToScreen(pos) {
   const scale = worldScale();
+  const shake = currentScreenShake();
   return {
-    x: (pos.x - state.camera.x) * scale + state.canvasWidth * 0.5,
-    y: (pos.y - state.camera.y) * scale + state.canvasHeight * 0.5,
+    x: (pos.x - state.camera.x) * scale + state.canvasWidth * 0.5 + shake.x,
+    y: (pos.y - state.camera.y) * scale + state.canvasHeight * 0.5 + shake.y,
   };
 }
 
 function screenToWorld(pos) {
   const scale = worldScale();
+  const shake = currentScreenShake();
   return {
-    x: (pos.x - state.canvasWidth * 0.5) / scale + state.camera.x,
-    y: (pos.y - state.canvasHeight * 0.5) / scale + state.camera.y,
+    x: (pos.x - state.canvasWidth * 0.5 - shake.x) / scale + state.camera.x,
+    y: (pos.y - state.canvasHeight * 0.5 - shake.y) / scale + state.camera.y,
   };
 }
 
@@ -2944,12 +3650,13 @@ function updateDebugInfo() {
   const chunkProfile = map?.chunkProfileLabel || "-";
   const inputMode = state.keyboardControl ? "keyboard" : "mouse";
   const socketState = state.ws ? ["connecting", "open", "closing", "closed"][state.ws.readyState] || state.ws.readyState : "none";
+  const prediction = state.predictionDebug || {};
 
   debugInfo.textContent = [
     `pos (${debugNumber(ownerPos?.x)}, ${debugNumber(ownerPos?.y)})  id ${state.ownerEntityId || "-"}  hp ${debugNumber(ownerSnap?.hpPercent * 100, 0)}%`,
     `cam (${debugNumber(state.camera.x)}, ${debugNumber(state.camera.y)})  mouse ${mouseWorld ? `(${debugNumber(mouseWorld.x)}, ${debugNumber(mouseWorld.y)})` : "(-, -)"}`,
-    `view ${debugNumber(state.viewRadius, 0)}  scale ${debugNumber(worldScale(), 4)}  fps ${debugNumber(state.fps, 1)}  dpr ${debugNumber(state.dpr, 2)}`,
-    `entities ${state.entities.size}  map ${map?.path || "-"}  chunks ${chunkCache}/${visibleChunks} q${chunkQueue} ${chunkProfile}  input ${inputMode}  ws ${socketState}`,
+    `view ${debugNumber(state.viewRadius, 0)}  scale ${debugNumber(worldScale(), 4)}  fps ${debugNumber(state.fps, 1)}  dpr ${debugNumber(state.dpr, 2)}  pred err ${debugNumber(prediction.errorDistance)} scale ${debugNumber(prediction.speedScale, 2)} stale ${debugNumber(prediction.staleTime, 2)}${prediction.snapped ? " snap" : ""}`,
+    `entities ${state.entities.size}/${currentVisibleEntityCount}  render load ${currentRenderLoad}  map ${map?.path || "-"}  chunks ${chunkCache}/${visibleChunks} q${chunkQueue} ${chunkProfile}  input ${inputMode}  ws ${socketState}`,
   ].join("\n");
 }
 
@@ -3014,6 +3721,141 @@ function drawDeathEffect(pos, radius, progress, rarity) {
   ctx.restore();
 }
 
+function bloodSacrificePhase(progress) {
+  const value = clamp(Number.isFinite(progress) ? progress : 0, 0, 1);
+  if (value < bloodSacrificeDrawPhaseEnd) {
+    return {
+      drawProgress: clamp(value / bloodSacrificeDrawPhaseEnd, 0, 1),
+      fadeProgress: 0,
+      alpha: 1,
+    };
+  }
+  const fadeProgress = clamp((value - bloodSacrificeDrawPhaseEnd) / (1 - bloodSacrificeDrawPhaseEnd), 0, 1);
+  return {
+    drawProgress: 1,
+    fadeProgress,
+    alpha: 1 - fadeProgress,
+  };
+}
+
+function bloodSacrificeStarPoints(pos, radius, angle = 0) {
+  const vertices = [];
+  for (let i = 0; i < 5; i += 1) {
+    const theta = bloodSacrificeInitialHeading + angle + i * Math.PI * 2 / 5;
+    vertices.push({
+      x: pos.x + Math.cos(theta) * radius,
+      y: pos.y - Math.sin(theta) * radius,
+    });
+  }
+  return [0, 2, 4, 1, 3, 0].map((index) => vertices[index]);
+}
+
+function traceBloodSacrificeStar(points, progress) {
+  if (!points || points.length < 2 || progress <= 0) return;
+
+  let totalLength = 0;
+  const segmentLengths = [];
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const length = Math.hypot(points[i + 1].x - points[i].x, points[i + 1].y - points[i].y);
+    segmentLengths.push(length);
+    totalLength += length;
+  }
+  if (totalLength <= 0) return;
+
+  const targetLength = totalLength * clamp(progress, 0, 1);
+  let travelled = 0;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const segmentLength = segmentLengths[i];
+    const start = points[i];
+    const end = points[i + 1];
+    if (travelled + segmentLength <= targetLength) {
+      ctx.lineTo(end.x, end.y);
+      travelled += segmentLength;
+      continue;
+    }
+    const segmentProgress = segmentLength > 0 ? (targetLength - travelled) / segmentLength : 0;
+    ctx.lineTo(
+      start.x + (end.x - start.x) * clamp(segmentProgress, 0, 1),
+      start.y + (end.y - start.y) * clamp(segmentProgress, 0, 1),
+    );
+    break;
+  }
+  ctx.stroke();
+}
+
+function fillBloodSacrificeStar(points) {
+  if (!points || points.length < 2) return;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i += 1) ctx.lineTo(points[i].x, points[i].y);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawBloodSacrificeEffect(pos, outerRadius, progress, angle = 0) {
+  const phase = bloodSacrificePhase(progress);
+  if (phase.alpha <= 0 || outerRadius < entityPixelMinScreenRadius) return;
+
+  const innerRadius = Math.max(1, outerRadius * bloodSacrificeInnerRadiusScale);
+  const outerPoints = bloodSacrificeStarPoints(pos, outerRadius, angle);
+  const innerPoints = bloodSacrificeStarPoints(pos, innerRadius, angle);
+  const lineWidth = Math.max(2, Math.min(20, innerRadius * 0.02));
+
+  ctx.save();
+  ctx.filter = "none";
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = `rgba(128, 128, 128, ${bloodSacrificeOuterAlpha * phase.alpha})`;
+  fillBloodSacrificeStar(outerPoints);
+
+  ctx.globalAlpha *= phase.alpha;
+  ctx.strokeStyle = "#ff0000";
+  ctx.lineWidth = lineWidth;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  traceBloodSacrificeStar(innerPoints, phase.drawProgress);
+  ctx.restore();
+}
+
+function hornetSkill2WindupMissileWobble(entity, time) {
+  const snap = entity?.snapshot;
+  if (!snap || snap.entityType !== hornetMissileType || (snap.flags & flagAttached) === 0) return 0;
+  let bestDistance = Infinity;
+  let owner = null;
+  for (const candidate of currentHornetSkill2WindupOwners) {
+    const ownerSnap = candidate?.snapshot;
+    const ownerPos = candidate.renderPos || ownerSnap.pos;
+    const missilePos = entity.renderPos || snap.pos;
+    if (!ownerPos || !missilePos) continue;
+    const distance = Math.hypot(missilePos.x - ownerPos.x, missilePos.y - ownerPos.y);
+    const maxDistance = Math.max(ownerSnap.radius * 4.5 + snap.radius * 2, 1);
+    if (distance <= maxDistance && distance < bestDistance) {
+      bestDistance = distance;
+      owner = candidate;
+    }
+  }
+  if (!owner) return 0;
+  return Math.sin((time || 0) * Math.PI * 4) * 0.42;
+}
+
+function detailMinRadiusForEntity(snap, isOwner, isPetal, isDrop) {
+  const base = isPetal ? petalDetailMinScreenRadius :
+    isDrop ? dropDetailMinScreenRadius : entityDetailMinScreenRadius;
+  if (currentRenderLoad <= 0 || isOwner || shouldAlwaysDrawDetailed(snap)) return base;
+  if (isPetal) return currentRenderLoad >= 2 ? base * 3.8 : base * 2.2;
+  if (isDrop) return currentRenderLoad >= 2 ? base * 3.2 : base * 2.0;
+  return currentRenderLoad >= 2 ? base * 3.0 : base * 1.8;
+}
+
+function shouldAlwaysDrawDetailed(snap) {
+  if (!snap) return false;
+  if (snap.entityType === playerFlowerType || snap.entityType === spiderWebZoneType ||
+      snap.entityType === bloodSacrificeEffectType)
+    return true;
+  return raritySortRank(snap.rarity) >= raritySortRank(bossRarity);
+}
+
 function drawEntity(entity) {
   const snap = entity.snapshot;
   const pos = worldToScreen(entity.renderPos);
@@ -3038,10 +3880,15 @@ function drawEntity(entity) {
     return;
   }
 
-  const detailMinRadius = isPetal ? petalDetailMinScreenRadius :
-    isDrop ? dropDetailMinScreenRadius : entityDetailMinScreenRadius;
+  const detailMinRadius = detailMinRadiusForEntity(snap, isOwner, isPetal, isDrop);
   if (visibleRadius < detailMinRadius) {
     drawPixelEntity(snap, pos, visibleRadius, isOwner, isPetal, isDrop);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && !isDrop && snap.entityType === bloodSacrificeEffectType) {
+    drawBloodSacrificeEffect(pos, visibleRadius, snap.hpPercent, entity.renderAngle ?? snap.angle);
     ctx.restore();
     return;
   }
@@ -3072,6 +3919,13 @@ function drawEntity(entity) {
     return;
   }
 
+  if (!isPetal && snap.entityType === leafPieceType) {
+    drawLeafPiece(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
   if (!isPetal && snap.entityType === babyAntType) {
     drawBabyAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
                 entity.motionBlend || 0, currentRenderTimeSeconds);
@@ -3091,6 +3945,75 @@ function drawEntity(entity) {
   if (!isPetal && snap.entityType === queenAntType) {
     drawQueenAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
                  entity.motionBlend || 0, currentRenderTimeSeconds);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && (snap.entityType === antEggMobType || snap.entityType === queenAntEggType)) {
+    drawAntEggMob(ctx, pos, radius * deathScale, "normal");
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && (snap.entityType === fireAntEggType || snap.entityType === queenFireAntEggType)) {
+    drawAntEggMob(ctx, pos, radius * deathScale, "fire");
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === termiteEggType) {
+    drawAntEggMob(ctx, pos, radius * deathScale, "termite");
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === babyFireAntType) {
+    drawBabyFireAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
+                    entity.motionBlend || 0, currentRenderTimeSeconds);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === workerFireAntType) {
+    drawWorkerFireAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
+                      entity.motionBlend || 0, currentRenderTimeSeconds);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === fireQueenAntType) {
+    drawFireQueenAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
+                     entity.motionBlend || 0, currentRenderTimeSeconds);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === babyTermiteType) {
+    drawBabyTermite(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
+                    entity.motionBlend || 0, currentRenderTimeSeconds);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === workerTermiteType) {
+    drawWorkerTermite(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
+                      entity.motionBlend || 0, currentRenderTimeSeconds);
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === termiteOvermindType) {
+    drawTermiteOvermind(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
+                        entity.motionBlend || 0, currentRenderTimeSeconds);
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
@@ -3124,10 +4047,19 @@ function drawEntity(entity) {
     return;
   }
 
-  if (!isPetal && (snap.entityType === soldierAntType || snap.entityType === summonedSoldierAntType)) {
+  if (!isPetal && (snap.entityType === soldierAntType || snap.entityType === summonedSoldierAntType ||
+                   snap.entityType === soldierFireAntType || snap.entityType === soldierTermiteType)) {
     const summoned = snap.entityType === summonedSoldierAntType;
-    drawSoldierAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                   entity.motionBlend || 0, currentRenderTimeSeconds, { summoned });
+    if (snap.entityType === soldierFireAntType) {
+      drawSoldierFireAntMob(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
+                            entity.motionBlend || 0, currentRenderTimeSeconds);
+    } else if (snap.entityType === soldierTermiteType) {
+      drawSoldierTermite(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
+                         entity.motionBlend || 0, currentRenderTimeSeconds);
+    } else {
+      drawSoldierAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
+                     entity.motionBlend || 0, currentRenderTimeSeconds, { summoned });
+    }
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
@@ -3159,8 +4091,10 @@ function drawEntity(entity) {
   }
 
   if (!isPetal && snap.entityType === hornetType) {
+    const windupId = skillWindupIdFromFlags(snap.flags);
+    const antennaWobble = windupId === 2 ? Math.sin((currentRenderTimeSeconds || 0) * Math.PI * 4) * 0.34 : 0;
     drawHornet(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-               entity.motionBlend || 0, currentRenderTimeSeconds);
+               entity.motionBlend || 0, currentRenderTimeSeconds, { antennaWobble });
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
@@ -3193,14 +4127,14 @@ function drawEntity(entity) {
   }
 
   if (!isPetal && !isDrop && snap.entityType === hornetMissileType) {
-    drawHornetMissile(ctx, pos, radius * deathScale, entity.renderAngle ?? snap.angle);
+    const wobble = hornetSkill2WindupMissileWobble(entity, currentRenderTimeSeconds);
+    drawHornetMissile(ctx, pos, radius * deathScale, (entity.renderAngle ?? snap.angle) + wobble);
     ctx.restore();
     return;
   }
 
   if (!isPetal && !isDrop && snap.entityType === dandelionMissileType) {
     drawDandelionMissile(pos, radius * deathScale, entity.renderAngle ?? snap.angle, snap.rarity, snap.entityId);
-    if (state.debugHitbox) drawCollisionHitbox(pos, radius);
     ctx.restore();
     return;
   }
@@ -4128,7 +5062,8 @@ function drawPetalSilhouette(size, rarity) {
 
 function isMobSnap(snap) {
   return snap && snap.entityType > 0 && !isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType) &&
-         snap.entityType !== playerFlowerType && snap.entityType !== portalType && !isProjectileSnap(snap);
+         snap.entityType !== playerFlowerType && snap.entityType !== portalType &&
+         !isBloodSacrificeEffectSnap(snap) && !isProjectileSnap(snap);
 }
 
 function isSummonedMobSnap(snap) {
@@ -4145,9 +5080,22 @@ function isProjectileSnap(snap) {
   );
 }
 
+function isBloodSacrificeEffectSnap(snap) {
+  return !!snap && snap.entityType === bloodSacrificeEffectType;
+}
+
+function isEffectZoneSnap(snap) {
+  return !!snap && snap.entityType === spiderWebZoneType;
+}
+
+function isMobHitboxSnap(snap) {
+  return snap && snap.entityType > 0 && !isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType) &&
+         snap.entityType !== portalType && !isBloodSacrificeEffectSnap(snap) && !isProjectileSnap(snap);
+}
+
 function hasHealthFrame(snap) {
   return snap && snap.entityType > 0 && !isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType) &&
-         snap.entityType !== portalType && !isProjectileSnap(snap);
+         snap.entityType !== portalType && !isBloodSacrificeEffectSnap(snap) && !isProjectileSnap(snap);
 }
 
 function mobDisplayName(snap) {
@@ -4269,13 +5217,32 @@ function drawOutlinedText(text, x, y, {
   ctx.fillText(text, x, y);
 }
 
-function drawCollisionHitbox(pos, radius) {
+function hitboxStyleForSnap(snap) {
+  if (isBloodSacrificeEffectSnap(snap)) {
+    return { stroke: "rgba(118, 0, 0, 0.96)", fill: "rgba(118, 0, 0, 0.13)" };
+  }
+  if (isEffectZoneSnap(snap)) {
+    return { stroke: "rgba(36, 255, 112, 0.96)", fill: "rgba(36, 255, 112, 0.10)" };
+  }
+  if (isPetalEntity(snap?.entityType) || isDropEntity(snap?.entityType)) {
+    return { stroke: rarityColor(snap.rarity || 1, 0.96), fill: rarityColor(snap.rarity || 1, 0.12) };
+  }
+  if (isProjectileSnap(snap)) {
+    return { stroke: "rgba(190, 82, 255, 0.96)", fill: "rgba(190, 82, 255, 0.10)" };
+  }
+  if (isMobHitboxSnap(snap) || snap?.entityType === playerFlowerType) {
+    return { stroke: "rgba(255, 48, 48, 0.96)", fill: "rgba(255, 48, 48, 0.10)" };
+  }
+  return { stroke: "rgba(116, 198, 255, 0.86)", fill: "rgba(116, 198, 255, 0.08)" };
+}
+
+function drawCollisionHitbox(pos, radius, style = hitboxStyleForSnap(null)) {
   if (radius < 0.5) return;
 
   ctx.save();
   ctx.lineWidth = Math.max(1.25, Math.min(3, radius * 0.08));
-  ctx.strokeStyle = "rgba(255, 32, 32, 0.92)";
-  ctx.fillStyle = "rgba(255, 32, 32, 0.08)";
+  ctx.strokeStyle = style.stroke;
+  ctx.fillStyle = style.fill;
   ctx.beginPath();
   ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
   ctx.fill();
@@ -4295,6 +5262,7 @@ function drawCollisionHitbox(pos, radius) {
 
 function drawMobFrame(snap, pos, radius) {
   if (radius < entityFrameMinScreenRadius) return;
+  if (shouldSkipMobFrame(snap, radius)) return;
 
   if (!hasHealthFrame(snap)) {
     drawEntityLabel(snap, pos, radius);
@@ -4306,8 +5274,9 @@ function drawMobFrame(snap, pos, radius) {
   const y = pos.y + radius + Math.max(4, radius * 0.2);
   const x = pos.x - width * 0.5;
   const hp = clamp(snap.hpPercent, 0, 1);
-  const labelColor = snap.entityType === playerFlowerType ? "#19e6d2" : rarityColor(snap.rarity, 1);
-  const textSize = Math.max(4, radius * 0.2);
+  const isPlayerFlower = snap.entityType === playerFlowerType;
+  const labelColor = isPlayerFlower ? rarityColor(playerLevelRarity(snap), 1) : rarityColor(snap.rarity, 1);
+  const textSize = Math.max(4, radius * (isPlayerFlower ? 0.24 : 0.2));
   const strokeColor = "#050506";
 
   drawOutlinedText(mobDisplayName(snap), x, y - Math.max(1, radius * 0.05), {
@@ -4333,11 +5302,20 @@ function drawMobFrame(snap, pos, radius) {
 
 function drawEntityLabel(snap, pos, radius) {
   if (!snap.name || radius < entityFrameMinScreenRadius) return;
+  if (shouldSkipMobFrame(snap, radius)) return;
   ctx.font = "12px Segoe UI, Microsoft YaHei, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "bottom";
   ctx.fillStyle = "rgba(39, 50, 65, 0.86)";
   ctx.fillText(snap.name, pos.x, pos.y - radius - 10);
+}
+
+function shouldSkipMobFrame(snap, radius) {
+  if (currentRenderLoad <= 0 || !snap) return false;
+  if (snap.entityType === playerFlowerType || snap.entityId === state.ownerEntityId) return false;
+  if (raritySortRank(snap.rarity) >= raritySortRank(bossRarity)) return false;
+  const minRadius = currentRenderLoad >= 2 ? entityFrameMinScreenRadius * 2.5 : entityFrameMinScreenRadius * 1.5;
+  return radius < minRadius;
 }
 
 function bossBarCandidates(entities) {
@@ -4423,9 +5401,10 @@ function drawSelfHud() {
   if (!owner) return;
 
   const health = owner ? clamp(owner.snapshot.hpPercent || 0, 0, 1) : 0;
-  const expProgress = clamp(state.ownerExp / Math.max(1, state.ownerExpRequired), 0, 1);
+  const expProgress = clamp(state.ownerExpProgress || 0, 0, 1);
   const name = owner.snapshot?.name || "Player";
   const level = Math.max(1, state.ownerLevel || owner?.snapshot?.rarity || 1);
+  const levelColor = rarityColor(playerLevelRarity(owner.snapshot), 1);
   const fadeProgress = owner.dying ? clamp((owner.deathAge || 0) / deathFadeDuration, 0, 1) : 0;
   const fadeEase = fadeProgress * fadeProgress * (3 - fadeProgress * 2);
   const fadeAlpha = owner.dying ? 1 - fadeEase : 1;
@@ -4455,15 +5434,15 @@ function drawSelfHud() {
                                (owner.renderAngle ?? owner.snapshot.angle),
                    true);
   drawOutlinedText(name, healthX + healthW * 0.5, healthY + healthH * 0.5, {
-    font: `900 ${24 * scale}px Segoe UI, Microsoft YaHei, sans-serif`,
+    font: `900 ${26 * scale}px Segoe UI, Microsoft YaHei, sans-serif`,
     fill: "#f7f7f7",
     lineWidth: 5 * scale,
   });
 
   drawOutlinedText(`Lvl ${level}`, expX + expW * 0.5, expY + expH * 0.5, {
-    font: `900 ${12.5 * scale}px Segoe UI, Microsoft YaHei, sans-serif`,
-    fill: "#f7f7f7",
-    lineWidth: 3.4 * scale,
+    font: `900 ${15.5 * scale}px Segoe UI, Microsoft YaHei, sans-serif`,
+    fill: levelColor,
+    lineWidth: 3.8 * scale,
   });
   ctx.restore();
 }
@@ -4616,8 +5595,73 @@ function drawEntityPass(entities) {
   for (const entity of entities) drawEntity(entity);
 }
 
+function drawHitboxPass(entities) {
+  if (!state.debugHitbox) return;
+  for (const entity of entities || []) {
+    const snap = entity?.snapshot;
+    if (!snap || !entity.renderPos) continue;
+    const radius = Math.max(0, worldLengthToScreen(snap.radius));
+    if (radius < 0.5) continue;
+    drawCollisionHitbox(worldToScreen(entity.renderPos), radius, hitboxStyleForSnap(snap));
+  }
+}
+
+function drawSceneHitboxes(passes) {
+  if (!state.debugHitbox) return;
+  drawHitboxPass(passes.ground);
+  drawHitboxPass(passes.underlay);
+  drawHitboxPass(passes.world);
+  drawHitboxPass(passes.petals);
+  if (passes.owner) drawHitboxPass([passes.owner]);
+  drawHitboxPass(passes.overlays);
+}
+
+function countScenePassEntities(passes) {
+  return (passes.ground?.length || 0) + (passes.underlay?.length || 0) + (passes.world?.length || 0) +
+    (passes.petals?.length || 0) + (passes.overlays?.length || 0) + (passes.owner ? 1 : 0);
+}
+
+function renderLoadForVisibleCount(count) {
+  if (count >= renderLoadHighEntityCount) return 2;
+  if (count >= renderLoadMediumEntityCount) return 1;
+  return 0;
+}
+
+function prepareFrameRenderCaches(passes) {
+  currentHornetSkill2WindupOwners = [];
+  for (const entity of passes.world || []) {
+    const snap = entity?.snapshot;
+    if (snap?.entityType === hornetType && skillWindupIdFromFlags(snap.flags) === 3)
+      currentHornetSkill2WindupOwners.push(entity);
+  }
+}
+
+function updateBloodSacrificeScreenShake(now) {
+  let strongest = 0;
+  for (const entity of state.entities.values()) {
+    const snap = entity?.snapshot;
+    if (!isBloodSacrificeEffectSnap(snap)) continue;
+    const phase = bloodSacrificePhase(snap.hpPercent);
+    if (phase.drawProgress >= 1) continue;
+    strongest = Math.max(strongest, 1 - phase.drawProgress * 0.35);
+  }
+
+  if (strongest <= 0) {
+    state.screenShake = { x: 0, y: 0 };
+    return;
+  }
+
+  const time = (now || performance.now()) / 1000;
+  const amplitude = bloodSacrificeShakeAmplitudePx * strongest;
+  state.screenShake = {
+    x: (Math.sin(time * 73.1) + Math.sin(time * 41.7 + 1.9)) * amplitude * 0.5,
+    y: (Math.cos(time * 67.3 + 0.7) + Math.sin(time * 53.9 + 2.4)) * amplitude * 0.5,
+  };
+}
+
 function drawScene(now = performance.now()) {
   currentRenderTimeSeconds = now / 1000;
+  updateBloodSacrificeScreenShake(now);
   drawGrid();
   const scale = worldScale();
   const passes = collectSceneRenderPasses({
@@ -4625,6 +5669,9 @@ function drawScene(now = performance.now()) {
     isEntityInRenderView,
     isBoss: (snap) => raritySortRank(snap.rarity) >= raritySortRank(bossRarity),
   });
+  currentVisibleEntityCount = countScenePassEntities(passes);
+  currentRenderLoad = renderLoadForVisibleCount(currentVisibleEntityCount);
+  prepareFrameRenderCaches(passes);
 
   drawEntityPass(passes.ground);
   drawEntityPass(passes.underlay);
@@ -4632,6 +5679,7 @@ function drawScene(now = performance.now()) {
   drawEntityPass(passes.petals);
   if (passes.owner) drawEntity(passes.owner);
   drawEntityPass(passes.overlays);
+  drawSceneHitboxes(passes);
   drawBossBars(passes.bosses);
   drawSelfHud();
   drawMinimap();
@@ -4662,6 +5710,7 @@ function setupEvents() {
   window.addEventListener("resize", resizeCanvas);
   connectBtn.addEventListener("click", connectAndAuth);
   reviveBtn.addEventListener("click", requestRevive);
+  deathCloseBtn?.addEventListener("click", closeDeathOverlay);
   backpackCloseBtn.addEventListener("click", () => toggleBackpack(false));
   craftCloseBtn.addEventListener("click", () => toggleCraft(false));
   talentCloseBtn.addEventListener("click", () => toggleTalent(false));
@@ -4732,6 +5781,12 @@ function setupEvents() {
       toggleConsole();
       return;
     }
+    if (event.key === "Alt" && !event.repeat) {
+      event.preventDefault();
+      state.debugHitbox = !state.debugHitbox;
+      addConsoleLine(`Hitbox debug ${state.debugHitbox ? "on" : "off"}`);
+      return;
+    }
     if (isTyping()) return;
     const key = event.key.toLowerCase();
     if (key === "z") {
@@ -4769,10 +5824,10 @@ function setupEvents() {
       return;
     }
     const slotIndex = slotIndexFromKey(key);
-    if (slotIndex !== null && slotIndex < state.ownerSlots.length) {
+    const ownerSlots = displayOwnerSlots();
+    if (slotIndex !== null && slotIndex < ownerSlots.length) {
       state.selectedSlot = slotIndex;
       quickSwapSlot(slotIndex);
-      renderInventoryPanel();
       return;
     }
     state.keys.add(key);

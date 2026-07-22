@@ -144,6 +144,7 @@ inline bool PetalIgnoresReachBonus(EPetalType type)
     case EPetalType::Honey:
     case EPetalType::Wax:
     case EPetalType::ThirdEye:
+    case EPetalType::Carrot:
     case EPetalType::Orange:
     case EPetalType::Missile:
     case EPetalType::Shovel:

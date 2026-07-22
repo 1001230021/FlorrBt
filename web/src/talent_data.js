@@ -15,6 +15,7 @@ export const TalentId = Object.freeze({
   Summoner: 14,
   Antennae: 15,
   ConcentratedPoison: 16,
+  Movement: 17,
 });
 
 const talentTierRarities = [1, 2, 3, 4, 5, 6, 7, 8, 9];
@@ -42,6 +43,7 @@ function buildTalentNodes() {
   };
 
   const flowerHealth = chain("Flower", TalentId.FlowerHealth, "Health", talentTierRarities, [2, 5, 8, 11, 14, 17, 20, 21, 24]);
+  chain("Flower", TalentId.Movement, "Movement", [3, 4, 5, 6, 7, 8, 9], [3, 4, 5, 6, 7, 9, 13], flowerHealth[1].key);
   const sharpEdges = chain("Flower", TalentId.BodyDamage, "Sharp Edges", talentTierRarities.slice(0, 8), [2, 3, 4, 5, 6, 7, 8, 9]);
   add("Flower", TalentId.BodyDamagePoison, "Body Toxicity", 7, 10, sharpEdges[5].key);
   chain("Petals", TalentId.PetalHealth, "Petal Health", talentTierRarities, [2, 4, 6, 8, 10, 12, 14, 16, 18]);

@@ -52,20 +52,20 @@
                  "name":"",
                  "polygon":[
                         {
-                         "x":0,
-                         "y":0
+                         "x":960,
+                         "y":960
                         }, 
                         {
-                         "x":128,
-                         "y":0
+                         "x":3008,
+                         "y":960
                         }, 
                         {
-                         "x":128,
-                         "y":128
+                         "x":3008,
+                         "y":3008
                         }, 
                         {
-                         "x":0,
-                         "y":128
+                         "x":960,
+                         "y":3008
                         }],
                  "rotation":0,
                  "visible":true,
@@ -80,11 +80,11 @@
          "y":0
         }],
  "nextlayerid":5,
- "nextobjectid":2,
+ "nextobjectid":3,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.9.1",
- "tileheight":32,
+ "tileheight":512,
  "tilesets":[
         {
          "firstgid":1,
@@ -94,7 +94,7 @@
          "firstgid":152,
          "source":"..\/tiles\/tileset.tsj"
         }],
- "tilewidth":32,
+ "tilewidth":512,
  "type":"map",
  "version":"1.9",
  "width":8

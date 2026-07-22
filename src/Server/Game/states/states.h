@@ -48,7 +48,7 @@ class CPincerSpeedReduceState : public CState
 class CWebSpeedReduceState : public CState
 {
   public:
-    CWebSpeedReduceState(CMobBase* owner, float timer, float desired_multiplier);
+    CWebSpeedReduceState(CMobBase* owner, float timer, float desired_multiplier, float reference_mass);
 
     void Tick(float dt) override { m_timer -= dt; }
     bool IsValid() const { return m_is_valid; }
@@ -117,9 +117,13 @@ class CNoReviveState : public CState
 class CInvincibleState : public CState
 {
   public:
-    CInvincibleState(CMobBase* owner, float timer, ERarity rarity) : CState(owner, timer, rarity) {}
+    CInvincibleState(CMobBase* owner, float timer, ERarity rarity);
 
-    void Tick(float dt) override { m_timer -= dt; }
+    void Tick(float dt) override;
+
+  private:
+    bool m_marked_for_destroy = false;
+    float m_hp = 0.f;
 };
 
 class CDiggingState : public CState

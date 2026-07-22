@@ -19,6 +19,7 @@
 #include <fstream>
 #include <random>
 #include <stdexcept>
+#include <string_view>
 #include <SFML/System/Clock.hpp>
 #include <SFML/System/Sleep.hpp>
 
@@ -56,6 +57,20 @@ void EnsureRconPasswordInitialized()
 
     game_config::rcon_password = GenerateRconPassword();
     LOG_INFO("rcon", "Generated RCON password: " + game_config::rcon_password);
+}
+
+std::string PetalReportArticle(ERarity rarity)
+{
+    switch (rarity)
+    {
+    case ERarity::Epic:
+    case ERarity::Ultra:
+    case ERarity::Eternal:
+    case ERarity::Exotic:
+        return "An";
+    default:
+        return "A";
+    }
 }
 
 }
@@ -219,6 +234,47 @@ const CServer::SChatEntry* CServer::SubmitChat(CGameWorld* world, sf::Vector2f p
 const CServer::SChatEntry* CServer::SubmitServerChat(const std::string& message)
 {
     return SubmitChat(nullptr, {0.f, 0.f}, EChatFlag::Server, 0, "Server", message);
+}
+
+bool CServer::MeetsPetalReportRarity(ERarity rarity, int min_rarity)
+{
+    if (!IsKnownRarity(rarity)) return false;
+    if (min_rarity <= 0) return true;
+
+    ERarity min = static_cast<ERarity>(min_rarity);
+    if (!IsKnownRarity(min)) return false;
+    return GetRaritySortRank(rarity) >= GetRaritySortRank(min);
+}
+
+bool CServer::BroadcastPetalReport(std::string_view done, ERarity rarity, std::string_view petal_name,
+                                   std::string_view doer)
+{
+    if (done.empty() || petal_name.empty() || doer.empty() || !IsKnownRarity(rarity)) return false;
+
+    INetworkModule* network = GetNetworkModule();
+    if (!network) return false;
+
+    std::string rarity_name(GetRarityName(rarity));
+    std::string message;
+    message.reserve(rarity_name.size() * 2 + petal_name.size() + doer.size() + done.size() + 32);
+    message += "<";
+    message += rarity_name;
+    message += ">(";
+    message += PetalReportArticle(rarity);
+    message += " ";
+    message += rarity_name;
+    message += " ";
+    message.append(petal_name);
+    message += " has been ";
+    message.append(done);
+    message += " by ";
+    message.append(doer);
+    message += ")";
+
+    const SChatEntry* chat = SubmitChat(nullptr, {0.f, 0.f}, EChatFlag::Server, 0, "Server", message);
+    if (!chat) return false;
+    network->BroadcastChat(*chat);
+    return true;
 }
 
 void CServer::Run()

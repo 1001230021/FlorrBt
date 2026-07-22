@@ -11,10 +11,16 @@ class CBloodSacrificeRitual : public CEntity
 
     void Tick(float dt) override;
     bool CanCollide() const override { return false; }
-    bool IsVisible() const override { return false; }
+    bool IsVisible() const override { return !IsDead(); }
+
+    ERarity GetRarity() const { return m_rarity; }
+    float EffectProgress() const;
 
   private:
     EMobType m_mob_type = EMobType::None;
     ERarity m_rarity = ERarity::Null;
-    float m_timer = 0.f;
+    float m_draw_duration = 10.f;
+    float m_fade_duration = 60.f;
+    float m_age = 0.f;
+    bool m_spawned = false;
 };

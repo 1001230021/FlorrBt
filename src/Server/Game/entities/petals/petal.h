@@ -105,6 +105,7 @@ class CPetal : public CProjectile
     int m_target_entity_id = -1;
     std::uint64_t m_target_entity_generation = 0;
     float m_lifetime = 0.f;
+    float m_timer = 0.f;
     float m_reload_override = -1.f;
     bool m_reload_ignore_multiplier = false;
     bool m_hidden = false;

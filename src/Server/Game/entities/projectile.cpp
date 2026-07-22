@@ -16,6 +16,7 @@ CMissile::CMissile(CGameWorld* world, sf::Vector2f pos, float radius, sf::Vector
 {
     if (owner) m_team = owner->m_team;
     m_health = std::max(0.f, health);
+    m_mass = std::max(0.f, game_config::default_missile_mass);
 
     float dir_len = Length(direction);
     if (dir_len > game_config::entity_collision_epsilon)
@@ -63,11 +64,12 @@ void CMissile::Tick(float dt)
 bool CMissile::ApplyHit(CEntity* target)
 {
     if (m_attached_to_owner) return false;
-    if (!target || target == this || target == GetOwner() || m_is_marked_for_des) return false;
+    if (!target || target == this || m_is_marked_for_des) return false;
+    if (target->m_id == m_owner_id && (m_owner_generation == 0 || target->m_generation == m_owner_generation))
+        return false;
+    if (target == GetOwner()) return false;
     if (m_damage > 0.f)
         target->TakeDamage(m_damage, GetOwner(), EDamageType::Normal);
-    m_health = 0.f;
-    m_is_marked_for_des = true;
     return true;
 }
 
@@ -179,7 +181,10 @@ void CPollenProjectile::Tick(float dt)
 
 bool CPollenProjectile::ApplyHit(CEntity* target)
 {
-    if (!target || target == this || target == GetOwner() || m_is_marked_for_des) return false;
+    if (!target || target == this || m_is_marked_for_des) return false;
+    if (target->m_id == m_owner_id && (m_owner_generation == 0 || target->m_generation == m_owner_generation))
+        return false;
+    if (target == GetOwner()) return false;
     if (m_damage > 0.f)
         target->TakeDamage(m_damage, GetOwner(), EDamageType::Normal);
     return true;

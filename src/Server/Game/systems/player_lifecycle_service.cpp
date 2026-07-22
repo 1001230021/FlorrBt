@@ -5,16 +5,20 @@
 #include "../player.h"
 #include "../../../Engine/logger.h"
 #include "../../../Shared/game_config.h"
-#include <algorithm>
+#include "../../../Shared/tools.h"
 #include <cmath>
-#include <limits>
 #include <random>
-#include <utility>
+#include <sstream>
+#include <string>
 
 namespace
 {
 constexpr int checkpoint_spawn_attempts = 48;
+constexpr int respawn_safety_rings = 24;
+constexpr int respawn_safety_angles = 16;
+constexpr float respawn_mob_separation_skin = 4.f;
 constexpr uint8_t checkpoint_check_interval_ticks = 4;
+constexpr uint8_t checkpoint_death_protection_max = 3;
 
 std::mt19937& RespawnRng()
 {
@@ -22,16 +26,66 @@ std::mt19937& RespawnRng()
     return rng;
 }
 
+bool RespawnPointBlockedByMob(const CGameWorld& world, sf::Vector2f pos, float radius)
+{
+    bool blocked = false;
+    world.ForEachEntity([&](const CEntity* entity)
+    {
+        if (blocked) return;
+
+        const auto* mob = dynamic_cast<const CMobBase*>(entity);
+        if (!mob || mob->m_mob_type == EMobType::PlayerFlower) return;
+        if (mob->m_is_marked_for_des || mob->IsDead() || !mob->CanCollide()) return;
+
+        const float min_distance = radius + std::max(0.f, mob->m_radius) + respawn_mob_separation_skin;
+        if (DistanceSq(pos, mob->m_pos) <= min_distance * min_distance) blocked = true;
+    });
+    return blocked;
+}
+
+bool RespawnPointSafe(const CGameWorld& world, const FlorrBtMap::Checkpoint& checkpoint, sf::Vector2f pos,
+                      float radius)
+{
+    if (!CheckpointContainsPoint(checkpoint, pos.x, pos.y)) return false;
+    if (world.CircleBlockedByWall(pos, radius)) return false;
+    return !RespawnPointBlockedByMob(world, pos, radius);
+}
+
+bool MoveRespawnPointToSafeSpot(const CGameWorld& world, const FlorrBtMap::Checkpoint& checkpoint,
+                                sf::Vector2f& pos, float radius)
+{
+    if (RespawnPointSafe(world, checkpoint, pos, radius)) return true;
+
+    const float step = std::max(radius * 0.5f, 16.f);
+    for (int ring = 1; ring <= respawn_safety_rings; ++ring)
+    {
+        const float distance = step * static_cast<float>(ring);
+        for (int angle_index = 0; angle_index < respawn_safety_angles; ++angle_index)
+        {
+            const float angle = game_config::pi * 2.f * static_cast<float>(angle_index) /
+                                static_cast<float>(respawn_safety_angles);
+            sf::Vector2f candidate = {pos.x + std::cos(angle) * distance, pos.y + std::sin(angle) * distance};
+            if (!RespawnPointSafe(world, checkpoint, candidate, radius)) continue;
+            pos = candidate;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool RandomPointInCheckpoint(const CGameWorld& world, const FlorrBtMap::Checkpoint& checkpoint, sf::Vector2f& out_pos)
 {
     if (checkpoint.w <= 0.f || checkpoint.h <= 0.f) return false;
 
-    std::uniform_real_distribution<float> random_x(checkpoint.x, checkpoint.x + checkpoint.w);
-    std::uniform_real_distribution<float> random_y(checkpoint.y, checkpoint.y + checkpoint.h);
+    std::uniform_real_distribution<float> random_x(0.f, checkpoint.w);
+    std::uniform_real_distribution<float> random_y(0.f, checkpoint.h);
     for (int attempt = 0; attempt < checkpoint_spawn_attempts; ++attempt)
     {
-        sf::Vector2f candidate = {random_x(RespawnRng()), random_y(RespawnRng())};
-        if (world.CircleBlockedByWall(candidate, game_config::mob_player_flower_radius)) continue;
+        const FlorrBtMap::Point point =
+            CheckpointLocalToWorldPoint(checkpoint, random_x(RespawnRng()), random_y(RespawnRng()));
+        sf::Vector2f candidate = {point.x, point.y};
+        if (!MoveRespawnPointToSafeSpot(world, checkpoint, candidate, game_config::mob_player_flower_radius)) continue;
         out_pos = candidate;
         return true;
     }
@@ -40,31 +94,55 @@ bool RandomPointInCheckpoint(const CGameWorld& world, const FlorrBtMap::Checkpoi
 
 bool CheckpointContains(const FlorrBtMap::Checkpoint& checkpoint, sf::Vector2f pos)
 {
-    return checkpoint.w > 0.f && checkpoint.h > 0.f &&
-           pos.x >= checkpoint.x && pos.x <= checkpoint.x + checkpoint.w &&
-           pos.y >= checkpoint.y && pos.y <= checkpoint.y + checkpoint.h;
+    return CheckpointContainsPoint(checkpoint, pos.x, pos.y);
 }
 
 sf::Vector2f CheckpointCenter(const FlorrBtMap::Checkpoint& checkpoint)
 {
-    return {checkpoint.x + checkpoint.w * 0.5f, checkpoint.y + checkpoint.h * 0.5f};
+    const FlorrBtMap::Point point = CheckpointCenterPoint(checkpoint);
+    return {point.x, point.y};
 }
 
-bool HasVisitedCheckpoint(const CPlayer& player, const FlorrBtMap::Checkpoint& checkpoint)
+std::string Vec2String(sf::Vector2f pos)
 {
-    for (const SPlayerCheckpointVisit& visit : player.m_cp_history)
+    std::ostringstream oss;
+    oss << pos.x << "," << pos.y;
+    return oss.str();
+}
+
+std::string CheckpointLabel(const FlorrBtMap::Checkpoint& checkpoint)
+{
+    std::ostringstream oss;
+    const sf::Vector2f center = CheckpointCenter(checkpoint);
+    oss << "id=" << checkpoint.id << " level=" << checkpoint.level
+        << " center=" << Vec2String(center) << " size=" << checkpoint.w << "x" << checkpoint.h
+        << " rotation=" << checkpoint.rotation;
+    return oss.str();
+}
+
+std::string CheckpointEntryLabel(const SPlayerCheckpointEntry& entry)
+{
+    std::ostringstream oss;
+    oss << "id=" << entry.checkpoint_id << " level=" << entry.level
+        << " count=" << static_cast<int>(entry.count);
+    return oss.str();
+}
+
+std::string CheckpointStackLabel(const CPlayer& player)
+{
+    std::ostringstream oss;
+    oss << "[";
+    for (size_t i = 0; i < player.m_cp_stack.size(); ++i)
     {
-        if (visit.level == checkpoint.level && CheckpointContains(checkpoint, visit.pos)) return true;
+        if (i > 0) oss << ", ";
+        oss << CheckpointEntryLabel(player.m_cp_stack[i]);
     }
-    return false;
+    oss << "]";
+    return oss.str();
 }
 
-int HighestVisitedCheckpointLevel(const CPlayer& player)
+void LogCheckpoint(const CPlayer& player, const std::string& msg)
 {
-    int level = 0;
-    for (const SPlayerCheckpointVisit& visit : player.m_cp_history)
-        level = std::max(level, visit.level);
-    return level;
 }
 
 void UpdatePlayerCheckpoint(CPlayer& player)
@@ -82,9 +160,37 @@ void UpdatePlayerCheckpoint(CPlayer& player)
     {
         if (!checkpoint.is_save || checkpoint.level <= 0) continue;
         if (!CheckpointContains(checkpoint, entity->m_pos)) continue;
-        if (HasVisitedCheckpoint(player, checkpoint)) continue;
 
-        player.m_cp_history.push_back({CheckpointCenter(checkpoint), checkpoint.level});
+        if (checkpoint.id == 0)
+        {
+            LogCheckpoint(player, "hit checkpoint with missing id at pos=" + Vec2String(entity->m_pos) +
+                                      " stack=" + CheckpointStackLabel(player));
+            return;
+        }
+
+        if (!player.m_cp_stack.empty() && player.m_cp_stack.back().checkpoint_id == checkpoint.id) return;
+
+        const std::string before_stack = CheckpointStackLabel(player);
+
+        while (!player.m_cp_stack.empty() && player.m_cp_stack.back().level > checkpoint.level)
+        {
+            LogCheckpoint(player, "pop higher checkpoint " + CheckpointEntryLabel(player.m_cp_stack.back()) +
+                                      " before hit " + CheckpointLabel(checkpoint));
+            player.m_cp_stack.pop_back();
+        }
+
+        uint8_t count = checkpoint_death_protection_max;
+        if (!player.m_cp_stack.empty() && player.m_cp_stack.back().level == checkpoint.level)
+        {
+            count = player.m_cp_stack.back().count;
+            LogCheckpoint(player, "replace same-level checkpoint " + CheckpointEntryLabel(player.m_cp_stack.back()) +
+                                      " with " + CheckpointLabel(checkpoint));
+            player.m_cp_stack.pop_back();
+        }
+
+        player.m_cp_stack.push_back({checkpoint.id, checkpoint.level, count});
+        LogCheckpoint(player, "hit " + CheckpointLabel(checkpoint) + " pos=" + Vec2String(entity->m_pos) +
+                                  " stack " + before_stack + " -> " + CheckpointStackLabel(player));
         return;
     }
 }
@@ -95,43 +201,90 @@ bool ShouldUpdatePlayerCheckpoint(CPlayer& player)
     return player.m_cp_check_phase == 0;
 }
 
-bool PickVisitedCheckpointRespawnPosition(const CPlayer& player, const CGameWorld& world, const FlorrBtMap& map,
-                                          sf::Vector2f death_pos, sf::Vector2f& out_pos)
+bool PickCheckpointRespawnPosition(const CPlayer& player, const CGameWorld& world, const FlorrBtMap& map,
+                                   const SPlayerCheckpointEntry& entry, sf::Vector2f& out_pos)
 {
-    const int target_level = HighestVisitedCheckpointLevel(player) - 1;
-    if (target_level <= 0) return false;
-
-    const SPlayerCheckpointVisit* best_visit = nullptr;
-    float best_distance_sq = std::numeric_limits<float>::max();
-    for (const SPlayerCheckpointVisit& visit : player.m_cp_history)
+    if (entry.checkpoint_id == 0)
     {
-        if (visit.level != target_level) continue;
-        const sf::Vector2f delta = {visit.pos.x - death_pos.x, visit.pos.y - death_pos.y};
-        const float distance_sq = delta.x * delta.x + delta.y * delta.y;
-        if (distance_sq >= best_distance_sq) continue;
-        best_distance_sq = distance_sq;
-        best_visit = &visit;
+        LogCheckpoint(player, "skip respawn checkpoint with missing id entry=" + CheckpointEntryLabel(entry));
+        return false;
     }
-    if (!best_visit) return false;
 
     for (const FlorrBtMap::Checkpoint& checkpoint : map.checkpoints)
     {
         if (!checkpoint.is_save) continue;
-        if (checkpoint.level != target_level) continue;
-        if (checkpoint.w <= 0.f || checkpoint.h <= 0.f) continue;
-        if (!CheckpointContains(checkpoint, best_visit->pos)) continue;
-        return RandomPointInCheckpoint(world, checkpoint, out_pos);
+        if (checkpoint.id != entry.checkpoint_id) continue;
+
+        if (checkpoint.level != entry.level)
+            LogCheckpoint(player, "checkpoint level changed for " + CheckpointEntryLabel(entry) +
+                                      " map_level=" + std::to_string(checkpoint.level));
+
+        if (checkpoint.w > 0.f && checkpoint.h > 0.f && RandomPointInCheckpoint(world, checkpoint, out_pos))
+        {
+            LogCheckpoint(player, "respawn selected " + CheckpointLabel(checkpoint) + " pos=" + Vec2String(out_pos));
+            return true;
+        }
+
+        LogCheckpoint(player, "respawn point failed for " + CheckpointLabel(checkpoint) +
+                                  " entry=" + CheckpointEntryLabel(entry));
+        return false;
     }
+
+    LogCheckpoint(player, "respawn checkpoint id not found entry=" + CheckpointEntryLabel(entry));
     return false;
 }
 
-sf::Vector2f PickRespawnPosition(CPlayer& player, CGameWorld& world, sf::Vector2f death_pos)
+bool PickStackCheckpointRespawnPosition(CPlayer& player, const CGameWorld& world, const FlorrBtMap& map,
+                                        sf::Vector2f& out_pos)
+{
+    if (player.m_cp_stack.empty())
+    {
+        LogCheckpoint(player, "respawn has empty checkpoint stack");
+        return false;
+    }
+
+    if (player.m_cp_stack.back().count > 0)
+    {
+        const std::string before_stack = CheckpointStackLabel(player);
+        --player.m_cp_stack.back().count;
+        const SPlayerCheckpointEntry current_entry = player.m_cp_stack.back();
+        if (PickCheckpointRespawnPosition(player, world, map, current_entry, out_pos))
+        {
+            LogCheckpoint(player, "respawn keep current checkpoint " + CheckpointEntryLabel(current_entry) +
+                                      " stack " + before_stack + " -> " + CheckpointStackLabel(player));
+            return true;
+        }
+
+        LogCheckpoint(player, "respawn pop unresolved protected checkpoint " + CheckpointEntryLabel(current_entry));
+        player.m_cp_stack.pop_back();
+    }
+    else
+    {
+        const std::string before_stack = CheckpointStackLabel(player);
+        const SPlayerCheckpointEntry current_entry = player.m_cp_stack.back();
+        player.m_cp_stack.pop_back();
+        LogCheckpoint(player, "respawn discard depleted checkpoint " + CheckpointEntryLabel(current_entry) +
+                                  " stack " + before_stack + " -> " + CheckpointStackLabel(player));
+    }
+
+    while (!player.m_cp_stack.empty())
+    {
+        const SPlayerCheckpointEntry entry = player.m_cp_stack.back();
+        if (PickCheckpointRespawnPosition(player, world, map, entry, out_pos)) return true;
+        LogCheckpoint(player, "respawn pop unresolved checkpoint " + CheckpointEntryLabel(entry));
+        player.m_cp_stack.pop_back();
+    }
+    LogCheckpoint(player, "respawn exhausted checkpoint stack");
+    return false;
+}
+
+sf::Vector2f PickRespawnPosition(CPlayer& player, CGameWorld& world)
 {
     const FlorrBtMap* map = world.GetMap();
     if (map)
     {
         sf::Vector2f saved_pos;
-        if (PickVisitedCheckpointRespawnPosition(player, world, *map, death_pos, saved_pos)) return saved_pos;
+        if (PickStackCheckpointRespawnPosition(player, world, *map, saved_pos)) return saved_pos;
 
         std::vector<size_t> checkpoints;
         for (size_t i = 0; i < map->checkpoints.size(); ++i)
@@ -143,10 +296,18 @@ sf::Vector2f PickRespawnPosition(CPlayer& player, CGameWorld& world, sf::Vector2
         {
             std::uniform_int_distribution<size_t> dist(0, checkpoints.size() - 1);
             sf::Vector2f pos;
-            if (RandomPointInCheckpoint(world, map->checkpoints[checkpoints[dist(RespawnRng())]], pos)) return pos;
+            const FlorrBtMap::Checkpoint& checkpoint = map->checkpoints[checkpoints[dist(RespawnRng())]];
+            if (RandomPointInCheckpoint(world, checkpoint, pos))
+            {
+                LogCheckpoint(player, "respawn selected respawn_area " + CheckpointLabel(checkpoint) +
+                                          " pos=" + Vec2String(pos));
+                return pos;
+            }
         }
     }
 
+    LogCheckpoint(player, "respawn selected default pos=" +
+                              Vec2String({game_config::player_respawn_x, game_config::player_respawn_y}));
     return {game_config::player_respawn_x, game_config::player_respawn_y};
 }
 }
@@ -158,21 +319,23 @@ void CPlayerLifecycleService::ProcessDropPickups(const std::vector<std::unique_p
     {
         if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
         if (ShouldUpdatePlayerCheckpoint(*player)) UpdatePlayerCheckpoint(*player);
-        if (player->TickDropPickup()) notifier.QueueInventory(*player);
+        if (player->TickDropPickup())
+        {
+            notifier.QueueInventory(*player);
+            notifier.QueueOwnerStateUpdate(*player);
+        }
     }
 }
 
 CEntity* CPlayerLifecycleService::Respawn(CPlayer& player, CGameWorld& world) const
 {
-    sf::Vector2f death_pos = {game_config::player_respawn_x, game_config::player_respawn_y};
     if (auto* old_flower = dynamic_cast<CPlayerFlower*>(player.GetEntity()))
     {
-        death_pos = old_flower->m_pos;
         old_flower->PrepareRespawnDestroy();
         player.SetOwnedEntity(nullptr);
     }
 
-    auto entity = CreateMob(EMobType::PlayerFlower, &world, PickRespawnPosition(player, world, death_pos), ERarity::Common);
+    auto entity = CreateMob(EMobType::PlayerFlower, &world, PickRespawnPosition(player, world), ERarity::Common);
     auto* raw_flower = dynamic_cast<CPlayerFlower*>(entity.get());
     if (!raw_flower) return nullptr;
 
