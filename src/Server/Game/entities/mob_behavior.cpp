@@ -1161,6 +1161,14 @@ class CAntHoleMob : public CBasicMob
             m_pending_death_cleanup = true;
             m_allow_skip_tick = false;
             QueueAllRemainingHealthWaves();
+            if (IsAtLeastRarity(GetRarity(), ERarity::Super))
+            {
+                LOG_INFO("loot", "AntHole pending death id=" + std::to_string(m_id) +
+                                  " rarity=" + std::string(GetRarityName(GetRarity())) +
+                                  " recorded_damage=" + std::to_string(RecordedDamageTotal()) +
+                                  " queued_spawns_left=" +
+                                      std::to_string(m_spawn_queue.size() - m_spawn_index));
+            }
         } else {
             QueueHealthTriggeredSpawns();
         }
@@ -1219,6 +1227,16 @@ class CAntHoleMob : public CBasicMob
             {0.40f, 1, 2, 7, false},
             {0.25f, 1, 1, 7, true},
         }};
+    }
+
+    float RecordedDamageTotal() const
+    {
+        float total = 0.f;
+        for (const CDamageData& damage_data : GetDamageData())
+        {
+            if (damage_data.m_total_dmg > 0.f) total += damage_data.m_total_dmg;
+        }
+        return total;
     }
 
     void QueueHealthWave(const SHealthWave& wave)
