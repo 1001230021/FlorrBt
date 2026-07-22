@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cctype>
+#include <cstdint>
 #include <exception>
 #include <string_view>
 #include <utility>
@@ -23,6 +24,17 @@
 
 namespace
 {
+uint16_t EncodeExpProgressBps(const CPlayerFlower& flower)
+{
+    const std::int64_t required = flower.ExpRequired();
+    if (required <= 0) return 0;
+
+    long double progress = static_cast<long double>(std::max<std::int64_t>(0, flower.m_exp)) /
+                           static_cast<long double>(required);
+    progress = std::clamp(progress, 0.0L, 1.0L);
+    return static_cast<uint16_t>(std::clamp<long long>(std::llround(progress * 10000.0L), 0, 10000));
+}
+
 size_t PacketLengthAt(const std::vector<uint8_t>& buffer, size_t offset)
 {
     if (offset + packet_length_prefix_size > buffer.size()) return 0;
@@ -57,6 +69,18 @@ size_t PendingSendBytes(const CPlayer& player)
 {
     if (player.m_send_offset >= player.m_send_buffer.size()) return 0;
     return player.m_send_buffer.size() - player.m_send_offset;
+}
+
+size_t SnapshotBacklogSkipBytes()
+{
+    size_t configured = game_config::network_snapshot_backlog_skip_bytes;
+    if (configured == 0) configured = std::max<size_t>(512, game_config::network_snapshot_packet_budget * 2u);
+    return std::clamp(configured, size_t{512}, CSnapshotService::backlog_skip_bytes);
+}
+
+bool IsSlotOperate(const ClientOperate& op)
+{
+    return op.type == ClientOperate::Type::Equip || op.type == ClientOperate::Type::Unequip;
 }
 
 std::string ToLower(std::string text)
@@ -275,7 +299,7 @@ void INetworkModule::SendSnapshots()
         if (!owner_mob || !owner_mob->GetFinalStats()) continue;
 
         DropQueuedSnapshots(*player);
-        if (PendingSendBytes(*player) > CSnapshotService::backlog_skip_bytes)
+        if (PendingSendBytes(*player) > SnapshotBacklogSkipBytes())
         {
             if ((m_snapshot_id % 60) == 0)
             {
@@ -293,14 +317,6 @@ void INetworkModule::SendSnapshots()
 
         CSnapshotService::SBuildResult snapshot;
         if (!m_snapshot_service.BuildSnapshot(*player, m_snapshot_id, snapshot)) continue;
-
-        if (snapshot.message.entities.size() < snapshot.visible_count && (m_snapshot_id % 60) == 0)
-        {
-            LOG_WARN("network", "Trimmed snapshot for player " + std::to_string(player->GetId()) + ": " +
-                                    std::to_string(snapshot.message.entities.size()) + "/" +
-                                    std::to_string(snapshot.visible_count) + " entities, " +
-                                    std::to_string(snapshot.packed_size) + " bytes");
-        }
 
         if (!QueueMessage(*player, snapshot.message))
         {
@@ -566,8 +582,7 @@ bool INetworkModule::QueueOwnerState(CPlayer& player)
     msg.type = ServerMessage::Type::OwnerState;
     msg.level = 1;
     msg.flags = 0;
-    msg.exp = 0;
-    msg.exp_required = 10;
+    msg.exp_progress_bps = 0;
     msg.talent_points = static_cast<uint16_t>(std::clamp(player.GetTalentPoints(), 0, static_cast<int>(UINT16_MAX)));
     for (const ITalent* talent : player.GetTalents())
     {
@@ -580,8 +595,7 @@ bool INetworkModule::QueueOwnerState(CPlayer& player)
     if (player_flower)
     {
         msg.level = static_cast<uint8_t>(std::clamp(player_flower->m_level, 0, 255));
-        msg.exp = static_cast<uint32_t>(std::max(0, player_flower->m_exp));
-        msg.exp_required = static_cast<uint32_t>(std::max(1, player_flower->ExpRequired()));
+        msg.exp_progress_bps = EncodeExpProgressBps(*player_flower);
     }
 
     auto* flower = dynamic_cast<CFlower*>(player.GetEntity());
@@ -622,6 +636,11 @@ bool INetworkModule::QueueOwnerState(CPlayer& player)
 bool INetworkModule::QueueOwnerStateUpdate(CPlayer& player)
 {
     return QueueOwnerState(player);
+}
+
+bool INetworkModule::QueueInventoryUpdate(CPlayer& player)
+{
+    return QueueInventory(player);
 }
 
 bool INetworkModule::QueueInventory(CPlayer& player)
@@ -701,12 +720,25 @@ void INetworkModule::BroadcastChat(const CServer::SChatEntry& chat)
 
 INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer& player)
 {
+    CAccountDataStore::CSaveBatch account_save_batch;
+    bool queue_slot_state = false;
+    auto flush_slot_state = [&]() -> EPlayerBufferResult
+    {
+        if (!queue_slot_state) return EPlayerBufferResult::Continue;
+        QueueInventory(player);
+        QueueOwnerState(player);
+        queue_slot_state = false;
+        if (!FlushSendBuffer(player))
+            return EPlayerBufferResult::RequestedDisconnect;
+        return EPlayerBufferResult::Continue;
+    };
+
     while (player.m_receive_buffer.size() >= 1)
     {
         if (ClientAuthRequest::IsPacketStart(player.m_receive_buffer[0]))
         {
             size_t packet_size = ClientAuthRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
-            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return EPlayerBufferResult::Continue;
+            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
 
             bool ok = false;
             ClientAuthRequest request = ClientAuthRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
@@ -725,7 +757,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
         if (ClientChatRequest::IsPacketStart(player.m_receive_buffer[0]))
         {
             size_t packet_size = ClientChatRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
-            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return EPlayerBufferResult::Continue;
+            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
 
             bool ok = false;
             ClientChatRequest request = ClientChatRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
@@ -742,7 +774,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
         if (ClientSecondarySlotRequest::IsPacketStart(player.m_receive_buffer[0]))
         {
             size_t packet_size = ClientSecondarySlotRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
-            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return EPlayerBufferResult::Continue;
+            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
 
             bool ok = false;
             ClientSecondarySlotRequest request = ClientSecondarySlotRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
@@ -752,14 +784,18 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                 QueueAuthResult(player, false, "Please login first");
                 return EPlayerBufferResult::RequestedDisconnect;
             }
-            if (ok) HandleSecondarySlotRequest(player, request);
+            if (ok)
+            {
+                HandleSecondarySlotRequest(player, request);
+                queue_slot_state = true;
+            }
             continue;
         }
 
         if (ClientCraftRequest::IsPacketStart(player.m_receive_buffer[0]))
         {
             size_t packet_size = ClientCraftRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
-            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return EPlayerBufferResult::Continue;
+            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
 
             bool ok = false;
             ClientCraftRequest request = ClientCraftRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
@@ -776,7 +812,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
         if (ClientTalentRequest::IsPacketStart(player.m_receive_buffer[0]))
         {
             size_t packet_size = ClientTalentRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
-            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return EPlayerBufferResult::Continue;
+            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
 
             bool ok = false;
             ClientTalentRequest request = ClientTalentRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
@@ -800,6 +836,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
             }
             QueueInventory(player);
             QueueOwnerState(player);
+            queue_slot_state = false;
             if (!FlushSendBuffer(player))
                 return EPlayerBufferResult::RequestedDisconnect;
             continue;
@@ -816,11 +853,12 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                               type == static_cast<uint8_t>(ClientOperate::Type::Equip))
                                  ? client_extended_packet_size
                                  : client_compact_packet_size;
-        if (player.m_receive_buffer.size() < packet_size) return EPlayerBufferResult::Continue;
+        if (player.m_receive_buffer.size() < packet_size) return flush_slot_state();
 
         ClientOperate op = ClientOperate::parse(player.m_receive_buffer.data(), packet_size);
         if (op.type != ClientOperate::Type::Unknown)
         {
+            bool op_queues_slot_state = IsSlotOperate(op);
             if (op.disconnect.value_or(false)) return EPlayerBufferResult::RequestedDisconnect;
             else if (op.agree.value_or(false))
             {
@@ -836,10 +874,11 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                 auto* flower = dynamic_cast<CPlayerFlower*>(player.GetEntity());
                 if (!flower || !flower->m_is_dead) player.HandleOperate(op);
             }
+            queue_slot_state = queue_slot_state || op_queues_slot_state;
         }
         player.m_receive_buffer.erase(player.m_receive_buffer.begin(), player.m_receive_buffer.begin() + packet_size);
     }
-    return EPlayerBufferResult::Continue;
+    return flush_slot_state();
 }
 
 void INetworkModule::HandleChatRequest(CPlayer& player, const ClientChatRequest& request)
@@ -885,9 +924,6 @@ void INetworkModule::HandleSecondarySlotRequest(CPlayer& player, const ClientSec
         CAccountDataStore::ClearSecondarySlot(player.GetAccountName(), request.slot_index);
     else
         CAccountDataStore::SetSecondarySlot(player.GetAccountName(), request.slot_index, request.petal_type, request.rarity);
-
-    QueueInventory(player);
-    QueueOwnerState(player);
 }
 
 void INetworkModule::HandleCraftRequest(CPlayer& player, const ClientCraftRequest& request)
@@ -897,6 +933,7 @@ void INetworkModule::HandleCraftRequest(CPlayer& player, const ClientCraftReques
     {
         QueueCraftResult(player, result);
         QueueInventory(player);
+        QueueOwnerStateUpdate(player);
     }
 }
 

@@ -10,6 +10,7 @@
 #include "../../../Engine/account_data.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 
 namespace
@@ -54,20 +55,22 @@ float GetPlayerFlowerLevelMultiplier(int level, float growth)
 
 SFlowerStats BuildPlayerFlowerLevelStats(SFlowerStats stats, int level)
 {
-    stats.max_health *= GetPlayerFlowerLevelMultiplier(level, game_config::mob_player_flower_level_health_growth);
+    stats.max_health *= std::pow(std::max(0.f, game_config::mob_player_flower_level_health_growth),
+                                 static_cast<float>(GetPlayerFlowerStatLevel(level)));
     stats.damage *= GetPlayerFlowerLevelMultiplier(level, game_config::mob_player_flower_level_damage_growth);
     return stats;
 }
 
-int PlayerFlowerExpRequired(int level)
+std::int64_t PlayerFlowerExpRequired(int level)
 {
-    constexpr double base_exp = 25.0;
-    constexpr double level_growth = 1.05;
     const int safe_level = std::max(1, level);
-    const double required = base_exp * std::pow(level_growth, static_cast<double>(safe_level - 1));
-    if (!std::isfinite(required) || required >= static_cast<double>(std::numeric_limits<int>::max()))
-        return std::numeric_limits<int>::max();
-    return std::max(1, static_cast<int>(std::llround(required)));
+    const long double base_exp = std::max(1.0L, static_cast<long double>(game_config::player_level_exp_base));
+    const long double level_growth = std::max(1.0L, static_cast<long double>(game_config::player_level_exp_growth));
+    const long double required = base_exp * std::pow(level_growth, static_cast<long double>(safe_level - 1));
+    const long double max_exp = static_cast<long double>(std::numeric_limits<std::int64_t>::max());
+    if (!std::isfinite(static_cast<double>(required)) || required >= max_exp)
+        return std::numeric_limits<std::int64_t>::max();
+    return std::max<std::int64_t>(1, static_cast<std::int64_t>(std::llround(required)));
 }
 
 int TalentPointGainForLevel(int level)
@@ -247,10 +250,9 @@ bool CFlower::TryStartBurrowFromShovel()
             CPetal* petal = slot.m_p_petals[i];
             if (!petal || petal->m_is_marked_for_des || petal->m_health <= 0.f || petal->m_hidden) continue;
 
-            float duration = std::max(game_config::server_fixed_dt, petal->m_final_petal_stats.reload);
+            float duration = std::max(game_config::server_fixed_dt, game_config::default_shovel_dig_duration);
             petal->m_reload_override = std::max(0.f, petal->m_final_petal_stats.preload);
             petal->m_health = 0.f;
-            if (auto* attackable = dynamic_cast<IAttackableMob*>(this)) attackable->ClearAttackState();
             AddState(std::make_unique<CDiggingState>(this, duration, slot.m_stored_rarity));
             return true;
         }
@@ -593,6 +595,8 @@ bool CFlower::HasNonYinYangPetals() const
 CPlayerFlower::CPlayerFlower(CGameWorld* pworld, sf::Vector2f pos, float r, ERarity rarity, const SFlowerStats& base)
     : CFlower(pworld, pos, r, rarity, base)
 {
+    AddTag(EEntityTag::ClearOwnedSummonsOnDestroy);
+
     int slot_count = std::clamp(game_config::mob_player_flower_initial_petal_slots, 0,
                                 std::max(0, game_config::mob_player_flower_max_petal_slots));
     SetPetalSlotCount(slot_count);
@@ -668,16 +672,18 @@ void CPlayerFlower::RefreshTalentSlotCount()
     SetPetalSlotCount(slot_count);
 }
 
-void CPlayerFlower::TakeExp(int exp)
+void CPlayerFlower::TakeExp(std::int64_t exp)
 {
     if (exp <= 0 || m_is_dead) return;
 
-    m_exp = std::max(0, m_exp + exp);
+    const std::int64_t max_exp = std::numeric_limits<std::int64_t>::max();
+    m_exp = std::max<std::int64_t>(0, m_exp);
+    m_exp = (exp > max_exp - m_exp) ? max_exp : (m_exp + exp);
     bool leveled = false;
     int gained_talent_points = 0;
     for (;;)
     {
-        int required = PlayerFlowerExpRequired(m_level);
+        std::int64_t required = PlayerFlowerExpRequired(m_level);
         if (required <= 0 || m_exp < required) break;
         m_exp -= required;
         ++m_level;
@@ -694,7 +700,7 @@ void CPlayerFlower::TakeExp(int exp)
         CAccountDataStore::SetProgress(player->GetAccountName(), m_level, m_exp);
 }
 
-int CPlayerFlower::ExpRequired() const
+std::int64_t CPlayerFlower::ExpRequired() const
 {
     return PlayerFlowerExpRequired(m_level);
 }
@@ -774,11 +780,13 @@ void CPlayerFlower::EnterDeathState()
     m_attacking = false;
     m_defending = false;
     BeginBloodSacrifice();
+    if (GameWorld()) GameWorld()->DestroySummonedMobsOwnedBy(m_id, m_generation);
     DestroyPetalEntities();
 }
 
 void CPlayerFlower::PrepareRespawnDestroy()
 {
+    if (GameWorld()) GameWorld()->DestroySummonedMobsOwnedBy(m_id, m_generation);
     ClearPetals();
     m_is_dead = false;
     m_is_marked_for_des = true;

@@ -148,6 +148,16 @@ void CPetal::Tick(float dt)
     }
     CProjectile::Tick(dt);
     m_lifetime += dt;
+    if (m_timer > 0.f)
+    {
+        m_timer -= dt;
+        if (m_timer <= 0.f)
+        {
+            m_timer = 0.f;
+            m_health = 0.f;
+            m_is_marked_for_des = true;
+        }
+    }
 
     for (auto it = m_hit_credits.begin(); it != m_hit_credits.end();)
     {

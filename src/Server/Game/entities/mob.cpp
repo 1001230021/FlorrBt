@@ -109,7 +109,7 @@ bool CMobBase::TickDropPickup(CPlayer* player)
     {
         auto* drop = dynamic_cast<CDrop*>(candidate);
         if (!drop || !drop->CanBePickedUpBy(player->GetId())) return;
-        picked_any = drop->PickUpTo(player->GetAccountName(), player->GetId()) || picked_any;
+        picked_any = drop->PickUpTo(*player) || picked_any;
     });
 
     return picked_any;
@@ -258,7 +258,9 @@ std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, sf::Vector
     const CMobPrototype* prototype = FindMobPrototype(type);
     if (!prototype || !prototype->m_factory) return nullptr;
     auto mob = prototype->m_factory(world, pos, rarity);
-    if (mob) mob->m_allow_skip_tick = type != EMobType::PlayerFlower;
+    if (mob)
+        mob->m_allow_skip_tick = type != EMobType::PlayerFlower && type != EMobType::LeafPiece &&
+                                 !IsAtLeastRarity(rarity, ERarity::Super);
     return mob;
 }
 
@@ -281,6 +283,18 @@ void RegisterMobs()
     RegisterBabyAnt();
     RegisterWorkerAnt();
     RegisterQueenAnt();
+    RegisterAntEggMob();
+    RegisterFireAntEgg();
+    RegisterTermiteEgg();
+    RegisterQueenAntEgg();
+    RegisterQueenFireAntEgg();
+    RegisterBabyFireAnt();
+    RegisterWorkerFireAnt();
+    RegisterFireQueenAnt();
+    RegisterBabyTermite();
+    RegisterWorkerTermite();
+    RegisterTermiteOvermind();
+    RegisterLeafPiece();
     RegisterAntHole();
     RegisterSpider();
     RegisterSandstorm();

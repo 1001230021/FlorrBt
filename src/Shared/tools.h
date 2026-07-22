@@ -142,6 +142,9 @@ inline float LengthSq(sf::Vector2f v)
 }
 
 CPlayer* FindPlayerFromEntity(CEntity* entity, const std::vector<std::unique_ptr<CPlayer>>& players);
+CEntity* FindRootOwnerEntity(CEntity* entity);
+const CEntity* FindRootOwnerEntity(const CEntity* entity);
+bool ShareRootOwner(const CEntity* lhs, const CEntity* rhs);
 
 #ifdef __EMSCRIPTEN__
 EM_JS(void, emscripten_get_random_bytes, (void* ptr, size_t len), {

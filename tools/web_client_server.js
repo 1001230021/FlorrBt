@@ -15,7 +15,7 @@ const listenPort = Number(process.env.WEB_PORT || 8080);
 const gameHost = process.env.GAME_HOST || "127.0.0.1";
 const gamePort = Number(process.env.GAME_PORT || 10012);
 const serverSnapshotType = 0x01;
-const snapshotFlushMs = Number(process.env.WEB_SNAPSHOT_FLUSH_MS || 16);
+const snapshotFlushMs = Number(process.env.WEB_SNAPSHOT_FLUSH_MS || 0);
 const snapshotBacklogDropBytes = Number(process.env.WEB_SNAPSHOT_BACKLOG_DROP_BYTES || 128 * 1024);
 
 const mimeTypes = {
@@ -124,6 +124,11 @@ function createServerPacketForwarder(wsSocket) {
 
   const scheduleSnapshot = () => {
     if (snapshotTimer) return;
+    if (snapshotFlushMs <= 0) {
+      snapshotTimer = { immediate: true };
+      queueMicrotask(flushSnapshot);
+      return;
+    }
     snapshotTimer = setTimeout(flushSnapshot, Math.max(0, snapshotFlushMs));
     if (snapshotTimer.unref) snapshotTimer.unref();
   };

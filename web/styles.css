@@ -149,10 +149,28 @@ body.mobile-mode-forced .quick-actions {
 .death-overlay {
   inset: 0;
   z-index: 7;
+  background: rgba(58, 62, 68, 0.3);
+  transition: background 180ms linear;
+}
+
+.death-overlay.closed {
+  background: transparent;
+  pointer-events: none;
+}
+
+.death-stack {
+  position: fixed;
+  left: 50%;
+  top: calc(50% + 12vh);
   display: grid;
-  place-items: center;
-  padding-top: 22vh;
-  background: #3a3e44;
+  gap: 10px;
+  justify-items: center;
+  transform: translateX(-50%);
+  transition: top 640ms linear;
+}
+
+.death-overlay.closed .death-stack {
+  top: calc(100vh - 194px);
 }
 
 .revive-button {
@@ -170,10 +188,32 @@ body.mobile-mode-forced .quick-actions {
     1px -1px 0 #22252a,
     -1px 1px 0 #22252a,
     1px 1px 0 #22252a;
+  pointer-events: auto;
 }
 
 .revive-button:active {
   transform: none;
+}
+
+.death-close-button {
+  width: 138px;
+  height: 38px;
+  border: 4px solid #2b2e34;
+  border-radius: 8px;
+  background: #9a9da3;
+  color: #f6f6f6;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-shadow:
+    -1px -1px 0 #33363c,
+    1px -1px 0 #33363c,
+    -1px 1px 0 #33363c,
+    1px 1px 0 #33363c;
+}
+
+.death-overlay.closed .death-close-button {
+  display: none;
 }
 
 .quick-actions {
@@ -1034,7 +1074,7 @@ body.mobile-mode-forced .quick-actions {
 
 .craft-matrix {
   display: grid;
-  grid-template-columns: 108px repeat(12, 58px);
+  grid-template-columns: 108px repeat(var(--craft-rarity-count, 12), 58px);
   gap: 5px;
   align-items: center;
   width: max-content;

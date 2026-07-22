@@ -6,9 +6,11 @@
 #include <cstdlib>
 #include <ctime>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 #ifdef _WIN32
@@ -22,6 +24,69 @@ std::string GetLastServerCrashContext();
 
 namespace
 {
+bool LooksLikeServerRoot(const std::filesystem::path& path)
+{
+    std::error_code ec;
+    return std::filesystem::exists(path / game_config::lobby_map_path, ec);
+}
+
+std::optional<std::filesystem::path> FindServerRootFrom(std::filesystem::path path)
+{
+    std::error_code ec;
+    path = std::filesystem::absolute(path, ec);
+    if (ec) return std::nullopt;
+    if (std::filesystem::is_regular_file(path, ec)) path = path.parent_path();
+
+    for (;;)
+    {
+        if (LooksLikeServerRoot(path)) return path;
+        std::filesystem::path parent = path.parent_path();
+        if (parent.empty() || parent == path) break;
+        path = parent;
+    }
+    return std::nullopt;
+}
+
+#ifdef _WIN32
+std::optional<std::filesystem::path> ServerExecutablePath()
+{
+    std::wstring buffer(MAX_PATH, L'\0');
+    for (;;)
+    {
+        DWORD written = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (written == 0) return std::nullopt;
+        if (written < buffer.size() - 1)
+        {
+            buffer.resize(written);
+            return std::filesystem::path(buffer);
+        }
+        buffer.resize(buffer.size() * 2);
+    }
+}
+#endif
+
+void NormalizeServerWorkingDirectory()
+{
+    if (LooksLikeServerRoot(std::filesystem::current_path())) return;
+
+    if (auto root = FindServerRootFrom(std::filesystem::current_path()))
+    {
+        std::filesystem::current_path(*root);
+        return;
+    }
+
+#ifdef _WIN32
+    if (auto exe_path = ServerExecutablePath())
+    {
+        if (auto root = FindServerRootFrom(*exe_path))
+        {
+            std::filesystem::current_path(*root);
+            return;
+        }
+    }
+#endif
+}
+
 std::string CrashTimestamp()
 {
     auto now = std::chrono::system_clock::now();
@@ -122,6 +187,7 @@ LONG WINAPI LogUnhandledSehException(EXCEPTION_POINTERS* pointers)
 
 int main()
 {
+    NormalizeServerWorkingDirectory();
     std::set_terminate(LogTerminate);
 #ifdef _WIN32
     SetUnhandledExceptionFilter(LogUnhandledSehException);

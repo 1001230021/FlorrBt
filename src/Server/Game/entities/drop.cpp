@@ -1,6 +1,8 @@
 #include "drop.h"
-#include "../../../Engine/account_data.h"
+#include "petals/petal.h"
 #include "../gameworld.h"
+#include "../player.h"
+#include "../../server.h"
 #include <algorithm>
 #include <limits>
 
@@ -55,11 +57,19 @@ bool CDrop::CanBePickedUpBy(uint32_t player_id) const
     return m_owner_id == drop_owner_all || m_owner_id == static_cast<int>(player_id);
 }
 
-bool CDrop::PickUpTo(const std::string& account_name, uint32_t player_id)
+bool CDrop::PickUpTo(CPlayer& player)
 {
-    if (account_name.empty() || !CanBePickedUpBy(player_id)) return false;
+    if (!CanBePickedUpBy(player.GetId())) return false;
 
-    CAccountDataStore::AddItem(account_name, static_cast<uint8_t>(m_type), static_cast<uint8_t>(m_rarity), m_stack_num);
+    if (!player.ObtainPetalCard(static_cast<uint8_t>(m_type), static_cast<uint8_t>(m_rarity), m_stack_num)) return false;
+    if (CServer::MeetsPetalReportRarity(m_rarity, game_config::min_drop_report_rarity))
+    {
+        if (const CPetalPrototype* proto = FindPetalPrototype(m_type))
+        {
+            if (CServer* server = CServer::GetInstance())
+                server->BroadcastPetalReport("found", m_rarity, proto->m_name, player.GetName());
+        }
+    }
     m_is_marked_for_des = true;
     return true;
 }

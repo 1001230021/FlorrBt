@@ -70,26 +70,14 @@ void CPlayerController::ExecuteOperate(const ClientOperate& op, CMobBase* mob)
         }
         break;
     case ClientOperate::Type::Chores:
-        if (op.is_digging.has_value())
-        {
-            bool digging = *op.is_digging;
-            if (digging)
-            {
-                if (auto* flower = dynamic_cast<CFlower*>(mob)) flower->TryStartBurrowFromShovel();
-            }
-        }
-        if (op.is_defending.value_or(false))
-        {
-            if (auto* flower = dynamic_cast<CFlower*>(mob); flower && flower->TryStartBurrowFromShovel())
-                break;
-        }
         if (attackable)
         {
-            if (!mob->HasState<CDiggingState>())
-            {
-                if (op.is_attacking.has_value()) attackable->SetAttacking(*op.is_attacking);
-                if (op.is_defending.has_value()) attackable->SetDefending(*op.is_defending);
-            }
+            if (op.is_attacking.has_value()) attackable->SetAttacking(*op.is_attacking);
+            if (op.is_defending.has_value()) attackable->SetDefending(*op.is_defending);
+        }
+        if (op.is_digging.value_or(false) || op.is_defending.value_or(false))
+        {
+            if (auto* flower = dynamic_cast<CFlower*>(mob)) flower->TryStartBurrowFromShovel();
         }
         break;
     case ClientOperate::Type::Equip:

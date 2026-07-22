@@ -1,6 +1,12 @@
 import { isDropEntity, isPetalEntity } from "./protocol.js";
 import { state } from "./app_context.js";
-import { dandelionMissileType, flagDigging, hornetMissileType, spiderWebZoneType } from "./game_ids.js";
+import {
+  bloodSacrificeEffectType,
+  dandelionMissileType,
+  flagDigging,
+  hornetMissileType,
+  spiderWebZoneType,
+} from "./game_ids.js";
 
 export function collectSceneRenderPasses({ scale, isEntityInRenderView, isBoss }) {
   const passes = {
@@ -25,7 +31,7 @@ export function collectSceneRenderPasses({ scale, isEntityInRenderView, isBoss }
 
     if ((snap.flags & flagDigging) !== 0) {
       passes.ground.push(entity);
-    } else if (snap.entityType === spiderWebZoneType) {
+    } else if (snap.entityType === spiderWebZoneType || snap.entityType === bloodSacrificeEffectType) {
       passes.ground.push(entity);
     } else if (isHornetMissileLayerEntity(snap)) {
       passes.underlay.push(entity);

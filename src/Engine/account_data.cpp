@@ -5,8 +5,10 @@
 #include "../Shared/rarity.h"
 #include <argon2.h>
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <system_error>
 #include <utility>
@@ -16,6 +18,19 @@ namespace
 {
 std::filesystem::path g_account_path;
 std::vector<SPlayerAccount> g_accounts;
+int g_save_batch_depth = 0;
+bool g_save_batch_dirty = false;
+
+bool WriteAccountData(std::string* error);
+
+std::int64_t JsonExpToInt64(const CJsonValue& value)
+{
+    long double number = static_cast<long double>(value.AsNumber(0.0));
+    if (!std::isfinite(static_cast<double>(number)) || number <= 0.0L) return 0;
+    const long double max_exp = static_cast<long double>(std::numeric_limits<std::int64_t>::max());
+    if (number >= max_exp) return std::numeric_limits<std::int64_t>::max();
+    return static_cast<std::int64_t>(std::llround(number));
+}
 
 std::string EscapeJsonString(const std::string& text)
 {
@@ -322,6 +337,20 @@ bool BackupCorruptAccountData(const std::filesystem::path& path, const std::stri
 }
 }
 
+CAccountDataStore::CSaveBatch::CSaveBatch()
+{
+    ++g_save_batch_depth;
+}
+
+CAccountDataStore::CSaveBatch::~CSaveBatch()
+{
+    if (g_save_batch_depth <= 0) return;
+    --g_save_batch_depth;
+    if (g_save_batch_depth != 0 || !g_save_batch_dirty) return;
+    g_save_batch_dirty = false;
+    CAccountDataStore::Save();
+}
+
 bool CAccountDataStore::Load(const std::filesystem::path& path, std::string* error)
 {
     g_account_path = path;
@@ -349,7 +378,7 @@ bool CAccountDataStore::Load(const std::filesystem::path& path, std::string* err
         if (const CJsonValue* name = account_value.Find("name")) account.name = name->AsString();
         if (const CJsonValue* password = account_value.Find("password")) account.password = password->AsString();
         if (const CJsonValue* level = account_value.Find("level")) account.level = std::max(1, level->AsInt(1));
-        if (const CJsonValue* exp = account_value.Find("exp")) account.exp = std::max(0, exp->AsInt(0));
+        if (const CJsonValue* exp = account_value.Find("exp")) account.exp = JsonExpToInt64(*exp);
         const CJsonValue* extra = account_value.Find("extra");
         if (extra) account.extra_json = JsonToString(*extra);
         bool loaded_talent_points = false;
@@ -389,6 +418,20 @@ bool CAccountDataStore::Load(const std::filesystem::path& path, std::string* err
 
 bool CAccountDataStore::Save(std::string* error)
 {
+    if (g_save_batch_depth > 0)
+    {
+        g_save_batch_dirty = true;
+        if (error) error->clear();
+        return true;
+    }
+
+    return WriteAccountData(error);
+}
+
+namespace
+{
+bool WriteAccountData(std::string* error)
+{
     if (g_account_path.empty())
     {
         if (error) *error = "Account data path is empty";
@@ -411,7 +454,7 @@ bool CAccountDataStore::Save(std::string* error)
         file << "      \"name\": \"" << EscapeJsonString(account.name) << "\",\n";
         file << "      \"password\": \"" << EscapeJsonString(account.password) << "\",\n";
         file << "      \"level\": " << std::max(1, account.level) << ",\n";
-        file << "      \"exp\": " << std::max(0, account.exp) << ",\n";
+        file << "      \"exp\": " << std::max<std::int64_t>(0, account.exp) << ",\n";
         file << "      \"inventory\": ";
         WriteItemsJson(file, account.inventory);
         file << ",\n";
@@ -430,6 +473,7 @@ bool CAccountDataStore::Save(std::string* error)
     }
     file << "  ]\n}\n";
     return true;
+}
 }
 
 bool CAccountDataStore::LoginOrRegister(const std::string& name, const std::string& password, bool register_mode,
@@ -523,23 +567,23 @@ std::vector<SInventoryItem> CAccountDataStore::GetSecondarySlots(const std::stri
     return account ? account->secondary_slots : std::vector<SInventoryItem>{};
 }
 
-bool CAccountDataStore::GetProgress(const std::string& name, int& level, int& exp)
+bool CAccountDataStore::GetProgress(const std::string& name, int& level, std::int64_t& exp)
 {
     const SPlayerAccount* account = FindAccountConst(name);
     if (!account) return false;
 
     level = std::max(1, account->level);
-    exp = std::max(0, account->exp);
+    exp = std::max<std::int64_t>(0, account->exp);
     return true;
 }
 
-void CAccountDataStore::SetProgress(const std::string& name, int level, int exp)
+void CAccountDataStore::SetProgress(const std::string& name, int level, std::int64_t exp)
 {
     SPlayerAccount* account = FindAccount(name);
     if (!account) return;
 
     account->level = std::max(1, level);
-    account->exp = std::max(0, exp);
+    account->exp = std::max<std::int64_t>(0, exp);
     Save();
 }
 
@@ -727,6 +771,7 @@ bool CAccountDataStore::CraftItem(const std::string& name, uint8_t petal_type, u
     craft_result.changed = true;
     craft_result.petal_type = petal_type;
     craft_result.rarity = rarity;
+    craft_result.result_rarity = result_rarity;
     craft_result.consumed = count;
 
     uint32_t source_pool = count;

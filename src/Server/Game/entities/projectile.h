@@ -19,6 +19,7 @@ class CProjectile : public CEntity
         : CEntity(world, pos.x, pos.y, r), m_p_owner(owner), m_owner_id(owner ? owner->m_id : -1),
           m_owner_generation(owner ? owner->m_generation : 0)
     {
+        if (owner) owner->AddTag(EEntityTag::ClearOwnedEntitiesOnDestroy);
     }
 
     void Tick(float dt) override

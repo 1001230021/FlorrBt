@@ -46,6 +46,7 @@ struct active_tick_view
 };
 
 float Dot(sf::Vector2f a, sf::Vector2f b);
+bool CollisionPairAlive(const CEntity* lhs, const CEntity* rhs);
 
 std::string WarpKey(std::string text)
 {
@@ -60,11 +61,12 @@ bool RandomPointInTransferCheckpoint(const CGameWorld& world, const FlorrBtMap::
 {
     if (checkpoint.w <= 0.f || checkpoint.h <= 0.f) return false;
 
-    std::uniform_real_distribution<float> random_x(checkpoint.x, checkpoint.x + checkpoint.w);
-    std::uniform_real_distribution<float> random_y(checkpoint.y, checkpoint.y + checkpoint.h);
+    std::uniform_real_distribution<float> random_x(0.f, checkpoint.w);
+    std::uniform_real_distribution<float> random_y(0.f, checkpoint.h);
     for (int attempt = 0; attempt < transfer_spawn_position_attempts; ++attempt)
     {
-        sf::Vector2f candidate = {random_x(GetRng()), random_y(GetRng())};
+        const FlorrBtMap::Point point = CheckpointLocalToWorldPoint(checkpoint, random_x(GetRng()), random_y(GetRng()));
+        sf::Vector2f candidate = {point.x, point.y};
         if (world.CircleBlockedByWall(candidate, game_config::mob_player_flower_radius)) continue;
         out_pos = candidate;
         return true;
@@ -367,6 +369,13 @@ bool IsHealPetalType(EPetalType type)
     return type == EPetalType::Rose || type == EPetalType::Dahlia;
 }
 
+bool EntityNeedsHealing(const CMobBase* mob)
+{
+    const SMobStats* stats = mob ? mob->GetFinalStats() : nullptr;
+    return stats && stats->max_health > 0.f &&
+           mob->m_health < stats->max_health - game_config::entity_collision_epsilon;
+}
+
 bool IsRoseTeamHealCollision(const CEntity* lhs, const CEntity* rhs)
 {
     if (!lhs || !rhs || !CheckTeam(lhs->m_team, rhs->m_team)) return false;
@@ -378,11 +387,13 @@ bool IsRoseTeamHealCollision(const CEntity* lhs, const CEntity* rhs)
 
     if (lhs_petal && IsHealPetalType(lhs_petal->m_type) && rhs_mob &&
         lhs_petal->m_target_entity_id == rhs->m_id &&
-        (lhs_petal->m_target_entity_generation == 0 || lhs_petal->m_target_entity_generation == rhs->m_generation))
+        (lhs_petal->m_target_entity_generation == 0 || lhs_petal->m_target_entity_generation == rhs->m_generation) &&
+        EntityNeedsHealing(rhs_mob))
         return true;
     if (rhs_petal && IsHealPetalType(rhs_petal->m_type) && lhs_mob &&
         rhs_petal->m_target_entity_id == lhs->m_id &&
-        (rhs_petal->m_target_entity_generation == 0 || rhs_petal->m_target_entity_generation == lhs->m_generation))
+        (rhs_petal->m_target_entity_generation == 0 || rhs_petal->m_target_entity_generation == lhs->m_generation) &&
+        EntityNeedsHealing(lhs_mob))
         return true;
     return false;
 }
@@ -632,13 +643,9 @@ void ApplyMobHitToPetal(CMobBase* mob, CPetal* petal)
     ApplyPhysicalDamageHits(petal, stats->damage, mob, PhysicalHitCountForTick(mob, petal));
 }
 
-bool ApplyAttachedMissileContact(CMissile* missile, CEntity* target, float dt)
+void ApplyContactDamageToMissile(CMissile* missile, CEntity* target, float dt)
 {
-    if (!missile || !target || !missile->IsAttachedToOwner() || target == missile->GetOwner()) return false;
-
-    const int missile_hit_count = PhysicalHitCountForTick(missile, target);
-    if (missile->m_damage > 0.f)
-        ApplyPhysicalDamageHits(target, missile->m_damage, missile->GetOwner(), missile_hit_count);
+    if (!missile || !target) return;
 
     if (auto* petal = dynamic_cast<CPetal*>(target))
     {
@@ -650,7 +657,7 @@ bool ApplyAttachedMissileContact(CMissile* missile, CEntity* target, float dt)
             if (damage <= 0.f) break;
             missile->TakeDamage(damage, petal->GetOwner(), EDamageType::Normal);
         }
-        return true;
+        return;
     }
 
     if (auto* mob = dynamic_cast<CMobBase*>(target))
@@ -661,15 +668,38 @@ bool ApplyAttachedMissileContact(CMissile* missile, CEntity* target, float dt)
                 ApplyPhysicalDamageHits(missile, stats->damage, mob,
                                         PhysicalHitCountForTick(mob, missile));
         }
-        return true;
+        return;
     }
+}
 
-    return false;
+bool ApplyAttachedMissileContact(CMissile* missile, CEntity* target, float dt)
+{
+    if (!missile || !target || !missile->IsAttachedToOwner() || IsProjectileOwnerCollision(missile, target))
+        return false;
+
+    const int missile_hit_count = PhysicalHitCountForTick(missile, target);
+    if (missile->m_damage > 0.f)
+        ApplyPhysicalDamageHits(target, missile->m_damage, missile->GetOwner(), missile_hit_count);
+
+    if (!CollisionPairAlive(missile, target)) return true;
+
+    ApplyContactDamageToMissile(missile, target, dt);
+    return true;
+}
+
+bool ApplyFiredMissileContact(CMissile* missile, CEntity* target, float dt)
+{
+    if (!missile || !target || missile->IsAttachedToOwner()) return false;
+    if (!missile->ApplyHit(target)) return false;
+    if (!CollisionPairAlive(missile, target)) return true;
+    ApplyContactDamageToMissile(missile, target, dt);
+    return true;
 }
 
 bool ApplyMissileHit(CMissile* missile, CEntity* target, float dt)
 {
     if (!missile || !target || dynamic_cast<CDrop*>(target)) return false;
+    if (IsProjectileOwnerCollision(missile, target)) return false;
     if (!dynamic_cast<CMobBase*>(target) && !dynamic_cast<CPetal*>(target)) return false;
     if (auto* dandelion = dynamic_cast<CDandelionMissile*>(missile))
     {
@@ -677,7 +707,7 @@ bool ApplyMissileHit(CMissile* missile, CEntity* target, float dt)
             ApplyDandelionAntiHeal(mob, dandelion->GetRarity());
     }
     if (missile->IsAttachedToOwner()) return ApplyAttachedMissileContact(missile, target, dt);
-    return missile->ApplyHit(target);
+    return ApplyFiredMissileContact(missile, target, dt);
 }
 
 bool ApplyPollenHit(CPollenProjectile* pollen, CEntity* target)
@@ -923,8 +953,7 @@ bool HandleFiredMissileWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, in
     if (auto* raw_missile = dynamic_cast<CMissile*>(&entity))
     {
         if (raw_missile->IsAttachedToOwner()) return true;
-        raw_missile->m_is_marked_for_des = true;
-        return true;
+        return false;
     }
 
     if (auto* missile = dynamic_cast<CMissilePetal*>(&entity);
@@ -932,8 +961,7 @@ bool HandleFiredMissileWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, in
     {
         if (missile->m_type != EPetalType::Carrot)
         {
-            missile->m_is_marked_for_des = true;
-            return true;
+            return false;
         }
 
         if (segment_index < 0)
@@ -1228,6 +1256,32 @@ void CGameWorld::DestroyProjectilesOwnedBy(int owner_id)
         if (entity) destroy_if_owned(entity);
 }
 
+void CGameWorld::DestroySummonedMobsOwnedBy(int owner_id, std::uint64_t owner_generation)
+{
+    if (owner_id < 0) return;
+
+    auto destroy_if_owned = [owner_id, owner_generation](CEntity* entity)
+    {
+        auto* mob = dynamic_cast<CMobBase*>(entity);
+        if (!mob) return;
+
+        auto* controller = dynamic_cast<CSummonedMeleeController*>(mob->GetController());
+        if (!controller || controller->GetOwnerId() != owner_id) return;
+
+        const std::uint64_t summon_owner_generation = controller->GetOwnerGeneration();
+        if (owner_generation != 0 && summon_owner_generation != 0 &&
+            summon_owner_generation != owner_generation)
+            return;
+
+        mob->m_is_marked_for_des = true;
+    };
+
+    for (const auto& entity : m_p_entities)
+        if (entity) destroy_if_owned(entity.get());
+    for (CEntity* entity : m_p_entity_refs)
+        if (entity) destroy_if_owned(entity);
+}
+
 void CGameWorld::SpawnMapPortals()
 {
     if (!m_map) return;
@@ -1296,6 +1350,7 @@ CEntity* CGameWorld::TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& ta
     if (auto* flower = dynamic_cast<CFlower*>(entity))
         flower->DestroyPetalEntities();
     DestroyProjectilesOwnedBy(old_id);
+    DestroySummonedMobsOwnedBy(old_id, old_generation);
 
     std::unique_ptr<CEntity> moved_entity = std::move(m_p_entities[old_id]);
 
@@ -1760,6 +1815,8 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
         if (BlocksNullifiedInteraction(entity, other) && !rose_team_heal_collision) return;
         auto* entity_missile = dynamic_cast<CMissile*>(entity);
         auto* other_missile = dynamic_cast<CMissile*>(other);
+        if ((entity_missile || other_missile) && CheckTeam(entity->m_team, other->m_team)) return;
+        if (entity_missile && other_missile) return;
         auto* entity_pollen = dynamic_cast<CPollenProjectile*>(entity);
         auto* other_pollen = dynamic_cast<CPollenProjectile*>(other);
         if (entity_petal && other_petal && !wax_pair) return;
@@ -1775,7 +1832,8 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
         bool same_team = CheckTeam(entity->m_team, other->m_team);
         if (same_team && fired_missile_collision && !rose_team_heal_collision) return;
 
-        if (!rose_team_heal_collision && ((!entity_missile && !other_missile) || attached_missile_collision || wax_pair))
+        if (!rose_team_heal_collision &&
+            ((!entity_missile && !other_missile) || attached_missile_collision || fired_missile_collision || wax_pair))
         {
             if (entity_missile && entity_missile->IsAttachedToOwner())
             {
@@ -1817,6 +1875,7 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
 
         if (entity_petal && other_mob)
         {
+            BounceFiredCarrotFromEntity(entity_petal, other);
             if (entity_petal->m_type == EPetalType::Yggdrasil)
             {
                 DamageYggdrasilOnEnemyContact(entity_petal, other_mob);
@@ -1827,12 +1886,12 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
             if (!CollisionPairAlive(entity_petal, other_mob)) return;
             ApplyMobHitToPetal(other_mob, entity_petal);
             if (!CollisionPairAlive(entity_petal, other_mob)) return;
-            BounceFiredCarrotFromEntity(entity_petal, other);
             return;
         }
 
         if (other_petal && entity_mob)
         {
+            BounceFiredCarrotFromEntity(other_petal, entity);
             if (other_petal->m_type == EPetalType::Yggdrasil)
             {
                 DamageYggdrasilOnEnemyContact(other_petal, entity_mob);
@@ -1843,7 +1902,6 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
             if (!CollisionPairAlive(other_petal, entity_mob)) return;
             ApplyMobHitToPetal(entity_mob, other_petal);
             if (!CollisionPairAlive(other_petal, entity_mob)) return;
-            BounceFiredCarrotFromEntity(other_petal, entity);
             return;
         }
 
@@ -1915,12 +1973,23 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
 
 void CGameWorld::Cleanup()
 {
+    std::vector<std::pair<int, std::uint64_t>> clear_owned_owner_keys;
+    std::vector<std::pair<int, std::uint64_t>> clear_summon_owner_keys;
+
+    auto collect_clear_owner = [&clear_owned_owner_keys, &clear_summon_owner_keys](const CEntity* entity)
+    {
+        if (entity && entity->HasTag(EEntityTag::ClearOwnedEntitiesOnDestroy))
+            clear_owned_owner_keys.emplace_back(entity->m_id, entity->m_generation);
+        if (entity && entity->HasTag(EEntityTag::ClearOwnedSummonsOnDestroy))
+            clear_summon_owner_keys.emplace_back(entity->m_id, entity->m_generation);
+    };
+
     for (size_t i = 0; i < m_p_entities.size(); ++i)
     {
         if (m_p_entities[i] && m_p_entities[i]->m_is_marked_for_des)
         {
             if (m_p_controller) m_p_controller->OnEntityDie(*this, m_p_entities[i].get());
-            DestroyProjectilesOwnedBy(m_p_entities[i]->m_id);
+            collect_clear_owner(m_p_entities[i].get());
             FreeID(m_p_entities[i]->m_id);
             m_p_entities[i].reset();
         }
@@ -1931,9 +2000,46 @@ void CGameWorld::Cleanup()
         if (entity && entity->m_is_marked_for_des)
         {
             if (m_p_controller) m_p_controller->OnEntityDie(*this, entity);
-            DestroyProjectilesOwnedBy(entity->m_id);
+            collect_clear_owner(entity);
             FreeID(entity->m_id);
             entity = nullptr;
         }
     }
+
+    if (clear_owned_owner_keys.empty() && clear_summon_owner_keys.empty()) return;
+
+    auto deduplicate = [](auto& keys)
+    {
+        std::sort(keys.begin(), keys.end());
+        keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+    };
+
+    deduplicate(clear_owned_owner_keys);
+    deduplicate(clear_summon_owner_keys);
+
+    auto has_owner_key = [](const auto& keys, int owner_id, std::uint64_t owner_generation)
+    {
+        if (owner_id < 0) return false;
+        return std::binary_search(keys.begin(), keys.end(), std::make_pair(owner_id, owner_generation));
+    };
+
+    auto destroy_if_owned = [&clear_owned_owner_keys, &clear_summon_owner_keys, &has_owner_key](CEntity* entity)
+    {
+        auto* projectile = dynamic_cast<CProjectile*>(entity);
+        if (projectile && has_owner_key(clear_owned_owner_keys, projectile->m_owner_id, projectile->m_owner_generation))
+            projectile->m_is_marked_for_des = true;
+
+        auto* mob = dynamic_cast<CMobBase*>(entity);
+        if (!mob) return;
+
+        auto* controller = dynamic_cast<CSummonedMeleeController*>(mob->GetController());
+        if (controller && has_owner_key(clear_summon_owner_keys, controller->GetOwnerId(),
+                                        controller->GetOwnerGeneration()))
+            mob->m_is_marked_for_des = true;
+    };
+
+    for (const auto& entity : m_p_entities)
+        if (entity) destroy_if_owned(entity.get());
+    for (CEntity* entity : m_p_entity_refs)
+        if (entity) destroy_if_owned(entity);
 }

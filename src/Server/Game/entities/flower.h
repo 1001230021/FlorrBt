@@ -3,6 +3,7 @@
 #include "../../../Shared/shared.h"
 #include "mob.h"
 #include "petals/petal_slot.h"
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -94,11 +95,11 @@ class CPlayerFlower : public CFlower
     void EnterDeathState();
     void PrepareRespawnDestroy();
     void ReviveFromYggdrasil(float health_fraction);
-    void TakeExp(int exp);
-    int ExpRequired() const;
+    void TakeExp(std::int64_t exp);
+    std::int64_t ExpRequired() const;
 
     int m_level = 1;
-    int m_exp = 0;
+    std::int64_t m_exp = 0;
     std::string m_name = "Player";
     bool m_is_dead = false;
 

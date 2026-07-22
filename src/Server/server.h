@@ -1,6 +1,7 @@
 #pragma once
 #include "../Engine/console.h"
 #include "../Shared/network_msg.h"
+#include "../Shared/rarity.h"
 #include "Module/module.h"
 #include <SFML/System/Vector2.hpp>
 #include <cstddef>
@@ -9,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 class CGameWorld;
@@ -51,6 +53,9 @@ class CServer
                                  const std::string& player_name, const std::string& message,
                                  int target_player_id = -1);
     const SChatEntry* SubmitServerChat(const std::string& message);
+    static bool MeetsPetalReportRarity(ERarity rarity, int min_rarity);
+    bool BroadcastPetalReport(std::string_view done, ERarity rarity, std::string_view petal_name,
+                              std::string_view doer);
 
   private:
     void ExecuteStartupCommands();

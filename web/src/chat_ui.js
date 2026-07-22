@@ -162,22 +162,25 @@ function appendRarityMessageParts(parent, message) {
     const markStart = text.indexOf("<", searchStart);
     if (markStart < 0) break;
 
-    const markEnd = text.indexOf(">", markStart + 1);
+    const doubleMark = text[markStart + 1] === "<";
+    const markEnd = doubleMark ? text.indexOf(">>", markStart + 2) : text.indexOf(">", markStart + 1);
     if (markEnd < 0) break;
-    if (text[markEnd + 1] !== "(") {
+
+    const bodyOpen = doubleMark ? markEnd + 2 : markEnd + 1;
+    if (text[bodyOpen] !== "(") {
       searchStart = markStart + 1;
       continue;
     }
 
-    const rarity = matchRarity(text.slice(markStart + 1, markEnd));
-    const close = findRarityMessageClose(text, markEnd + 1);
+    const rarity = matchRarity(text.slice(markStart + (doubleMark ? 2 : 1), markEnd));
+    const close = findRarityMessageClose(text, bodyOpen);
     if (rarity <= 0 || close < 0) {
       searchStart = markStart + 1;
       continue;
     }
 
     appendChatText(parent, text.slice(plainStart, markStart));
-    appendChatText(parent, text.slice(markEnd + 2, close), rarityColor(rarity, 1));
+    appendChatText(parent, text.slice(bodyOpen + 1, close), rarityColor(rarity, 1));
     plainStart = close + 1;
     searchStart = close + 1;
   }

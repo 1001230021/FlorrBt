@@ -35,6 +35,7 @@ inline SFlowerStats EmptyFlowerStats()
     stats.petal_medicine_multiplier = 1.f;
     stats.healing_received_multiplier = 1.f;
     stats.mult_summoned_health = 1.f;
+    stats.mult_summoned_damage = 1.f;
     stats.poison_damage_multiplier = 1.f;
     stats.poison_duration_multiplier = 1.f;
     stats.body_poison_damage_multiplier = 0.f;
@@ -247,6 +248,7 @@ inline bool IsValidPetalEnemyTarget(const CPetal* owner, const CFlower* flower, 
     if (IsDiggingEntity(entity)) return false;
     if (dynamic_cast<const CPetal*>(entity)) return false;
     if (CheckTeam(entity->m_team, flower->m_team)) return false;
+    if ((entity->m_team == 0 || flower->m_team == 0) && ShareRootOwner(owner, entity)) return false;
     if (BlocksNullifiedInteraction(owner, entity)) return false;
     return dynamic_cast<const CMobBase*>(entity) != nullptr;
 }
@@ -889,6 +891,7 @@ class CCactusBehavior : public CPetalBehavior
 {
   public:
     bool IsOpen() const override { return true; }
+    EPetalBonusMode GetBonusMode() const override { return EPetalBonusMode::ReloadKeepsBonus; }
 
     SFlowerStats GetStats(ERarity rarity) const override
     {
@@ -925,6 +928,7 @@ class CSoilBehavior : public CPetalBehavior
 {
   public:
     bool IsOpen() const override { return true; }
+    EPetalBonusMode GetBonusMode() const override { return EPetalBonusMode::ReloadKeepsBonus; }
 
     SFlowerStats GetStats(ERarity rarity) const override
     {
@@ -1296,56 +1300,55 @@ inline float BeetleEggReload(ERarity rarity)
 
 inline float BrokenEggSummonedHealthMultiplier(ERarity rarity)
 {
-    switch (rarity)
+    float level = std::clamp(PetalSpecialValueLevel(rarity), 1.f, 10.f);
+    if (level <= 8.f)
     {
-    case ERarity::Common:
-        return 1.10f;
-    case ERarity::Unusual:
-        return 1.20f;
-    case ERarity::Rare:
-        return 1.35f;
-    case ERarity::Epic:
-        return 1.50f;
-    case ERarity::Legendary:
-        return 1.75f;
-    case ERarity::Mythic:
-        return 2.10f;
-    case ERarity::Ultra:
-        return 2.50f;
-    case ERarity::Exotic:
-        return BlendUltraSuper(2.50f, 2.80f, exotic_special_super_weight);
-    case ERarity::Super:
-        return 2.80f;
-    case ERarity::Eternal:
-    case ERarity::Unique:
-        return 3.25f;
-    case ERarity::Primordial:
-        return 4.00f;
-    default:
-        return 1.00f;
+        float t = (level - 1.f) / 7.f;
+        return 0.90f + (0.25f - 0.90f) * t;
     }
+    float t = (level - 8.f) / 2.f;
+    return 0.25f + (0.02f - 0.25f) * t;
 }
 
-inline bool FlowerHasSummonHealthMultiplier(const CFlower* flower)
+inline float BrokenEggSummonedDamageMultiplier(ERarity rarity)
+{
+    float level = std::clamp(PetalSpecialValueLevel(rarity), 1.f, 10.f);
+    if (level <= 8.f)
+    {
+        float t = (level - 1.f) / 7.f;
+        return 1.12f + (7.50f - 1.12f) * t;
+    }
+    float t = (level - 8.f) / 2.f;
+    return 7.50f + (25.00f - 7.50f) * t;
+}
+
+inline bool FlowerHasSummonStatMultiplier(const CFlower* flower)
 {
     const SFlowerStats* stats = flower ? flower->GetFinalStats() : nullptr;
-    return stats && stats->mult_summoned_health > 1.f + game_config::entity_collision_epsilon;
+    return stats &&
+           (std::abs(stats->mult_summoned_health - 1.f) > game_config::entity_collision_epsilon ||
+            std::abs(stats->mult_summoned_damage - 1.f) > game_config::entity_collision_epsilon);
 }
 
-inline void ApplySummonedHealthMultiplier(CMobBase* summon, const CFlower* flower)
+inline void ApplySummonedStatMultipliers(CMobBase* summon, const CFlower* flower)
 {
     if (!summon || !flower || !flower->GetFinalStats()) return;
 
-    float multiplier = std::max(0.f, flower->GetFinalStats()->mult_summoned_health);
-    if (std::abs(multiplier - 1.f) <= game_config::entity_collision_epsilon) return;
+    float health_multiplier = std::max(0.f, flower->GetFinalStats()->mult_summoned_health);
+    float damage_multiplier = std::max(0.f, flower->GetFinalStats()->mult_summoned_damage);
+    if (std::abs(health_multiplier - 1.f) <= game_config::entity_collision_epsilon &&
+        std::abs(damage_multiplier - 1.f) <= game_config::entity_collision_epsilon)
+        return;
 
     if (auto* mob = dynamic_cast<CMob<SMobStats>*>(summon))
     {
-        mob->m_base_stats.max_health *= multiplier;
-        mob->m_final_stats.max_health *= multiplier;
+        mob->m_base_stats.max_health *= health_multiplier;
+        mob->m_final_stats.max_health *= health_multiplier;
+        mob->m_base_stats.damage *= damage_multiplier;
+        mob->m_final_stats.damage *= damage_multiplier;
     }
 
-    summon->m_health = std::max(1.f, summon->m_health * multiplier);
+    summon->m_health = std::max(1.f, summon->m_health * health_multiplier);
 }
 
 inline float BubbleReload(ERarity rarity)
@@ -1403,7 +1406,7 @@ class CSummonEggBehavior : public CPetalBehavior
         {
             PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower),
                                      game_config::default_petal_orbit_k, true, dt);
-            if (FlowerHasSummonHealthMultiplier(flower) && owner->m_lifetime >= 1.f)
+            if (FlowerHasSummonStatMultiplier(flower) && owner->m_lifetime >= 1.f)
                 owner->m_health = 0.f;
             return;
         }
@@ -1475,7 +1478,7 @@ class CSummonEggBehavior : public CPetalBehavior
             return;
         }
 
-        ApplySummonedHealthMultiplier(raw_summon, flower);
+        ApplySummonedStatMultipliers(raw_summon, flower);
         egg->m_summon_id = raw_summon->m_id;
         egg->m_summon_generation = raw_summon->m_generation;
         egg->m_has_spawned_summon = true;
@@ -1558,6 +1561,7 @@ class CBrokenEggBehavior : public CPetalBehavior
     {
         SFlowerStats stats = EmptyFlowerStats();
         stats.mult_summoned_health = BrokenEggSummonedHealthMultiplier(rarity);
+        stats.mult_summoned_damage = BrokenEggSummonedDamageMultiplier(rarity);
         return stats;
     }
 
@@ -1884,6 +1888,17 @@ inline void HealMob(CMobBase* mob, float amount)
     mob->m_health = std::min(max_health, mob->m_health + amount);
 }
 
+inline bool RoseCanHealTarget(const CPetal* owner, const CFlower* flower, const CEntity* entity)
+{
+    if (!owner || !flower || !entity || entity == owner) return false;
+    if (entity->m_is_marked_for_des || entity->IsDead() || !entity->CanCollide()) return false;
+    if (!CheckTeam(entity->m_team, flower->m_team)) return false;
+    if (BlocksNullifiedInteraction(owner, entity)) return false;
+
+    const auto* mob = dynamic_cast<const CMobBase*>(entity);
+    return mob && MobNeedsHealing(mob);
+}
+
 inline float YggdrasilChannelTime(ERarity rarity)
 {
     switch (rarity)
@@ -2025,20 +2040,19 @@ inline CEntity* RoseFindTarget(CPetal* owner, CFlower* flower)
     if (!owner || !flower || !flower->GameWorld()) return nullptr;
     if (owner->m_lifetime < 0.5f) return nullptr;
 
-    float range = owner->m_radius * 5.f;
-    if (range <= 0.f) return nullptr;
-
     auto is_valid_heal_target = [owner, flower](const CEntity* entity) -> bool
     {
-        if (!entity) return false;
-        if (entity == owner) return false;
-        if (entity->m_is_marked_for_des || entity->IsDead() || !entity->CanCollide()) return false;
-        if (IsDiggingEntity(entity)) return false;
-        if (!CheckTeam(entity->m_team, flower->m_team)) return false;
-        if (BlocksNullifiedInteraction(owner, entity)) return false;
-        const auto* mob = dynamic_cast<const CMobBase*>(entity);
-        return mob && MobNeedsHealing(mob);
+        return RoseCanHealTarget(owner, flower, entity);
     };
+
+    if (RoseCanHealTarget(owner, flower, flower)) return flower;
+
+    float range = owner->m_radius * 5.f;
+    if (range <= 0.f)
+    {
+        PetalClearTarget(owner);
+        return nullptr;
+    }
 
     CEntity* raw = PetalGetCachedTarget(owner, flower, owner->m_pos, range, is_valid_heal_target);
     if (!raw) raw = PetalFindClosestTarget(owner, flower, owner->m_pos, range, is_valid_heal_target);
@@ -2100,6 +2114,11 @@ class CRoseBehavior : public CPetalBehavior
 
         if (CheckTeam(owner->m_team, target->m_team))
         {
+            if (!MobNeedsHealing(mob))
+            {
+                damage = 0.f;
+                return;
+            }
             HealMob(mob, owner->m_final_petal_stats.medicine);
             damage = 0.f;
             owner->m_health = 0.f;
@@ -2166,6 +2185,11 @@ class CDahliaBehavior : public CPetalBehavior
 
         if (CheckTeam(owner->m_team, target->m_team))
         {
+            if (!MobNeedsHealing(mob))
+            {
+                damage = 0.f;
+                return;
+            }
             HealMob(mob, owner->m_final_petal_stats.medicine);
             damage = 0.f;
             owner->m_health = 0.f;
@@ -2876,8 +2900,6 @@ class CMissileBehavior : public CPetalBehavior
 
         if (!missile->m_fired)
             damage *= game_config::default_missile_unfired_damage_multiplier;
-        else
-            owner->m_health = 0.f;
     }
 
     void OnPetalSpawned(CPetal*, ERarity, CFlower*) override {}
@@ -2937,10 +2959,40 @@ inline float WebRadius(ERarity rarity)
     return game_config::default_flower_radius * 2.f * radius_units[index] / 48.f;
 }
 
+inline float WebSameRaritySoldierAntMass(ERarity rarity)
+{
+    auto mass_scale_for_level = [](int level)
+    {
+        return std::pow(game_config::mob_mass_scale_base,
+                        static_cast<float>(level - 1) * game_config::mob_mass_scale_exp_multiplier);
+    };
+
+    float mass_scale = 1.f;
+    if (rarity == ERarity::Exotic)
+    {
+        mass_scale = BlendUltraSuper(mass_scale_for_level(GetLevel(ERarity::Ultra)),
+                                     mass_scale_for_level(GetLevel(ERarity::Super)));
+    }
+    else
+    {
+        mass_scale = mass_scale_for_level(GetLevel(rarity));
+    }
+
+    return game_config::mob_soldier_ant_mass * mass_scale;
+}
+
 inline float WebDesiredSpeedMultiplier(ERarity rarity)
 {
-    float t = std::clamp(PetalSpecialValueLevel(rarity) - 1.f, 0.f, 10.f) / 10.f;
-    return 0.40f + 0.20f * t;
+    float t = std::clamp(PetalSpecialValueLevel(rarity) - 1.f, 0.f, 9.f) / 9.f;
+    float target_slow = 0.90f + (0.40f - 0.90f) * t;
+    target_slow = std::clamp(target_slow, 0.f, 1.f);
+
+    float target_mass = std::max(game_config::entity_collision_epsilon, WebSameRaritySoldierAntMass(rarity));
+    float reference_mass = std::max(game_config::entity_collision_epsilon, game_config::mob_player_flower_mass);
+    float numerator = reference_mass * (1.f - target_slow);
+    float denominator = target_slow * target_mass + numerator;
+    if (denominator <= game_config::entity_collision_epsilon) return 1.f;
+    return std::clamp(numerator / denominator, 0.f, 1.f);
 }
 
 inline void SpawnPetalWebZone(CPetal* owner, ERarity rarity, CFlower* flower)
@@ -3004,12 +3056,7 @@ class CWebBehavior : public CPetalBehavior
         SpawnPetalWebZone(owner, rarity, flower);
     }
 
-    void OnPetalHit(CPetal* owner, ERarity, CEntity*, float&) override
-    {
-        if (auto* thrown = dynamic_cast<CThrownPetal*>(owner))
-            thrown->StopThrow(true);
-        if (owner) owner->m_health = 0.f;
-    }
+    void OnPetalHit(CPetal*, ERarity, CEntity*, float&) override {}
 };
 
 class CPollenBehavior : public CPetalBehavior
@@ -3055,6 +3102,8 @@ class CPollenBehavior : public CPetalBehavior
         {
             thrown->BeginThrow(PetalThrowDirection(owner, flower), flower_speed * speed_mult,
                                game_config::default_web_throw_deceleration, false, true, true);
+            owner->m_timer = std::max(0.f, game_config::default_pollen_lifetime);
+            if (owner->m_timer <= 0.f) owner->m_health = 0.f;
             owner->m_detach_from_slot = true;
             owner->m_reload_override = game_config::default_pollen_reload;
         }
@@ -3310,6 +3359,7 @@ inline bool IsCompassMagnetPetal(const CEntity* entity, const CCompassPetal* own
     if (petal->m_type != EPetalType::Compass) return false;
     if (petal->m_is_marked_for_des || petal->IsDead() || !petal->CanCollide()) return false;
     if (CheckTeam(petal->m_team, flower->m_team)) return false;
+    if ((petal->m_team == 0 || flower->m_team == 0) && ShareRootOwner(owner, petal)) return false;
     return true;
 }
 

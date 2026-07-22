@@ -1,4 +1,5 @@
 import {
+  NETWORK_BLOOD_SACRIFICE_ENTITY_TYPE,
   NETWORK_DANDELION_MISSILE_ENTITY_TYPE,
   NETWORK_MISSILE_ENTITY_TYPE,
   NETWORK_POLLEN_ENTITY_TYPE,
@@ -28,6 +29,8 @@ export function skillWindupIdFromFlags(flags) {
 export const beetleType = 1;
 export const normalLadybugType = 3;
 export const soldierAntType = 7;
+export const soldierFireAntType = 8;
+export const soldierTermiteType = 9;
 export const summonedBeetleType = 10;
 export const summonedSoldierAntType = 11;
 export const bandageBeetleType = 12;
@@ -43,6 +46,19 @@ export const spiderType = 21;
 export const sandstormType = 22;
 export const dummyType = 23;
 export const dandelionType = 24;
+export const antEggMobType = 25;
+export const fireAntEggType = 26;
+export const termiteEggType = 27;
+export const queenAntEggType = 28;
+export const queenFireAntEggType = 29;
+export const babyFireAntType = 30;
+export const workerFireAntType = 31;
+export const fireQueenAntType = 32;
+export const babyTermiteType = 33;
+export const workerTermiteType = 34;
+export const termiteOvermindType = 35;
+export const leafPieceType = 36;
+export const bloodSacrificeEffectType = NETWORK_BLOOD_SACRIFICE_ENTITY_TYPE;
 export const dandelionMissileType = NETWORK_DANDELION_MISSILE_ENTITY_TYPE;
 export const pollenProjectileType = NETWORK_POLLEN_ENTITY_TYPE;
 export const spiderWebZoneType = NETWORK_SPIDER_WEB_ENTITY_TYPE;

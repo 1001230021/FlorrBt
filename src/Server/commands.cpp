@@ -16,6 +16,7 @@
 #include <charconv>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <optional>
 #include <string_view>
 
@@ -684,6 +685,60 @@ REGISTER_CONSOLE_COMMAND(control, {
 
     LOG_INFO("console", "Player " + std::to_string(*player_id) + " is now controlling entity " +
                             std::to_string(*entity_id) + ".");
+})
+
+REGISTER_CONSOLE_COMMAND(add, {
+    if (args.size() < 3)
+    {
+        LOG_INFO("console", "Usage: add [petal name/id] [rarity name/id] [player id/name] [num=1]");
+        return;
+    }
+
+    const CPetalPrototype* proto = FindPetalPrototypeByText(args[0]);
+    if (!proto)
+    {
+        LOG_WARN("console", "Unknown petal: " + args[0]);
+        return;
+    }
+
+    auto rarity = ParseRarity(args[1]);
+    if (!rarity)
+    {
+        LOG_WARN("console", "Invalid rarity: " + args[1]);
+        return;
+    }
+
+    uint32_t count = 1;
+    if (args.size() >= 4)
+    {
+        auto parsed_count = ParseInt(args[3]);
+        if (!parsed_count || *parsed_count <= 0)
+        {
+            LOG_WARN("console", "Invalid item count: " + args[3]);
+            return;
+        }
+        count = static_cast<uint32_t>(std::min(*parsed_count, static_cast<int>(max_inventory_item_count)));
+    }
+
+    auto* server = CServer::GetInstance();
+    CGameContext* context = server ? server->GameContext() : nullptr;
+    CPlayer* player = FindPlayerByIdOrName(context, args[2]);
+    std::string account_name = player ? player->GetAccountName() : args[2];
+    if (account_name.empty())
+    {
+        LOG_WARN("console", "Player/account has no account name: " + args[2]);
+        return;
+    }
+
+    const uint8_t petal_type = static_cast<uint8_t>(proto->m_type);
+    const uint8_t rarity_id = static_cast<uint8_t>(*rarity);
+    CAccountDataStore::AddItem(account_name, petal_type, rarity_id, count);
+
+    if (player && player->IsAuthenticated() && context)
+        context->Network().QueueInventoryUpdate(*player);
+
+    LOG_INFO("console", "Added " + std::to_string(count) + " " + RarityName(*rarity) + " " + proto->m_name +
+                            " to " + account_name + ".");
 })
 
 REGISTER_CONSOLE_COMMAND(equip, {

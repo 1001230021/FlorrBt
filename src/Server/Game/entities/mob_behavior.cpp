@@ -45,6 +45,18 @@ std::once_flag g_rock_registered;
 std::once_flag g_baby_ant_registered;
 std::once_flag g_worker_ant_registered;
 std::once_flag g_queen_ant_registered;
+std::once_flag g_ant_egg_mob_registered;
+std::once_flag g_fire_ant_egg_registered;
+std::once_flag g_termite_egg_registered;
+std::once_flag g_queen_ant_egg_registered;
+std::once_flag g_queen_fire_ant_egg_registered;
+std::once_flag g_baby_fire_ant_registered;
+std::once_flag g_worker_fire_ant_registered;
+std::once_flag g_fire_queen_ant_registered;
+std::once_flag g_baby_termite_registered;
+std::once_flag g_worker_termite_registered;
+std::once_flag g_termite_overmind_registered;
+std::once_flag g_leaf_piece_registered;
 std::once_flag g_ant_hole_registered;
 std::once_flag g_spider_registered;
 std::once_flag g_sandstorm_registered;
@@ -53,6 +65,12 @@ std::once_flag g_dummy_registered;
 constexpr float dummy_max_health = 1000000000.f;
 constexpr float dummy_damage_report_interval = 0.5f;
 constexpr float dummy_damage_session_timeout = 5.f;
+
+float HornetMissileSpeed(ERarity rarity)
+{
+    int level = rarity == ERarity::Exotic ? GetLevel(ERarity::Ultra) : GetLevel(rarity);
+    return game_config::mob_hornet_missile_speed * (1.f + 0.05f * static_cast<float>(level));
+}
 
 inline float GetHealthMult(int level)
 {
@@ -114,9 +132,8 @@ SMobStats ScaleSummonedMobStats(SMobStats stats, ERarity rarity)
 
 SMobStats ScaleHornetStats(SMobStats stats, ERarity rarity)
 {
-    const float base_horizon = stats.horizon;
     stats = ScaleMobStats(stats, rarity);
-    stats.horizon = base_horizon;
+    stats.horizon = HornetMissileSpeed(rarity) * game_config::default_missile_lifetime * 0.5f;
     return stats;
 }
 
@@ -125,6 +142,26 @@ SMobStats ScaleFixedHorizonMobStats(SMobStats stats, ERarity rarity)
     const float base_horizon = stats.horizon;
     stats = ScaleMobStats(stats, rarity);
     stats.horizon = base_horizon;
+    return stats;
+}
+
+SMobStats ScaleAntEggStats(SMobStats stats, ERarity rarity)
+{
+    const float fixed_mass = stats.mass;
+    stats = ScaleMobStats(stats, rarity);
+    stats.mass = fixed_mass;
+    return stats;
+}
+
+SMobStats FireAntStats(SMobStats stats)
+{
+    stats.damage *= game_config::mob_fire_ant_damage_multiplier;
+    return stats;
+}
+
+SMobStats TermiteStats(SMobStats stats)
+{
+    stats.max_health *= game_config::mob_termite_health_multiplier;
     return stats;
 }
 
@@ -286,6 +323,13 @@ ERarity RarityFromNaturalMobLevel(int level)
     }
 }
 
+float LeafPieceRegenPerSecond(ERarity rarity)
+{
+    int level = std::clamp(GetLevel(rarity), GetLevel(ERarity::Common), GetLevel(ERarity::Primordial));
+    return game_config::mob_leaf_piece_regen_base *
+           std::pow(std::max(0.f, game_config::mob_leaf_piece_regen_growth), static_cast<float>(level));
+}
+
 int CountOwnedSummonedSoldierAnts(CGameWorld* world, const CEntity* owner)
 {
     if (!world || !owner) return 0;
@@ -295,11 +339,42 @@ int CountOwnedSummonedSoldierAnts(CGameWorld* world, const CEntity* owner)
     {
         auto* mob = dynamic_cast<CMobBase*>(entity);
         if (!mob || mob->m_is_marked_for_des || mob->IsDead()) return;
-        if (mob->m_mob_type != EMobType::SoldierAnt && mob->m_mob_type != EMobType::SummonedSoldierAnt) return;
+        switch (mob->m_mob_type)
+        {
+        case EMobType::SoldierAnt:
+        case EMobType::SoldierFireAnt:
+        case EMobType::SummonedSoldierAnt:
+        case EMobType::QueenAntEgg:
+        case EMobType::QueenFireAntEgg:
+            break;
+        default:
+            return;
+        }
         auto* controller = dynamic_cast<CSummonedMeleeController*>(mob->GetController());
         if (controller && controller->IsOwnedBy(owner)) ++count;
     });
     return count;
+}
+
+template <typename TMob> bool RegisterPsionicMobPrototype(EMobType type, CMobPrototype prototype)
+{
+    auto holder = std::make_unique<CMobPrototype>(std::move(prototype));
+    CMobPrototype* proto_ptr = holder.get();
+    proto_ptr->m_factory = [proto_ptr](CGameWorld* world, sf::Vector2f pos, ERarity rarity) -> std::unique_ptr<CMobBase>
+    {
+        if (!world) return nullptr;
+
+        typename TMob::stats_type stats = proto_ptr->BuildTypedStats<typename TMob::stats_type>(rarity);
+        auto mob = std::make_unique<TMob>(world, pos, stats.radius, rarity, stats);
+        mob->m_mob_type = proto_ptr->m_type;
+        mob->m_team = proto_ptr->m_team;
+        mob->m_allow_skip_tick = proto_ptr->m_type != EMobType::PlayerFlower && !IsAtLeastRarity(rarity, ERarity::Super);
+        mob->AddState(std::make_unique<CPsionicConnectionState>(mob.get(), endless, rarity));
+        if (proto_ptr->m_controller_factory) mob->SetController(proto_ptr->m_controller_factory());
+        return mob;
+    };
+    g_mob_registry[type] = std::move(holder);
+    return true;
 }
 
 class CBandageBeetleMob : public CBasicMob
@@ -396,6 +471,7 @@ class CHornetMob : public CSkillCasterBasicMob
     {
         m_attack_timer = std::max(0.f, m_attack_timer - dt);
         m_attack_recovery_timer = std::max(0.f, m_attack_recovery_timer - dt);
+        if (m_special_windup_timer > 0.f) m_special_windup_timer = std::max(0.f, m_special_windup_timer - dt);
         if (m_attack_windup_timer > 0.f)
         {
             m_attack_windup_timer -= dt;
@@ -408,21 +484,36 @@ class CHornetMob : public CSkillCasterBasicMob
 
     bool IsFacingLocked() const override { return m_attack_recovery_timer > 0.f; }
 
-    int GetSkillCount() const override { return 1; }
+    int GetSkillCount() const override { return 4; }
 
     bool CanCastSkill(int skill_index) const override
     {
-        return skill_index == hornet_missile_skill &&
-               m_attack_timer <= 0.f &&
-               m_attack_windup_timer <= 0.f &&
-               m_loaded_missile_id >= 0 &&
-               GameWorld();
+        if (!GameWorld()) return false;
+        if (skill_index == hornet_missile_skill)
+        {
+            return m_attack_timer <= 0.f &&
+                   m_attack_windup_timer <= 0.f &&
+                   m_special_windup_timer <= 0.f &&
+                   (m_loaded_missile_id >= 0 || m_missile_reload_timer <= 0.f);
+        }
+        if (skill_index == hornet_summon_skill || skill_index == hornet_dash_skill || skill_index == hornet_grab_skill)
+            return m_attack_windup_timer <= 0.f && m_special_windup_timer <= 0.f;
+        return false;
     }
 
     bool TryCastSkill(int skill_index, CEntity* target) override
     {
+        if (skill_index == hornet_summon_skill || skill_index == hornet_dash_skill || skill_index == hornet_grab_skill)
+        {
+            if (m_attack_windup_timer > 0.f || m_special_windup_timer > 0.f || !GameWorld()) return false;
+            m_special_windup_id = SkillWindupId(skill_index);
+            m_special_windup_timer = skill_index == hornet_grab_skill ?
+                game_config::mob_hornet_skill3_charge_time : game_config::mob_hornet_skill_windup_time;
+            return true;
+        }
+
         if (skill_index != hornet_missile_skill) return false;
-        if (m_attack_timer > 0.f || m_attack_windup_timer > 0.f || !GameWorld()) return false;
+        if (m_attack_timer > 0.f || m_attack_windup_timer > 0.f || m_special_windup_timer > 0.f || !GameWorld()) return false;
         if (!GetLoadedMissile()) return false;
 
         m_attack_target_id = target ? target->m_id : -1;
@@ -432,11 +523,30 @@ class CHornetMob : public CSkillCasterBasicMob
     }
 
     bool TryAttack(CEntity* target) override { return TryCastSkill(hornet_missile_skill, target); }
-    uint8_t GetWindupSkillId() const override { return m_attack_windup_timer > 0.f ? hornet_missile_windup_id : 0; }
+    bool IsSkillBusy() const override { return m_attack_windup_timer > 0.f; }
+    uint8_t GetWindupSkillId() const override
+    {
+        if (m_special_windup_timer > 0.f) return m_special_windup_id;
+        return m_attack_windup_timer > 0.f ? hornet_missile_windup_id : 0;
+    }
 
   private:
     static constexpr int hornet_missile_skill = 0;
+    static constexpr int hornet_summon_skill = 1;
+    static constexpr int hornet_dash_skill = 2;
+    static constexpr int hornet_grab_skill = 3;
     static constexpr uint8_t hornet_missile_windup_id = 1;
+    static constexpr uint8_t hornet_summon_windup_id = 2;
+    static constexpr uint8_t hornet_dash_windup_id = 3;
+    static constexpr uint8_t hornet_grab_windup_id = 4;
+
+    static uint8_t SkillWindupId(int skill_index)
+    {
+        if (skill_index == hornet_summon_skill) return hornet_summon_windup_id;
+        if (skill_index == hornet_dash_skill) return hornet_dash_windup_id;
+        if (skill_index == hornet_grab_skill) return hornet_grab_windup_id;
+        return hornet_missile_windup_id;
+    }
 
     CMissile* FindLoadedMissile()
     {
@@ -466,6 +576,8 @@ class CHornetMob : public CSkillCasterBasicMob
     CMissile* GetLoadedMissile()
     {
         RefreshLoadedMissileState();
+        if (m_loaded_missile_id < 0 && m_missile_reload_timer <= 0.f)
+            SpawnLoadedMissile();
         return FindLoadedMissile();
     }
 
@@ -544,10 +656,11 @@ class CHornetMob : public CSkillCasterBasicMob
         CEntity* target = m_attack_target_id >= 0 ?
             GameWorld()->GetEntity(m_attack_target_id, m_attack_target_generation) : nullptr;
         sf::Vector2f rear_direction = {std::cos(m_facing_angle), std::sin(m_facing_angle)};
+        float missile_speed = HornetMissileSpeed(GetRarity());
         if (target && !target->m_is_marked_for_des && !target->IsDead())
         {
             sf::Vector2f shot_direction =
-                GetHornetShotDirection(this, target, game_config::mob_hornet_missile_speed, GetRarity());
+                GetHornetShotDirection(this, target, missile_speed, GetRarity());
             if (LengthSq(shot_direction) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
                 rear_direction = shot_direction;
         }
@@ -563,8 +676,7 @@ class CHornetMob : public CSkillCasterBasicMob
         missile->m_pos = spawn_pos;
         missile->m_prev_pos = spawn_pos;
         missile->m_team = m_team;
-        if (!missile->Fire(rear_direction, game_config::mob_hornet_missile_speed,
-                           game_config::default_missile_lifetime))
+        if (!missile->Fire(rear_direction, missile_speed, game_config::default_missile_lifetime))
         {
             m_attack_target_id = -1;
             m_attack_target_generation = 0;
@@ -586,7 +698,9 @@ class CHornetMob : public CSkillCasterBasicMob
     float m_attack_timer = 0.f;
     float m_attack_windup_timer = 0.f;
     float m_attack_recovery_timer = 0.f;
+    float m_special_windup_timer = 0.f;
     float m_missile_reload_timer = 0.f;
+    uint8_t m_special_windup_id = 0;
     int m_attack_target_id = -1;
     std::uint64_t m_attack_target_generation = 0;
     int m_loaded_missile_id = -1;
@@ -809,6 +923,112 @@ class CDandelionMob : public CAttackableBasicMob
     int m_next_fire_index = 0;
 };
 
+class CAntEggMob : public CBasicMob
+{
+  public:
+    using CBasicMob::CBasicMob;
+
+    void Tick(float dt) override
+    {
+        InitializeByType();
+        if (m_auto_hatch_timer >= 0.f)
+        {
+            m_auto_hatch_timer -= dt;
+            if (m_auto_hatch_timer <= 0.f)
+            {
+                Hatch(AutoHatchType(), true);
+                m_is_marked_for_des = true;
+                return;
+            }
+        }
+
+        m_pos += m_vel * dt;
+        m_vel *= std::pow(game_config::mob_stop_damping, std::max(0.f, dt) * 60.f);
+        TickStates(dt);
+    }
+
+    void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
+    {
+        bool was_dead = m_is_marked_for_des || IsDead();
+        CBasicMob::TakeDamage(dmg, attacker, dmg_type);
+        if (was_dead || !m_is_marked_for_des) return;
+
+        EMobType hatch_type = NaturalDeathHatchType();
+        if (hatch_type == EMobType::None) return;
+        if (!CheckChance(game_config::mob_ant_egg_death_hatch_chance)) return;
+        Hatch(hatch_type, false);
+    }
+
+  private:
+    void InitializeByType()
+    {
+        if (m_initialized) return;
+        m_initialized = true;
+        if (AutoHatchType() != EMobType::None)
+            m_auto_hatch_timer = std::max(0.f, game_config::mob_queen_laid_egg_hatch_time);
+    }
+
+    EMobType AutoHatchType() const
+    {
+        switch (m_mob_type)
+        {
+        case EMobType::QueenAntEgg: return EMobType::SoldierAnt;
+        case EMobType::QueenFireAntEgg: return EMobType::SoldierFireAnt;
+        default: return EMobType::None;
+        }
+    }
+
+    EMobType NaturalDeathHatchType() const
+    {
+        switch (m_mob_type)
+        {
+        case EMobType::AntEgg: return EMobType::BabyAnt;
+        case EMobType::FireAntEgg: return EMobType::BabyFireAnt;
+        case EMobType::TermiteEgg: return EMobType::BabyTermite;
+        default: return EMobType::None;
+        }
+    }
+
+    void Hatch(EMobType hatch_type, bool preserve_owner)
+    {
+        CGameWorld* world = GameWorld();
+        if (!world || hatch_type == EMobType::None) return;
+
+        CEntity* owner = nullptr;
+        bool persist_after_owner_death = false;
+        if (preserve_owner)
+        {
+            auto* summoned = dynamic_cast<CSummonedMeleeController*>(GetController());
+            persist_after_owner_death = summoned && summoned->PersistsAfterOwnerDeath();
+            owner = summoned ? summoned->GetOwner(world) : nullptr;
+            if (owner && (owner->m_is_marked_for_des || owner->IsDead())) owner = nullptr;
+        }
+
+        auto spawned = CreateMob(hatch_type, world, m_pos, GetRarity());
+        auto* mob = spawned ? dynamic_cast<CMobBase*>(spawned.get()) : nullptr;
+        if (!mob) return;
+
+        mob->m_team = m_team;
+        mob->m_facing_angle = m_facing_angle;
+        mob->m_has_facing = m_has_facing;
+        if (preserve_owner)
+        {
+            if (owner)
+            {
+                auto controller = std::make_unique<CSummonedMeleeController>(owner);
+                controller->SetPersistAfterOwnerDeath(persist_after_owner_death);
+                mob->SetController(std::move(controller));
+            } else {
+                mob->SetController(std::make_unique<CMeleeController>());
+            }
+        }
+        world->InsertEntity(std::move(spawned));
+    }
+
+    bool m_initialized = false;
+    float m_auto_hatch_timer = -1.f;
+};
+
 class CQueenAntMob : public CAttackableBasicMob
 {
   public:
@@ -875,12 +1095,17 @@ class CQueenAntMob : public CAttackableBasicMob
 
         ERarity spawn_rarity = PreviousRarity(GetRarity());
         sf::Vector2f spawn_pos = m_pos - forward * (m_radius * 0.5f);
-        auto spawned = CreateMob(EMobType::SoldierAnt, world, spawn_pos, spawn_rarity);
-        auto* ant = spawned ? dynamic_cast<CMobBase*>(spawned.get()) : nullptr;
-        if (ant)
+        EMobType egg_type = m_mob_type == EMobType::FireQueenAnt ? EMobType::QueenFireAntEgg : EMobType::QueenAntEgg;
+        auto spawned = CreateMob(egg_type, world, spawn_pos, spawn_rarity);
+        auto* egg = spawned ? dynamic_cast<CMobBase*>(spawned.get()) : nullptr;
+        if (egg)
         {
-            ant->m_team = m_team;
-            ant->SetController(std::make_unique<CSummonedMeleeController>(this));
+            egg->m_team = m_team;
+            egg->m_facing_angle = m_facing_angle;
+            egg->m_has_facing = true;
+            auto controller = std::make_unique<CSummonedMeleeController>(this);
+            controller->SetPersistAfterOwnerDeath(true);
+            egg->SetController(std::move(controller));
             world->InsertEntity(std::move(spawned));
         }
         FinishAttack();
@@ -913,10 +1138,13 @@ class CAntHoleMob : public CBasicMob
         m_vel = {0.f, 0.f};
         TickStates(dt);
         ReleaseQueuedSpawns(dt);
+        if (m_pending_death_cleanup && m_spawn_index >= m_spawn_queue.size())
+            m_is_marked_for_des = true;
     }
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {
+        if (m_pending_death_cleanup) return;
         if (dmg_type == EDamageType::Normal) dmg = std::max(0.f, dmg - m_base_stats.armor);
         if (dmg <= 0.f) return;
         if (TrySharePsionicDamage(this, dmg, attacker, dmg_type)) return;
@@ -928,14 +1156,20 @@ class CAntHoleMob : public CBasicMob
 
         if (m_is_marked_for_des)
         {
+            m_is_marked_for_des = false;
+            m_health = 0.f;
+            m_pending_death_cleanup = true;
+            m_allow_skip_tick = false;
             QueueAllRemainingHealthWaves();
-            ReleaseAllQueuedSpawns();
         } else {
             QueueHealthTriggeredSpawns();
         }
     }
 
     void OnCollision(CEntity*) override {}
+    bool IsDead() const override { return m_pending_death_cleanup || CBasicMob::IsDead(); }
+    bool CanCollide() const override { return !m_pending_death_cleanup && CBasicMob::CanCollide(); }
+    bool IsVisible() const override { return !m_pending_death_cleanup && CBasicMob::IsVisible(); }
 
   private:
     struct SQueuedSpawn
@@ -1034,24 +1268,32 @@ class CAntHoleMob : public CBasicMob
     {
         if (!GameWorld() || m_spawn_index >= m_spawn_queue.size()) return;
 
+        if (m_pending_death_cleanup)
+        {
+            int ticks_left = std::max(1, game_config::mob_ant_hole_death_release_ticks - m_death_release_ticks);
+            size_t remaining = m_spawn_queue.size() - m_spawn_index;
+            size_t release_limit = std::max<size_t>(1, (remaining + static_cast<size_t>(ticks_left) - 1) /
+                                                        static_cast<size_t>(ticks_left));
+            for (size_t released = 0; released < release_limit && m_spawn_index < m_spawn_queue.size(); ++released)
+            {
+                ReleaseSpawn(m_spawn_queue[m_spawn_index]);
+                ++m_spawn_index;
+            }
+            ++m_death_release_ticks;
+            return;
+        }
+
         m_release_timer += dt;
         float interval = std::max(game_config::server_fixed_dt, game_config::mob_ant_hole_release_interval);
-        while (m_release_timer >= interval && m_spawn_index < m_spawn_queue.size())
+        int release_limit = std::max(1, game_config::mob_ant_hole_release_per_tick);
+        int released = 0;
+        while (m_release_timer >= interval && m_spawn_index < m_spawn_queue.size() && released < release_limit)
         {
             const SQueuedSpawn& queued = m_spawn_queue[m_spawn_index];
             m_release_timer -= interval;
             ReleaseSpawn(queued);
             ++m_spawn_index;
-        }
-    }
-
-    void ReleaseAllQueuedSpawns()
-    {
-        if (!GameWorld()) return;
-        while (m_spawn_index < m_spawn_queue.size())
-        {
-            ReleaseSpawn(m_spawn_queue[m_spawn_index]);
-            ++m_spawn_index;
+            ++released;
         }
     }
 
@@ -1076,6 +1318,8 @@ class CAntHoleMob : public CBasicMob
     float m_release_timer = 0.f;
     size_t m_health_wave_index = 0;
     bool m_same_rarity_queen_queued = false;
+    bool m_pending_death_cleanup = false;
+    int m_death_release_ticks = 0;
 };
 
 class CRockAttackOnDamagedController : public IController
@@ -1471,6 +1715,26 @@ class CDummyMob : public CBasicMob
     sf::Vector2f m_anchor_pos;
     std::vector<SDummyDamageReport> m_reports;
 };
+
+class CLeafPieceMob : public CBasicMob
+{
+  public:
+    using CBasicMob::CBasicMob;
+
+    void Tick(float dt) override
+    {
+        CBasicMob::Tick(dt);
+        if (m_is_marked_for_des || m_health <= 0.f) return;
+
+        const SMobStats* stats = GetFinalStats();
+        if (!stats || stats->max_health <= 0.f) return;
+
+        float regen = LeafPieceRegenPerSecond(GetRarity()) * GetMedicMultiplier(this);
+        if (regen <= 0.f) return;
+
+        m_health = std::min(stats->max_health, m_health + regen * dt);
+    }
+};
 } // namespace
 
 void RegisterBeetle()
@@ -1568,8 +1832,24 @@ void RegisterHornet()
         proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
             return ScaleHornetStats(base_stats, rarity);
         };
-        proto.m_controller_factory = []() { return std::make_unique<CHornetRangedController>(); };
-        REGISTER_MOB(EMobType::Hornet, CHornetMob, proto);
+        auto holder = std::make_unique<CMobPrototype>(std::move(proto));
+        CMobPrototype* proto_ptr = holder.get();
+        proto_ptr->m_factory = [proto_ptr](CGameWorld* world, sf::Vector2f pos, ERarity rarity) -> std::unique_ptr<CMobBase>
+        {
+            if (!world) return nullptr;
+
+            SMobStats stats = proto_ptr->BuildTypedStats<SMobStats>(rarity);
+            auto mob = std::make_unique<CHornetMob>(world, pos, stats.radius, rarity, stats);
+            mob->m_mob_type = proto_ptr->m_type;
+            mob->m_team = proto_ptr->m_team;
+            mob->m_allow_skip_tick = !IsAtLeastRarity(rarity, ERarity::Super);
+            if (IsAtLeastRarity(rarity, ERarity::Super))
+                mob->SetController(std::make_unique<CSpecialHornetController>());
+            else
+                mob->SetController(std::make_unique<CHornetRangedController>());
+            return mob;
+        };
+        g_mob_registry[EMobType::Hornet] = std::move(holder);
     });
 }
 
@@ -1719,6 +1999,297 @@ void RegisterQueenAnt()
         };
         proto.m_controller_factory = []() { return std::make_unique<CQueenAntController>(); };
         REGISTER_MOB(EMobType::QueenAnt, CQueenAntMob, proto);
+    });
+}
+
+void RegisterAntEggMob()
+{
+    std::call_once(g_ant_egg_mob_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::AntEgg;
+        proto.m_name = std::string(GetMobTypeName(proto.m_type));
+        proto.m_team = game_config::mob_ant_egg_team;
+        proto.m_base_stats.max_health = game_config::mob_ant_egg_max_health;
+        proto.m_base_stats.armor = game_config::mob_ant_egg_armor;
+        proto.m_base_stats.damage = game_config::mob_ant_egg_damage;
+        proto.m_base_stats.radius = game_config::mob_ant_egg_radius;
+        proto.m_base_stats.mass = game_config::mob_ant_egg_mass;
+        proto.m_base_stats.horizon = 0.f;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = 0.f;
+        proto.m_base_stats.acceleration = 0.f;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleAntEggStats(base_stats, rarity);
+        };
+        REGISTER_MOB(EMobType::AntEgg, CAntEggMob, proto);
+    });
+}
+
+void RegisterFireAntEgg()
+{
+    std::call_once(g_fire_ant_egg_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::FireAntEgg;
+        proto.m_name = std::string(GetMobTypeName(proto.m_type));
+        proto.m_team = game_config::mob_fire_ant_team;
+        proto.m_base_stats.max_health = game_config::mob_ant_egg_max_health;
+        proto.m_base_stats.armor = game_config::mob_ant_egg_armor;
+        proto.m_base_stats.damage = game_config::mob_ant_egg_damage;
+        proto.m_base_stats.radius = game_config::mob_ant_egg_radius;
+        proto.m_base_stats.mass = game_config::mob_ant_egg_mass;
+        proto.m_base_stats.horizon = 0.f;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = 0.f;
+        proto.m_base_stats.acceleration = 0.f;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleAntEggStats(base_stats, rarity);
+        };
+        REGISTER_MOB(EMobType::FireAntEgg, CAntEggMob, proto);
+    });
+}
+
+void RegisterTermiteEgg()
+{
+    std::call_once(g_termite_egg_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::TermiteEgg;
+        proto.m_name = std::string(GetMobTypeName(proto.m_type));
+        proto.m_team = game_config::mob_termite_team;
+        proto.m_base_stats.max_health = game_config::mob_ant_egg_max_health;
+        proto.m_base_stats.armor = game_config::mob_ant_egg_armor;
+        proto.m_base_stats.damage = game_config::mob_ant_egg_damage;
+        proto.m_base_stats.radius = game_config::mob_ant_egg_radius;
+        proto.m_base_stats.mass = game_config::mob_ant_egg_mass;
+        proto.m_base_stats.horizon = 0.f;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = 0.f;
+        proto.m_base_stats.acceleration = 0.f;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return TermiteStats(ScaleAntEggStats(base_stats, rarity));
+        };
+        RegisterPsionicMobPrototype<CAntEggMob>(EMobType::TermiteEgg, std::move(proto));
+    });
+}
+
+void RegisterQueenAntEgg()
+{
+    std::call_once(g_queen_ant_egg_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::QueenAntEgg;
+        proto.m_name = std::string(GetMobTypeName(proto.m_type));
+        proto.m_team = game_config::mob_queen_ant_team;
+        proto.m_base_stats.max_health = game_config::mob_ant_egg_max_health;
+        proto.m_base_stats.armor = game_config::mob_ant_egg_armor;
+        proto.m_base_stats.damage = game_config::mob_ant_egg_damage;
+        proto.m_base_stats.radius = game_config::mob_ant_egg_radius;
+        proto.m_base_stats.mass = game_config::mob_ant_egg_mass;
+        proto.m_base_stats.horizon = 0.f;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = 0.f;
+        proto.m_base_stats.acceleration = 0.f;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleAntEggStats(base_stats, rarity);
+        };
+        REGISTER_MOB(EMobType::QueenAntEgg, CAntEggMob, proto);
+    });
+}
+
+void RegisterQueenFireAntEgg()
+{
+    std::call_once(g_queen_fire_ant_egg_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::QueenFireAntEgg;
+        proto.m_name = std::string(GetMobTypeName(proto.m_type));
+        proto.m_team = game_config::mob_fire_ant_team;
+        proto.m_base_stats.max_health = game_config::mob_ant_egg_max_health;
+        proto.m_base_stats.armor = game_config::mob_ant_egg_armor;
+        proto.m_base_stats.damage = game_config::mob_ant_egg_damage;
+        proto.m_base_stats.radius = game_config::mob_ant_egg_radius;
+        proto.m_base_stats.mass = game_config::mob_ant_egg_mass;
+        proto.m_base_stats.horizon = 0.f;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = 0.f;
+        proto.m_base_stats.acceleration = 0.f;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleAntEggStats(base_stats, rarity);
+        };
+        REGISTER_MOB(EMobType::QueenFireAntEgg, CAntEggMob, proto);
+    });
+}
+
+void RegisterBabyFireAnt()
+{
+    std::call_once(g_baby_fire_ant_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::BabyFireAnt;
+        proto.m_name = std::string(GetMobTypeName(proto.m_type));
+        proto.m_team = game_config::mob_fire_ant_team;
+        proto.m_base_stats.max_health = game_config::mob_baby_ant_max_health;
+        proto.m_base_stats.armor = game_config::mob_baby_ant_armor;
+        proto.m_base_stats.damage = game_config::mob_baby_ant_damage;
+        proto.m_base_stats.radius = game_config::mob_baby_ant_radius;
+        proto.m_base_stats.mass = game_config::mob_baby_ant_mass;
+        proto.m_base_stats.horizon = game_config::default_horizon;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = game_config::default_max_velocity;
+        proto.m_base_stats.acceleration = game_config::default_acceleration;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(FireAntStats(base_stats), rarity);
+        };
+        proto.m_controller_factory = []() { return std::make_unique<CRandomWanderController>(); };
+        REGISTER_MOB(EMobType::BabyFireAnt, CBasicMob, proto);
+    });
+}
+
+void RegisterWorkerFireAnt()
+{
+    std::call_once(g_worker_fire_ant_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::WorkerFireAnt;
+        proto.m_name = std::string(GetMobTypeName(proto.m_type));
+        proto.m_team = game_config::mob_fire_ant_team;
+        proto.m_base_stats.max_health = game_config::mob_worker_ant_max_health;
+        proto.m_base_stats.armor = game_config::mob_worker_ant_armor;
+        proto.m_base_stats.damage = game_config::mob_worker_ant_damage;
+        proto.m_base_stats.radius = game_config::mob_worker_ant_radius;
+        proto.m_base_stats.mass = game_config::mob_worker_ant_mass;
+        proto.m_base_stats.horizon = game_config::default_horizon;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = game_config::default_max_velocity;
+        proto.m_base_stats.acceleration = game_config::default_acceleration;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(FireAntStats(base_stats), rarity);
+        };
+        proto.m_controller_factory = []() { return std::make_unique<CNeutralMeleeController>(); };
+        REGISTER_MOB(EMobType::WorkerFireAnt, CBasicMob, proto);
+    });
+}
+
+void RegisterFireQueenAnt()
+{
+    std::call_once(g_fire_queen_ant_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::FireQueenAnt;
+        proto.m_name = std::string(GetMobTypeName(proto.m_type));
+        proto.m_team = game_config::mob_fire_ant_team;
+        proto.m_base_stats.max_health = game_config::mob_queen_ant_max_health;
+        proto.m_base_stats.armor = game_config::mob_queen_ant_armor;
+        proto.m_base_stats.damage = game_config::mob_queen_ant_damage;
+        proto.m_base_stats.radius = game_config::mob_queen_ant_radius;
+        proto.m_base_stats.mass = game_config::mob_queen_ant_mass;
+        proto.m_base_stats.horizon = game_config::default_horizon;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = game_config::default_max_velocity;
+        proto.m_base_stats.acceleration = game_config::default_acceleration;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(FireAntStats(base_stats), rarity);
+        };
+        proto.m_controller_factory = []() { return std::make_unique<CQueenAntController>(); };
+        REGISTER_MOB(EMobType::FireQueenAnt, CQueenAntMob, proto);
+    });
+}
+
+void RegisterBabyTermite()
+{
+    std::call_once(g_baby_termite_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::BabyTermite;
+        proto.m_name = std::string(GetMobTypeName(proto.m_type));
+        proto.m_team = game_config::mob_termite_team;
+        proto.m_base_stats.max_health = game_config::mob_baby_ant_max_health;
+        proto.m_base_stats.armor = game_config::mob_baby_ant_armor;
+        proto.m_base_stats.damage = game_config::mob_baby_ant_damage;
+        proto.m_base_stats.radius = game_config::mob_baby_ant_radius;
+        proto.m_base_stats.mass = game_config::mob_baby_ant_mass;
+        proto.m_base_stats.horizon = game_config::default_horizon;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = game_config::default_max_velocity;
+        proto.m_base_stats.acceleration = game_config::default_acceleration;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(TermiteStats(base_stats), rarity);
+        };
+        proto.m_controller_factory = []() { return std::make_unique<CRandomWanderController>(); };
+        RegisterPsionicMobPrototype<CBasicMob>(EMobType::BabyTermite, std::move(proto));
+    });
+}
+
+void RegisterWorkerTermite()
+{
+    std::call_once(g_worker_termite_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::WorkerTermite;
+        proto.m_name = std::string(GetMobTypeName(proto.m_type));
+        proto.m_team = game_config::mob_termite_team;
+        proto.m_base_stats.max_health = game_config::mob_worker_ant_max_health;
+        proto.m_base_stats.armor = game_config::mob_worker_ant_armor;
+        proto.m_base_stats.damage = game_config::mob_worker_ant_damage;
+        proto.m_base_stats.radius = game_config::mob_worker_ant_radius;
+        proto.m_base_stats.mass = game_config::mob_worker_ant_mass;
+        proto.m_base_stats.horizon = game_config::default_horizon;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = game_config::default_max_velocity;
+        proto.m_base_stats.acceleration = game_config::default_acceleration;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(TermiteStats(base_stats), rarity);
+        };
+        proto.m_controller_factory = []() { return std::make_unique<CNeutralMeleeController>(); };
+        RegisterPsionicMobPrototype<CBasicMob>(EMobType::WorkerTermite, std::move(proto));
+    });
+}
+
+void RegisterTermiteOvermind()
+{
+    std::call_once(g_termite_overmind_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::TermiteOvermind;
+        proto.m_name = std::string(GetMobTypeName(proto.m_type));
+        proto.m_team = game_config::mob_termite_team;
+        proto.m_base_stats.max_health = game_config::mob_queen_ant_max_health;
+        proto.m_base_stats.armor = game_config::mob_queen_ant_armor;
+        proto.m_base_stats.damage = game_config::mob_queen_ant_damage;
+        proto.m_base_stats.radius =
+            game_config::mob_soldier_ant_radius * game_config::mob_termite_overmind_radius_multiplier;
+        proto.m_base_stats.mass =
+            game_config::mob_soldier_ant_mass * game_config::mob_termite_overmind_radius_multiplier;
+        proto.m_base_stats.horizon = game_config::default_horizon;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = game_config::default_max_velocity * game_config::mob_termite_overmind_velocity_multiplier;
+        proto.m_base_stats.acceleration = game_config::default_acceleration * game_config::mob_termite_overmind_velocity_multiplier;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(TermiteStats(base_stats), rarity);
+        };
+        proto.m_controller_factory = []() { return std::make_unique<CNeutralMeleeController>(); };
+        RegisterPsionicMobPrototype<CBasicMob>(EMobType::TermiteOvermind, std::move(proto));
+    });
+}
+
+void RegisterLeafPiece()
+{
+    std::call_once(g_leaf_piece_registered, []() {
+        CMobPrototype proto;
+        proto.m_type = EMobType::LeafPiece;
+        proto.m_name = std::string(GetMobTypeName(proto.m_type));
+        proto.m_team = game_config::mob_leaf_piece_team;
+        proto.m_base_stats.max_health =
+            game_config::mob_soldier_ant_max_health * game_config::mob_leaf_piece_health_multiplier;
+        proto.m_base_stats.armor = game_config::mob_leaf_piece_armor;
+        proto.m_base_stats.damage = game_config::mob_leaf_piece_damage;
+        proto.m_base_stats.radius = game_config::mob_leaf_piece_radius;
+        proto.m_base_stats.mass = game_config::mob_soldier_ant_mass * game_config::mob_leaf_piece_mass_multiplier;
+        proto.m_base_stats.horizon = 0.f;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = 0.f;
+        proto.m_base_stats.acceleration = 0.f;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            SMobStats stats = base_stats;
+            float min_scale = std::min(game_config::mob_leaf_piece_radius_scale_min,
+                                       game_config::mob_leaf_piece_radius_scale_max);
+            float max_scale = std::max(game_config::mob_leaf_piece_radius_scale_min,
+                                       game_config::mob_leaf_piece_radius_scale_max);
+            stats.radius *= GetLimitedRng(min_scale, max_scale);
+            return ScaleMobStats(stats, rarity);
+        };
+        REGISTER_MOB(EMobType::LeafPiece, CLeafPieceMob, proto);
     });
 }
 

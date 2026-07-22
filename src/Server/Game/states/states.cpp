@@ -134,6 +134,34 @@ CCorruptionState::~CCorruptionState()
     if (m_p_owner) m_p_owner->m_team = m_old_team;
 }
 
+CInvincibleState::CInvincibleState(CMobBase* owner, float timer, ERarity rarity)
+    : CState(owner, timer, rarity)
+{
+    if (!owner) return;
+    m_marked_for_destroy = owner->m_is_marked_for_des;
+    const SMobStats* stats = owner->GetFinalStats();
+    float max_health = stats ? stats->max_health : 0.f;
+    if (max_health > game_config::entity_collision_epsilon)
+        m_hp = std::max(0.f, owner->m_health / max_health);
+}
+
+void CInvincibleState::Tick(float dt)
+{
+    if (m_p_owner)
+    {
+        m_p_owner->m_is_marked_for_des = m_marked_for_destroy;
+        const SMobStats* stats = m_p_owner->GetFinalStats();
+        float max_health = stats ? stats->max_health : 0.f;
+        if (max_health > game_config::entity_collision_epsilon)
+        {
+            float hp = std::max(0.f, m_p_owner->m_health / max_health);
+            if (hp > m_hp) m_hp = hp;
+            m_p_owner->m_health = max_health * m_hp;
+        }
+    }
+    m_timer -= dt;
+}
+
 CBanSlotState::CBanSlotState(CMobBase* owner, float timer, int slot, ERarity rarity)
     : CState(owner, timer, rarity), m_slot_index(slot)
 {
@@ -180,10 +208,30 @@ CPincerSpeedReduceState::CPincerSpeedReduceState(CMobBase* owner, float timer, E
     }
 }
 
-CWebSpeedReduceState::CWebSpeedReduceState(CMobBase* owner, float timer, float desired_multiplier)
+namespace
+{
+float WebSlowMassMultiplier(float desired_multiplier, float target_mass, float reference_mass)
+{
+    const float m = std::clamp(desired_multiplier, 0.f, 1.f);
+    const float x = std::max(game_config::entity_collision_epsilon, target_mass);
+    const float f = std::max(game_config::entity_collision_epsilon, reference_mass);
+    const float denominator = m * x + f * (1.f - m);
+    if (denominator <= game_config::entity_collision_epsilon) return m;
+    return std::clamp((m * x) / denominator, 0.f, 1.f);
+}
+}
+
+CWebSpeedReduceState::CWebSpeedReduceState(CMobBase* owner, float timer, float desired_multiplier, float reference_mass)
     : CState(owner, timer, ERarity::Common)
 {
-    m_multiplier = std::clamp(desired_multiplier, 0.f, 1.f);
+    float target_mass = owner ? owner->m_mass : 1.f;
+    if (owner)
+    {
+        if (const SMobStats* stats = owner->GetFinalStats(); stats && stats->mass > game_config::entity_collision_epsilon)
+            target_mass = stats->mass;
+    }
+
+    m_multiplier = WebSlowMassMultiplier(desired_multiplier, target_mass, reference_mass);
     if (owner && owner->m_mob_type == EMobType::Spider)
         m_multiplier = std::clamp(1.f - (1.f - m_multiplier) * 0.5f, 0.f, 1.f);
 

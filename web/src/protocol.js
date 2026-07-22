@@ -3,6 +3,7 @@ const textDecoder = new TextDecoder();
 
 export const NETWORK_PETAL_TYPE_OFFSET = 100;
 export const NETWORK_DROP_TYPE_OFFSET = 180;
+export const NETWORK_BLOOD_SACRIFICE_ENTITY_TYPE = 94;
 export const NETWORK_DANDELION_MISSILE_ENTITY_TYPE = 95;
 export const NETWORK_POLLEN_ENTITY_TYPE = 96;
 export const NETWORK_SPIDER_WEB_ENTITY_TYPE = 97;
@@ -10,8 +11,11 @@ export const NETWORK_MISSILE_ENTITY_TYPE = 98;
 export const NETWORK_PORTAL_ENTITY_TYPE = 99;
 export const MAX_CHAT_MESSAGE_SIZE = 180;
 export const NET_COORD_SCALE = 64;
+export const NET_RELATIVE_COORD_SCALE = 1;
 export const NET_RADIUS_SCALE = 1;
 export const NET_ANGLE_SCALE = 1000;
+const ENTITY_SNAPSHOT_FULL = 0;
+const ENTITY_SNAPSHOT_COMPACT = 1;
 
 export const ChatFlag = Object.freeze({
   Global: 0,
@@ -44,7 +48,9 @@ export const MobNames = [
   "None", "Beetle", "Gambler", "NormalLadybug", "MechaFlower", "NormalFlower", "PlayerFlower",
   "SoldierAnt", "SoldierFireAnt", "SoldierTermite", "SummonedBeetle", "SummonedSoldierAnt",
   "BandageBeetle", "Bee", "Hornet", "BumbleBee", "Rock", "BabyAnt", "WorkerAnt", "QueenAnt",
-  "AntHole", "Spider", "Sandstorm", "Dummy", "Dandelion",
+  "AntHole", "Spider", "Sandstorm", "Dummy", "Dandelion", "AntEgg", "FireAntEgg", "TermiteEgg",
+  "QueenAntEgg", "QueenFireAntEgg", "BabyFireAnt", "WorkerFireAnt", "FireQueenAnt", "BabyTermite",
+  "WorkerTermite", "TermiteOvermind", "LeafPiece",
 ];
 
 export const RarityNames = [
@@ -191,8 +197,29 @@ class Reader {
   }
 }
 
-function parseEntity(reader) {
+function parseEntity(reader, origin = null) {
   const entity = {};
+  const format = reader.u8();
+  if (format === ENTITY_SNAPSHOT_COMPACT) {
+    if (!origin) throw new Error("compact entity without origin");
+    entity.entityId = reader.u16();
+    entity.entityType = reader.u8();
+    entity.team = reader.u8();
+    entity.pos = {
+      x: origin.x + reader.i16() / NET_RELATIVE_COORD_SCALE,
+      y: origin.y + reader.i16() / NET_RELATIVE_COORD_SCALE,
+    };
+    entity.radius = reader.u16() / NET_RADIUS_SCALE;
+    entity.hpPercent = reader.u8() / 255;
+    entity.flags = reader.u16();
+    entity.angle = reader.i16() / NET_ANGLE_SCALE;
+    entity.rarity = reader.u8();
+    entity.name = "";
+    entity.primarySlots = [];
+    return entity;
+  }
+  if (format !== ENTITY_SNAPSHOT_FULL) throw new Error("unknown entity snapshot format");
+
   entity.entityId = reader.u16();
   entity.entityType = reader.u8();
   entity.team = reader.u8();
@@ -235,7 +262,12 @@ export function parseServerMessage(payload) {
       msg.viewRadius = reader.i32() / NET_COORD_SCALE;
       const count = reader.u16();
       msg.entities = [];
-      for (let i = 0; i < count; i += 1) msg.entities.push(parseEntity(reader));
+      let origin = null;
+      for (let i = 0; i < count; i += 1) {
+        const entity = parseEntity(reader, origin);
+        if (!origin) origin = entity.pos;
+        msg.entities.push(entity);
+      }
       return msg;
     }
 
@@ -251,12 +283,10 @@ export function parseServerMessage(payload) {
       const primaryCount = reader.u8();
       const secondaryCount = reader.u8();
       const slotBytes = (primaryCount + secondaryCount) * 2;
-      if (reader.has(8 + slotBytes)) {
-        msg.exp = reader.u32();
-        msg.expRequired = reader.u32();
+      if (reader.has(2 + slotBytes)) {
+        msg.expProgress = clamp(reader.u16() / 10000, 0, 1);
       } else {
-        msg.exp = 0;
-        msg.expRequired = 0;
+        msg.expProgress = 0;
       }
       msg.ownerSlots = [];
       msg.secondarySlots = [];

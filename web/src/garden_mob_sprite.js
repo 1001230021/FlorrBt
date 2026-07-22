@@ -8,6 +8,11 @@ const ROCK_EDGE_WIDTH = 5.2;
 const ROCK_VISUAL_SCALE = 1.18;
 const SANDSTORM_VISUAL_SCALE = 1.2;
 const PORTAL_VISUAL_SCALE = 2.15;
+const ANT_EGG_VISUAL_SCALE = 4.4;
+const FULL_ANT_VISUAL_SCALE = 5.65;
+const BABY_ANT_VISUAL_SCALE = 7.37;
+const OVERMIND_VISUAL_SCALE = 4.1;
+const LEAF_PIECE_VISUAL_SCALE = 3.1;
 const DANDELION_VISUAL_SCALE = 4;
 const DANDELION_BASE_IMAGE_ANGLE_OFFSET = Math.PI * 0.5;
 const BASE_CACHE = new Map();
@@ -79,7 +84,7 @@ function rockShapePoints(entityId, worldRadius) {
 export function drawBabyAnt(ctx, pos, radius, entityId, angle, motion, time) {
   drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/baby_ant.svg",
-    sizeScale: 5.65,
+    sizeScale: BABY_ANT_VISUAL_SCALE,
     stripWings: false,
     forelimbAmplitude: 0.18,
   });
@@ -104,6 +109,105 @@ export function drawQueenAnt(ctx, pos, radius, entityId, angle, motion, time) {
   });
 }
 
+export function drawAntEggMob(ctx, pos, radius, variant = "normal") {
+  const src = variant === "fire"
+    ? "./assets/fire_ant_egg.svg"
+    : (variant === "termite" ? "./assets/termite_egg.svg" : "./assets/ant_egg.svg");
+  drawSvgMob(ctx, src, pos, radius, undefined, { sizeScale: ANT_EGG_VISUAL_SCALE });
+}
+
+export function drawLeafPiece(ctx, pos, radius, entityId, angle) {
+  if (radius < 0.5) return;
+  const variant = ((stableHash(entityId || 0) % 4) + 1);
+  const image = baseImage(`./assets/leaf_piece_${variant}.svg`, "raw", "raw");
+  const size = Math.max(1, radius * LEAF_PIECE_VISUAL_SCALE);
+  const half = size * 0.5;
+  const fallbackAngle = (stableHash((entityId || 0) + 0x9e3779b9) / 0xffffffff) * Math.PI * 2;
+
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  ctx.rotate(Number.isFinite(angle) ? angle : fallbackAngle);
+  if (isImageReady(image)) {
+    ctx.drawImage(image, -half, -half, size, size);
+  } else {
+    drawFallbackLeafPiece(ctx, radius);
+  }
+  ctx.restore();
+}
+
+export function drawBabyFireAnt(ctx, pos, radius, entityId, angle, motion, time) {
+  drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
+    src: "./assets/baby_fire_ant.svg",
+    sizeScale: 5.65,
+    stripWings: false,
+    forelimbAmplitude: 0.18,
+  });
+}
+
+export function drawWorkerFireAnt(ctx, pos, radius, entityId, angle, motion, time) {
+  drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
+    src: "./assets/worker_fire_ant.svg",
+    sizeScale: 5.3,
+    stripWings: false,
+    forelimbAmplitude: 0.18,
+  });
+}
+
+export function drawFireQueenAnt(ctx, pos, radius, entityId, angle, motion, time) {
+  drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
+    src: "./assets/fire_queen_ant.svg",
+    sizeScale: 4.3,
+    stripWings: true,
+    layeredWings: true,
+    forelimbAmplitude: 0.28,
+  });
+}
+
+export function drawBabyTermite(ctx, pos, radius, entityId, angle, motion, time) {
+  drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
+    src: "./assets/baby_termite.svg",
+    sizeScale: 5.65,
+    stripWings: false,
+    forelimbAmplitude: 0.18,
+  });
+}
+
+export function drawWorkerTermite(ctx, pos, radius, entityId, angle, motion, time) {
+  drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
+    src: "./assets/worker_termite.svg",
+    sizeScale: 5.3,
+    stripWings: false,
+    forelimbAmplitude: 0.18,
+  });
+}
+
+export function drawSoldierFireAntMob(ctx, pos, radius, entityId, angle, motion, time) {
+  drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
+    src: "./assets/soldier_fire_ant.svg",
+    sizeScale: FULL_ANT_VISUAL_SCALE,
+    forelimbAmplitude: 0.22,
+  });
+}
+
+export function drawSoldierTermite(ctx, pos, radius, entityId, angle, motion, time) {
+  drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
+    src: "./assets/worker_termite.svg",
+    sizeScale: 5.45,
+    stripWings: false,
+    forelimbAmplitude: 0.2,
+  });
+}
+
+export function drawTermiteOvermind(ctx, pos, radius, entityId, angle, motion, time) {
+  drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
+    src: "./assets/termite_overmind.svg",
+    sizeScale: OVERMIND_VISUAL_SCALE,
+    stripWings: true,
+    layeredWings: true,
+    forelimbAmplitude: 0.3,
+  });
+}
+
 export function drawAntHole(ctx, pos, radius) {
   const image = baseImage("./assets/ant_hole.svg", "plain", false);
   const size = Math.max(1, radius * 3.05);
@@ -122,6 +226,34 @@ export function drawAntHole(ctx, pos, radius) {
     ctx.stroke();
   }
   ctx.restore();
+}
+
+function drawSvgMob(ctx, src, pos, radius, angle, options = {}) {
+  const image = baseImage(src, "raw", "raw");
+  const sizeScale = Number.isFinite(options.sizeScale) ? options.sizeScale : 4;
+  const size = Math.max(1, radius * sizeScale);
+  const half = size * 0.5;
+
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  if (Number.isFinite(angle) && Number.isFinite(options.faceAngle)) ctx.rotate(angle - options.faceAngle);
+  if (isImageReady(image)) {
+    ctx.drawImage(image, -half, -half, size, size);
+  } else {
+    drawFallbackAnt(ctx, radius);
+  }
+  ctx.restore();
+}
+
+function drawFallbackLeafPiece(ctx, radius) {
+  const size = radius * 1.85;
+  ctx.fillStyle = "#38b148";
+  ctx.strokeStyle = "#2e933c";
+  ctx.lineWidth = Math.max(1.8, radius * 0.22);
+  ctx.beginPath();
+  ctx.rect(-size * 0.5, -size * 0.5, size, size);
+  ctx.fill();
+  ctx.stroke();
 }
 
 export function drawDandelion(ctx, pos, radius, _entityId, angle, options = {}) {
@@ -208,7 +340,7 @@ function drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, options)
   const spriteSize = Math.max(1, radius * options.sizeScale);
   const spriteHalf = spriteSize * 0.5;
   const forelimbs = svgParts(options.src, "forelimbs");
-  const wings = options.stripWings ? svgParts(options.src, "wings") : [];
+  const wings = svgParts(options.src, "wings");
   const animation = antAnimation(entityId, motion || 0, time || 0, options.forelimbAmplitude);
 
   ctx.save();
@@ -239,7 +371,7 @@ function drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, options)
   } else {
     drawFallbackAnt(ctx, radius);
   }
-  drawAnimatedParts(ctx, wings, spriteSize, animation.wing, "fill");
+  if (!options.stripWings) drawAnimatedParts(ctx, wings, spriteSize, animation.wing, "fill");
   ctx.restore();
 }
 
@@ -426,6 +558,16 @@ function seededRng(seed) {
     value ^= value << 5;
     return ((value >>> 0) / 4294967296);
   };
+}
+
+function stableHash(seed) {
+  let value = seed >>> 0;
+  value ^= value >>> 16;
+  value = Math.imul(value, 2246822507) >>> 0;
+  value ^= value >>> 13;
+  value = Math.imul(value, 3266489909) >>> 0;
+  value ^= value >>> 16;
+  return value >>> 0;
 }
 
 function isImageReady(image) {

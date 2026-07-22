@@ -19,7 +19,7 @@ struct SPlayerAccount
     std::string name;
     std::string password;
     int level = 1;
-    int exp = 0;
+    std::int64_t exp = 0;
     std::vector<SInventoryItem> inventory;
     std::vector<SInventoryItem> slots;
     std::vector<SInventoryItem> secondary_slots;
@@ -36,6 +36,7 @@ struct SCraftResult
     uint32_t consumed = 0;
     uint32_t attempts = 0;
     uint32_t successes = 0;
+    uint8_t result_rarity = 0;
     std::vector<SInventoryItem> items;
 };
 
@@ -44,14 +45,22 @@ class CAccountDataStore
   public:
     static bool Load(const std::filesystem::path& path, std::string* error = nullptr);
     static bool Save(std::string* error = nullptr);
+    class CSaveBatch
+    {
+      public:
+        CSaveBatch();
+        ~CSaveBatch();
+        CSaveBatch(const CSaveBatch&) = delete;
+        CSaveBatch& operator=(const CSaveBatch&) = delete;
+    };
     static bool LoginOrRegister(const std::string& name, const std::string& password, bool register_mode,
                                 std::string* error = nullptr);
 
     static std::vector<SInventoryItem> GetInventory(const std::string& name);
     static std::vector<SInventoryItem> GetSlots(const std::string& name);
     static std::vector<SInventoryItem> GetSecondarySlots(const std::string& name);
-    static bool GetProgress(const std::string& name, int& level, int& exp);
-    static void SetProgress(const std::string& name, int level, int exp);
+    static bool GetProgress(const std::string& name, int& level, std::int64_t& exp);
+    static void SetProgress(const std::string& name, int level, std::int64_t exp);
     static int GetTalentPoints(const std::string& name);
     static void SetTalentPoints(const std::string& name, int talent_points);
     static void AddTalentPoints(const std::string& name, int talent_points);

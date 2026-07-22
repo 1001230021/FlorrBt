@@ -107,6 +107,7 @@ class CMobBase : public CEntity
 
     void SetController(std::unique_ptr<IController> controller) { m_p_controller = std::move(controller); }
     IController* GetController() { return m_p_controller.get(); }
+    const IController* GetController() const { return m_p_controller.get(); }
 
     sf::Vector2f m_vel = {0.f, 0.f};
     EMobType m_mob_type = EMobType::None;
@@ -185,6 +186,7 @@ class ISkillCasterMob
     virtual int GetSkillCount() const = 0;
     virtual bool CanCastSkill(int skill_index) const = 0;
     virtual bool TryCastSkill(int skill_index, CEntity* target) = 0;
+    virtual bool IsSkillBusy() const = 0;
     virtual uint8_t GetWindupSkillId() const = 0;
 };
 
@@ -213,6 +215,7 @@ template <typename TStats = SMobStats> class CSkillCasterMob : public CAttackabl
     int GetSkillCount() const override { return 0; }
     bool CanCastSkill(int) const override { return false; }
     bool TryCastSkill(int, CEntity*) override { return false; }
+    bool IsSkillBusy() const override { return false; }
     uint8_t GetWindupSkillId() const override { return 0; }
 };
 
@@ -277,7 +280,9 @@ template <typename TMob> bool RegisterMobPrototype(EMobType type, CMobPrototype 
         auto mob = std::make_unique<TMob>(world, pos, stats.radius, rarity, stats);
         mob->m_mob_type = raw_ptr->m_type;
         mob->m_team = raw_ptr->m_team;
-        mob->m_allow_skip_tick = raw_ptr->m_type != EMobType::PlayerFlower;
+        mob->m_allow_skip_tick = raw_ptr->m_type != EMobType::PlayerFlower &&
+                                 raw_ptr->m_type != EMobType::LeafPiece &&
+                                 !IsAtLeastRarity(rarity, ERarity::Super);
         if (raw_ptr->m_controller_factory) mob->SetController(raw_ptr->m_controller_factory());
         return mob;
     };
@@ -304,6 +309,18 @@ void RegisterRock();
 void RegisterBabyAnt();
 void RegisterWorkerAnt();
 void RegisterQueenAnt();
+void RegisterAntEggMob();
+void RegisterFireAntEgg();
+void RegisterTermiteEgg();
+void RegisterQueenAntEgg();
+void RegisterQueenFireAntEgg();
+void RegisterBabyFireAnt();
+void RegisterWorkerFireAnt();
+void RegisterFireQueenAnt();
+void RegisterBabyTermite();
+void RegisterWorkerTermite();
+void RegisterTermiteOvermind();
+void RegisterLeafPiece();
 void RegisterAntHole();
 void RegisterSpider();
 void RegisterSandstorm();
