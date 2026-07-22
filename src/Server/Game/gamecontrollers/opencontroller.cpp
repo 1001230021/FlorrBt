@@ -12,6 +12,7 @@
 #include "../../../Shared/drop_rate.h"
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 #include <limits>
 #include <random>
 #include <unordered_map>
@@ -47,6 +48,108 @@ struct pending_spawn
     sf::Vector2f pos = {0.f, 0.f};
     float radius = 0.f;
 };
+
+bool IsActivePlayer(const CGameContext* context, const CPlayer* player)
+{
+    if (!player) return false;
+    if (!context) return true;
+
+    for (const auto& existing : context->Players())
+    {
+        if (existing.get() == player) return true;
+    }
+    return false;
+}
+
+float TotalDamageRecorded(const CMobBase& mob)
+{
+    float total = 0.f;
+    for (const CDamageData& damage_data : mob.GetDamageData())
+    {
+        if (damage_data.m_total_dmg > 0.f) total += damage_data.m_total_dmg;
+    }
+    return total;
+}
+
+std::string DamageSummary(const CMobBase& mob)
+{
+    const CGameContext* context = const_cast<CMobBase&>(mob).GameContext();
+    std::vector<const CDamageData*> records;
+    records.reserve(mob.GetDamageData().size());
+    for (const CDamageData& damage_data : mob.GetDamageData())
+    {
+        if (damage_data.m_total_dmg > 0.f) records.push_back(&damage_data);
+    }
+
+    std::sort(records.begin(), records.end(), [](const CDamageData* lhs, const CDamageData* rhs)
+    {
+        return lhs->m_total_dmg > rhs->m_total_dmg;
+    });
+
+    std::ostringstream oss;
+    for (size_t i = 0; i < records.size() && i < 5; ++i)
+    {
+        const CDamageData* record = records[i];
+        if (i > 0) oss << ", ";
+        const bool active_player = IsActivePlayer(context, record->m_player);
+        oss << (active_player ? record->m_player->GetName() : "<stale>")
+            << "#" << (active_player ? record->m_player->GetId() : 0)
+            << "=" << record->m_total_dmg;
+    }
+    if (records.size() > 5) oss << ", ...";
+    std::string text = oss.str();
+    return text.empty() ? "<none>" : text;
+}
+
+std::string LootableSummary(const std::vector<lootable_player>& lootable_players)
+{
+    std::ostringstream oss;
+    for (size_t i = 0; i < lootable_players.size(); ++i)
+    {
+        const lootable_player& lootable = lootable_players[i];
+        if (i > 0) oss << ", ";
+        oss << (lootable.player ? lootable.player->GetName() : "<null>")
+            << "#" << (lootable.player ? lootable.player->GetId() : 0)
+            << "=" << lootable.damage;
+    }
+    std::string text = oss.str();
+    return text.empty() ? "<none>" : text;
+}
+
+std::string DropSummary(const std::vector<SDropRate>& drops)
+{
+    std::ostringstream oss;
+    for (size_t i = 0; i < drops.size(); ++i)
+    {
+        const SDropRate& drop = drops[i];
+        if (i > 0) oss << ", ";
+        oss << std::string(GetRarityName(drop.rarity)) << " " << std::string(GetPetalTypeName(drop.type));
+    }
+    std::string text = oss.str();
+    return text.empty() ? "<none>" : text;
+}
+
+void LogSuperLootIssue(const CMobBase& mob, const std::string& reason)
+{
+    const SMobStats* stats = mob.GetFinalStats();
+    const float max_health = stats ? stats->max_health : 0.f;
+    LOG_WARN("loot", reason + " mob=" + std::string(GetRarityName(mob.GetRarity())) + " " +
+                        std::string(GetMobTypeName(mob.m_mob_type)) +
+                        " id=" + std::to_string(mob.m_id) +
+                        " max_health=" + std::to_string(max_health) +
+                        " recorded_damage=" + std::to_string(TotalDamageRecorded(mob)) +
+                        " damage_sources=" + DamageSummary(mob));
+}
+
+bool IsPlayerOwnedSummon(CGameWorld& world, const CMobBase& mob)
+{
+    auto* controller = dynamic_cast<const CSummonedMeleeController*>(mob.GetController());
+    if (!controller) return false;
+
+    CGameContext* context = world.GameContext();
+    CEntity* owner = controller->GetOwner(&world);
+    return context && owner && context->FindPlayerFromEntity(owner) != nullptr;
+}
 
 const std::vector<SZoneMobEntry>& CachedZoneMobEntries(const std::string& mobs)
 {
@@ -453,6 +556,7 @@ bool ShouldSkipSuperOrHigherSpawn(CGameWorld& world, const sf::Vector2f& pos, ER
 
 std::vector<lootable_player> FindLootablePlayers(const CMobBase& mob)
 {
+    const CGameContext* context = const_cast<CMobBase&>(mob).GameContext();
     const bool above_ultra = IsAboveUltra(mob.GetRarity());
     const size_t max_lootable =
         above_ultra ? game_config::max_lootable_player_above_ultra : game_config::max_lootable_players;
@@ -462,7 +566,7 @@ std::vector<lootable_player> FindLootablePlayers(const CMobBase& mob)
     std::unordered_map<CPlayer*, float> damage_by_player;
     for (const CDamageData& damage_data : mob.GetDamageData())
     {
-        if (!damage_data.m_player || damage_data.m_total_dmg <= 0.f) continue;
+        if (!IsActivePlayer(context, damage_data.m_player) || damage_data.m_total_dmg <= 0.f) continue;
         total_damage += damage_data.m_total_dmg;
         damage_by_player[damage_data.m_player] += damage_data.m_total_dmg;
     }
@@ -655,13 +759,47 @@ void COpenController::OnEntityDie(CGameWorld& world, CEntity* entity)
     auto* mob = dynamic_cast<CMobBase*>(entity);
     if (!mob) return;
     if (mob->m_mob_type == EMobType::SummonedBeetle || mob->m_mob_type == EMobType::SummonedSoldierAnt) return;
-    if (dynamic_cast<const CSummonedMeleeController*>(mob->GetController())) return;
+    if (IsPlayerOwnedSummon(world, *mob)) return;
 
-    std::vector<SDropRate> drops = RollDrops(mob->m_mob_type, mob->GetRarity());
     std::vector<lootable_player> lootable_players = FindLootablePlayers(*mob);
+    if (lootable_players.empty() && IsSuperOrHigher(mob->GetRarity()))
+    {
+        LogSuperLootIssue(*mob, "No lootable players");
+        return;
+    }
+
+    const bool log_loot_issues = IsSuperOrHigher(mob->GetRarity());
     for (const lootable_player& lootable : lootable_players)
     {
-        if (!lootable.player) continue;
+        if (!lootable.player)
+        {
+            if (log_loot_issues)
+                LogSuperLootIssue(*mob, "Skipped lootable null player");
+            continue;
+        }
+
+        const std::vector<SDropRate>& rates = QueryDropRates(mob->m_mob_type, mob->GetRarity());
+        if (rates.empty())
+        {
+            if (log_loot_issues)
+                LogSuperLootIssue(*mob, "No drop table");
+            continue;
+        }
+
+        std::vector<SDropRate> drops = RollDrops(mob->m_mob_type, mob->GetRarity());
+        if (drops.empty())
+        {
+            if (log_loot_issues)
+                LOG_WARN("loot", "Rolled zero drops mob=" + std::string(GetRarityName(mob->GetRarity())) + " " +
+                                    std::string(GetMobTypeName(mob->m_mob_type)) +
+                                    " id=" + std::to_string(mob->m_id) +
+                                    " player=" + lootable.player->GetName() +
+                                    "#" + std::to_string(lootable.player->GetId()) +
+                                    " lootables=" + LootableSummary(lootable_players) +
+                                    " damage_sources=" + DamageSummary(*mob));
+            continue;
+        }
+
         size_t drop_index = 0;
         const size_t player_drop_count = drops.size();
         for (const SDropRate& drop : drops)
@@ -669,6 +807,14 @@ void COpenController::OnEntityDie(CGameWorld& world, CEntity* entity)
             sf::Vector2f drop_pos = mob->m_pos + DropSpreadOffset(drop_index++, player_drop_count);
             auto drop_entity = std::make_unique<CDrop>(&world, drop_pos, drop.type, drop.rarity, lootable.player->GetId());
             world.InsertEntity(std::move(drop_entity));
+        }
+        if (log_loot_issues && mob->m_mob_type == EMobType::AntHole)
+        {
+            LOG_INFO("loot", "Generated AntHole drops mob=" + std::string(GetRarityName(mob->GetRarity())) +
+                              " id=" + std::to_string(mob->m_id) +
+                              " player=" + lootable.player->GetName() +
+                              "#" + std::to_string(lootable.player->GetId()) +
+                              " drops=" + DropSummary(drops));
         }
     }
 }
