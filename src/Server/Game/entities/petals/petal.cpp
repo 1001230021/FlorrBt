@@ -10,8 +10,6 @@
 
 namespace
 {
-constexpr float max_petal_owner_distance_multiplier = 16.f;
-
 std::optional<sf::Vector2f> CalculateSpawnGlobal(CPetal* petal, CFlower* flower)
 {
     if (!petal || !flower || !flower->GetFinalStats()) return std::nullopt;
@@ -150,13 +148,15 @@ void CPetal::Tick(float dt)
     }
     CProjectile::Tick(dt);
     m_lifetime += dt;
-
-    float flower_radius = flower->GetFinalStats() ? flower->GetFinalStats()->radius : flower->m_radius;
-    float max_distance = std::max(0.f, flower_radius) * max_petal_owner_distance_multiplier;
-    if (max_distance > 0.f && DistanceSq(m_pos, flower->m_pos) > max_distance * max_distance)
+    if (m_timer > 0.f)
     {
-        m_is_marked_for_des = true;
-        return;
+        m_timer -= dt;
+        if (m_timer <= 0.f)
+        {
+            m_timer = 0.f;
+            m_health = 0.f;
+            m_is_marked_for_des = true;
+        }
     }
 
     for (auto it = m_hit_credits.begin(); it != m_hit_credits.end();)
@@ -181,9 +181,28 @@ void CPetal::TakeDamage(float dmg, CEntity*, EDamageType damage_type)
     }
 }
 
+bool CPetal::CollidesWithWalls() const
+{
+    switch (m_type)
+    {
+    case EPetalType::AntEgg:
+    case EPetalType::BeetleEgg:
+    case EPetalType::BrokenEgg:
+    case EPetalType::Carrot:
+    case EPetalType::Web:
+    case EPetalType::Pollen:
+    case EPetalType::Honey:
+    case EPetalType::Wax:
+        return true;
+    default:
+        return false;
+    }
+}
+
 void CBeetleEggPetal::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
 {
-    CEntity* summon = GameWorld() ? GameWorld()->GetEntity(m_summon_id) : nullptr;
+    CEntity* summon = GameWorld() && m_summon_id >= 0 ?
+        GameWorld()->GetEntity(m_summon_id, m_summon_generation) : nullptr;
     if (m_has_spawned_summon && summon && !summon->m_is_marked_for_des)
     {
         summon->TakeDamage(dmg, attacker, damage_type);

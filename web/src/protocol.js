@@ -2,11 +2,20 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 export const NETWORK_PETAL_TYPE_OFFSET = 100;
-export const NETWORK_DROP_TYPE_OFFSET = 150;
+export const NETWORK_DROP_TYPE_OFFSET = 180;
+export const NETWORK_BLOOD_SACRIFICE_ENTITY_TYPE = 94;
+export const NETWORK_DANDELION_MISSILE_ENTITY_TYPE = 95;
+export const NETWORK_POLLEN_ENTITY_TYPE = 96;
+export const NETWORK_SPIDER_WEB_ENTITY_TYPE = 97;
+export const NETWORK_MISSILE_ENTITY_TYPE = 98;
+export const NETWORK_PORTAL_ENTITY_TYPE = 99;
 export const MAX_CHAT_MESSAGE_SIZE = 180;
 export const NET_COORD_SCALE = 64;
+export const NET_RELATIVE_COORD_SCALE = 1;
 export const NET_RADIUS_SCALE = 1;
 export const NET_ANGLE_SCALE = 1000;
+const ENTITY_SNAPSHOT_FULL = 0;
+const ENTITY_SNAPSHOT_COMPACT = 1;
 
 export const ChatFlag = Object.freeze({
   Global: 0,
@@ -32,19 +41,21 @@ export const PetalNames = [
   "Corruption", "Bandage", "Heavy", "Faster", "Yggdrasil", "Dahlia", "Wing", "Triangle",
   "Sawblade", "Fragment", "Mimic", "Glass", "Stinger", "BrokenEgg", "Light",
   "Leaf", "Rock", "Web", "Cactus", "Pollen", "Corn", "Rice", "Basil", "Soil",
-  "Honey", "Wax",
+  "Honey", "Wax", "ThirdEye", "Dandelion", "Orange", "Shovel",
 ];
 
 export const MobNames = [
   "None", "Beetle", "Gambler", "NormalLadybug", "MechaFlower", "NormalFlower", "PlayerFlower",
   "SoldierAnt", "SoldierFireAnt", "SoldierTermite", "SummonedBeetle", "SummonedSoldierAnt",
   "BandageBeetle", "Bee", "Hornet", "BumbleBee", "Rock", "BabyAnt", "WorkerAnt", "QueenAnt",
-  "AntHole", "Spider",
+  "AntHole", "Spider", "Sandstorm", "Dummy", "Dandelion", "AntEgg", "FireAntEgg", "TermiteEgg",
+  "QueenAntEgg", "QueenFireAntEgg", "BabyFireAnt", "WorkerFireAnt", "FireQueenAnt", "BabyTermite",
+  "WorkerTermite", "TermiteOvermind", "LeafPiece",
 ];
 
 export const RarityNames = [
   "Null", "Common", "Unusual", "Rare", "Epic", "Legendary", "Mythic", "Ultra", "Super",
-  "Eternal", "Unique", "Primordial",
+  "Eternal", "Unique", "Primordial", "Exotic",
 ];
 
 export const RarityColors = [
@@ -60,6 +71,7 @@ export const RarityColors = [
   [238, 238, 238, 160, 0, 224],
   [53, 53, 53, 160, 0, 50],
   [110, 110, 110, 0, 0, 103],
+  [180, 180, 180, 126, 126, 126],
 ];
 
 export function rarityColor(rarity, alpha = 1) {
@@ -185,8 +197,29 @@ class Reader {
   }
 }
 
-function parseEntity(reader) {
+function parseEntity(reader, origin = null) {
   const entity = {};
+  const format = reader.u8();
+  if (format === ENTITY_SNAPSHOT_COMPACT) {
+    if (!origin) throw new Error("compact entity without origin");
+    entity.entityId = reader.u16();
+    entity.entityType = reader.u8();
+    entity.team = reader.u8();
+    entity.pos = {
+      x: origin.x + reader.i16() / NET_RELATIVE_COORD_SCALE,
+      y: origin.y + reader.i16() / NET_RELATIVE_COORD_SCALE,
+    };
+    entity.radius = reader.u16() / NET_RADIUS_SCALE;
+    entity.hpPercent = reader.u8() / 255;
+    entity.flags = reader.u16();
+    entity.angle = reader.i16() / NET_ANGLE_SCALE;
+    entity.rarity = reader.u8();
+    entity.name = "";
+    entity.primarySlots = [];
+    return entity;
+  }
+  if (format !== ENTITY_SNAPSHOT_FULL) throw new Error("unknown entity snapshot format");
+
   entity.entityId = reader.u16();
   entity.entityType = reader.u8();
   entity.team = reader.u8();
@@ -229,7 +262,12 @@ export function parseServerMessage(payload) {
       msg.viewRadius = reader.i32() / NET_COORD_SCALE;
       const count = reader.u16();
       msg.entities = [];
-      for (let i = 0; i < count; i += 1) msg.entities.push(parseEntity(reader));
+      let origin = null;
+      for (let i = 0; i < count; i += 1) {
+        const entity = parseEntity(reader, origin);
+        if (!origin) origin = entity.pos;
+        msg.entities.push(entity);
+      }
       return msg;
     }
 
@@ -245,12 +283,10 @@ export function parseServerMessage(payload) {
       const primaryCount = reader.u8();
       const secondaryCount = reader.u8();
       const slotBytes = (primaryCount + secondaryCount) * 2;
-      if (reader.has(8 + slotBytes)) {
-        msg.exp = reader.u32();
-        msg.expRequired = reader.u32();
+      if (reader.has(2 + slotBytes)) {
+        msg.expProgress = clamp(reader.u16() / 10000, 0, 1);
       } else {
-        msg.exp = 0;
-        msg.expRequired = 0;
+        msg.expProgress = 0;
       }
       msg.ownerSlots = [];
       msg.secondarySlots = [];
@@ -336,12 +372,13 @@ export function packInput(moveX, moveY) {
   return out;
 }
 
-export function packChores(attacking, defending, agree = false, disconnect = false) {
+export function packChores(attacking, defending, agree = false, disconnect = false, digging = false) {
   let value = 0x03;
   if (attacking) value |= 1 << 2;
   if (defending) value |= 1 << 3;
   if (agree) value |= 1 << 4;
   if (disconnect) value |= 1 << 5;
+  if (digging) value |= 1 << 6;
   return new Uint8Array([value]);
 }
 
@@ -366,6 +403,10 @@ export function packCraft(petalType, rarity, count) {
   const view = new DataView(out.buffer);
   view.setUint32(3, safeCount, true);
   return out;
+}
+
+export function packStateRequest() {
+  return new Uint8Array([0xf5]);
 }
 
 export function packTalentRequest(action, talents) {

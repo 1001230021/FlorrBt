@@ -16,6 +16,7 @@
 #include <charconv>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <optional>
 #include <string_view>
 
@@ -56,8 +57,8 @@ std::optional<ERarity> ParseRarity(std::string_view text)
 {
     if (auto value = ParseInt(text))
     {
-        if (*value > static_cast<int>(ERarity::Null) && *value <= static_cast<int>(ERarity::Primordial))
-            return static_cast<ERarity>(*value);
+        ERarity parsed = static_cast<ERarity>(*value);
+        if (IsKnownRarity(parsed)) return parsed;
         return std::nullopt;
     }
 
@@ -73,6 +74,7 @@ std::optional<ERarity> ParseRarity(std::string_view text)
     if (rarity == "eternal") return ERarity::Eternal;
     if (rarity == "unique") return ERarity::Unique;
     if (rarity == "primordial") return ERarity::Primordial;
+    if (rarity == "ex" || rarity == "exotic") return ERarity::Exotic;
     return std::nullopt;
 }
 
@@ -102,6 +104,8 @@ std::string RarityName(ERarity rarity)
         return "Unique";
     case ERarity::Primordial:
         return "Primordial";
+    case ERarity::Exotic:
+        return "Exotic";
     default:
         return "Null";
     }
@@ -381,6 +385,44 @@ REGISTER_CONSOLE_COMMAND(query_entity_id, {
                             " entity_id=" + std::to_string(entity ? entity->m_id : -1));
 })
 
+REGISTER_CONSOLE_COMMAND(tele, {
+    if (args.size() < 2)
+    {
+        LOG_INFO("console", "Usage: tele [player id/name] [x,y] or tele [player id/name] [x] [y]");
+        return;
+    }
+
+    std::optional<sf::Vector2f> pos = ParsePosition(args, 1);
+    if (!pos)
+    {
+        LOG_WARN("console", "Invalid position. Usage: tele [player id/name] [x,y] or tele [player id/name] [x] [y]");
+        return;
+    }
+
+    auto* server = CServer::GetInstance();
+    CGameContext* context = server ? server->GameContext() : nullptr;
+    CPlayer* player = FindPlayerByIdOrName(context, args[0]);
+    if (!player)
+    {
+        LOG_WARN("console", "Player not found: " + args[0]);
+        return;
+    }
+
+    CEntity* entity = player->GetEntity();
+    if (!entity)
+    {
+        LOG_WARN("console", "Player has no controlled entity: " + args[0]);
+        return;
+    }
+
+    sf::Vector2f old_pos = entity->m_pos;
+    entity->m_pos = *pos;
+    entity->m_prev_pos = *pos;
+    LOG_INFO("console", "Teleported " + player->GetName() + " from " + std::to_string(old_pos.x) + "," +
+                            std::to_string(old_pos.y) + " to " + std::to_string(pos->x) + "," +
+                            std::to_string(pos->y));
+})
+
 REGISTER_CONSOLE_COMMAND(set_team, {
     if (args.size() < 2)
     {
@@ -643,6 +685,60 @@ REGISTER_CONSOLE_COMMAND(control, {
 
     LOG_INFO("console", "Player " + std::to_string(*player_id) + " is now controlling entity " +
                             std::to_string(*entity_id) + ".");
+})
+
+REGISTER_CONSOLE_COMMAND(add, {
+    if (args.size() < 3)
+    {
+        LOG_INFO("console", "Usage: add [petal name/id] [rarity name/id] [player id/name] [num=1]");
+        return;
+    }
+
+    const CPetalPrototype* proto = FindPetalPrototypeByText(args[0]);
+    if (!proto)
+    {
+        LOG_WARN("console", "Unknown petal: " + args[0]);
+        return;
+    }
+
+    auto rarity = ParseRarity(args[1]);
+    if (!rarity)
+    {
+        LOG_WARN("console", "Invalid rarity: " + args[1]);
+        return;
+    }
+
+    uint32_t count = 1;
+    if (args.size() >= 4)
+    {
+        auto parsed_count = ParseInt(args[3]);
+        if (!parsed_count || *parsed_count <= 0)
+        {
+            LOG_WARN("console", "Invalid item count: " + args[3]);
+            return;
+        }
+        count = static_cast<uint32_t>(std::min(*parsed_count, static_cast<int>(max_inventory_item_count)));
+    }
+
+    auto* server = CServer::GetInstance();
+    CGameContext* context = server ? server->GameContext() : nullptr;
+    CPlayer* player = FindPlayerByIdOrName(context, args[2]);
+    std::string account_name = player ? player->GetAccountName() : args[2];
+    if (account_name.empty())
+    {
+        LOG_WARN("console", "Player/account has no account name: " + args[2]);
+        return;
+    }
+
+    const uint8_t petal_type = static_cast<uint8_t>(proto->m_type);
+    const uint8_t rarity_id = static_cast<uint8_t>(*rarity);
+    CAccountDataStore::AddItem(account_name, petal_type, rarity_id, count);
+
+    if (player && player->IsAuthenticated() && context)
+        context->Network().QueueInventoryUpdate(*player);
+
+    LOG_INFO("console", "Added " + std::to_string(count) + " " + RarityName(*rarity) + " " + proto->m_name +
+                            " to " + account_name + ".");
 })
 
 REGISTER_CONSOLE_COMMAND(equip, {

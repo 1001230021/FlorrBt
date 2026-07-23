@@ -1,5 +1,6 @@
 #include "player.h"
 #include "../../Engine/account_data.h"
+#include "../server.h"
 #include "entities/drop.h"
 #include "entities/flower.h"
 #include "entities/mob.h"
@@ -8,7 +9,10 @@
 #include "gameworld.h"
 #include "talent.h"
 #include "../../Shared/game_config.h"
+#include "../../Shared/petal_card_exp.h"
 #include <algorithm>
+#include <cstdint>
+#include <limits>
 
 namespace
 {
@@ -169,11 +173,11 @@ void CPlayer::ApplySavedProgress()
     if (!flower) return;
 
     int level = 1;
-    int exp = 0;
+    std::int64_t exp = 0;
     if (!CAccountDataStore::GetProgress(m_account_name, level, exp)) return;
 
     flower->m_level = std::max(1, level);
-    flower->m_exp = std::max(0, exp);
+    flower->m_exp = std::max<std::int64_t>(0, exp);
     flower->RebuildFinalStats();
     if (const SFlowerStats* stats = flower->GetFinalStats())
         flower->m_health = stats->max_health;
@@ -227,7 +231,7 @@ bool CPlayer::TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rari
 {
     if (!m_authenticated) return false;
     if (petal_type == 0) return false;
-    if (rarity == 0 || rarity > static_cast<uint8_t>(ERarity::Primordial)) return false;
+    if (!IsKnownRarity(static_cast<ERarity>(rarity))) return false;
 
     auto* flower = dynamic_cast<CFlower*>(GetEntity());
     if (!flower) return false;
@@ -279,11 +283,53 @@ bool CPlayer::TryUnequipPetal(uint8_t slot_index)
 bool CPlayer::TryCraftPetal(uint8_t petal_type, uint8_t rarity, uint32_t count, SCraftResult* result)
 {
     if (!m_authenticated) return false;
-    if (petal_type == 0 || !FindPetalPrototype(static_cast<EPetalType>(petal_type))) return false;
+    const CPetalPrototype* proto = FindPetalPrototype(static_cast<EPetalType>(petal_type));
+    if (petal_type == 0 || !proto) return false;
     if (rarity < static_cast<uint8_t>(ERarity::Common) || rarity > static_cast<uint8_t>(ERarity::Eternal)) return false;
     if (count < 5) return false;
 
-    return CAccountDataStore::CraftItem(m_account_name, petal_type, rarity, count, result);
+    SCraftResult local_result;
+    SCraftResult* craft_result = result ? result : &local_result;
+    if (!CAccountDataStore::CraftItem(m_account_name, petal_type, rarity, count, craft_result)) return false;
+
+    if (craft_result->successes > 0 && craft_result->result_rarity != 0)
+    {
+        ObtainPetalCard(petal_type, craft_result->result_rarity, craft_result->successes, false);
+        ERarity result_rarity = static_cast<ERarity>(craft_result->result_rarity);
+        if (CServer::MeetsPetalReportRarity(result_rarity, game_config::min_craft_report_rarity))
+        {
+            if (CServer* server = CServer::GetInstance())
+                server->BroadcastPetalReport("crafted", result_rarity, proto->m_name, m_name);
+        }
+    }
+    return true;
+}
+
+bool CPlayer::ObtainPetalCard(uint8_t petal_type, uint8_t rarity, uint32_t count, bool add_to_inventory)
+{
+    if (!m_authenticated || m_account_name.empty()) return false;
+    if (petal_type == 0 || count == 0) return false;
+    if (!FindPetalPrototype(static_cast<EPetalType>(petal_type))) return false;
+
+    ERarity card_rarity = static_cast<ERarity>(rarity);
+    if (!IsKnownRarity(card_rarity)) return false;
+
+    CAccountDataStore::CSaveBatch save_batch;
+    if (add_to_inventory) CAccountDataStore::AddItem(m_account_name, petal_type, rarity, count);
+
+    auto* flower = dynamic_cast<CPlayerFlower*>(GetEntity());
+    int per_card_exp = PetalCardExpForRarity(card_rarity);
+    if (flower && per_card_exp > 0)
+    {
+        const std::uint64_t max_exp = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+        const std::uint64_t per_card = static_cast<std::uint64_t>(per_card_exp);
+        std::uint64_t total_exp = max_exp;
+        if (count == 0 || per_card <= max_exp / static_cast<std::uint64_t>(count))
+            total_exp = per_card * static_cast<std::uint64_t>(count);
+        std::int64_t clamped_exp = static_cast<std::int64_t>(std::min<std::uint64_t>(total_exp, max_exp));
+        flower->TakeExp(clamped_exp);
+    }
+    return true;
 }
 
 bool CPlayer::AddTalent(ETalentId id, ERarity rarity, int rank)
@@ -300,7 +346,7 @@ bool CPlayer::AddTalent(ETalentId id, ERarity rarity, int rank)
     m_talents.push_back(talent);
     NormalizeTalentOrder();
     SaveTalentState();
-    RefreshTalentEffects();
+    RefreshTalentEffects(true);
     return true;
 }
 
@@ -341,7 +387,7 @@ bool CPlayer::RemoveTalent(ETalentId id, ERarity rarity, int rank)
     m_talent_points = std::max(0, m_talent_points + refund);
     NormalizeTalentOrder();
     SaveTalentState();
-    RefreshTalentEffects();
+    RefreshTalentEffects(true);
     return true;
 }
 
@@ -368,6 +414,12 @@ void CPlayer::ApplyTalents(ETalentEvent event, STalentContext& ctx) const
     {
         if (talent) talent->Apply(event, ctx);
     }
+
+    if (m_p_world)
+    {
+        if (IGameController* controller = m_p_world->GetController())
+            controller->ModifyTalentContext(*m_p_world, const_cast<CPlayer*>(this), event, ctx);
+    }
 }
 
 int CPlayer::CalculateTalentSlotCount() const
@@ -384,13 +436,14 @@ int CPlayer::CalculateTalentSlotCount() const
     return std::clamp(slot_count, 0, std::max(0, game_config::mob_player_flower_max_petal_slots));
 }
 
-void CPlayer::RefreshTalentEffects()
+void CPlayer::RefreshTalentEffects(bool reload_petals)
 {
     auto* flower = dynamic_cast<CPlayerFlower*>(GetEntity());
     if (!flower) return;
 
     flower->RefreshTalentSlotCount();
     flower->RebuildFinalStats();
+    if (reload_petals) flower->ReloadAllPetals();
 }
 
 void CPlayer::SetSecondChanceCooldown(float cooldown)
@@ -411,11 +464,13 @@ void CPlayer::SetOwnedEntity(CEntity* entity)
     {
         m_p_world = nullptr;
         m_entity_id = -1;
+        m_entity_generation = 0;
         return;
     }
 
     m_p_world = entity->GameWorld();
     m_entity_id = entity->m_id;
+    m_entity_generation = entity->m_generation;
 }
 
 void CPlayer::Authenticate(const std::string& account_name)
@@ -423,11 +478,14 @@ void CPlayer::Authenticate(const std::string& account_name)
     m_account_name = account_name;
     m_name = account_name;
     m_authenticated = true;
+    m_cp_stack.clear();
+    m_cp_check_phase = static_cast<uint8_t>(m_player_id & 0x07);
 }
 
 CEntity* CPlayer::GetEntity() const
 {
     if (!m_p_world || m_entity_id < 0) return nullptr;
+    if (m_entity_generation != 0) return m_p_world->GetEntity(m_entity_id, m_entity_generation);
     return m_p_world->GetEntity(m_entity_id);
 }
 

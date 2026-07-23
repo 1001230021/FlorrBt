@@ -2,9 +2,11 @@
 #include "../entities/flower.h"
 #include "../entities/mob.h"
 #include "../entities/petals/petal.h"
+#include "../states/states.h"
 #include "../../../Shared/game_config.h"
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 void CPlayerController::OnTick(CMobBase* mob, float dt)
 {
@@ -22,6 +24,12 @@ void CPlayerController::OnTick(CMobBase* mob, float dt)
     {
         ExecuteOperate(m_op_queue.front(), mob);
         m_op_queue.pop();
+    }
+
+    if (auto* attackable = dynamic_cast<IAttackableMob*>(mob); attackable && attackable->IsDefending())
+    {
+        if (auto* flower = dynamic_cast<CFlower*>(mob))
+            flower->TryStartBurrowFromShovel();
     }
 
     TryManualAttack(mob);
@@ -66,6 +74,10 @@ void CPlayerController::ExecuteOperate(const ClientOperate& op, CMobBase* mob)
         {
             if (op.is_attacking.has_value()) attackable->SetAttacking(*op.is_attacking);
             if (op.is_defending.has_value()) attackable->SetDefending(*op.is_defending);
+        }
+        if (op.is_digging.value_or(false) || op.is_defending.value_or(false))
+        {
+            if (auto* flower = dynamic_cast<CFlower*>(mob)) flower->TryStartBurrowFromShovel();
         }
         break;
     case ClientOperate::Type::Equip:

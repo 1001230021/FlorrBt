@@ -55,7 +55,7 @@ export function drawBeetle(ctx, src, pos, radius, entityId, angle, motion, time,
 function beetleAnimation(entityId, motion, time) {
   const activeMotion = clamp01(motion) < BEETLE_MOTION_DEADZONE ? 0 : clamp01(motion);
   if (activeMotion <= 0) return { swing: 0 };
-  const phase = time * (7.2 + activeMotion * 4.8) + entityId * 0.81;
+  const phase = time * (4.8 + activeMotion * 16.5) + entityId * 0.81;
   return {
     swing: Math.sin(phase) * activeMotion * 0.24,
   };

@@ -8,8 +8,8 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <set>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -40,8 +40,11 @@ class CGameWorld
 
     void RemoveEntity(int id);
     void DestroyProjectilesOwnedBy(int owner_id);
+    void DestroySummonedMobsOwnedBy(int owner_id, std::uint64_t owner_generation = 0);
     CEntity* TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& target_world,
-                                         std::optional<sf::Vector2f> target_pos = std::nullopt);
+                                         std::optional<sf::Vector2f> target_pos = std::nullopt,
+                                         std::optional<std::string> from = std::nullopt);
+    CEntity* TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& target_world, const std::string& from);
 
     void Tick(float dt);
 
@@ -68,18 +71,23 @@ class CGameWorld
     std::vector<CEntity*> GetAllEntities() const;
 
     const entity_spatial_grid& GetSpatialGrid() const { return m_spatial_grid; }
+    float GetMaxEntityRadius() const { return m_cached_max_entity_radius; }
     const FlorrBtMap* GetMap() const { return m_map.get(); }
     const std::string& GetMapPath() const { return m_map_path; }
+    std::string GetMapName() const;
     bool SegmentBlockedByWall(sf::Vector2f start, sf::Vector2f end) const;
+    bool CircleBlockedByWall(sf::Vector2f center, float radius) const;
 
   private:
+    void SpawnMapPortals();
+    std::optional<sf::Vector2f> FindWarpPoint(const std::string& from) const;
     FlorrBtMap::Wall* GetWall(int id) const;
     void BuildWallGrid();
     void ResolveWallCollisions(const std::vector<CEntity*>& entities);
     void ResolveCollisions(const std::vector<CEntity*>& entities, float dt);
     void Cleanup();
 
-    std::set<int> m_free_ids;
+    std::vector<int> m_free_ids;
     int m_next_id = 0;
     std::uint64_t m_next_generation = 1;
     CGameContext* m_p_game_context = nullptr;
@@ -89,13 +97,13 @@ class CGameWorld
 
     entity_spatial_grid m_spatial_grid;
     wall_spatial_grid m_wall_grid;
-    float m_max_wall_query_radius = 0.f;
     std::unique_ptr<IGameController> m_p_controller = nullptr;
 
     std::vector<std::unique_ptr<CEntity>> m_p_entities;
     std::vector<CEntity*> m_p_entity_refs;
     std::vector<CEntity*> m_tick_entities;
     std::vector<CEntity*> m_active_entities;
+    std::unordered_set<int> m_wall_query_visited;
     std::uint64_t m_active_tick_marker = 1;
     float m_cached_max_entity_radius = 0.f;
 };

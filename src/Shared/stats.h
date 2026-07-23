@@ -50,6 +50,7 @@ struct SFlowerStats : public SMobStats
     float petal_medicine_multiplier = 1.f;
     float healing_received_multiplier = 1.f;
     float mult_summoned_health = 1.f;
+    float mult_summoned_damage = 1.f;
     float poison_damage_multiplier = 1.f;
     float poison_duration_multiplier = 1.f;
     float body_poison_damage_multiplier = 0.f;
@@ -75,6 +76,7 @@ struct SFlowerStats : public SMobStats
         petal_medicine_multiplier *= other.petal_medicine_multiplier;
         healing_received_multiplier *= other.healing_received_multiplier;
         mult_summoned_health *= other.mult_summoned_health;
+        mult_summoned_damage *= other.mult_summoned_damage;
         poison_damage_multiplier *= other.poison_damage_multiplier;
         poison_duration_multiplier *= other.poison_duration_multiplier;
         body_poison_damage_multiplier = std::max(body_poison_damage_multiplier, other.body_poison_damage_multiplier);

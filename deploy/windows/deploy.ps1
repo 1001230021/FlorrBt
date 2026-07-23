@@ -64,6 +64,10 @@ function Build-SelfArgs([string]$ChildMode) {
     return Join-Args $items
 }
 
+function Build-InteractiveSelfArgs([string]$ChildMode) {
+    return "-NoExit " + (Build-SelfArgs $ChildMode)
+}
+
 function Find-Node {
     $candidates = @(
         (Get-Command node -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
@@ -177,10 +181,10 @@ function Start-Interactive {
     Set-Location $RepoRoot
 
     if (-not $NoServer) {
-        Start-Process -FilePath "powershell.exe" -ArgumentList (Build-SelfArgs "start-server") -WorkingDirectory $RepoRoot
+        Start-Process -FilePath "powershell.exe" -ArgumentList (Build-InteractiveSelfArgs "start-server") -WorkingDirectory $RepoRoot
     }
     if (-not $NoWeb) {
-        Start-Process -FilePath "powershell.exe" -ArgumentList (Build-SelfArgs "start-web") -WorkingDirectory $RepoRoot
+        Start-Process -FilePath "powershell.exe" -ArgumentList (Build-InteractiveSelfArgs "start-web") -WorkingDirectory $RepoRoot
     }
 
     Write-Section "Started"

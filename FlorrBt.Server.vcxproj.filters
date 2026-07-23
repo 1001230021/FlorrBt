@@ -25,6 +25,9 @@
     <Filter Include="src\Server\Game\states">
       <UniqueIdentifier>{9140B92F-2439-602B-B26F-31E19B3CA5B3}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Server\Game\systems">
+      <UniqueIdentifier>{2380B3E9-30E5-486F-A293-D4B55FC4232C}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\Server\Module">
       <UniqueIdentifier>{7EA5AE3C-1420-1628-8510-AA185AA89781}</UniqueIdentifier>
     </Filter>
@@ -111,8 +114,20 @@
     <ClInclude Include="src\Server\Game\entities\blood_sacrifice_ritual.h">
       <Filter>src\Server\Game\entities</Filter>
     </ClInclude>
+    <ClInclude Include="src\Server\Game\entities\portal.h">
+      <Filter>src\Server\Game\entities</Filter>
+    </ClInclude>
     <ClInclude Include="src\Server\Game\talent.h">
       <Filter>src\Server\Game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server\Game\gamecontrollers\waitingcontroller.h">
+      <Filter>src\Server\Game\gamecontrollers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server\Game\systems\snapshot_service.h">
+      <Filter>src\Server\Game\systems</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server\Game\systems\player_lifecycle_service.h">
+      <Filter>src\Server\Game\systems</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -141,6 +156,9 @@
       <Filter>src\Server\Game\entities\petals</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\entities\projectile.cpp">
+      <Filter>src\Server\Game\entities</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Game\entities\portal.cpp">
       <Filter>src\Server\Game\entities</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\entity.cpp">
@@ -188,11 +206,20 @@
     <ClCompile Include="src\Server\Game\gamecontrollers\opencontroller.cpp">
       <Filter>src\Server\Game\gamecontrollers</Filter>
     </ClCompile>
+    <ClCompile Include="src\Server\Game\gamecontrollers\waitingcontroller.cpp">
+      <Filter>src\Server\Game\gamecontrollers</Filter>
+    </ClCompile>
     <ClCompile Include="src\Server\Game\entities\drop.cpp">
       <Filter>src\Server\Game\entities</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\entities\blood_sacrifice_ritual.cpp">
       <Filter>src\Server\Game\entities</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Game\systems\snapshot_service.cpp">
+      <Filter>src\Server\Game\systems</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Game\systems\player_lifecycle_service.cpp">
+      <Filter>src\Server\Game\systems</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -15,11 +16,13 @@ constexpr uint8_t chore_agree_bit = 4;
 constexpr uint8_t chore_attack_bit = 2;
 constexpr uint8_t chore_defend_bit = 3;
 constexpr uint8_t chore_disconnect_bit = 5;
+constexpr uint8_t chore_digging_bit = 6;
 constexpr uint8_t client_auth_packet_type = 0xf0;
 constexpr uint8_t client_chat_packet_type = 0xf1;
 constexpr uint8_t client_secondary_slot_packet_type = 0xf2;
 constexpr uint8_t client_craft_packet_type = 0xf3;
 constexpr uint8_t client_talent_packet_type = 0xf4;
+constexpr uint8_t client_state_request_packet_type = 0xf5;
 constexpr size_t client_compact_packet_size = 1;
 constexpr size_t client_extended_packet_size = 3;
 constexpr size_t client_auth_header_size = 4;
@@ -36,7 +39,13 @@ constexpr size_t max_auth_password_size = 64;
 constexpr size_t max_chat_message_size = 180;
 constexpr size_t packet_length_prefix_size = 2;
 constexpr uint8_t server_petal_entity_type_offset = 100;
-constexpr uint8_t server_drop_entity_type_offset = 150;
+constexpr uint8_t server_drop_entity_type_offset = 180;
+constexpr uint8_t server_blood_sacrifice_entity_type = 94;
+constexpr uint8_t server_dandelion_missile_entity_type = 95;
+constexpr uint8_t server_pollen_entity_type = 96;
+constexpr uint8_t server_spider_web_entity_type = 97;
+constexpr uint8_t server_missile_entity_type = 98;
+constexpr uint8_t server_portal_entity_type = 99;
 
 // Client packets:
 // Input:        [type:2 bits][move_x:1 byte][move_y:1 byte]
@@ -48,6 +57,7 @@ constexpr uint8_t server_drop_entity_type_offset = 150;
 // SecondarySlot:[0xf2][slot:1 byte][petal_type:1 byte][rarity:1 byte]
 // Craft:        [0xf3][petal_type:1 byte][rarity:1 byte][count:4 bytes]
 // Talent:       [0xf4][action:1 byte][count:1 byte][talent_id:2 bytes][rarity:1 byte][rank:1 byte]...
+// StateRequest: [0xf5]
 
 enum class EChatFlag : uint8_t
 {
@@ -87,6 +97,7 @@ struct ClientOperate
     std::optional<bool> is_defending;
     std::optional<bool> agree;
     std::optional<bool> disconnect;
+    std::optional<bool> is_digging;
 
     static ClientOperate parse(const uint8_t* data, size_t len)
     {
@@ -126,6 +137,7 @@ struct ClientOperate
             op.is_defending = ((first >> chore_defend_bit) & bit_mask) != 0;
             op.agree = ((first >> chore_agree_bit) & bit_mask) != 0;
             op.disconnect = ((first >> chore_disconnect_bit) & bit_mask) != 0;
+            op.is_digging = ((first >> chore_digging_bit) & bit_mask) != 0;
             break;
         default:
             op.type = Type::Unknown;
@@ -159,6 +171,7 @@ struct ClientOperate
             if (op.is_defending.value_or(false)) out[0] |= (bit_mask << chore_defend_bit);
             if (op.agree.value_or(false)) out[0] |= (bit_mask << chore_agree_bit);
             if (op.disconnect.value_or(false)) out[0] |= (bit_mask << chore_disconnect_bit);
+            if (op.is_digging.value_or(false)) out[0] |= (bit_mask << chore_digging_bit);
             return 1;
         default:
             return 0;
@@ -476,21 +489,28 @@ struct ClientTalentRequest
 // Server packets:
 // Welcome:    [type:1 byte][player_id:2 bytes][owner_entity_id:2 bytes][tick_rate:1 byte][map_len:1 byte][map_name]
 // Snapshot:   [type:1 byte][snapshot_id:4 bytes][owner_entity_id:2 bytes][view_radius:4 bytes][count:2 bytes][entity_snap...]
-// EntitySnap: [entity_id:2 bytes][entity_type:1 byte][team:1 byte][x:4 bytes][y:4 bytes][radius:2 bytes][hp_percent:1 byte][flags:2 bytes][angle:2 bytes][rarity:1 byte][name_len:1 byte][name][primary_slots:1 byte][petal_type:1 byte][rarity:1 byte]...
-//             live petal entity_type = 100 + petal_type, drop entity_type = 150 + petal_type.
-// OwnerState: [type:1 byte][level:1 byte][flags:1 byte][petal_slots:1 byte][secondary_slots:1 byte][exp:4 bytes][exp_required:4 bytes][petal_type:1 byte][rarity:1 byte]...[talent_points:2 bytes][talent_count:1 byte][talent_id:2 bytes][rarity:1 byte][rank:1 byte]...
+// EntitySnap full:    [format:1 byte][entity_id:2 bytes][entity_type:1 byte][team:1 byte][x:4 bytes][y:4 bytes][radius:2 bytes][hp_percent:1 byte][flags:2 bytes][angle:2 bytes][rarity:1 byte][name_len:1 byte][name][primary_slots:1 byte][petal_type:1 byte][rarity:1 byte]...
+// EntitySnap compact: [format:1 byte][entity_id:2 bytes][entity_type:1 byte][team:1 byte][rel_x:2 bytes][rel_y:2 bytes][radius:2 bytes][hp_percent:1 byte][flags:2 bytes][angle:2 bytes][rarity:1 byte]
+//             live petal entity_type = 100 + petal_type, drop entity_type = 180 + petal_type.
+// OwnerState: [type:1 byte][level:1 byte][flags:1 byte][petal_slots:1 byte][secondary_slots:1 byte][exp_progress_bps:2 bytes][petal_type:1 byte][rarity:1 byte]...[talent_points:2 bytes][talent_count:1 byte][talent_id:2 bytes][rarity:1 byte][rank:1 byte]...
 // Inventory:  [type:1 byte][count:2 bytes][petal_type:1 byte][rarity:1 byte][count:4 bytes]...
 // AuthResult: [type:1 byte][success:1 byte][message_len:1 byte][message]
 // Chat:       [type:1 byte][flag:1 byte][player_id:2 bytes][time:4 bytes][name_len:1 byte][message_len:1 byte][name][message]
 // CraftResult:[type:1 byte][success:1 byte][petal_type:1 byte][rarity:1 byte][consumed:4 bytes][count:2 bytes][item...]
 
 using net_coord = int32_t;
+using net_relative_coord = int16_t;
 using net_entity_id = uint16_t;
 
+constexpr uint8_t server_entity_snap_full = 0;
+constexpr uint8_t server_entity_snap_compact = 1;
 constexpr float net_coord_scale = 64.f;
+constexpr float net_relative_coord_scale = 1.f;
 constexpr float net_radius_scale = 1.f;
 constexpr float net_angle_scale = 1000.f;
 constexpr size_t server_entity_fixed_size = 21;
+constexpr size_t server_entity_format_size = 1;
+constexpr size_t server_entity_compact_size = 17;
 
 inline net_coord PackCoord(float value)
 {
@@ -500,6 +520,27 @@ inline net_coord PackCoord(float value)
 inline float UnpackCoord(net_coord value)
 {
     return static_cast<float>(value) / net_coord_scale;
+}
+
+inline bool CanPackRelativeCoord(float value)
+{
+    float packed = std::round(value * net_relative_coord_scale);
+    return packed >= static_cast<float>(std::numeric_limits<net_relative_coord>::min()) &&
+           packed <= static_cast<float>(std::numeric_limits<net_relative_coord>::max());
+}
+
+inline net_relative_coord PackRelativeCoord(float value)
+{
+    float packed = std::round(value * net_relative_coord_scale);
+    packed = std::clamp(packed,
+                        static_cast<float>(std::numeric_limits<net_relative_coord>::min()),
+                        static_cast<float>(std::numeric_limits<net_relative_coord>::max()));
+    return static_cast<net_relative_coord>(packed);
+}
+
+inline float UnpackRelativeCoord(net_relative_coord value)
+{
+    return static_cast<float>(value) / net_relative_coord_scale;
 }
 
 inline net_coord PackViewRadius(float value)
@@ -600,7 +641,18 @@ enum class ServerEntityFlag : uint16_t
     Antennae = 1 << 7,
     Summoned = 1 << 8,
     Poisoned = 1 << 9,
+    Attached = 1 << 10,
+    Digging = 1 << 11,
+    SkillWindupMask = 0xf000,
 };
+
+constexpr uint16_t server_entity_skill_windup_shift = 12;
+constexpr uint16_t server_entity_skill_windup_mask = 0xf000;
+
+inline uint16_t PackServerEntitySkillWindup(uint8_t skill_id)
+{
+    return static_cast<uint16_t>((static_cast<uint16_t>(skill_id) & 0x0f) << server_entity_skill_windup_shift);
+}
 
 inline ServerEntityFlag operator|(ServerEntityFlag lhs, ServerEntityFlag rhs)
 {
@@ -632,9 +684,43 @@ struct ServerEntitySnap
     std::string name;
     std::vector<SOwnerPetalSlot> primary_slots;
 
-    static bool parse(const uint8_t* data, size_t len, size_t& offset, ServerEntitySnap& snap)
+    static bool CanPackCompact(const ServerEntitySnap& snap, sf::Vector2f origin, net_entity_id owner_entity_id)
     {
-        if (!data || offset + server_entity_fixed_size > len) return false;
+        if (snap.entity_id == owner_entity_id) return false;
+        if ((snap.flags & static_cast<uint16_t>(ServerEntityFlag::Owner)) != 0) return false;
+        if (!snap.name.empty() || !snap.primary_slots.empty()) return false;
+        return CanPackRelativeCoord(snap.pos.x - origin.x) && CanPackRelativeCoord(snap.pos.y - origin.y);
+    }
+
+    static bool parse(const uint8_t* data, size_t len, size_t& offset, ServerEntitySnap& snap,
+                      sf::Vector2f origin = {0.f, 0.f}, bool has_origin = false)
+    {
+        if (!data || offset + server_entity_format_size > len) return false;
+
+        snap.name.clear();
+        snap.primary_slots.clear();
+
+        uint8_t format = data[offset++];
+        if (format == server_entity_snap_compact)
+        {
+            if (!has_origin || offset + (server_entity_compact_size - server_entity_format_size) > len) return false;
+
+            snap.entity_id = ReadU16(data, offset);
+            snap.entity_type = data[offset++];
+            snap.team = data[offset++];
+            float rel_x = UnpackRelativeCoord(static_cast<net_relative_coord>(ReadU16(data, offset)));
+            float rel_y = UnpackRelativeCoord(static_cast<net_relative_coord>(ReadU16(data, offset)));
+            snap.pos = sf::Vector2f(origin.x + rel_x, origin.y + rel_y);
+            snap.radius = UnpackRadius(ReadU16(data, offset));
+            snap.hp_percent = UnpackPercent(data[offset++]);
+            snap.flags = ReadU16(data, offset);
+            snap.angle = static_cast<int16_t>(ReadU16(data, offset));
+            snap.rarity = data[offset++];
+            return true;
+        }
+
+        if (format != server_entity_snap_full) return false;
+        if (offset + server_entity_fixed_size > len) return false;
 
         snap.entity_id = ReadU16(data, offset);
         snap.entity_type = data[offset++];
@@ -665,8 +751,27 @@ struct ServerEntitySnap
         return true;
     }
 
-    static void pack(const ServerEntitySnap& snap, uint8_t* out, size_t& offset)
+    static void pack(const ServerEntitySnap& snap, uint8_t* out, size_t& offset,
+                     sf::Vector2f origin = {0.f, 0.f}, net_entity_id owner_entity_id = 0,
+                     bool has_origin = false)
     {
+        if (has_origin && CanPackCompact(snap, origin, owner_entity_id))
+        {
+            out[offset++] = server_entity_snap_compact;
+            WriteU16(out, offset, snap.entity_id);
+            out[offset++] = snap.entity_type;
+            out[offset++] = snap.team;
+            WriteU16(out, offset, static_cast<uint16_t>(PackRelativeCoord(snap.pos.x - origin.x)));
+            WriteU16(out, offset, static_cast<uint16_t>(PackRelativeCoord(snap.pos.y - origin.y)));
+            WriteU16(out, offset, PackRadius(snap.radius));
+            out[offset++] = PackPercent(snap.hp_percent);
+            WriteU16(out, offset, snap.flags);
+            WriteU16(out, offset, static_cast<uint16_t>(snap.angle));
+            out[offset++] = snap.rarity;
+            return;
+        }
+
+        out[offset++] = server_entity_snap_full;
         WriteU16(out, offset, snap.entity_id);
         out[offset++] = snap.entity_type;
         out[offset++] = snap.team;
@@ -692,8 +797,15 @@ struct ServerEntitySnap
 
     static size_t GetPackedSize(const ServerEntitySnap& snap)
     {
-        return server_entity_fixed_size + std::min<size_t>(snap.name.size(), UINT8_MAX) + 1 +
+        return server_entity_format_size + server_entity_fixed_size + std::min<size_t>(snap.name.size(), UINT8_MAX) + 1 +
                std::min<size_t>(snap.primary_slots.size(), UINT8_MAX) * owner_slot_packet_size;
+    }
+
+    static size_t GetPackedSize(const ServerEntitySnap& snap, sf::Vector2f origin, net_entity_id owner_entity_id,
+                                bool has_origin)
+    {
+        return has_origin && CanPackCompact(snap, origin, owner_entity_id) ? server_entity_compact_size :
+            GetPackedSize(snap);
     }
 };
 
@@ -732,8 +844,7 @@ struct ServerMessage
     std::optional<uint8_t> flags;
 
     std::optional<uint8_t> level;
-    std::optional<uint32_t> exp;
-    std::optional<uint32_t> exp_required;
+    std::optional<uint16_t> exp_progress_bps;
     std::optional<uint8_t> petal_slots;
     std::vector<SOwnerPetalSlot> owner_slots;
     std::optional<uint8_t> secondary_slots_count;
@@ -784,7 +895,7 @@ struct ServerMessage
             break;
         case Type::Snapshot:
         {
-            if (len < 14)
+            if (len < 13)
             {
                 msg.type = Type::Unknown;
                 break;
@@ -795,14 +906,21 @@ struct ServerMessage
 
             uint16_t count = ReadU16(data, offset);
             msg.entities.reserve(count);
+            sf::Vector2f snapshot_origin = {0.f, 0.f};
+            bool has_snapshot_origin = false;
             for (uint16_t i = 0; i < count; ++i)
             {
                 ServerEntitySnap snap;
-                if (!ServerEntitySnap::parse(data, len, offset, snap))
+                if (!ServerEntitySnap::parse(data, len, offset, snap, snapshot_origin, has_snapshot_origin))
                 {
                     msg.entities.clear();
                     msg.type = Type::Unknown;
                     break;
+                }
+                if (!has_snapshot_origin)
+                {
+                    snapshot_origin = snap.pos;
+                    has_snapshot_origin = true;
                 }
                 msg.entities.push_back(snap);
             }
@@ -828,7 +946,7 @@ struct ServerMessage
             break;
         }
         case Type::OwnerState:
-            if (len < 5)
+            if (len < 7)
             {
                 msg.type = Type::Unknown;
                 break;
@@ -841,15 +959,13 @@ struct ServerMessage
                 const size_t slot_bytes = (static_cast<size_t>(*msg.petal_slots) +
                                            static_cast<size_t>(*msg.secondary_slots_count)) *
                                           owner_slot_packet_size;
-                if (offset + 8 + slot_bytes <= len)
+                if (offset + 2 + slot_bytes <= len)
                 {
-                    msg.exp = ReadU32(data, offset);
-                    msg.exp_required = ReadU32(data, offset);
+                    msg.exp_progress_bps = ReadU16(data, offset);
                 }
                 else
                 {
-                    msg.exp = 0;
-                    msg.exp_required = 0;
+                    msg.exp_progress_bps = 0;
                 }
                 if (offset + slot_bytes > len)
                 {
@@ -1017,10 +1133,19 @@ struct ServerMessage
             WriteU32(out, offset, msg.snapshot_id.value_or(0));
             WriteU16(out, offset, msg.owner_entity_id.value_or(0));
             WriteI32(out, offset, PackViewRadius(msg.view_radius.value_or(0.f)));
-            WriteU16(out, offset, static_cast<uint16_t>(msg.entities.size()));
-            for (const ServerEntitySnap& snap : msg.entities)
+            uint16_t count = static_cast<uint16_t>(std::min<size_t>(msg.entities.size(), UINT16_MAX));
+            WriteU16(out, offset, count);
+            sf::Vector2f snapshot_origin = {0.f, 0.f};
+            bool has_snapshot_origin = false;
+            net_entity_id owner_id = msg.owner_entity_id.value_or(0);
+            for (uint16_t i = 0; i < count; ++i)
             {
-                ServerEntitySnap::pack(snap, out, offset);
+                ServerEntitySnap::pack(msg.entities[i], out, offset, snapshot_origin, owner_id, has_snapshot_origin);
+                if (!has_snapshot_origin)
+                {
+                    snapshot_origin = msg.entities[i].pos;
+                    has_snapshot_origin = true;
+                }
             }
             return offset;
         }
@@ -1041,8 +1166,7 @@ struct ServerMessage
             out[offset++] = msg.flags.value_or(0);
             out[offset++] = slot_count;
             out[offset++] = secondary_slot_count;
-            WriteU32(out, offset, msg.exp.value_or(0));
-            WriteU32(out, offset, msg.exp_required.value_or(0));
+            WriteU16(out, offset, std::min<uint16_t>(msg.exp_progress_bps.value_or(0), 10000));
             for (uint8_t i = 0; i < slot_count; ++i)
             {
                 out[offset++] = msg.owner_slots[i].petal_type;
@@ -1066,14 +1190,18 @@ struct ServerMessage
             return offset;
         }
         case Type::Inventory:
-            WriteU16(out, offset, static_cast<uint16_t>(msg.inventory.size()));
-            for (const SInventoryItem& item : msg.inventory)
+        {
+            uint16_t count = static_cast<uint16_t>(std::min<size_t>(msg.inventory.size(), UINT16_MAX));
+            WriteU16(out, offset, count);
+            for (uint16_t i = 0; i < count; ++i)
             {
+                const SInventoryItem& item = msg.inventory[i];
                 out[offset++] = item.petal_type;
                 out[offset++] = item.rarity;
                 WriteU32(out, offset, std::min(item.count, max_inventory_item_count));
             }
             return offset;
+        }
         case Type::Chat:
         {
             out[offset++] = static_cast<uint8_t>(msg.chat.flag);
@@ -1094,12 +1222,16 @@ struct ServerMessage
             out[offset++] = msg.craft_petal_type;
             out[offset++] = msg.craft_rarity;
             WriteU32(out, offset, msg.craft_consumed);
-            WriteU16(out, offset, static_cast<uint16_t>(msg.craft_items.size()));
-            for (const SInventoryItem& item : msg.craft_items)
             {
-                out[offset++] = item.petal_type;
-                out[offset++] = item.rarity;
-                WriteU32(out, offset, std::min(item.count, max_inventory_item_count));
+                uint16_t count = static_cast<uint16_t>(std::min<size_t>(msg.craft_items.size(), UINT16_MAX));
+                WriteU16(out, offset, count);
+                for (uint16_t i = 0; i < count; ++i)
+                {
+                    const SInventoryItem& item = msg.craft_items[i];
+                    out[offset++] = item.petal_type;
+                    out[offset++] = item.rarity;
+                    WriteU32(out, offset, std::min(item.count, max_inventory_item_count));
+                }
             }
             return offset;
         default:
@@ -1115,27 +1247,36 @@ struct ServerMessage
             return 7 + std::min<size_t>(msg.map_name.size(), UINT8_MAX);
         case Type::Snapshot:
         {
-            size_t size = 14;
-            for (const ServerEntitySnap& snap : msg.entities)
+            size_t size = 13;
+            size_t count = std::min<size_t>(msg.entities.size(), UINT16_MAX);
+            sf::Vector2f snapshot_origin = {0.f, 0.f};
+            bool has_snapshot_origin = false;
+            net_entity_id owner_id = msg.owner_entity_id.value_or(0);
+            for (size_t i = 0; i < count; ++i)
             {
-                size += ServerEntitySnap::GetPackedSize(snap);
+                size += ServerEntitySnap::GetPackedSize(msg.entities[i], snapshot_origin, owner_id, has_snapshot_origin);
+                if (!has_snapshot_origin)
+                {
+                    snapshot_origin = msg.entities[i].pos;
+                    has_snapshot_origin = true;
+                }
             }
             return size;
         }
         case Type::AuthResult:
             return 3 + std::min<size_t>(msg.auth_message.size(), UINT8_MAX);
         case Type::OwnerState:
-            return 16 + (std::min<size_t>(msg.owner_slots.size(), UINT8_MAX) +
+            return 10 + (std::min<size_t>(msg.owner_slots.size(), UINT8_MAX) +
                          std::min<size_t>(msg.secondary_slots.size(), UINT8_MAX)) *
                             owner_slot_packet_size +
                    std::min<size_t>(msg.talents.size(), UINT8_MAX) * talent_packet_item_size;
         case Type::Inventory:
-            return 3 + msg.inventory.size() * inventory_item_packet_size;
+            return 3 + std::min<size_t>(msg.inventory.size(), UINT16_MAX) * inventory_item_packet_size;
         case Type::Chat:
             return 10 + std::min<size_t>(msg.chat.player_name.size(), UINT8_MAX) +
                    std::min<size_t>(msg.chat.message.size(), max_chat_message_size);
         case Type::CraftResult:
-            return 10 + msg.craft_items.size() * inventory_item_packet_size;
+            return 10 + std::min<size_t>(msg.craft_items.size(), UINT16_MAX) * inventory_item_packet_size;
         default:
             return 0;
         }

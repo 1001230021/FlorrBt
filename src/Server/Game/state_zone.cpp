@@ -1,4 +1,5 @@
 #include "state_zone.h"
+#include "entities/flower.h"
 #include "entities/mob.h"
 #include "entities/projectile.h"
 #include "gameworld.h"
@@ -7,6 +8,21 @@
 #include "../../Shared/tools.h"
 #include <algorithm>
 #include <utility>
+
+namespace
+{
+float WebReferenceMass(const CEntity* owner)
+{
+    if (const auto* flower = dynamic_cast<const CFlower*>(owner))
+    {
+        if (const SFlowerStats* stats = flower->GetFinalStats();
+            stats && stats->mass > game_config::entity_collision_epsilon)
+            return stats->mass;
+    }
+    if (owner && owner->m_mass > game_config::entity_collision_epsilon) return owner->m_mass;
+    return std::max(game_config::entity_collision_epsilon, game_config::mob_player_flower_mass);
+}
+}
 
 CStateZone::CStateZone(CGameWorld* world, sf::Vector2f pos, float radius, state_factory state, zone_filter filter)
     : CEntity(world, pos.x, pos.y, radius), m_state(std::move(state)), m_filter(std::move(filter))
@@ -38,9 +54,13 @@ void CStateZone::Apply()
     CGameWorld* world = GameWorld();
     if (!world || !m_state || m_radius <= 0.f) return;
 
-    world->GetSpatialGrid().ForEachInRange(m_pos, m_radius, [this](CEntity* entity)
+    const float query_radius = m_radius + std::max(0.f, world->GetMaxEntityRadius());
+    world->GetSpatialGrid().ForEachInRangeBroadphase(m_pos, query_radius, [this](CEntity* entity)
     {
         if (!entity || entity == this || entity->m_is_marked_for_des) return;
+        if (entity->IsDead() || !entity->CanCollide()) return;
+        const float radius = m_radius + std::max(0.f, entity->m_radius);
+        if (DistanceSq(m_pos, entity->m_pos) > radius * radius) return;
         if (m_filter && !m_filter(entity)) return;
         auto* mob = dynamic_cast<CMobBase*>(entity);
         if (!mob) return;
@@ -54,10 +74,10 @@ CSpiderWebZone::CSpiderWebZone(CGameWorld* world, sf::Vector2f pos, float radius
                                float lifetime, float desired_speed_multiplier)
     : CStateZone(
           world, pos, radius,
-          [desired_speed_multiplier](CMobBase* mob) -> std::unique_ptr<CState>
+          [desired_speed_multiplier, reference_mass = WebReferenceMass(owner)](CMobBase* mob) -> std::unique_ptr<CState>
           {
               auto state = std::make_unique<CWebSpeedReduceState>(
-                  mob, game_config::mob_spider_web_slow_duration, desired_speed_multiplier);
+                  mob, game_config::mob_spider_web_slow_duration, desired_speed_multiplier, reference_mass);
               if (!state->IsValid()) return nullptr;
               return state;
           },

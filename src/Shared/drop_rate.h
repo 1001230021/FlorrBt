@@ -5,6 +5,7 @@
 #include "tools.h"
 #include <algorithm>
 #include <cstddef>
+#include <initializer_list>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -47,7 +48,7 @@ inline void ClearDropRateTable()
 }
 
 inline bool RegisterDropRate(EMobType mob_type, ERarity mob_rarity, EPetalType drop_type, ERarity drop_rarity,
-                             double drop_rate)
+                              double drop_rate)
 {
     if (mob_type == EMobType::None || mob_rarity == ERarity::Null) return false;
     if (drop_type == EPetalType::None || drop_rarity == ERarity::Null) return false;
@@ -58,9 +59,341 @@ inline bool RegisterDropRate(EMobType mob_type, ERarity mob_rarity, EPetalType d
     std::sort(drops.begin(), drops.end(), [](const SDropRate& lhs, const SDropRate& rhs)
     {
         if (lhs.type != rhs.type) return static_cast<int>(lhs.type) < static_cast<int>(rhs.type);
-        return GetLevel(lhs.rarity) > GetLevel(rhs.rarity);
+        return GetRaritySortRank(lhs.rarity) > GetRaritySortRank(rhs.rarity);
     });
     return true;
+}
+
+struct SDropRateSpec
+{
+    ERarity mob_rarity = ERarity::Null;
+    ERarity drop_rarity = ERarity::Null;
+    double drop_rate = 0.0;
+};
+
+inline void RemoveDropRatesForMob(EMobType mob_type, std::initializer_list<EPetalType> preserved_types = {})
+{
+    for (ERarity rarity : {ERarity::Common, ERarity::Unusual, ERarity::Rare, ERarity::Epic,
+                           ERarity::Legendary, ERarity::Mythic, ERarity::Ultra, ERarity::Super})
+    {
+        auto& table = GetDropRateTable();
+        auto it = table.find(SDropRateKey{mob_type, rarity});
+        if (it == table.end()) continue;
+
+        auto& drops = it->second;
+        drops.erase(std::remove_if(drops.begin(), drops.end(), [preserved_types](const SDropRate& drop)
+        {
+            return std::find(preserved_types.begin(), preserved_types.end(), drop.type) == preserved_types.end();
+        }), drops.end());
+
+        if (drops.empty()) table.erase(it);
+    }
+}
+
+inline void RegisterDropRateTable(EMobType mob_type, EPetalType drop_type,
+                                  std::initializer_list<SDropRateSpec> drops)
+{
+    for (const SDropRateSpec& drop : drops)
+        RegisterDropRate(mob_type, drop.mob_rarity, drop_type, drop.drop_rarity, drop.drop_rate);
+}
+
+inline void RegisterWikiId6DropTable(EMobType mob_type, EPetalType drop_type)
+{
+    RegisterDropRateTable(mob_type, drop_type, {
+        {ERarity::Common, ERarity::Common, 0.598}, {ERarity::Common, ERarity::Unusual, 0.164},
+        {ERarity::Unusual, ERarity::Common, 0.485}, {ERarity::Unusual, ERarity::Unusual, 0.512},
+        {ERarity::Rare, ERarity::Unusual, 0.834}, {ERarity::Rare, ERarity::Rare, 0.165},
+        {ERarity::Epic, ERarity::Unusual, 0.067}, {ERarity::Epic, ERarity::Rare, 0.810},
+        {ERarity::Epic, ERarity::Epic, 0.123},
+        {ERarity::Legendary, ERarity::Rare, 0.072}, {ERarity::Legendary, ERarity::Epic, 0.877},
+        {ERarity::Legendary, ERarity::Legendary, 0.050},
+        {ERarity::Mythic, ERarity::Epic, 0.075}, {ERarity::Mythic, ERarity::Legendary, 0.917},
+        {ERarity::Mythic, ERarity::Mythic, 0.008},
+        {ERarity::Ultra, ERarity::Legendary, 0.317}, {ERarity::Ultra, ERarity::Mythic, 0.679},
+        {ERarity::Ultra, ERarity::Ultra, 0.004},
+        {ERarity::Super, ERarity::Mythic, 0.356}, {ERarity::Super, ERarity::Ultra, 0.644},
+    });
+}
+
+inline void RegisterWikiId7UnusualDropTable(EMobType mob_type, EPetalType drop_type)
+{
+    RegisterDropRateTable(mob_type, drop_type, {
+        {ERarity::Common, ERarity::Unusual, 0.101},
+        {ERarity::Unusual, ERarity::Unusual, 0.348},
+        {ERarity::Rare, ERarity::Unusual, 0.883}, {ERarity::Rare, ERarity::Rare, 0.103},
+        {ERarity::Epic, ERarity::Unusual, 0.197}, {ERarity::Epic, ERarity::Rare, 0.727},
+        {ERarity::Epic, ERarity::Epic, 0.076},
+        {ERarity::Legendary, ERarity::Rare, 0.207}, {ERarity::Legendary, ERarity::Epic, 0.763},
+        {ERarity::Legendary, ERarity::Legendary, 0.031},
+        {ERarity::Mythic, ERarity::Epic, 0.212}, {ERarity::Mythic, ERarity::Legendary, 0.783},
+        {ERarity::Mythic, ERarity::Mythic, 0.005},
+        {ERarity::Ultra, ERarity::Legendary, 0.394}, {ERarity::Ultra, ERarity::Mythic, 0.603},
+        {ERarity::Ultra, ERarity::Ultra, 0.003},
+        {ERarity::Super, ERarity::Mythic, 0.538}, {ERarity::Super, ERarity::Ultra, 0.462},
+    });
+}
+
+inline void RegisterWikiId4DropTable(EMobType mob_type, EPetalType drop_type)
+{
+    RegisterDropRateTable(mob_type, drop_type, {
+        {ERarity::Common, ERarity::Common, 0.662}, {ERarity::Common, ERarity::Unusual, 0.306},
+        {ERarity::Unusual, ERarity::Common, 0.232}, {ERarity::Unusual, ERarity::Unusual, 0.768},
+        {ERarity::Rare, ERarity::Unusual, 0.697}, {ERarity::Rare, ERarity::Rare, 0.303},
+        {ERarity::Epic, ERarity::Rare, 0.764}, {ERarity::Epic, ERarity::Epic, 0.231},
+        {ERarity::Legendary, ERarity::Rare, 0.005}, {ERarity::Legendary, ERarity::Epic, 0.897},
+        {ERarity::Legendary, ERarity::Legendary, 0.098},
+        {ERarity::Mythic, ERarity::Epic, 0.006}, {ERarity::Mythic, ERarity::Legendary, 0.979},
+        {ERarity::Mythic, ERarity::Mythic, 0.015},
+        {ERarity::Ultra, ERarity::Legendary, 0.045}, {ERarity::Ultra, ERarity::Mythic, 0.945},
+        {ERarity::Ultra, ERarity::Ultra, 0.010},
+        {ERarity::Super, ERarity::Mythic, 0.127}, {ERarity::Super, ERarity::Ultra, 0.873},
+    });
+}
+
+inline void RegisterWikiId5DropTable(EMobType mob_type, EPetalType drop_type)
+{
+    RegisterDropRateTable(mob_type, drop_type, {
+        {ERarity::Common, ERarity::Common, 0.638}, {ERarity::Common, ERarity::Unusual, 0.194},
+        {ERarity::Unusual, ERarity::Common, 0.420}, {ERarity::Unusual, ERarity::Unusual, 0.579},
+        {ERarity::Rare, ERarity::Unusual, 0.805}, {ERarity::Rare, ERarity::Rare, 0.195},
+        {ERarity::Epic, ERarity::Unusual, 0.039}, {ERarity::Epic, ERarity::Rare, 0.815},
+        {ERarity::Epic, ERarity::Epic, 0.146},
+        {ERarity::Legendary, ERarity::Rare, 0.043}, {ERarity::Legendary, ERarity::Epic, 0.897},
+        {ERarity::Legendary, ERarity::Legendary, 0.060},
+        {ERarity::Mythic, ERarity::Epic, 0.045}, {ERarity::Mythic, ERarity::Legendary, 0.946},
+        {ERarity::Mythic, ERarity::Mythic, 0.009},
+        {ERarity::Ultra, ERarity::Legendary, 0.252}, {ERarity::Ultra, ERarity::Mythic, 0.744},
+        {ERarity::Ultra, ERarity::Ultra, 0.005},
+        {ERarity::Super, ERarity::Mythic, 0.290}, {ERarity::Super, ERarity::Ultra, 0.710},
+    });
+}
+
+inline void RegisterWikiId5MythicDropTable(EMobType mob_type, EPetalType drop_type)
+{
+    RegisterDropRateTable(mob_type, drop_type, {
+        {ERarity::Mythic, ERarity::Mythic, 0.009},
+        {ERarity::Ultra, ERarity::Mythic, 0.838}, {ERarity::Ultra, ERarity::Ultra, 0.006},
+        {ERarity::Super, ERarity::Mythic, 0.290}, {ERarity::Super, ERarity::Ultra, 0.710},
+    });
+}
+
+inline void RegisterWikiAntEggMobDropTable(EMobType mob_type)
+{
+    RegisterDropRateTable(mob_type, EPetalType::AntEgg, {
+        {ERarity::Common, ERarity::Common, 0.598}, {ERarity::Common, ERarity::Unusual, 0.164},
+        {ERarity::Unusual, ERarity::Common, 0.485}, {ERarity::Unusual, ERarity::Unusual, 0.512},
+        {ERarity::Rare, ERarity::Unusual, 0.834}, {ERarity::Rare, ERarity::Rare, 0.165},
+        {ERarity::Epic, ERarity::Unusual, 0.067}, {ERarity::Epic, ERarity::Rare, 0.810},
+        {ERarity::Epic, ERarity::Epic, 0.123},
+        {ERarity::Legendary, ERarity::Rare, 0.072}, {ERarity::Legendary, ERarity::Epic, 0.877},
+        {ERarity::Legendary, ERarity::Legendary, 0.050},
+        {ERarity::Mythic, ERarity::Epic, 0.075}, {ERarity::Mythic, ERarity::Legendary, 0.917},
+        {ERarity::Mythic, ERarity::Mythic, 0.008},
+        {ERarity::Ultra, ERarity::Legendary, 0.212}, {ERarity::Ultra, ERarity::Mythic, 0.783},
+        {ERarity::Ultra, ERarity::Ultra, 0.005},
+        {ERarity::Super, ERarity::Mythic, 0.356}, {ERarity::Super, ERarity::Ultra, 0.644},
+    });
+}
+
+inline void RegisterWikiFireAntEggDropTable(EMobType mob_type, EPetalType drop_type = EPetalType::AntEgg)
+{
+    RegisterDropRateTable(mob_type, drop_type, {
+        {ERarity::Common, ERarity::Common, 0.598}, {ERarity::Common, ERarity::Unusual, 0.164},
+        {ERarity::Unusual, ERarity::Common, 0.485}, {ERarity::Unusual, ERarity::Unusual, 0.512},
+        {ERarity::Rare, ERarity::Unusual, 0.834}, {ERarity::Rare, ERarity::Rare, 0.165},
+        {ERarity::Epic, ERarity::Unusual, 0.067}, {ERarity::Epic, ERarity::Rare, 0.810},
+        {ERarity::Epic, ERarity::Epic, 0.123},
+        {ERarity::Legendary, ERarity::Rare, 0.072}, {ERarity::Legendary, ERarity::Epic, 0.877},
+        {ERarity::Legendary, ERarity::Legendary, 0.050},
+        {ERarity::Mythic, ERarity::Epic, 0.075}, {ERarity::Mythic, ERarity::Legendary, 0.917},
+        {ERarity::Mythic, ERarity::Mythic, 0.008},
+        {ERarity::Ultra, ERarity::Legendary, 0.856}, {ERarity::Ultra, ERarity::Mythic, 0.143},
+        {ERarity::Ultra, ERarity::Ultra, 0.0005},
+        {ERarity::Super, ERarity::Mythic, 0.773}, {ERarity::Super, ERarity::Ultra, 0.227},
+    });
+}
+
+inline void RegisterWikiWorkerCornDropTable(EMobType mob_type)
+{
+    RegisterDropRateTable(mob_type, EPetalType::Corn, {
+        {ERarity::Common, ERarity::Common, 0.455}, {ERarity::Common, ERarity::Unusual, 0.101},
+        {ERarity::Unusual, ERarity::Common, 0.613}, {ERarity::Unusual, ERarity::Unusual, 0.348},
+        {ERarity::Rare, ERarity::Common, 0.014}, {ERarity::Rare, ERarity::Unusual, 0.883},
+        {ERarity::Rare, ERarity::Rare, 0.103},
+        {ERarity::Epic, ERarity::Unusual, 0.197}, {ERarity::Epic, ERarity::Rare, 0.727},
+        {ERarity::Epic, ERarity::Epic, 0.076},
+        {ERarity::Legendary, ERarity::Rare, 0.207}, {ERarity::Legendary, ERarity::Epic, 0.763},
+        {ERarity::Legendary, ERarity::Legendary, 0.031},
+        {ERarity::Mythic, ERarity::Epic, 0.212}, {ERarity::Mythic, ERarity::Legendary, 0.783},
+        {ERarity::Mythic, ERarity::Mythic, 0.005},
+        {ERarity::Ultra, ERarity::Legendary, 0.394}, {ERarity::Ultra, ERarity::Mythic, 0.603},
+        {ERarity::Ultra, ERarity::Ultra, 0.003},
+        {ERarity::Super, ERarity::Mythic, 0.538}, {ERarity::Super, ERarity::Ultra, 0.462},
+    });
+}
+
+inline void RegisterWikiFireWorkerCornDropTable(EMobType mob_type)
+{
+    RegisterDropRateTable(mob_type, EPetalType::Corn, {
+        {ERarity::Common, ERarity::Common, 0.455}, {ERarity::Common, ERarity::Unusual, 0.101},
+        {ERarity::Unusual, ERarity::Common, 0.613}, {ERarity::Unusual, ERarity::Unusual, 0.348},
+        {ERarity::Rare, ERarity::Common, 0.014}, {ERarity::Rare, ERarity::Unusual, 0.883},
+        {ERarity::Rare, ERarity::Rare, 0.103},
+        {ERarity::Epic, ERarity::Unusual, 0.197}, {ERarity::Epic, ERarity::Rare, 0.727},
+        {ERarity::Epic, ERarity::Epic, 0.076},
+        {ERarity::Legendary, ERarity::Rare, 0.207}, {ERarity::Legendary, ERarity::Epic, 0.763},
+        {ERarity::Legendary, ERarity::Legendary, 0.031},
+        {ERarity::Mythic, ERarity::Epic, 0.212}, {ERarity::Mythic, ERarity::Legendary, 0.783},
+        {ERarity::Mythic, ERarity::Mythic, 0.005},
+        {ERarity::Ultra, ERarity::Legendary, 0.502}, {ERarity::Ultra, ERarity::Mythic, 0.496},
+        {ERarity::Ultra, ERarity::Ultra, 0.002},
+        {ERarity::Super, ERarity::Mythic, 0.538}, {ERarity::Super, ERarity::Ultra, 0.462},
+    });
+}
+
+inline void RegisterWikiAntHoleDropTables()
+{
+    RegisterDropRateTable(EMobType::AntHole, EPetalType::Soil, {
+        {ERarity::Common, ERarity::Common, 0.598}, {ERarity::Common, ERarity::Unusual, 0.164},
+        {ERarity::Unusual, ERarity::Common, 0.485}, {ERarity::Unusual, ERarity::Unusual, 0.512},
+        {ERarity::Rare, ERarity::Common, 0.013}, {ERarity::Rare, ERarity::Unusual, 0.884},
+        {ERarity::Rare, ERarity::Rare, 0.103},
+        {ERarity::Epic, ERarity::Unusual, 0.067}, {ERarity::Epic, ERarity::Rare, 0.810},
+        {ERarity::Epic, ERarity::Epic, 0.123},
+        {ERarity::Legendary, ERarity::Rare, 0.072}, {ERarity::Legendary, ERarity::Epic, 0.877},
+        {ERarity::Legendary, ERarity::Legendary, 0.050},
+        {ERarity::Mythic, ERarity::Epic, 0.075}, {ERarity::Mythic, ERarity::Legendary, 0.917},
+        {ERarity::Mythic, ERarity::Mythic, 0.008},
+        {ERarity::Ultra, ERarity::Legendary, 0.852}, {ERarity::Ultra, ERarity::Mythic, 0.143},
+        {ERarity::Ultra, ERarity::Ultra, 0.005},
+        {ERarity::Super, ERarity::Mythic, 0.773}, {ERarity::Super, ERarity::Ultra, 0.227},
+    });
+    RegisterDropRateTable(EMobType::AntHole, EPetalType::Shovel, {
+        {ERarity::Common, ERarity::Common, 0.539}, {ERarity::Common, ERarity::Unusual, 0.133},
+        {ERarity::Unusual, ERarity::Common, 0.553}, {ERarity::Unusual, ERarity::Unusual, 0.436},
+        {ERarity::Rare, ERarity::Common, 0.003}, {ERarity::Rare, ERarity::Unusual, 0.862},
+        {ERarity::Rare, ERarity::Rare, 0.135},
+        {ERarity::Epic, ERarity::Unusual, 0.114}, {ERarity::Epic, ERarity::Rare, 0.786},
+        {ERarity::Epic, ERarity::Epic, 0.100},
+        {ERarity::Legendary, ERarity::Rare, 0.122}, {ERarity::Legendary, ERarity::Epic, 0.837},
+        {ERarity::Legendary, ERarity::Legendary, 0.041},
+        {ERarity::Mythic, ERarity::Epic, 0.126}, {ERarity::Mythic, ERarity::Legendary, 0.867},
+        {ERarity::Mythic, ERarity::Mythic, 0.006},
+        {ERarity::Ultra, ERarity::Legendary, 0.883}, {ERarity::Ultra, ERarity::Mythic, 0.116},
+        {ERarity::Ultra, ERarity::Ultra, 0.0004},
+        {ERarity::Super, ERarity::Mythic, 0.812}, {ERarity::Super, ERarity::Ultra, 0.186},
+    });
+}
+
+inline void RegisterWikiQueenFireAntDropTables()
+{
+    RegisterDropRateTable(EMobType::FireQueenAnt, EPetalType::AntEgg, {
+        {ERarity::Common, ERarity::Common, 0.662}, {ERarity::Common, ERarity::Unusual, 0.306},
+        {ERarity::Unusual, ERarity::Common, 0.232}, {ERarity::Unusual, ERarity::Unusual, 0.768},
+        {ERarity::Rare, ERarity::Unusual, 0.697}, {ERarity::Rare, ERarity::Rare, 0.303},
+        {ERarity::Epic, ERarity::Rare, 0.764}, {ERarity::Epic, ERarity::Epic, 0.231},
+        {ERarity::Legendary, ERarity::Rare, 0.005}, {ERarity::Legendary, ERarity::Epic, 0.897},
+        {ERarity::Legendary, ERarity::Legendary, 0.098},
+        {ERarity::Mythic, ERarity::Epic, 0.006}, {ERarity::Mythic, ERarity::Legendary, 0.979},
+        {ERarity::Mythic, ERarity::Mythic, 0.015},
+        {ERarity::Ultra, ERarity::Legendary, 0.733}, {ERarity::Ultra, ERarity::Mythic, 0.266},
+        {ERarity::Ultra, ERarity::Ultra, 0.001},
+        {ERarity::Super, ERarity::Mythic, 0.597}, {ERarity::Super, ERarity::Ultra, 0.403},
+    });
+    RegisterDropRateTable(EMobType::FireQueenAnt, EPetalType::Basil, {
+        {ERarity::Mythic, ERarity::Mythic, 0.009},
+        {ERarity::Ultra, ERarity::Mythic, 0.169}, {ERarity::Ultra, ERarity::Ultra, 0.0006},
+        {ERarity::Super, ERarity::Mythic, 0.734}, {ERarity::Super, ERarity::Ultra, 0.266},
+    });
+    RegisterDropRate(EMobType::FireQueenAnt, ERarity::Ultra, EPetalType::BrokenEgg, ERarity::Ultra, 0.0057);
+    RegisterDropRate(EMobType::FireQueenAnt, ERarity::Super, EPetalType::BrokenEgg, ERarity::Ultra, 0.6745);
+}
+
+inline void RegisterWikiTermiteRelicDropTable(EMobType mob_type)
+{
+    RegisterDropRateTable(mob_type, EPetalType::Relic, {
+        {ERarity::Common, ERarity::Unusual, 0.035},
+        {ERarity::Unusual, ERarity::Unusual, 0.132},
+        {ERarity::Rare, ERarity::Unusual, 0.722}, {ERarity::Rare, ERarity::Rare, 0.035},
+        {ERarity::Epic, ERarity::Unusual, 0.582}, {ERarity::Epic, ERarity::Rare, 0.392},
+        {ERarity::Epic, ERarity::Epic, 0.026},
+        {ERarity::Legendary, ERarity::Rare, 0.591}, {ERarity::Legendary, ERarity::Epic, 0.399},
+        {ERarity::Legendary, ERarity::Legendary, 0.010},
+        {ERarity::Mythic, ERarity::Epic, 0.596}, {ERarity::Mythic, ERarity::Legendary, 0.402},
+        {ERarity::Mythic, ERarity::Mythic, 0.002},
+        {ERarity::Ultra, ERarity::Legendary, 0.969}, {ERarity::Ultra, ERarity::Mythic, 0.030},
+        {ERarity::Ultra, ERarity::Ultra, 0.0001},
+        {ERarity::Super, ERarity::Mythic, 0.950}, {ERarity::Super, ERarity::Ultra, 0.050},
+    });
+}
+
+inline void RegisterWikiTermiteOvermindRelicDropTable()
+{
+    RegisterDropRateTable(EMobType::TermiteOvermind, EPetalType::Relic, {
+        {ERarity::Common, ERarity::Unusual, 0.306},
+        {ERarity::Unusual, ERarity::Unusual, 0.768},
+        {ERarity::Rare, ERarity::Unusual, 0.697}, {ERarity::Rare, ERarity::Rare, 0.303},
+        {ERarity::Epic, ERarity::Rare, 0.764}, {ERarity::Epic, ERarity::Epic, 0.231},
+        {ERarity::Legendary, ERarity::Rare, 0.005}, {ERarity::Legendary, ERarity::Epic, 0.897},
+        {ERarity::Legendary, ERarity::Legendary, 0.098},
+        {ERarity::Mythic, ERarity::Epic, 0.006}, {ERarity::Mythic, ERarity::Legendary, 0.979},
+        {ERarity::Mythic, ERarity::Mythic, 0.015},
+        {ERarity::Ultra, ERarity::Legendary, 0.733}, {ERarity::Ultra, ERarity::Mythic, 0.266},
+        {ERarity::Ultra, ERarity::Ultra, 0.001},
+        {ERarity::Super, ERarity::Mythic, 0.597}, {ERarity::Super, ERarity::Ultra, 0.403},
+    });
+}
+
+inline void RegisterWikiTermiteOvermindCompassDropTable()
+{
+    RegisterDropRate(EMobType::TermiteOvermind, ERarity::Ultra, EPetalType::Compass, ERarity::Ultra, 0.020);
+    RegisterDropRate(EMobType::TermiteOvermind, ERarity::Super, EPetalType::Compass, ERarity::Ultra, 0.984);
+}
+
+inline void RegisterWikiAntDropRates()
+{
+    RemoveDropRatesForMob(EMobType::AntEgg);
+    RemoveDropRatesForMob(EMobType::BabyAnt);
+    RemoveDropRatesForMob(EMobType::WorkerAnt);
+    RemoveDropRatesForMob(EMobType::SoldierAnt, {EPetalType::Wing});
+    RemoveDropRatesForMob(EMobType::QueenAnt, {EPetalType::BrokenEgg});
+    RemoveDropRatesForMob(EMobType::AntHole);
+    RemoveDropRatesForMob(EMobType::FireAntEgg);
+    RemoveDropRatesForMob(EMobType::BabyFireAnt);
+    RemoveDropRatesForMob(EMobType::WorkerFireAnt);
+    RemoveDropRatesForMob(EMobType::SoldierFireAnt);
+    RemoveDropRatesForMob(EMobType::FireQueenAnt);
+    RemoveDropRatesForMob(EMobType::TermiteEgg);
+    RemoveDropRatesForMob(EMobType::BabyTermite);
+    RemoveDropRatesForMob(EMobType::WorkerTermite);
+    RemoveDropRatesForMob(EMobType::SoldierTermite);
+    RemoveDropRatesForMob(EMobType::TermiteOvermind);
+
+    RegisterWikiAntEggMobDropTable(EMobType::AntEgg);
+    RegisterWikiId6DropTable(EMobType::BabyAnt, EPetalType::Light);
+    RegisterWikiId7UnusualDropTable(EMobType::BabyAnt, EPetalType::Leaf);
+    RegisterWikiId6DropTable(EMobType::BabyAnt, EPetalType::Rice);
+    RegisterWikiId7UnusualDropTable(EMobType::WorkerAnt, EPetalType::Leaf);
+    RegisterWikiWorkerCornDropTable(EMobType::WorkerAnt);
+    RegisterWikiId5DropTable(EMobType::SoldierAnt, EPetalType::Glass);
+    RegisterWikiId4DropTable(EMobType::QueenAnt, EPetalType::AntEgg);
+    RegisterWikiId5MythicDropTable(EMobType::QueenAnt, EPetalType::Basil);
+    RegisterWikiAntHoleDropTables();
+
+    RegisterWikiFireAntEggDropTable(EMobType::FireAntEgg);
+    RegisterWikiId6DropTable(EMobType::BabyFireAnt, EPetalType::Light);
+    RegisterWikiFireWorkerCornDropTable(EMobType::WorkerFireAnt);
+    RegisterWikiId6DropTable(EMobType::SoldierFireAnt, EPetalType::Triangle);
+    RegisterWikiQueenFireAntDropTables();
+
+    RegisterWikiFireAntEggDropTable(EMobType::TermiteEgg);
+    RegisterWikiTermiteRelicDropTable(EMobType::BabyTermite);
+    RegisterWikiId6DropTable(EMobType::BabyTermite, EPetalType::Carrot);
+    RegisterWikiTermiteRelicDropTable(EMobType::WorkerTermite);
+    RegisterWikiTermiteRelicDropTable(EMobType::SoldierTermite);
+    RegisterWikiFireAntEggDropTable(EMobType::SoldierTermite, EPetalType::Bone);
+    RegisterWikiTermiteOvermindRelicDropTable();
+    RegisterWikiTermiteOvermindCompassDropTable();
 }
 
 inline void RegisterDropRates()
@@ -111,6 +444,44 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::SoldierAnt, ERarity::Super, EPetalType::Glass, ERarity::Super, 0.000008);
     RegisterDropRate(EMobType::SoldierAnt, ERarity::Super, EPetalType::Glass, ERarity::Ultra, 0.464992);
     RegisterDropRate(EMobType::SoldierAnt, ERarity::Super, EPetalType::Glass, ERarity::Mythic, 0.535);
+
+    RegisterDropRate(EMobType::Rock, ERarity::Common, EPetalType::Rock, ERarity::Common, 0.455);
+    RegisterDropRate(EMobType::Rock, ERarity::Common, EPetalType::Rock, ERarity::Unusual, 0.101);
+    RegisterDropRate(EMobType::Rock, ERarity::Unusual, EPetalType::Rock, ERarity::Common, 0.613);
+    RegisterDropRate(EMobType::Rock, ERarity::Unusual, EPetalType::Rock, ERarity::Unusual, 0.348);
+    RegisterDropRate(EMobType::Rock, ERarity::Rare, EPetalType::Rock, ERarity::Common, 0.014);
+    RegisterDropRate(EMobType::Rock, ERarity::Rare, EPetalType::Rock, ERarity::Unusual, 0.883);
+    RegisterDropRate(EMobType::Rock, ERarity::Rare, EPetalType::Rock, ERarity::Rare, 0.103);
+    RegisterDropRate(EMobType::Rock, ERarity::Rare, EPetalType::Heavy, ERarity::Rare, 0.035);
+    RegisterDropRate(EMobType::Rock, ERarity::Epic, EPetalType::Rock, ERarity::Unusual, 0.197);
+    RegisterDropRate(EMobType::Rock, ERarity::Epic, EPetalType::Rock, ERarity::Rare, 0.727);
+    RegisterDropRate(EMobType::Rock, ERarity::Epic, EPetalType::Rock, ERarity::Epic, 0.076);
+    RegisterDropRate(EMobType::Rock, ERarity::Epic, EPetalType::Heavy, ERarity::Rare, 0.392);
+    RegisterDropRate(EMobType::Rock, ERarity::Epic, EPetalType::Heavy, ERarity::Epic, 0.026);
+    RegisterDropRate(EMobType::Rock, ERarity::Legendary, EPetalType::Rock, ERarity::Rare, 0.207);
+    RegisterDropRate(EMobType::Rock, ERarity::Legendary, EPetalType::Rock, ERarity::Epic, 0.763);
+    RegisterDropRate(EMobType::Rock, ERarity::Legendary, EPetalType::Rock, ERarity::Legendary, 0.031);
+    RegisterDropRate(EMobType::Rock, ERarity::Legendary, EPetalType::Heavy, ERarity::Rare, 0.591);
+    RegisterDropRate(EMobType::Rock, ERarity::Legendary, EPetalType::Heavy, ERarity::Epic, 0.399);
+    RegisterDropRate(EMobType::Rock, ERarity::Legendary, EPetalType::Heavy, ERarity::Legendary, 0.010);
+    RegisterDropRate(EMobType::Rock, ERarity::Mythic, EPetalType::Rock, ERarity::Epic, 0.212);
+    RegisterDropRate(EMobType::Rock, ERarity::Mythic, EPetalType::Rock, ERarity::Legendary, 0.783);
+    RegisterDropRate(EMobType::Rock, ERarity::Mythic, EPetalType::Rock, ERarity::Mythic, 0.005);
+    RegisterDropRate(EMobType::Rock, ERarity::Mythic, EPetalType::Heavy, ERarity::Epic, 0.596);
+    RegisterDropRate(EMobType::Rock, ERarity::Mythic, EPetalType::Heavy, ERarity::Legendary, 0.402);
+    RegisterDropRate(EMobType::Rock, ERarity::Mythic, EPetalType::Heavy, ERarity::Mythic, 0.002);
+    RegisterDropRate(EMobType::Rock, ERarity::Ultra, EPetalType::Rock, ERarity::Legendary, 0.918);
+    RegisterDropRate(EMobType::Rock, ERarity::Ultra, EPetalType::Rock, ERarity::Mythic, 0.089);
+    RegisterDropRate(EMobType::Rock, ERarity::Ultra, EPetalType::Rock, ERarity::Ultra, 0.0003);
+    RegisterDropRate(EMobType::Rock, ERarity::Ultra, EPetalType::Heavy, ERarity::Legendary, 0.969);
+    RegisterDropRate(EMobType::Rock, ERarity::Ultra, EPetalType::Heavy, ERarity::Mythic, 0.030);
+    RegisterDropRate(EMobType::Rock, ERarity::Ultra, EPetalType::Heavy, ERarity::Ultra, 0.0001);
+    RegisterDropRate(EMobType::Rock, ERarity::Ultra, EPetalType::Moon, ERarity::Ultra, 0.00001);
+    RegisterDropRate(EMobType::Rock, ERarity::Super, EPetalType::Rock, ERarity::Mythic, 0.857);
+    RegisterDropRate(EMobType::Rock, ERarity::Super, EPetalType::Rock, ERarity::Ultra, 0.143);
+    RegisterDropRate(EMobType::Rock, ERarity::Super, EPetalType::Heavy, ERarity::Mythic, 0.950);
+    RegisterDropRate(EMobType::Rock, ERarity::Super, EPetalType::Heavy, ERarity::Ultra, 0.050);
+    RegisterDropRate(EMobType::Rock, ERarity::Super, EPetalType::Moon, ERarity::Ultra, 0.005);
 
     RegisterDropRate(EMobType::NormalLadybug, ERarity::Common, EPetalType::Light, ERarity::Common, 0.56);
     RegisterDropRate(EMobType::NormalLadybug, ERarity::Common, EPetalType::Light, ERarity::Unusual, 0.44);
@@ -250,6 +621,23 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::WorkerAnt, ERarity::Super, EPetalType::Corn, ERarity::Mythic, 0.538);
     RegisterDropRate(EMobType::WorkerAnt, ERarity::Super, EPetalType::Corn, ERarity::Ultra, 0.462);
 
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Common, EPetalType::Leaf, ERarity::Common, 0.352);
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Common, EPetalType::Leaf, ERarity::Unusual, 0.048);
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Unusual, EPetalType::Leaf, ERarity::Common, 0.393143);
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Unusual, EPetalType::Leaf, ERarity::Unusual, 0.092571);
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Rare, EPetalType::Leaf, ERarity::Unusual, 0.434286);
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Rare, EPetalType::Leaf, ERarity::Rare, 0.137143);
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Epic, EPetalType::Leaf, ERarity::Rare, 0.475429);
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Epic, EPetalType::Leaf, ERarity::Epic, 0.181714);
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Legendary, EPetalType::Leaf, ERarity::Epic, 0.516571);
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Legendary, EPetalType::Leaf, ERarity::Legendary, 0.226286);
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Mythic, EPetalType::Leaf, ERarity::Legendary, 0.557714);
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Mythic, EPetalType::Leaf, ERarity::Mythic, 0.270857);
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Ultra, EPetalType::Leaf, ERarity::Mythic, 0.598857);
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Ultra, EPetalType::Leaf, ERarity::Ultra, 0.315429);
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Super, EPetalType::Leaf, ERarity::Mythic, 0.640);
+    RegisterDropRate(EMobType::LeafPiece, ERarity::Super, EPetalType::Leaf, ERarity::Ultra, 0.360);
+
     RegisterDropRate(EMobType::BabyAnt, ERarity::Common, EPetalType::Rice, ERarity::Common, 0.662);
     RegisterDropRate(EMobType::BabyAnt, ERarity::Common, EPetalType::Rice, ERarity::Unusual, 0.306);
     RegisterDropRate(EMobType::BabyAnt, ERarity::Common, EPetalType::Light, ERarity::Common, 0.598);
@@ -355,6 +743,27 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::AntHole, ERarity::Ultra, EPetalType::Soil, ERarity::Ultra, 0.005);
     RegisterDropRate(EMobType::AntHole, ERarity::Super, EPetalType::Soil, ERarity::Mythic, 0.356);
     RegisterDropRate(EMobType::AntHole, ERarity::Super, EPetalType::Soil, ERarity::Ultra, 0.644);
+    RegisterDropRate(EMobType::AntHole, ERarity::Common, EPetalType::Shovel, ERarity::Common, 0.539);
+    RegisterDropRate(EMobType::AntHole, ERarity::Common, EPetalType::Shovel, ERarity::Unusual, 0.133);
+    RegisterDropRate(EMobType::AntHole, ERarity::Unusual, EPetalType::Shovel, ERarity::Common, 0.553);
+    RegisterDropRate(EMobType::AntHole, ERarity::Unusual, EPetalType::Shovel, ERarity::Unusual, 0.436);
+    RegisterDropRate(EMobType::AntHole, ERarity::Rare, EPetalType::Shovel, ERarity::Common, 0.003);
+    RegisterDropRate(EMobType::AntHole, ERarity::Rare, EPetalType::Shovel, ERarity::Unusual, 0.862);
+    RegisterDropRate(EMobType::AntHole, ERarity::Rare, EPetalType::Shovel, ERarity::Rare, 0.135);
+    RegisterDropRate(EMobType::AntHole, ERarity::Epic, EPetalType::Shovel, ERarity::Unusual, 0.114);
+    RegisterDropRate(EMobType::AntHole, ERarity::Epic, EPetalType::Shovel, ERarity::Rare, 0.786);
+    RegisterDropRate(EMobType::AntHole, ERarity::Epic, EPetalType::Shovel, ERarity::Epic, 0.100);
+    RegisterDropRate(EMobType::AntHole, ERarity::Legendary, EPetalType::Shovel, ERarity::Rare, 0.122);
+    RegisterDropRate(EMobType::AntHole, ERarity::Legendary, EPetalType::Shovel, ERarity::Epic, 0.837);
+    RegisterDropRate(EMobType::AntHole, ERarity::Legendary, EPetalType::Shovel, ERarity::Legendary, 0.041);
+    RegisterDropRate(EMobType::AntHole, ERarity::Mythic, EPetalType::Shovel, ERarity::Epic, 0.126);
+    RegisterDropRate(EMobType::AntHole, ERarity::Mythic, EPetalType::Shovel, ERarity::Legendary, 0.867);
+    RegisterDropRate(EMobType::AntHole, ERarity::Mythic, EPetalType::Shovel, ERarity::Mythic, 0.006);
+    RegisterDropRate(EMobType::AntHole, ERarity::Ultra, EPetalType::Shovel, ERarity::Legendary, 0.883);
+    RegisterDropRate(EMobType::AntHole, ERarity::Ultra, EPetalType::Shovel, ERarity::Mythic, 0.116);
+    RegisterDropRate(EMobType::AntHole, ERarity::Ultra, EPetalType::Shovel, ERarity::Ultra, 0.0004);
+    RegisterDropRate(EMobType::AntHole, ERarity::Super, EPetalType::Shovel, ERarity::Mythic, 0.812);
+    RegisterDropRate(EMobType::AntHole, ERarity::Super, EPetalType::Shovel, ERarity::Ultra, 0.186);
 
     RegisterDropRate(EMobType::BumbleBee, ERarity::Common, EPetalType::Pollen, ERarity::Unusual, 0.472);
     RegisterDropRate(EMobType::BumbleBee, ERarity::Unusual, EPetalType::Pollen, ERarity::Unusual, 0.922);
@@ -397,6 +806,50 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::BumbleBee, ERarity::Super, EPetalType::Honey, ERarity::Mythic, 0.438);
     RegisterDropRate(EMobType::BumbleBee, ERarity::Super, EPetalType::Honey, ERarity::Ultra, 0.562);
 
+    RegisterDropRate(EMobType::Spider, ERarity::Common, EPetalType::Faster, ERarity::Common, 0.598);
+    RegisterDropRate(EMobType::Spider, ERarity::Common, EPetalType::Faster, ERarity::Unusual, 0.164);
+    RegisterDropRate(EMobType::Spider, ERarity::Common, EPetalType::Web, ERarity::Unusual, 0.164);
+    RegisterDropRate(EMobType::Spider, ERarity::Unusual, EPetalType::Faster, ERarity::Common, 0.485);
+    RegisterDropRate(EMobType::Spider, ERarity::Unusual, EPetalType::Faster, ERarity::Unusual, 0.512);
+    RegisterDropRate(EMobType::Spider, ERarity::Unusual, EPetalType::Web, ERarity::Unusual, 0.512);
+    RegisterDropRate(EMobType::Spider, ERarity::Rare, EPetalType::Faster, ERarity::Unusual, 0.834);
+    RegisterDropRate(EMobType::Spider, ERarity::Rare, EPetalType::Faster, ERarity::Rare, 0.165);
+    RegisterDropRate(EMobType::Spider, ERarity::Rare, EPetalType::Web, ERarity::Unusual, 0.834);
+    RegisterDropRate(EMobType::Spider, ERarity::Rare, EPetalType::Web, ERarity::Rare, 0.165);
+    RegisterDropRate(EMobType::Spider, ERarity::Epic, EPetalType::Faster, ERarity::Unusual, 0.067);
+    RegisterDropRate(EMobType::Spider, ERarity::Epic, EPetalType::Faster, ERarity::Rare, 0.810);
+    RegisterDropRate(EMobType::Spider, ERarity::Epic, EPetalType::Faster, ERarity::Epic, 0.123);
+    RegisterDropRate(EMobType::Spider, ERarity::Epic, EPetalType::Web, ERarity::Unusual, 0.067);
+    RegisterDropRate(EMobType::Spider, ERarity::Epic, EPetalType::Web, ERarity::Rare, 0.810);
+    RegisterDropRate(EMobType::Spider, ERarity::Epic, EPetalType::Web, ERarity::Epic, 0.123);
+    RegisterDropRate(EMobType::Spider, ERarity::Legendary, EPetalType::Faster, ERarity::Rare, 0.072);
+    RegisterDropRate(EMobType::Spider, ERarity::Legendary, EPetalType::Faster, ERarity::Epic, 0.877);
+    RegisterDropRate(EMobType::Spider, ERarity::Legendary, EPetalType::Faster, ERarity::Legendary, 0.050);
+    RegisterDropRate(EMobType::Spider, ERarity::Legendary, EPetalType::Web, ERarity::Rare, 0.072);
+    RegisterDropRate(EMobType::Spider, ERarity::Legendary, EPetalType::Web, ERarity::Epic, 0.877);
+    RegisterDropRate(EMobType::Spider, ERarity::Legendary, EPetalType::Web, ERarity::Legendary, 0.050);
+    RegisterDropRate(EMobType::Spider, ERarity::Mythic, EPetalType::Faster, ERarity::Epic, 0.075);
+    RegisterDropRate(EMobType::Spider, ERarity::Mythic, EPetalType::Faster, ERarity::Legendary, 0.917);
+    RegisterDropRate(EMobType::Spider, ERarity::Mythic, EPetalType::Faster, ERarity::Mythic, 0.008);
+    RegisterDropRate(EMobType::Spider, ERarity::Mythic, EPetalType::Web, ERarity::Epic, 0.075);
+    RegisterDropRate(EMobType::Spider, ERarity::Mythic, EPetalType::Web, ERarity::Legendary, 0.917);
+    RegisterDropRate(EMobType::Spider, ERarity::Mythic, EPetalType::Web, ERarity::Mythic, 0.008);
+    RegisterDropRate(EMobType::Spider, ERarity::Mythic, EPetalType::ThirdEye, ERarity::Mythic, 0.0003);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::Faster, ERarity::Legendary, 0.212);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::Faster, ERarity::Mythic, 0.783);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::Faster, ERarity::Ultra, 0.005);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::Web, ERarity::Legendary, 0.212);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::Web, ERarity::Mythic, 0.783);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::Web, ERarity::Ultra, 0.005);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::ThirdEye, ERarity::Mythic, 0.060);
+    RegisterDropRate(EMobType::Spider, ERarity::Ultra, EPetalType::ThirdEye, ERarity::Ultra, 0.0002);
+    RegisterDropRate(EMobType::Spider, ERarity::Super, EPetalType::Faster, ERarity::Mythic, 0.356);
+    RegisterDropRate(EMobType::Spider, ERarity::Super, EPetalType::Faster, ERarity::Ultra, 0.644);
+    RegisterDropRate(EMobType::Spider, ERarity::Super, EPetalType::Web, ERarity::Mythic, 0.356);
+    RegisterDropRate(EMobType::Spider, ERarity::Super, EPetalType::Web, ERarity::Ultra, 0.644);
+    RegisterDropRate(EMobType::Spider, ERarity::Super, EPetalType::ThirdEye, ERarity::Mythic, 0.960);
+    RegisterDropRate(EMobType::Spider, ERarity::Super, EPetalType::ThirdEye, ERarity::Ultra, 0.040);
+
     RegisterDropRate(EMobType::Hornet, ERarity::Common, EPetalType::Missile, ERarity::Common, 0.870108);
     RegisterDropRate(EMobType::Hornet, ERarity::Common, EPetalType::Missile, ERarity::Unusual, 0.129892);
     RegisterDropRate(EMobType::Hornet, ERarity::Unusual, EPetalType::Missile, ERarity::Unusual, 0.129892);
@@ -434,6 +887,47 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::Hornet, ERarity::Super, EPetalType::Missile, ERarity::Super, 0.00001);
     RegisterDropRate(EMobType::Hornet, ERarity::Super, EPetalType::Missile, ERarity::Ultra, 0.6681);
     RegisterDropRate(EMobType::Hornet, ERarity::Super, EPetalType::Missile, ERarity::Mythic, 0.33189);
+    RegisterDropRate(EMobType::Hornet, ERarity::Common, EPetalType::Orange, ERarity::Unusual, 0.164);
+    RegisterDropRate(EMobType::Hornet, ERarity::Unusual, EPetalType::Orange, ERarity::Unusual, 0.512);
+    RegisterDropRate(EMobType::Hornet, ERarity::Rare, EPetalType::Orange, ERarity::Unusual, 0.834);
+    RegisterDropRate(EMobType::Hornet, ERarity::Rare, EPetalType::Orange, ERarity::Rare, 0.165);
+    RegisterDropRate(EMobType::Hornet, ERarity::Epic, EPetalType::Orange, ERarity::Unusual, 0.067);
+    RegisterDropRate(EMobType::Hornet, ERarity::Epic, EPetalType::Orange, ERarity::Rare, 0.810);
+    RegisterDropRate(EMobType::Hornet, ERarity::Epic, EPetalType::Orange, ERarity::Epic, 0.123);
+    RegisterDropRate(EMobType::Hornet, ERarity::Legendary, EPetalType::Orange, ERarity::Rare, 0.072);
+    RegisterDropRate(EMobType::Hornet, ERarity::Legendary, EPetalType::Orange, ERarity::Epic, 0.877);
+    RegisterDropRate(EMobType::Hornet, ERarity::Legendary, EPetalType::Orange, ERarity::Legendary, 0.050);
+    RegisterDropRate(EMobType::Hornet, ERarity::Mythic, EPetalType::Orange, ERarity::Epic, 0.075);
+    RegisterDropRate(EMobType::Hornet, ERarity::Mythic, EPetalType::Orange, ERarity::Legendary, 0.917);
+    RegisterDropRate(EMobType::Hornet, ERarity::Mythic, EPetalType::Orange, ERarity::Mythic, 0.008);
+    RegisterDropRate(EMobType::Hornet, ERarity::Ultra, EPetalType::Orange, ERarity::Legendary, 0.856);
+    RegisterDropRate(EMobType::Hornet, ERarity::Ultra, EPetalType::Orange, ERarity::Mythic, 0.143);
+    RegisterDropRate(EMobType::Hornet, ERarity::Ultra, EPetalType::Orange, ERarity::Ultra, 0.0005);
+    RegisterDropRate(EMobType::Hornet, ERarity::Super, EPetalType::Orange, ERarity::Mythic, 0.773);
+    RegisterDropRate(EMobType::Hornet, ERarity::Super, EPetalType::Orange, ERarity::Ultra, 0.227);
+
+    RegisterDropRate(EMobType::Dandelion, ERarity::Common, EPetalType::Dandelion, ERarity::Common, 0.870108);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Common, EPetalType::Dandelion, ERarity::Unusual, 0.129892);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Unusual, EPetalType::Dandelion, ERarity::Unusual, 0.129892);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Unusual, EPetalType::Dandelion, ERarity::Common, 0.870108);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Rare, EPetalType::Dandelion, ERarity::Rare, 0.051);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Rare, EPetalType::Dandelion, ERarity::Unusual, 0.695108);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Rare, EPetalType::Dandelion, ERarity::Common, 0.253892);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Epic, EPetalType::Dandelion, ERarity::Epic, 0.030);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Epic, EPetalType::Dandelion, ERarity::Rare, 0.690108);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Epic, EPetalType::Dandelion, ERarity::Unusual, 0.279892);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Legendary, EPetalType::Dandelion, ERarity::Legendary, 0.010);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Legendary, EPetalType::Dandelion, ERarity::Epic, 0.685108);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Legendary, EPetalType::Dandelion, ERarity::Rare, 0.304892);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Mythic, EPetalType::Dandelion, ERarity::Mythic, 0.003);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Mythic, EPetalType::Dandelion, ERarity::Legendary, 0.682108);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Mythic, EPetalType::Dandelion, ERarity::Epic, 0.314892);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Ultra, EPetalType::Dandelion, ERarity::Ultra, 0.0005);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Ultra, EPetalType::Dandelion, ERarity::Mythic, 0.668608);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Ultra, EPetalType::Dandelion, ERarity::Legendary, 0.330892);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Super, EPetalType::Dandelion, ERarity::Super, 0.00001);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Super, EPetalType::Dandelion, ERarity::Ultra, 0.6681);
+    RegisterDropRate(EMobType::Dandelion, ERarity::Super, EPetalType::Dandelion, ERarity::Mythic, 0.33189);
 
     RegisterDropRate(EMobType::BandageBeetle, ERarity::Common, EPetalType::Lentil, ERarity::Common, 0.453);
     RegisterDropRate(EMobType::BandageBeetle, ERarity::Common, EPetalType::BeetleEgg, ERarity::Common, 0.800);
@@ -503,6 +997,8 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::Beetle, ERarity::Super, EPetalType::BeetleEgg, ERarity::Super, 0.000008);
     RegisterDropRate(EMobType::Beetle, ERarity::Super, EPetalType::BeetleEgg, ERarity::Ultra, 0.464992);
     RegisterDropRate(EMobType::Beetle, ERarity::Super, EPetalType::BeetleEgg, ERarity::Mythic, 0.535);
+
+    RegisterWikiAntDropRates();
 }
 
 inline const std::vector<SDropRate>& QueryDropRates(EMobType mob_type, ERarity rarity)

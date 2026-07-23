@@ -35,6 +35,7 @@ std::vector<std::string> RarityNames()
         "Legendary",
         "Mythic",
         "Ultra",
+        "Exotic",
         "Super",
         "Eternal",
         "Unique",

@@ -2,6 +2,7 @@
 #include "../../../../Shared/shared.h"
 #include "../flower.h"
 #include "../projectile.h"
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -91,6 +92,7 @@ class CPetal : public CProjectile
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
     bool CanCollide() const override { return !m_hidden && CProjectile::CanCollide(); }
+    bool CollidesWithWalls() const;
     bool IsVisible() const override { return !m_hidden && CProjectile::IsVisible(); }
 
     SPetalStats m_base_petal_stats;
@@ -101,7 +103,9 @@ class CPetal : public CProjectile
     int m_copy_index = 0;
     int m_slot_index = 0;
     int m_target_entity_id = -1;
+    std::uint64_t m_target_entity_generation = 0;
     float m_lifetime = 0.f;
+    float m_timer = 0.f;
     float m_reload_override = -1.f;
     bool m_reload_ignore_multiplier = false;
     bool m_hidden = false;
@@ -118,6 +122,7 @@ class CBeetleEggPetal : public CPetal
     void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
 
     int m_summon_id = -1;
+    std::uint64_t m_summon_generation = 0;
     bool m_has_spawned_summon = false;
 };
 
@@ -127,6 +132,7 @@ class CRelicPetal : public CPetal
     using CPetal::CPetal;
 
     int m_state_zone_id = -1;
+    std::uint64_t m_state_zone_generation = 0;
 };
 
 class CThrownPetal : public CPetal
@@ -167,6 +173,7 @@ class CCompassPetal : public CPetal
     using CPetal::CPetal;
 
     int m_compass_target_id = -1;
+    std::uint64_t m_compass_target_generation = 0;
     float m_compass_wait_timer = 0.f;
 };
 
@@ -194,6 +201,14 @@ class CBrokenEggPetal : public CPetal
     bool CanCollide() const override { return false; }
 };
 
+class CShovelPetal : public CPetal
+{
+  public:
+    using CPetal::CPetal;
+
+    bool CanCollide() const override { return false; }
+};
+
 class CBasilPetal : public CPetal
 {
   public:
@@ -208,6 +223,7 @@ class CYggdrasilPetal : public CPetal
     using CPetal::CPetal;
 
     int m_revive_target_id = -1;
+    std::uint64_t m_revive_target_generation = 0;
     float m_revive_timer = 0.f;
 };
 

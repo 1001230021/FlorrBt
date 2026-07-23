@@ -3,7 +3,7 @@ const SPIDER_VIEWBOX = 110;
 const SPIDER_CLIP_X = 9.167;
 const SPIDER_CLIP_SIZE = 91.667;
 const SPIDER_BASE_FACE_ANGLE = -Math.PI * 0.75;
-const SPIDER_SPRITE_SCALE = 5.1;
+const SPIDER_SPRITE_SCALE = 7.7;
 const SPIDER_LEG_GROUP_A = new Set([1, 3, 5, 7]);
 const SPIDER_CACHE = {
   started: false,
@@ -31,17 +31,18 @@ export function drawSpider(ctx, pos, radius, entityId, angle, motion, time) {
   ctx.restore();
 }
 
-export function drawSpiderWeb(ctx, pos, radius, entityId, time) {
+export function drawSpiderWeb(ctx, pos, radius, entityId, time, options = {}) {
   const spokes = 10;
   const rings = [0.27, 0.45, 0.64, 0.84];
   const seed = ((entityId || 1) * 2654435761) >>> 0;
   const phase = seededUnit(seed) * Math.PI * 2;
   const shimmer = 0.55 + Math.sin((time || 0) * 2.2 + seed * 0.000001) * 0.08;
+  const color = options.playerOwned ? "255, 214, 70" : "255, 255, 255";
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
   ctx.rotate(phase);
-  ctx.strokeStyle = `rgba(255, 255, 255, ${shimmer})`;
+  ctx.strokeStyle = `rgba(${color}, ${shimmer})`;
   ctx.lineWidth = Math.max(1, radius * 0.035);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
@@ -81,8 +82,9 @@ function drawSpiderLegs(ctx, legs, spriteSize, entityId, motion, time) {
   if (!legs || legs.length === 0) return;
 
   const scale = spriteSize / SPIDER_VIEWBOX;
-  const step = Math.sin(time * (7.4 + motion * 10.5) + entityId * 0.43);
-  const lift = Math.max(0, Math.sin(time * (14.8 + motion * 21) + entityId * 0.43));
+  const stepRate = 4.8 + motion * 22;
+  const step = Math.sin(time * stepRate + entityId * 0.43);
+  const lift = Math.max(0, Math.sin(time * stepRate * 2 + entityId * 0.43));
   const swingAmp = 0.18 * motion;
   const slideAmp = 1.8 * motion;
 

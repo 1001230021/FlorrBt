@@ -2,8 +2,8 @@
   color-scheme: light;
   --ink: #263241;
   --muted: #6c7785;
-  --panel: rgba(250, 252, 253, 0.93);
-  --panel-strong: rgba(255, 255, 255, 0.98);
+  --panel: #fafcfd;
+  --panel-strong: #ffffff;
   --line: rgba(72, 88, 108, 0.2);
   --blue: #3577d4;
   --red: #dc5555;
@@ -54,12 +54,28 @@ button:active {
   width: 100vw;
   height: 100vh;
   display: block;
+  touch-action: none;
 }
 
 .ui {
   position: fixed;
   z-index: 2;
   user-select: none;
+}
+
+.mobile-controls {
+  display: none;
+  inset: 0;
+  z-index: 26;
+  pointer-events: none;
+}
+
+.mobile-controls.force-mobile:not(.hidden) {
+  display: block;
+}
+
+body.mobile-mode-forced .quick-actions {
+  display: none;
 }
 
 .auth-panel {
@@ -71,7 +87,7 @@ button:active {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel-strong);
-  box-shadow: 0 20px 55px rgba(28, 42, 60, 0.18);
+  box-shadow: none;
 }
 
 .auth-panel h1 {
@@ -133,10 +149,28 @@ button:active {
 .death-overlay {
   inset: 0;
   z-index: 7;
+  background: rgba(58, 62, 68, 0.3);
+  transition: background 180ms linear;
+}
+
+.death-overlay.closed {
+  background: transparent;
+  pointer-events: none;
+}
+
+.death-stack {
+  position: fixed;
+  left: 50%;
+  top: calc(50% + 12vh);
   display: grid;
-  place-items: center;
-  padding-top: 22vh;
-  background: rgba(58, 62, 68, 0.62);
+  gap: 10px;
+  justify-items: center;
+  transform: translateX(-50%);
+  transition: top 640ms linear;
+}
+
+.death-overlay.closed .death-stack {
+  top: calc(100vh - 194px);
 }
 
 .revive-button {
@@ -154,10 +188,32 @@ button:active {
     1px -1px 0 #22252a,
     -1px 1px 0 #22252a,
     1px 1px 0 #22252a;
+  pointer-events: auto;
 }
 
 .revive-button:active {
   transform: none;
+}
+
+.death-close-button {
+  width: 138px;
+  height: 38px;
+  border: 4px solid #2b2e34;
+  border-radius: 8px;
+  background: #9a9da3;
+  color: #f6f6f6;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-shadow:
+    -1px -1px 0 #33363c,
+    1px -1px 0 #33363c,
+    -1px 1px 0 #33363c,
+    1px 1px 0 #33363c;
+}
+
+.death-overlay.closed .death-close-button {
+  display: none;
 }
 
 .quick-actions {
@@ -312,8 +368,8 @@ button:active {
   justify-content: flex-start;
   padding: 7px 8px;
   border-radius: 4px;
-  background: rgba(75, 75, 75, 0.57);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  background: #4b4b4b;
+  box-shadow: none;
   pointer-events: auto;
   scrollbar-width: thin;
 }
@@ -324,7 +380,7 @@ button:active {
   min-height: 18px;
   padding: 1px 5px;
   border-radius: 4px;
-  background: rgba(20, 24, 28, calc(0.22 * var(--chat-alpha, 1)));
+  background: #14181c;
   color: #fff;
   font-size: 14px;
   font-weight: 900;
@@ -378,7 +434,7 @@ button:active {
   height: 31px;
   border: 3px solid rgba(34, 85, 65, 0.7);
   border-radius: 6px;
-  background: rgba(23, 106, 68, 0.84);
+  background: #176a44;
   color: #fff;
   font-size: 13px;
   font-weight: 900;
@@ -401,7 +457,7 @@ button:active {
   border: 3px solid #15181d;
   border-radius: 6px;
   padding: 0 8px;
-  background: rgba(255, 255, 255, 0.98);
+  background: #ffffff;
   color: #1d2835;
   font-size: 14px;
   font-weight: 800;
@@ -417,11 +473,9 @@ button:active {
   padding: 8px 10px 9px;
   border: 3px solid rgba(27, 34, 43, 0.9);
   border-radius: 6px;
-  background: rgba(36, 44, 54, 0.94);
+  background: #242c36;
   color: #fff;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    0 8px 18px rgba(18, 27, 38, 0.24);
+  box-shadow: none;
   pointer-events: none;
 }
 
@@ -490,8 +544,8 @@ button:active {
   border: 1px solid rgba(48, 68, 96, 0.18);
   border-top: 0;
   border-radius: 0 0 8px 8px;
-  background: rgba(248, 251, 253, 0.97);
-  box-shadow: 0 18px 48px rgba(28, 42, 60, 0.16);
+  background: #f8fbfd;
+  box-shadow: none;
   transition: top 160ms ease;
 }
 
@@ -505,7 +559,7 @@ button:active {
   padding: 8px;
   border: 1px solid rgba(48, 68, 96, 0.14);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.76);
+  background: #ffffff;
   color: #344255;
   font: 12px/1.4 Consolas, "Cascadia Mono", monospace;
   user-select: text;
@@ -516,7 +570,7 @@ button:active {
   padding: 7px 9px;
   border: 1px solid rgba(48, 68, 96, 0.14);
   border-radius: 8px;
-  background: rgba(240, 246, 250, 0.88);
+  background: #f0f6fa;
   color: #243348;
   font: 12px/1.35 Consolas, "Cascadia Mono", monospace;
   white-space: pre-wrap;
@@ -549,6 +603,58 @@ button:active {
   user-select: text;
 }
 
+.slider-panel {
+  top: 12px;
+  right: 12px;
+  width: min(320px, calc(100vw - 24px));
+  z-index: 40;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(48, 68, 96, 0.18);
+  border-radius: 8px;
+  background: #f8fbfd;
+  color: var(--ink);
+}
+
+.slider-panel-header {
+  display: grid;
+  grid-template-columns: 1fr 28px;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider-title,
+.slider-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 12px/1.25 Consolas, "Cascadia Mono", monospace;
+  font-weight: 800;
+}
+
+.slider-close {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(50, 88, 138, 0.25);
+  border-radius: 6px;
+  background: #fff;
+  color: #344255;
+  font-weight: 900;
+}
+
+.slider-control {
+  display: grid;
+  gap: 6px;
+}
+
+.slider-input {
+  width: 100%;
+  touch-action: auto;
+  pointer-events: auto;
+}
+
 .slots-panel {
   left: 50%;
   bottom: 12px;
@@ -563,6 +669,7 @@ button:active {
 .backpack-panel {
   left: calc(-1 * min(430px, calc(100vw - 24px)) - 12px);
   bottom: 12px;
+  z-index: 40;
   width: min(430px, calc(100vw - 24px));
   max-height: min(620px, calc(100vh - 132px));
   display: grid;
@@ -572,7 +679,7 @@ button:active {
   border: 5px solid #238b67;
   border-radius: 2px;
   background: #5ba7de;
-  box-shadow: 0 18px 46px rgba(25, 66, 96, 0.22);
+  box-shadow: none;
   transition: left 160ms ease;
 }
 
@@ -583,6 +690,7 @@ button:active {
 .craft-panel {
   left: calc(-1 * min(640px, calc(100vw - 24px)) - 12px);
   bottom: 12px;
+  z-index: 40;
   width: min(640px, calc(100vw - 24px));
   max-height: min(720px, calc(100vh - 72px));
   display: grid;
@@ -592,7 +700,7 @@ button:active {
   border: 5px solid #8c8146;
   border-radius: 2px;
   background: #dfa25a;
-  box-shadow: 0 18px 48px rgba(55, 35, 20, 0.22);
+  box-shadow: none;
   transition: left 160ms ease;
 }
 
@@ -603,6 +711,7 @@ button:active {
 .talent-panel {
   left: calc(-1 * min(720px, calc(100vw - 24px)) - 12px);
   bottom: 12px;
+  z-index: 40;
   width: min(720px, calc(100vw - 24px));
   max-height: min(720px, calc(100vh - 72px));
   display: grid;
@@ -612,7 +721,7 @@ button:active {
   border: 5px solid #3b5167;
   border-radius: 2px;
   background: #6f8caf;
-  box-shadow: 0 18px 48px rgba(26, 41, 56, 0.24);
+  box-shadow: none;
   transition: left 160ms ease;
 }
 
@@ -737,7 +846,9 @@ button:active {
   background: #eef3f5;
   color: #263241;
   text-align: left;
-  box-shadow: inset 0 0 0 3px var(--talent-color);
+  box-shadow: none;
+  outline: 3px solid var(--talent-color);
+  outline-offset: -6px;
 }
 
 .talent-node.owned {
@@ -862,7 +973,7 @@ button:active {
   padding: 0;
   border: 1px solid rgba(95, 61, 28, 0.15);
   border-radius: 4px;
-  background: rgba(116, 73, 31, 0.34);
+  background: #9d744d;
   transform: translate(-50%, -50%);
   transition: filter 120ms ease, transform 120ms ease;
 }
@@ -963,7 +1074,7 @@ button:active {
 
 .craft-matrix {
   display: grid;
-  grid-template-columns: 108px repeat(11, 58px);
+  grid-template-columns: 108px repeat(var(--craft-rarity-count, 12), 58px);
   gap: 5px;
   align-items: center;
   width: max-content;
@@ -1024,8 +1135,8 @@ button:active {
   padding: 0;
   border: 0;
   border-radius: 0;
-  background: rgba(116, 73, 31, 0.24);
-  box-shadow: inset 0 0 0 1px rgba(91, 58, 29, 0.12);
+  background: #ba8a5d;
+  box-shadow: none;
   touch-action: manipulation;
   transition: filter 100ms ease, opacity 100ms ease;
 }
@@ -1046,12 +1157,12 @@ button:active {
 }
 
 .craft-matrix-cell.lit {
-  filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.56));
+  filter: none;
 }
 
 .craft-matrix-cell.lit:hover,
 .craft-matrix-cell.selected {
-  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.82));
+  filter: none;
 }
 
 @keyframes craft-orbit-in {
@@ -1102,7 +1213,7 @@ button:active {
 }
 
 .backpack-panel.drag-target {
-  box-shadow: inset 0 0 0 1px rgba(40, 100, 190, 0.32);
+  box-shadow: none;
 }
 
 .slot-row {
@@ -1237,7 +1348,7 @@ button:active {
 }
 
 .petal-stack.multi-copy .petal-icon {
-  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.18));
+  filter: none;
 }
 
 .petal-card-label {
@@ -1272,7 +1383,7 @@ button:active {
   max-width: 42px;
   padding: 1px 4px 2px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.82);
+  background: #000000;
   color: #fff;
   font-size: 10px;
   font-weight: 800;
@@ -1301,6 +1412,102 @@ button:active {
 .secondary .slot:not(.empty) .petal-stack {
   width: 46px;
   height: 46px;
+}
+
+.mobile-joystick {
+  position: fixed;
+  width: 124px;
+  height: 124px;
+  z-index: 27;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.mobile-joystick-base,
+.mobile-joystick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+}
+
+.mobile-joystick-base {
+  width: 124px;
+  height: 124px;
+  background: rgba(0, 0, 0, 0.24);
+  border: 2px solid rgba(255, 255, 255, 0.16);
+}
+
+.mobile-joystick-knob {
+  width: 56px;
+  height: 56px;
+  background: rgba(0, 0, 0, 0.38);
+  border: 2px solid rgba(255, 255, 255, 0.18);
+}
+
+.mobile-panel-actions {
+  position: fixed;
+  left: max(10px, env(safe-area-inset-left));
+  top: max(10px, env(safe-area-inset-top));
+  z-index: 27;
+  display: grid;
+  grid-template-columns: repeat(2, 58px);
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.mobile-control-button {
+  position: fixed;
+  z-index: 27;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.34);
+  color: #fff;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-shadow:
+    -1px -1px 0 rgba(0, 0, 0, 0.45),
+    1px -1px 0 rgba(0, 0, 0, 0.45),
+    -1px 1px 0 rgba(0, 0, 0, 0.45),
+    1px 1px 0 rgba(0, 0, 0, 0.45);
+  touch-action: none;
+  pointer-events: auto;
+}
+
+.mobile-control-button.pressed,
+.mobile-control-button:active {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.mobile-panel-button {
+  position: static;
+  width: 58px;
+  height: 42px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.mobile-attack-button {
+  right: max(86px, calc(env(safe-area-inset-right) + 86px));
+  top: 50%;
+  width: 88px;
+  height: 88px;
+  margin-top: -44px;
+  font-size: 30px;
+}
+
+.mobile-defend-button {
+  right: max(22px, calc(env(safe-area-inset-right) + 22px));
+  bottom: max(78px, calc(env(safe-area-inset-bottom) + 78px));
+  width: 62px;
+  height: 62px;
+  font-size: 22px;
 }
 
 .inventory-list {
@@ -1336,12 +1543,12 @@ button:active {
   content: "";
   height: 5px;
   border-radius: 999px;
-  background: rgba(36, 84, 123, 0.22);
+  background: #b9c8d3;
 }
 
 .craft-list .inventory-group-title::before,
 .craft-list .inventory-group-title::after {
-  background: rgba(117, 75, 36, 0.28);
+  background: #bd966f;
 }
 
 .inventory-grid {
@@ -1373,11 +1580,11 @@ button:active {
 }
 
 .craft-inventory-item:not(.locked) {
-  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.55));
+  filter: none;
 }
 
 .craft-inventory-item:not(.locked):hover {
-  filter: drop-shadow(0 0 7px rgba(255, 255, 255, 0.74));
+  filter: none;
 }
 
 .drag-ghost {
@@ -1390,8 +1597,8 @@ button:active {
   padding: 6px 8px;
   border: 1px solid rgba(77, 91, 111, 0.26);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 16px 34px rgba(28, 42, 60, 0.2);
+  background: #ffffff;
+  box-shadow: none;
   color: var(--ink);
   pointer-events: none;
 }
@@ -1417,6 +1624,16 @@ button:active {
   display: none !important;
 }
 
+@media (pointer: coarse), (max-width: 720px) {
+  .mobile-controls:not(.hidden) {
+    display: block;
+  }
+
+  .quick-actions {
+    display: none;
+  }
+}
+
 @media (max-width: 720px) {
   .slots-panel {
     left: 12px;
@@ -1429,21 +1646,10 @@ button:active {
     width: min(330px, calc(100vw - 24px));
   }
 
-  .quick-actions {
-    left: 4px;
-    bottom: 8px;
-    gap: 4px;
-  }
-
-  .quick-action {
-    width: 50px;
-    height: 50px;
-  }
-
   .chat-panel {
-    left: 62px;
+    left: 12px;
     bottom: 8px;
-    width: calc(100vw - 70px);
+    width: calc(100vw - 24px);
   }
 
   .chat-panel.open .chat-log {
