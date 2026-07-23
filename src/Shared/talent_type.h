@@ -23,11 +23,12 @@ enum class ETalentId : uint16_t
     Summoner = 14,
     Antennae = 15,
     ConcentratedPoison = 16,
+    Movement = 17,
 };
 
 using TalentId = ETalentId;
 
-inline constexpr std::array<std::string_view, 17> talent_id_names = {
+inline constexpr std::array<std::string_view, 18> talent_id_names = {
     "None",
     "PetalHealth",
     "PetalSplit",
@@ -45,6 +46,7 @@ inline constexpr std::array<std::string_view, 17> talent_id_names = {
     "Summoner",
     "Antennae",
     "ConcentratedPoison",
+    "Movement",
 };
 
 inline std::string_view GetTalentIdName(ETalentId id)
@@ -101,6 +103,8 @@ inline bool MatchTalentIdAlias(std::string_view text, ETalentId id)
     case ETalentId::ConcentratedPoison:
         return text == "concentrated_poison" || text == "concentratedpoison" || text == "cpoison" ||
                text == "cpoi";
+    case ETalentId::Movement:
+        return text == "movement" || text == "move" || text == "speed" || text == "mmt";
     default:
         return false;
     }

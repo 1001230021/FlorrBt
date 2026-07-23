@@ -16,7 +16,8 @@ enum class ERarity : int
     Super,
     Eternal,
     Unique,
-    Primordial
+    Primordial,
+    Exotic
 };
 
 struct SRarityColor
@@ -29,7 +30,7 @@ struct SRarityColor
     uint8_t l = 0;
 };
 
-inline constexpr std::array<SRarityColor, 12> rarity_colors = {
+inline constexpr std::array<SRarityColor, 13> rarity_colors = {
     SRarityColor{0, 0, 0, 0, 0, 0},
     SRarityColor{111, 211, 96, 75, 193, 164},
     SRarityColor{255, 230, 93, 34, 240, 164},
@@ -42,7 +43,14 @@ inline constexpr std::array<SRarityColor, 12> rarity_colors = {
     SRarityColor{238, 238, 238, 160, 0, 224},
     SRarityColor{53, 53, 53, 160, 0, 50},
     SRarityColor{110, 110, 110, 0, 0, 103},
+    SRarityColor{180, 180, 180, 126, 126, 126},
 };
+
+inline bool IsKnownRarity(ERarity rarity)
+{
+    int index = static_cast<int>(rarity);
+    return index > static_cast<int>(ERarity::Null) && index < static_cast<int>(rarity_colors.size());
+}
 
 inline SRarityColor GetRarityColor(ERarity rarity)
 {
@@ -77,7 +85,42 @@ inline std::string_view GetRarityName(ERarity rarity)
         return "Unique";
     case ERarity::Primordial:
         return "Primordial";
+    case ERarity::Exotic:
+        return "Exotic";
     default:
         return "Null";
+    }
+}
+
+inline float GetRaritySortRank(ERarity rarity)
+{
+    switch (rarity)
+    {
+    case ERarity::Common:
+        return 1.f;
+    case ERarity::Unusual:
+        return 2.f;
+    case ERarity::Rare:
+        return 3.f;
+    case ERarity::Epic:
+        return 4.f;
+    case ERarity::Legendary:
+        return 5.f;
+    case ERarity::Mythic:
+        return 6.f;
+    case ERarity::Ultra:
+        return 7.f;
+    case ERarity::Exotic:
+        return 7.5f;
+    case ERarity::Super:
+        return 8.f;
+    case ERarity::Eternal:
+        return 9.f;
+    case ERarity::Unique:
+        return 10.f;
+    case ERarity::Primordial:
+        return 11.f;
+    default:
+        return 0.f;
     }
 }

@@ -27,11 +27,26 @@ enum class EMobType : int
     QueenAnt,
     AntHole,
     Spider,
+    Sandstorm,
+    Dummy,
+    Dandelion,
+    AntEgg,
+    FireAntEgg,
+    TermiteEgg,
+    QueenAntEgg,
+    QueenFireAntEgg,
+    BabyFireAnt,
+    WorkerFireAnt,
+    FireQueenAnt,
+    BabyTermite,
+    WorkerTermite,
+    TermiteOvermind,
+    LeafPiece,
 };
 
 using MobType = EMobType;
 
-inline constexpr std::array<std::string_view, 22> mob_type_names = {
+inline constexpr std::array<std::string_view, 37> mob_type_names = {
     "None",
     "Beetle",
     "Gambler",
@@ -54,6 +69,21 @@ inline constexpr std::array<std::string_view, 22> mob_type_names = {
     "QueenAnt",
     "AntHole",
     "Spider",
+    "Sandstorm",
+    "Dummy",
+    "Dandelion",
+    "AntEgg",
+    "FireAntEgg",
+    "TermiteEgg",
+    "QueenAntEgg",
+    "QueenFireAntEgg",
+    "BabyFireAnt",
+    "WorkerFireAnt",
+    "FireQueenAnt",
+    "BabyTermite",
+    "WorkerTermite",
+    "TermiteOvermind",
+    "LeafPiece",
 };
 
 inline std::string_view GetMobTypeName(EMobType type)
@@ -103,6 +133,36 @@ inline bool MatchMobTypeAlias(std::string_view text, EMobType type)
         return text == "ah" || text == "anthole" || text == "ant_hole";
     case EMobType::Spider:
         return text == "spider" || text == "spi";
+    case EMobType::Sandstorm:
+        return text == "sandstorm" || text == "ss";
+    case EMobType::Dummy:
+        return text == "dummy" || text == "training_dummy" || text == "trainingdummy";
+    case EMobType::Dandelion:
+        return text == "dande" || text == "dandelion";
+    case EMobType::AntEgg:
+        return text == "egg" || text == "antegg" || text == "ant_egg";
+    case EMobType::FireAntEgg:
+        return text == "fgg" || text == "fireantegg" || text == "fire_ant_egg";
+    case EMobType::TermiteEgg:
+        return text == "tgg" || text == "termiteegg" || text == "termite_egg";
+    case EMobType::QueenAntEgg:
+        return text == "qaegg" || text == "queenantegg" || text == "queen_ant_egg";
+    case EMobType::QueenFireAntEgg:
+        return text == "fqaegg" || text == "queenfireantegg" || text == "queen_fire_ant_egg";
+    case EMobType::BabyFireAnt:
+        return text == "bfa" || text == "babyfireant" || text == "baby_fire_ant";
+    case EMobType::WorkerFireAnt:
+        return text == "wfa" || text == "workerfireant" || text == "worker_fire_ant";
+    case EMobType::FireQueenAnt:
+        return text == "fqa" || text == "firequeenant" || text == "fire_queen_ant";
+    case EMobType::BabyTermite:
+        return text == "bta" || text == "babytermite" || text == "baby_termite";
+    case EMobType::WorkerTermite:
+        return text == "wta" || text == "workertermite" || text == "worker_termite";
+    case EMobType::TermiteOvermind:
+        return text == "ovm" || text == "overmind" || text == "termiteovermind" || text == "termite_overmind";
+    case EMobType::LeafPiece:
+        return text == "lp" || text == "leafpiece" || text == "leaf_piece";
     default:
         return false;
     }

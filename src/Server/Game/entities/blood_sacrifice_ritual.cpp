@@ -4,21 +4,51 @@
 #include "../../../Engine/logger.h"
 #include <algorithm>
 
+namespace
+{
+constexpr float blood_sacrifice_inner_star_radius = 1024.f;
+constexpr float blood_sacrifice_outer_star_radius = blood_sacrifice_inner_star_radius * 2.f;
+constexpr float blood_sacrifice_fade_duration = 60.f;
+constexpr float min_phase_duration = 0.001f;
+}
+
 CBloodSacrificeRitual::CBloodSacrificeRitual(CGameWorld* world, sf::Vector2f pos, EMobType mob_type, ERarity rarity,
                                              float timer)
-    : CEntity(world, pos.x, pos.y, 0.f), m_mob_type(mob_type), m_rarity(rarity), m_timer(std::max(0.f, timer))
+    : CEntity(world, pos.x, pos.y, blood_sacrifice_outer_star_radius), m_mob_type(mob_type), m_rarity(rarity),
+      m_draw_duration(std::max(min_phase_duration, timer)), m_fade_duration(blood_sacrifice_fade_duration)
 {
     m_health = 1.f;
     m_mass = 0.f;
     m_team = 0;
 }
 
+float CBloodSacrificeRitual::EffectProgress() const
+{
+    if (m_draw_duration <= min_phase_duration)
+        return std::clamp(0.5f + m_age / std::max(min_phase_duration, m_fade_duration) * 0.5f, 0.f, 1.f);
+
+    if (m_age < m_draw_duration)
+        return std::clamp(m_age / m_draw_duration * 0.5f, 0.f, 0.5f);
+
+    const float fade_progress = (m_age - m_draw_duration) / std::max(min_phase_duration, m_fade_duration);
+    return std::clamp(0.5f + fade_progress * 0.5f, 0.f, 1.f);
+}
+
 void CBloodSacrificeRitual::Tick(float dt)
 {
     if (m_is_marked_for_des) return;
 
-    m_timer -= dt;
-    if (m_timer > 0.f) return;
+    m_age += std::max(0.f, dt);
+    if (!m_spawned && m_age < m_draw_duration) return;
+
+    if (m_spawned)
+    {
+        if (m_age >= m_draw_duration + m_fade_duration)
+            m_is_marked_for_des = true;
+        return;
+    }
+
+    m_spawned = true;
 
     bool spawned = false;
     int spawned_id = -1;
@@ -49,6 +79,4 @@ void CBloodSacrificeRitual::Tick(float dt)
                                        std::string(GetMobTypeName(m_mob_type)) + " at " + std::to_string(m_pos.x) +
                                        "," + std::to_string(m_pos.y));
     }
-
-    m_is_marked_for_des = true;
 }

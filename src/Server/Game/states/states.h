@@ -48,7 +48,7 @@ class CPincerSpeedReduceState : public CState
 class CWebSpeedReduceState : public CState
 {
   public:
-    CWebSpeedReduceState(CMobBase* owner, float timer, float desired_multiplier);
+    CWebSpeedReduceState(CMobBase* owner, float timer, float desired_multiplier, float reference_mass);
 
     void Tick(float dt) override { m_timer -= dt; }
     bool IsValid() const { return m_is_valid; }
@@ -57,6 +57,18 @@ class CWebSpeedReduceState : public CState
   private:
     float m_multiplier = 1.f;
     bool m_is_valid = false;
+};
+
+class CAntiHealState : public CState
+{
+  public:
+    CAntiHealState(CMobBase* owner, float timer, ERarity rarity, float medic_mult);
+
+    void Tick(float dt) override { m_timer -= dt; }
+    void Refresh(float timer, ERarity rarity, float medic_mult);
+    float GetMedicMultiplier() const { return m_medic_mult; }
+
+    float m_medic_mult = 1.f;
 };
 
 class CNullificationState : public CState
@@ -105,9 +117,22 @@ class CNoReviveState : public CState
 class CInvincibleState : public CState
 {
   public:
-    CInvincibleState(CMobBase* owner, float timer, ERarity rarity) : CState(owner, timer, rarity) {}
+    CInvincibleState(CMobBase* owner, float timer, ERarity rarity);
 
-    void Tick(float dt) override { m_timer -= dt; }
+    void Tick(float dt) override;
+
+  private:
+    bool m_marked_for_destroy = false;
+    float m_hp = 0.f;
+};
+
+class CDiggingState : public CState
+{
+  public:
+    CDiggingState(CMobBase* owner, float timer, ERarity rarity) : CState(owner, timer, rarity) {}
+    ~CDiggingState() override;
+
+    void Tick(float dt) override { if (m_timer != endless) m_timer -= dt; }
 };
 
 class CPsionicConnectionState : public CState
@@ -123,6 +148,10 @@ class CPsionicConnectionState : public CState
 };
 
 bool BlocksNullifiedInteraction(const CEntity* lhs, const CEntity* rhs);
+bool IsDiggingEntity(const CEntity* entity);
+bool ShouldSkipDiggingCollision(const CEntity* lhs, const CEntity* rhs);
 float GetPincerSpeedMultiplier(const CMobBase* mob);
+float GetMedicMultiplier(const CMobBase* mob);
+void ApplyDandelionAntiHeal(CMobBase* mob, ERarity rarity);
 bool TrySharePsionicDamage(CMobBase* receiver, float dmg, CEntity* attacker, EDamageType dmg_type);
 float GetBandageUndeadDuration(ERarity rarity);

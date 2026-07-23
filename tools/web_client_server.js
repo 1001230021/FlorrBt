@@ -14,6 +14,9 @@ const listenHost = process.env.WEB_HOST || "127.0.0.1";
 const listenPort = Number(process.env.WEB_PORT || 8080);
 const gameHost = process.env.GAME_HOST || "127.0.0.1";
 const gamePort = Number(process.env.GAME_PORT || 10012);
+const serverSnapshotType = 0x01;
+const snapshotFlushMs = Number(process.env.WEB_SNAPSHOT_FLUSH_MS || 0);
+const snapshotBacklogDropBytes = Number(process.env.WEB_SNAPSHOT_BACKLOG_DROP_BYTES || 128 * 1024);
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -25,6 +28,7 @@ const mimeTypes = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
   ".webp": "image/webp",
   ".svg": "image/svg+xml",
 };
@@ -52,7 +56,7 @@ function sendFile(res, requestPath) {
     }
     res.writeHead(200, {
       "Content-Type": mimeTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream",
-      "Cache-Control": "no-cache",
+      "Cache-Control": "no-store, max-age=0",
     });
     res.end(data);
   });
@@ -82,12 +86,87 @@ function writeWsFrame(socket, payload, opcode = 0x2) {
     header[1] = 127;
     header.writeBigUInt64BE(BigInt(data.length), 2);
   }
-  socket.write(Buffer.concat([header, data]));
+  return socket.write(Buffer.concat([header, data]));
 }
 
 function closePair(wsSocket, tcpSocket) {
   if (tcpSocket && !tcpSocket.destroyed) tcpSocket.destroy();
   if (wsSocket && !wsSocket.destroyed) wsSocket.destroy();
+}
+
+function frameServerPayload(payload) {
+  const frame = Buffer.allocUnsafe(2 + payload.length);
+  frame[0] = payload.length & 0xff;
+  frame[1] = (payload.length >> 8) & 0xff;
+  payload.copy(frame, 2);
+  return frame;
+}
+
+function createServerPacketForwarder(wsSocket) {
+  let buffer = Buffer.alloc(0);
+  let pendingSnapshot = null;
+  let snapshotTimer = null;
+
+  const flushSnapshot = () => {
+    snapshotTimer = null;
+    if (!pendingSnapshot || wsSocket.destroyed) {
+      pendingSnapshot = null;
+      return;
+    }
+    if (wsSocket.writableLength > snapshotBacklogDropBytes) {
+      pendingSnapshot = null;
+      return;
+    }
+    const frame = pendingSnapshot;
+    pendingSnapshot = null;
+    writeWsFrame(wsSocket, frame, 0x2);
+  };
+
+  const scheduleSnapshot = () => {
+    if (snapshotTimer) return;
+    if (snapshotFlushMs <= 0) {
+      snapshotTimer = { immediate: true };
+      queueMicrotask(flushSnapshot);
+      return;
+    }
+    snapshotTimer = setTimeout(flushSnapshot, Math.max(0, snapshotFlushMs));
+    if (snapshotTimer.unref) snapshotTimer.unref();
+  };
+
+  const forwardPayload = (payload) => {
+    if (!payload || payload.length <= 0 || wsSocket.destroyed) return;
+    const frame = frameServerPayload(payload);
+    if (payload[0] === serverSnapshotType) {
+      pendingSnapshot = frame;
+      scheduleSnapshot();
+      return;
+    }
+    writeWsFrame(wsSocket, frame, 0x2);
+  };
+
+  return {
+    push(chunk) {
+      buffer = Buffer.concat([buffer, chunk]);
+      for (;;) {
+        if (buffer.length < 2) return;
+        const len = buffer[0] | (buffer[1] << 8);
+        if (len <= 0) {
+          buffer = buffer.subarray(2);
+          continue;
+        }
+        if (buffer.length < 2 + len) return;
+        const payload = buffer.subarray(2, 2 + len);
+        forwardPayload(payload);
+        buffer = buffer.subarray(2 + len);
+      }
+    },
+    close() {
+      pendingSnapshot = null;
+      buffer = Buffer.alloc(0);
+      if (snapshotTimer) clearTimeout(snapshotTimer);
+      snapshotTimer = null;
+    },
+  };
 }
 
 function createFrameParser(onData, onClose, onPing) {
@@ -178,9 +257,14 @@ server.on("upgrade", (req, socket) => {
   ].join("\r\n"));
 
   const tcp = net.createConnection({ host: gameHost, port: gamePort });
-  tcp.on("data", (data) => writeWsFrame(socket, data, 0x2));
-  tcp.on("close", () => closePair(socket, tcp));
+  const forwardServerPackets = createServerPacketForwarder(socket);
+  tcp.on("data", (data) => forwardServerPackets.push(data));
+  tcp.on("close", () => {
+    forwardServerPackets.close();
+    closePair(socket, tcp);
+  });
   tcp.on("error", (error) => {
+    forwardServerPackets.close();
     writeWsFrame(socket, `TCP error: ${error.message}`, 0x1);
     closePair(socket, tcp);
   });
@@ -194,8 +278,14 @@ server.on("upgrade", (req, socket) => {
   );
 
   socket.on("data", parse);
-  socket.on("close", () => closePair(socket, tcp));
-  socket.on("error", () => closePair(socket, tcp));
+  socket.on("close", () => {
+    forwardServerPackets.close();
+    closePair(socket, tcp);
+  });
+  socket.on("error", () => {
+    forwardServerPackets.close();
+    closePair(socket, tcp);
+  });
 });
 
 server.listen(listenPort, listenHost, () => {

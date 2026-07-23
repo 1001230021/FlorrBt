@@ -2,6 +2,7 @@
 #include "../../Shared/rarity.h"
 #include "../../Shared/talent_type.h"
 #include <SFML/Network/TcpSocket.hpp>
+#include <SFML/System/Vector2.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -14,6 +15,13 @@ class ITalent;
 struct SCraftResult;
 struct STalentContext;
 struct ClientOperate;
+
+struct SPlayerCheckpointEntry
+{
+    uint32_t checkpoint_id = 0;
+    int level = 0;
+    uint8_t count = 3;
+};
 
 class CPlayer
 {
@@ -43,6 +51,7 @@ class CPlayer
     bool TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rarity);
     bool TryUnequipPetal(uint8_t slot_index);
     bool TryCraftPetal(uint8_t petal_type, uint8_t rarity, uint32_t count, SCraftResult* result = nullptr);
+    bool ObtainPetalCard(uint8_t petal_type, uint8_t rarity, uint32_t count = 1, bool add_to_inventory = true);
     bool AddTalent(ETalentId id, ERarity rarity, int rank = 0);
     bool RemoveTalent(ETalentId id, ERarity rarity, int rank = 0);
     void AddTalentPoints(int amount);
@@ -51,7 +60,7 @@ class CPlayer
     bool HasTalent(const ITalent* talent) const;
     void ApplyTalents(ETalentEvent event, STalentContext& ctx) const;
     int CalculateTalentSlotCount() const;
-    void RefreshTalentEffects();
+    void RefreshTalentEffects(bool reload_petals = false);
     float GetSecondChanceCooldown() const { return m_second_chance_cooldown; }
     void SetSecondChanceCooldown(float cooldown);
     void SetUseNewPlayerSpawn(bool value) { m_use_new_player_spawn = value; }
@@ -67,7 +76,7 @@ class CPlayer
     const std::string& GetName() const { return m_name; }
     const std::string& GetAccountName() const { return m_account_name; }
     const std::string& GetRemoteAddress() const { return m_remote_address; }
-    bool HasOwnedEntity() const { return m_entity_id >= 0; }
+    bool HasOwnedEntity() const { return GetEntity() != nullptr; }
     bool IsConnected() const { return m_connected; }
     bool IsAuthenticated() const { return m_authenticated; }
     bool IsRconAuthorized() const { return m_rcon_authorized; }
@@ -78,11 +87,14 @@ class CPlayer
     size_t m_send_offset = 0;
     std::vector<uint8_t> m_receive_buffer;
     bool m_logged_missing_entity = false;
+    std::vector<SPlayerCheckpointEntry> m_cp_stack;
+    uint8_t m_cp_check_phase = 0;
 
   private:
     sf::TcpSocket m_socket;
     CGameWorld* m_p_world = nullptr;
     int m_entity_id = -1;
+    std::uint64_t m_entity_generation = 0;
     bool m_connected = true;
     bool m_authenticated = false;
     bool m_rcon_authorized = false;

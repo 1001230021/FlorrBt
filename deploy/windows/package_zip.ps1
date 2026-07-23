@@ -62,6 +62,9 @@ Copy-Dir (Join-Path $RepoRoot "data") (Join-Path $StageRoot "data")
 Copy-Dir (Join-Path $RepoRoot "tools") (Join-Path $StageRoot "tools")
 Copy-Dir (Join-Path $RepoRoot "deploy\windows") (Join-Path $StageRoot "deploy\windows")
 Copy-Dir (Join-Path $RepoRoot "deploy\windows-web") (Join-Path $StageRoot "deploy\windows-web")
+Get-ChildItem -LiteralPath $StageRoot -Filter "*.log" -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+    Remove-Item -LiteralPath $_.FullName -Force
+}
 
 $StartAll = @'
 @echo off

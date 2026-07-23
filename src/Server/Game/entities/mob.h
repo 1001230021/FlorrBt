@@ -24,6 +24,7 @@ struct CDamageData
 
 class CMobBase;
 bool TrySharePsionicDamage(CMobBase* receiver, float dmg, CEntity* attacker, EDamageType dmg_type);
+bool ShouldBlockDiggingDamage(CMobBase* receiver, CEntity* attacker, EDamageType dmg_type);
 
 class CMobBase : public CEntity
 {
@@ -106,6 +107,7 @@ class CMobBase : public CEntity
 
     void SetController(std::unique_ptr<IController> controller) { m_p_controller = std::move(controller); }
     IController* GetController() { return m_p_controller.get(); }
+    const IController* GetController() const { return m_p_controller.get(); }
 
     sf::Vector2f m_vel = {0.f, 0.f};
     EMobType m_mob_type = EMobType::None;
@@ -145,6 +147,7 @@ template <typename TStats = SMobStats> class CMob : public CMobBase
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {
+        if (ShouldBlockDiggingDamage(this, attacker, dmg_type)) return;
         if (dmg_type == EDamageType::Normal) dmg = std::max(0.f, dmg - m_base_stats.armor);
         if (dmg <= 0.f) return;
         if (TrySharePsionicDamage(this, dmg, attacker, dmg_type)) return;
@@ -175,6 +178,18 @@ class IAttackableMob
     }
 };
 
+class ISkillCasterMob
+{
+  public:
+    virtual ~ISkillCasterMob() = default;
+
+    virtual int GetSkillCount() const = 0;
+    virtual bool CanCastSkill(int skill_index) const = 0;
+    virtual bool TryCastSkill(int skill_index, CEntity* target) = 0;
+    virtual bool IsSkillBusy() const = 0;
+    virtual uint8_t GetWindupSkillId() const = 0;
+};
+
 template <typename TStats = SMobStats> class CAttackableMob : public CMob<TStats>, public IAttackableMob
 {
   public:
@@ -189,6 +204,19 @@ template <typename TStats = SMobStats> class CAttackableMob : public CMob<TStats
 
     bool m_attacking = false;
     bool m_defending = false;
+};
+
+template <typename TStats = SMobStats> class CSkillCasterMob : public CAttackableMob<TStats>, public ISkillCasterMob
+{
+  public:
+    using stats_type = TStats;
+    using CAttackableMob<TStats>::CAttackableMob;
+
+    int GetSkillCount() const override { return 0; }
+    bool CanCastSkill(int) const override { return false; }
+    bool TryCastSkill(int, CEntity*) override { return false; }
+    bool IsSkillBusy() const override { return false; }
+    uint8_t GetWindupSkillId() const override { return 0; }
 };
 
 class CMobPrototype
@@ -252,7 +280,9 @@ template <typename TMob> bool RegisterMobPrototype(EMobType type, CMobPrototype 
         auto mob = std::make_unique<TMob>(world, pos, stats.radius, rarity, stats);
         mob->m_mob_type = raw_ptr->m_type;
         mob->m_team = raw_ptr->m_team;
-        mob->m_allow_skip_tick = raw_ptr->m_type != EMobType::PlayerFlower;
+        mob->m_allow_skip_tick = raw_ptr->m_type != EMobType::PlayerFlower &&
+                                 raw_ptr->m_type != EMobType::LeafPiece &&
+                                 !IsAtLeastRarity(rarity, ERarity::Super);
         if (raw_ptr->m_controller_factory) mob->SetController(raw_ptr->m_controller_factory());
         return mob;
     };
@@ -279,8 +309,23 @@ void RegisterRock();
 void RegisterBabyAnt();
 void RegisterWorkerAnt();
 void RegisterQueenAnt();
+void RegisterAntEggMob();
+void RegisterFireAntEgg();
+void RegisterTermiteEgg();
+void RegisterQueenAntEgg();
+void RegisterQueenFireAntEgg();
+void RegisterBabyFireAnt();
+void RegisterWorkerFireAnt();
+void RegisterFireQueenAnt();
+void RegisterBabyTermite();
+void RegisterWorkerTermite();
+void RegisterTermiteOvermind();
+void RegisterLeafPiece();
 void RegisterAntHole();
 void RegisterSpider();
+void RegisterSandstorm();
+void RegisterDummy();
+void RegisterDandelion();
 void RegisterMobs();
 
 #define REGISTER_MOB(type, mob_class, proto) RegisterMobPrototype<mob_class>(type, std::move(proto))

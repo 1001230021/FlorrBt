@@ -7,6 +7,8 @@
 
 inline constexpr int drop_owner_all = -1;
 
+class CPlayer;
+
 class CDrop : public CEntity
 {
   public:
@@ -19,7 +21,7 @@ class CDrop : public CEntity
     void OnCollision(CEntity* other) override {}
     bool CanCollide() const override { return false; }
     bool CanBePickedUpBy(uint32_t player_id) const;
-    bool PickUpTo(const std::string& account_name, uint32_t player_id);
+    bool PickUpTo(CPlayer& player);
 
     PetalType GetType() const { return m_type; }
     ERarity GetRarity() const { return m_rarity; }

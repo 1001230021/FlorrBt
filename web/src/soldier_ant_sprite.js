@@ -71,7 +71,7 @@ export function drawSoldierAnt(ctx, pos, radius, entityId, angle, motion, time, 
 function antAnimation(entityId, motion, time) {
   const activeMotion = motion < SOLDIER_ANT_MOTION_DEADZONE ? 0 : motion;
   if (activeMotion <= 0) return { swing: 0 };
-  const phase = time * ((26 + activeMotion * 22) / 3) + entityId * 0.73;
+  const phase = time * (5.2 + activeMotion * 19.5) + entityId * 0.73;
   return {
     swing: Math.sin(phase) * activeMotion * 0.22,
   };

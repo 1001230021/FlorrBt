@@ -73,6 +73,7 @@ inline constexpr int body_toxicity_tier_count = 1;
 inline constexpr int duplicator_tier_count = 4;
 inline constexpr int poison_tier_count = 9;
 inline constexpr int concentrated_poison_tier_count = 1;
+inline constexpr int movement_tier_count = 7;
 inline constexpr std::array<ERarity, talent_tier_count> talent_tier_rarities = {
     ERarity::Common,
     ERarity::Unusual,
@@ -119,6 +120,27 @@ class CBodyDamageTalent final : public ITalent
     {
         if (event != ETalentEvent::RebuildFlowerStats || !ctx.flower_stats) return;
         ctx.flower_stats->damage *= m_step_multiplier;
+    }
+
+    float m_total_multiplier = 1.f;
+    float m_step_multiplier = 1.f;
+};
+
+class CMovementTalent final : public ITalent
+{
+  public:
+    CMovementTalent() = default;
+    CMovementTalent(ERarity rarity, int cost, float total_multiplier, float previous_total_multiplier)
+        : ITalent(ETalentId::Movement, rarity, cost), m_total_multiplier(total_multiplier),
+          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier : total_multiplier)
+    {
+    }
+
+    void Apply(ETalentEvent event, STalentContext& ctx) override
+    {
+        if (event != ETalentEvent::RebuildFlowerStats || !ctx.flower_stats) return;
+        ctx.flower_stats->max_velocity *= m_step_multiplier;
+        ctx.flower_stats->acceleration *= m_step_multiplier;
     }
 
     float m_total_multiplier = 1.f;
@@ -481,6 +503,29 @@ inline std::array<CBodyDamageTalent, sharp_edges_tier_count>& BodyDamageTalents(
     return talents;
 }
 
+inline std::array<CMovementTalent, movement_tier_count>& MovementTalents()
+{
+    static std::array<CMovementTalent, movement_tier_count> talents = {
+        CMovementTalent(ERarity::Rare, 3, 1.1f, 1.f),
+        CMovementTalent(ERarity::Epic, 4, 1.2f, 1.1f),
+        CMovementTalent(ERarity::Legendary, 5, 1.3f, 1.2f),
+        CMovementTalent(ERarity::Mythic, 6, 1.4f, 1.3f),
+        CMovementTalent(ERarity::Ultra, 7, 1.5f, 1.4f),
+        CMovementTalent(ERarity::Super, 9, 1.75f, 1.5f),
+        CMovementTalent(ERarity::Eternal, 13, 2.f, 1.75f),
+    };
+    static const bool linked = []()
+    {
+        auto& health = FlowerHealthTalents();
+        talents[0].m_based = &health[1];
+        for (size_t i = 1; i < talents.size(); ++i)
+            talents[i].m_based = &talents[i - 1];
+        return true;
+    }();
+    (void)linked;
+    return talents;
+}
+
 inline std::array<CBodyToxicityTalent, body_toxicity_tier_count>& BodyToxicityTalents()
 {
     static std::array<CBodyToxicityTalent, body_toxicity_tier_count> talents = {
@@ -746,6 +791,8 @@ inline ITalent* FindBuiltinTalent(ETalentId id, ERarity rarity, int rank = 0)
         return FindTalentByRarity(PetalHealthTalents(), rarity);
     case ETalentId::FlowerHealth:
         return &FlowerHealthTalents()[index];
+    case ETalentId::Movement:
+        return FindTalentByRarity(MovementTalents(), rarity);
     case ETalentId::BodyDamage:
         return FindTalentByRarity(BodyDamageTalents(), rarity);
     case ETalentId::BodyDamagePoison:
@@ -784,8 +831,10 @@ inline std::vector<ITalent*> BuiltinTalents()
     std::vector<ITalent*> talents;
     talents.reserve(talent_tier_count * 4 + short_talent_tier_count * 2 + reach_tier_count + second_chance_tier_count +
                     magnetism_tier_count + sharp_edges_tier_count + body_toxicity_tier_count + duplicator_tier_count +
-                    poison_tier_count + concentrated_poison_tier_count + antennae_tier_count);
+                    poison_tier_count + concentrated_poison_tier_count + antennae_tier_count + movement_tier_count);
     for (auto& talent : FlowerHealthTalents())
+        talents.push_back(&talent);
+    for (auto& talent : MovementTalents())
         talents.push_back(&talent);
     for (auto& talent : BodyDamageTalents())
         talents.push_back(&talent);

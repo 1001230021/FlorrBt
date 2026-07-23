@@ -3,6 +3,7 @@ const BEE_EFFECTIVE_BOX = 91.667;
 const BEE_BASE_FACE_ANGLE = -Math.PI * 0.75;
 const HORNET_BASE_FACE_ANGLE = -Math.PI * 0.75;
 const BEE_SPRITE_SCALE = 2.5;
+const HORNET_SPRITE_SCALE = BEE_SPRITE_SCALE * 0.75;
 const BEE_BASE_CACHE = new Map();
 const BEE_ANTENNA_STROKE = "#333";
 const BEE_ANTENNA_LINE_WIDTH = 2.5;
@@ -73,12 +74,14 @@ export function drawBumbleBee(ctx, pos, radius, entityId, angle, motion, time) {
   });
 }
 
-export function drawHornet(ctx, pos, radius, entityId, angle, motion, time) {
+export function drawHornet(ctx, pos, radius, entityId, angle, motion, time, options = {}) {
   drawInsect(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/hornet.svg",
     baseFaceAngle: HORNET_BASE_FACE_ANGLE,
     antennaParts: getHornetAntennaPaths(),
     strip: "hornet",
+    antennaWobble: options.antennaWobble || 0,
+    spriteScale: HORNET_SPRITE_SCALE,
   });
 }
 
@@ -122,10 +125,11 @@ export function drawPollen(ctx, pos, radius, entityId, time) {
 }
 
 function drawInsect(ctx, pos, radius, entityId, angle, motion, time, options) {
-  const spriteSize = Math.max(1, radius * 2 * (BEE_VIEWBOX_SIZE / BEE_EFFECTIVE_BOX) * BEE_SPRITE_SCALE);
+  const spriteScale = options.spriteScale ?? BEE_SPRITE_SCALE;
+  const spriteSize = Math.max(1, radius * 2 * (BEE_VIEWBOX_SIZE / BEE_EFFECTIVE_BOX) * spriteScale);
   const spriteHalf = spriteSize * 0.5;
   const base = insectBaseImage(options.src, options.strip);
-  const antennaJitter = beeAntennaJitter(entityId, motion || 0, time || 0);
+  const antennaJitter = beeAntennaJitter(entityId, motion || 0, time || 0) + (options.antennaWobble || 0);
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
@@ -134,7 +138,7 @@ function drawInsect(ctx, pos, radius, entityId, angle, motion, time, options) {
   if (isImageReady(base)) {
     ctx.drawImage(base, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
   } else {
-    drawFallback(ctx, radius * BEE_SPRITE_SCALE);
+    drawFallback(ctx, radius * spriteScale);
   }
   drawAntennae(ctx, spriteSize, antennaJitter, options.antennaParts);
 
@@ -142,14 +146,15 @@ function drawInsect(ctx, pos, radius, entityId, angle, motion, time, options) {
 }
 
 function beeAntennaJitter(entityId, motion, time) {
-  const period = 4.4 + (entityId % 7) * 0.28;
+  const move = clamp01(motion);
+  const period = (4.4 + (entityId % 7) * 0.28) / (1 + move * 1.85);
   const phase = (time + entityId * 0.31) % period;
-  const duration = 0.52;
+  const duration = 0.52 / (1 + move * 1.85);
   if (phase > duration) return 0;
 
   const t = phase / duration;
   const envelope = 1 - t;
-  return Math.sin(t * Math.PI * 2) * envelope * (0.09 + clamp01(motion) * 0.04);
+  return Math.sin(t * Math.PI * 2) * envelope * (0.09 + move * 0.04);
 }
 
 function drawAntennae(ctx, spriteSize, jitter, paths) {
