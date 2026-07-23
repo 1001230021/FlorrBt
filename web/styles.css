@@ -1069,7 +1069,7 @@ body.mobile-mode-forced .quick-actions {
 .craft-list {
   min-height: 0;
   overflow: auto;
-  padding: 4px 2px 0;
+  padding: 0;
 }
 
 .craft-matrix {
