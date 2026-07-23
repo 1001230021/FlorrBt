@@ -44,6 +44,7 @@ class CFlower : public CAttackableMob<SFlowerStats>
     bool HasNonYinYangPetals() const;
 
     virtual void RebuildFinalStats();
+    void MarkFinalStatsDirty() { m_final_stats_dirty = true; }
     void EquipPetal(int slot_index, const CPetalPrototype* proto, ERarity rarity);
     void LoadPetalSlot(int slot_index, const CPetalPrototype* proto, ERarity rarity);
     void UnequipPetal(int slot_index);
@@ -61,12 +62,14 @@ class CFlower : public CAttackableMob<SFlowerStats>
 
   protected:
     void SetPetalSlotCount(int count);
+    void ClearFinalStatsDirty() { m_final_stats_dirty = false; }
 
   private:
     int m_petal_num_max = static_cast<int>(game_config::default_flower_petal_num_max);
     int m_shield = 0;
     int m_yinyang_layout_count = 0;
     float m_petal_rotation_angle = 0.f;
+    bool m_final_stats_dirty = true;
 
     std::vector<CPetalSlot> m_slots;
 };
@@ -94,7 +97,7 @@ class CPlayerFlower : public CFlower
     bool CanCollide() const override { return !m_is_dead && CFlower::CanCollide(); }
     void EnterDeathState();
     void PrepareRespawnDestroy();
-    void ReviveFromYggdrasil(float health_fraction);
+    bool ReviveFromYggdrasil(float health_fraction);
     void TakeExp(std::int64_t exp);
     std::int64_t ExpRequired() const;
 

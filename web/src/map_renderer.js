@@ -34,19 +34,26 @@ export function createMapRenderer({
       const tmj = await response.json();
       const tileImages = new Map();
       const collidableGids = new Set();
+      const collisionDefs = new Map();
       const tileLoadPromises = [];
       for (const tilesetRef of tmj.tilesets || []) {
         const tilesetPath = joinAssetPath(path, tilesetRef.source || "");
-        if (!tilesetPath) continue;
-        const tsjResponse = await fetch(tilesetPath, { cache: "no-cache" });
-        if (!tsjResponse.ok) throw new Error(`tileset HTTP ${tsjResponse.status}`);
-        const tileset = await tsjResponse.json();
+        let tileset = tilesetRef;
+        if (tilesetPath) {
+          const tsjResponse = await fetch(tilesetPath, { cache: "no-cache" });
+          if (!tsjResponse.ok) throw new Error(`tileset HTTP ${tsjResponse.status}`);
+          tileset = await tsjResponse.json();
+        }
         for (const tile of tileset.tiles || []) {
-          if (!tile.image) continue;
           const gid = (tilesetRef.firstgid || 1) + (tile.id || 0);
-          if (tileHasCollision(tile)) collidableGids.add(gid);
+          const collisionDef = buildTileCollisionDefinition(tile, tileset);
+          if (collisionDef) {
+            collisionDefs.set(gid, collisionDef);
+            if (tileHasFullTileCollision(tile, tileset)) collidableGids.add(gid);
+          }
+          if (!tile.image) continue;
           const image = new Image();
-          const tileSrc = joinAssetPath(tilesetPath, tile.image);
+          const tileSrc = joinAssetPath(tilesetPath || path, tile.image);
           tileLoadPromises.push(loadMapTileImage(image, tileSrc).then((ok) => {
             if (!ok && token === state.mapLoadToken) addConsoleLine(`Tile image failed: ${tileSrc}`, "error");
           }));
@@ -66,6 +73,7 @@ export function createMapRenderer({
         });
       }
       const decorations = await loadMapDecorations(tmj, path, token);
+      const collisionWalls = buildMapCollisionWalls(tmj, layers, collisionDefs);
 
       if (token !== state.mapLoadToken) return;
       state.map = {
@@ -79,6 +87,8 @@ export function createMapRenderer({
         tileImages,
         collidableGids,
         collisionTiles: buildCollisionTiles(layers, collidableGids),
+        collisionWalls,
+        collisionWallBuckets: buildCollisionWallBuckets(collisionWalls, tmj.tilewidth || 512, tmj.tileheight || 512),
         chunkCache: new Map(),
         chunkBuildQueue: [],
         chunkBuildQueued: new Set(),
@@ -440,9 +450,16 @@ export function createMapRenderer({
     if (map.chunkBuildQueue.length) scheduleMapChunkBuildPump(map);
   }
 
+  function resolvePredictedCircleMotion(start, end, radius) {
+    const map = state.map;
+    if (!map?.collisionWalls?.length) return { pos: { x: end.x, y: end.y }, normals: [] };
+    return resolveCircleMotion(map, start, end, Math.max(0, Number(radius) || 0));
+  }
+
   return {
     drawGrid,
     loadMap,
+    resolvePredictedCircleMotion,
   };
 }
 
@@ -559,31 +576,324 @@ function canonicalTileGid(raw) {
   return (raw >>> 0) & 0x1fffffff;
 }
 
-function tileHasCollision(tile) {
-  if (tile?.objectgroup?.objects?.length > 0) return true;
+function buildTileCollisionDefinition(tile, tileset = {}) {
+  const sourceWidth = Math.max(1, Number(tile?.imagewidth || tileset?.tilewidth) || 256);
+  const sourceHeight = Math.max(1, Number(tile?.imageheight || tileset?.tileheight) || 256);
+  const walls = [];
+  for (const object of tile?.objectgroup?.objects || []) {
+    const wall = buildCollisionWallFromObject(object);
+    if (wall) walls.push(wall);
+  }
+  if (!walls.length) {
+    const hasSolidProperty = (tile?.properties || []).some((prop) => {
+      const name = String(prop?.name || "").toLowerCase();
+      return (name === "collision" || name === "collidable" || name === "solid" || name === "wall") &&
+        prop.value !== false;
+    });
+    if (hasSolidProperty) {
+      walls.push(finalizeCollisionWall([
+        { x: 0, y: 0 },
+        { x: sourceWidth, y: 0 },
+        { x: sourceWidth, y: sourceHeight },
+        { x: 0, y: sourceHeight },
+      ], true));
+    }
+  }
+  return walls.length ? { sourceWidth, sourceHeight, walls } : null;
+}
+
+function buildMapCollisionWalls(tmj, layers, collisionDefs) {
+  const walls = [];
+  const tileWidth = Math.max(1, Number(tmj?.tilewidth) || 512);
+  const tileHeight = Math.max(1, Number(tmj?.tileheight) || 512);
+
+  for (const layer of layers || []) {
+    if (!layer.width || !layer.height || !layer.tiles?.length) continue;
+    for (let y = 0; y < layer.height; y += 1) {
+      for (let x = 0; x < layer.width; x += 1) {
+        const raw = (layer.tiles[y * layer.width + x] || 0) >>> 0;
+        const def = collisionDefs.get(canonicalTileGid(raw));
+        if (!def) continue;
+
+        const flipH = (raw & 0x80000000) !== 0;
+        const flipV = (raw & 0x40000000) !== 0;
+        const flipD = (raw & 0x20000000) !== 0;
+        for (const sourceWall of def.walls) {
+          const vertices = sourceWall.vertices.map((point) => {
+            const scaledX = point.x / def.sourceWidth * tileWidth;
+            const scaledY = point.y / def.sourceHeight * tileHeight;
+            const transformed = transformTilePoint(scaledX, scaledY, tileWidth, tileHeight, flipH, flipV, flipD);
+            return { x: x * tileWidth + transformed.x, y: y * tileHeight + transformed.y };
+          });
+          walls.push(finalizeCollisionWall(vertices, sourceWall.closed));
+        }
+      }
+    }
+  }
+
+  for (const layer of tmj?.layers || []) {
+    if (layer?.type !== "objectgroup") continue;
+    for (const object of layer.objects || []) {
+      if (!isMapWallObject(layer, object)) continue;
+      const wall = buildCollisionWallFromObject(object);
+      if (wall) walls.push(wall);
+    }
+  }
+  return walls.filter(Boolean);
+}
+
+function isMapWallObject(layer, object) {
+  const layerName = String(layer?.name || "").toLowerCase();
+  if (layerName === "collision" || layerName === "collisions" || layerName === "wall" || layerName === "walls")
+    return true;
+  const type = String(object?.type || "").toLowerCase();
+  const name = String(object?.name || "").toLowerCase();
+  return type === "wall" || type === "collision" || type === "collisions" ||
+    name === "wall" || name === "collision" || name === "collisions";
+}
+
+function buildCollisionWallFromObject(object) {
+  if (!object) return null;
+  let localVertices = [];
+  let closed = true;
+  if (Array.isArray(object.polygon)) {
+    localVertices = object.polygon;
+  } else if (Array.isArray(object.polyline)) {
+    localVertices = object.polyline;
+    closed = false;
+  } else {
+    const width = Number(object.width) || 0;
+    const height = Number(object.height) || 0;
+    if (width <= 0 || height <= 0) return null;
+    localVertices = [
+      { x: 0, y: 0 },
+      { x: width, y: 0 },
+      { x: width, y: height },
+      { x: 0, y: height },
+    ];
+  }
+
+  if (localVertices.length < (closed ? 3 : 2)) return null;
+  const originX = Number(object.x) || 0;
+  const originY = Number(object.y) || 0;
+  const angle = (Number(object.rotation) || 0) * Math.PI / 180;
+  const sin = Math.sin(angle);
+  const cos = Math.cos(angle);
+  const vertices = localVertices.map((point) => {
+    const localX = Number(point.x) || 0;
+    const localY = Number(point.y) || 0;
+    return {
+      x: originX + localX * cos - localY * sin,
+      y: originY + localX * sin + localY * cos,
+    };
+  });
+  return finalizeCollisionWall(vertices, closed);
+}
+
+function finalizeCollisionWall(vertices, closed) {
+  if (!vertices?.length) return null;
+  let minX = vertices[0].x;
+  let minY = vertices[0].y;
+  let maxX = minX;
+  let maxY = minY;
+  for (const point of vertices) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+  return { vertices, closed, minX, minY, maxX, maxY };
+}
+
+function buildCollisionWallBuckets(walls, tileWidth, tileHeight) {
+  const size = Math.max(128, Math.min(1024, Math.max(Number(tileWidth) || 512, Number(tileHeight) || 512)));
+  const buckets = new Map();
+  for (let id = 0; id < (walls?.length || 0); id += 1) {
+    const wall = walls[id];
+    const minX = Math.floor(wall.minX / size);
+    const minY = Math.floor(wall.minY / size);
+    const maxX = Math.floor(wall.maxX / size);
+    const maxY = Math.floor(wall.maxY / size);
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const key = `${x}:${y}`;
+        let bucket = buckets.get(key);
+        if (!bucket) buckets.set(key, bucket = []);
+        bucket.push(id);
+      }
+    }
+  }
+  return { size, buckets };
+}
+
+function collisionWallsInBounds(map, minX, minY, maxX, maxY) {
+  const index = map?.collisionWallBuckets;
+  if (!index?.buckets) return map?.collisionWalls || [];
+  const ids = new Set();
+  const firstX = Math.floor(minX / index.size);
+  const firstY = Math.floor(minY / index.size);
+  const lastX = Math.floor(maxX / index.size);
+  const lastY = Math.floor(maxY / index.size);
+  for (let y = firstY; y <= lastY; y += 1) {
+    for (let x = firstX; x <= lastX; x += 1) {
+      for (const id of index.buckets.get(`${x}:${y}`) || []) ids.add(id);
+    }
+  }
+  return [...ids].map((id) => map.collisionWalls[id]);
+}
+
+function resolveCircleMotion(map, start, end, radius) {
+  const motion = { x: end.x - start.x, y: end.y - start.y };
+  const travel = Math.hypot(motion.x, motion.y);
+  const maxStep = Math.max(2, radius * 0.5);
+  const steps = Math.max(1, Math.ceil(travel / maxStep));
+  const step = { x: motion.x / steps, y: motion.y / steps };
+  const pos = { x: start.x, y: start.y };
+  const normals = [];
+
+  for (let i = 0; i < steps; i += 1) {
+    const previous = { x: pos.x, y: pos.y };
+    pos.x += step.x;
+    pos.y += step.y;
+    for (let pass = 0; pass < 4; pass += 1) {
+      let pushed = false;
+      const walls = collisionWallsInBounds(
+        map,
+        Math.min(previous.x, pos.x) - radius - 1,
+        Math.min(previous.y, pos.y) - radius - 1,
+        Math.max(previous.x, pos.x) + radius + 1,
+        Math.max(previous.y, pos.y) + radius + 1,
+      );
+      for (const wall of walls) {
+        const normal = pushCircleOutOfWall(pos, radius, wall, step);
+        if (!normal) continue;
+        pushed = true;
+        normals.push(normal);
+      }
+      if (!pushed) break;
+    }
+  }
+  return { pos, normals };
+}
+
+function pushCircleOutOfWall(pos, radius, wall, motion) {
+  if (!wall || pos.x + radius < wall.minX || pos.x - radius > wall.maxX ||
+      pos.y + radius < wall.minY || pos.y - radius > wall.maxY) return null;
+
+  const count = wall.closed ? wall.vertices.length : wall.vertices.length - 1;
+  let bestDistanceSq = Number.POSITIVE_INFINITY;
+  let closest = null;
+  let edgeA = null;
+  let edgeB = null;
+  for (let i = 0; i < count; i += 1) {
+    const a = wall.vertices[i];
+    const b = wall.vertices[(i + 1) % wall.vertices.length];
+    const point = closestPointOnSegment(pos, a, b);
+    const dx = pos.x - point.x;
+    const dy = pos.y - point.y;
+    const distanceSq = dx * dx + dy * dy;
+    if (distanceSq >= bestDistanceSq) continue;
+    bestDistanceSq = distanceSq;
+    closest = point;
+    edgeA = a;
+    edgeB = b;
+  }
+  if (!closest) return null;
+
+  const inside = wall.closed && pointInPolygon(pos, wall.vertices);
+  const distance = Math.sqrt(Math.max(0, bestDistanceSq));
+  if (!inside && distance >= radius) return null;
+
+  let normal;
+  if (distance > 0.000001) {
+    const scale = 1 / distance;
+    normal = inside
+      ? { x: (closest.x - pos.x) * scale, y: (closest.y - pos.y) * scale }
+      : { x: (pos.x - closest.x) * scale, y: (pos.y - closest.y) * scale };
+  } else {
+    const edgeX = edgeB.x - edgeA.x;
+    const edgeY = edgeB.y - edgeA.y;
+    const edgeLength = Math.hypot(edgeX, edgeY) || 1;
+    normal = { x: -edgeY / edgeLength, y: edgeX / edgeLength };
+    if (wall.closed) {
+      const probe = { x: pos.x + normal.x, y: pos.y + normal.y };
+      if (pointInPolygon(probe, wall.vertices)) normal = { x: -normal.x, y: -normal.y };
+    } else if (normal.x * motion.x + normal.y * motion.y > 0) {
+      normal = { x: -normal.x, y: -normal.y };
+    }
+  }
+
+  const penetration = inside ? radius + distance : radius - distance;
+  const skin = 0.5;
+  pos.x += normal.x * (penetration + skin);
+  pos.y += normal.y * (penetration + skin);
+  return normal;
+}
+
+function closestPointOnSegment(point, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq <= 0.000001) return { x: a.x, y: a.y };
+  const t = clamp(((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq, 0, 1);
+  return { x: a.x + dx * t, y: a.y + dy * t };
+}
+
+function pointInPolygon(point, vertices) {
+  let inside = false;
+  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i, i += 1) {
+    const a = vertices[i];
+    const b = vertices[j];
+    const crosses = ((a.y > point.y) !== (b.y > point.y)) &&
+      point.x < (b.x - a.x) * (point.y - a.y) / ((b.y - a.y) || Number.EPSILON) + a.x;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+function tileHasFullTileCollision(tile, tileset = {}) {
+  const width = Number(tile?.imagewidth || tileset?.tilewidth) || 256;
+  const height = Number(tile?.imageheight || tileset?.tileheight) || 256;
   for (const prop of tile?.properties || []) {
     const name = String(prop?.name || "").toLowerCase();
     if ((name === "collision" || name === "collidable" || name === "solid" || name === "wall") && prop.value !== false)
       return true;
   }
+  for (const object of tile?.objectgroup?.objects || []) {
+    if (objectIsFullTileCollisionRect(object, width, height)) return true;
+  }
   return false;
 }
 
-function layerLooksCollidable(layer) {
-  const name = String(layer?.name || "").toLowerCase();
-  return /\b(wall|collision|collidable|solid|block)\b/.test(name);
+function objectIsFullTileCollisionRect(object, width, height) {
+  if (!object || object.visible === false) return false;
+  if (object.polygon || object.polyline || object.ellipse || object.point) return false;
+  if ((Number(object.rotation) || 0) !== 0) return false;
+
+  const x = Number(object.x ?? 0);
+  const y = Number(object.y ?? 0);
+  const objectWidth = Number(object.width);
+  const objectHeight = Number(object.height);
+  if (![x, y, objectWidth, objectHeight, width, height].every(Number.isFinite)) return false;
+
+  const epsilon = 0.5;
+  return (
+    Math.abs(x) <= epsilon &&
+    Math.abs(y) <= epsilon &&
+    Math.abs(objectWidth - width) <= epsilon &&
+    Math.abs(objectHeight - height) <= epsilon
+  );
 }
 
 function buildCollisionTiles(layers, collidableGids) {
   const byTile = new Map();
   for (const layer of layers || []) {
     if (!layer.width || !layer.height || !layer.tiles?.length) continue;
-    const layerCollidable = layerLooksCollidable(layer);
     for (let y = 0; y < layer.height; y += 1) {
       for (let x = 0; x < layer.width; x += 1) {
         const gid = canonicalTileGid(layer.tiles[y * layer.width + x] || 0);
         if (!gid) continue;
-        if (!layerCollidable && !collidableGids.has(gid)) continue;
+        if (!collidableGids.has(gid)) continue;
         byTile.set(`${x}:${y}`, { x, y });
       }
     }

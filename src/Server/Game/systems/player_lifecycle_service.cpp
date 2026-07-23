@@ -379,7 +379,9 @@ void CPlayerLifecycleService::RespawnDeadControlledEntities(const std::vector<st
         if (!entity->IsDead()) continue;
 
         player->SetOwnedEntity(nullptr);
-        if (Respawn(*player, respawn_world) && player->IsConnected())
+        CGameWorld* current_world = entity->GameWorld();
+        if (!current_world) current_world = &respawn_world;
+        if (Respawn(*player, *current_world) && player->IsConnected())
             NotifyPlayerWorldChanged(*player, notifier);
     }
 }

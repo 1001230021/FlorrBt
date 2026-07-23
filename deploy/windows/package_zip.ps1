@@ -62,6 +62,11 @@ Copy-Dir (Join-Path $RepoRoot "data") (Join-Path $StageRoot "data")
 Copy-Dir (Join-Path $RepoRoot "tools") (Join-Path $StageRoot "tools")
 Copy-Dir (Join-Path $RepoRoot "deploy\windows") (Join-Path $StageRoot "deploy\windows")
 Copy-Dir (Join-Path $RepoRoot "deploy\windows-web") (Join-Path $StageRoot "deploy\windows-web")
+Get-ChildItem -LiteralPath $StageRoot -Directory -Recurse -Force -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -eq "__pycache__" } |
+    Remove-Item -Recurse -Force
+Get-ChildItem -LiteralPath $StageRoot -File -Recurse -Force -Filter "*.pyc" -ErrorAction SilentlyContinue |
+    Remove-Item -Force
 Get-ChildItem -LiteralPath $StageRoot -Filter "*.log" -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
     Remove-Item -LiteralPath $_.FullName -Force
 }

@@ -7,12 +7,39 @@
 #include <filesystem>
 #include <random>
 
-IWorldModule::IWorldModule()
+namespace
 {
-    auto world = std::make_unique<CGameWorld>(game_config::lobby_map_path);
+
+constexpr const char* ant_hel_map_path = "data/maps/ant_hel.tmj";
+
+std::unique_ptr<CGameWorld> CreateOpenWorld(const std::string& map_path)
+{
+    auto world = std::make_unique<CGameWorld>(map_path);
     auto controller = std::make_unique<COpenController>();
     world->SetController(std::move(controller));
-    m_worlds.emplace_back(std::move(world));
+    return world;
+}
+
+std::string NormalizeMapName(std::string name)
+{
+    std::replace(name.begin(), name.end(), '\\', '/');
+    std::filesystem::path path(name);
+    if (path.has_extension()) name = path.stem().generic_string();
+    else if (path.has_parent_path()) name = path.filename().generic_string();
+
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch)
+    {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return name;
+}
+
+}
+
+IWorldModule::IWorldModule()
+{
+    m_worlds.emplace_back(CreateOpenWorld(game_config::lobby_map_path));
+    m_worlds.emplace_back(CreateOpenWorld(ant_hel_map_path));
 }
 
 bool IWorldModule::Init()
@@ -29,23 +56,6 @@ void IWorldModule::Tick(float dt)
 }
 
 void IWorldModule::ShutDown() {}
-
-namespace
-{
-std::string NormalizeMapName(std::string name)
-{
-    std::replace(name.begin(), name.end(), '\\', '/');
-    std::filesystem::path path(name);
-    if (path.has_extension()) name = path.stem().generic_string();
-    else if (path.has_parent_path()) name = path.filename().generic_string();
-
-    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch)
-    {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return name;
-}
-}
 
 std::vector<CGameWorld*> IWorldModule::FindWorldsByMapName(const std::string& map_name) const
 {

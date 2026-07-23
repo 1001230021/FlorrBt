@@ -396,6 +396,83 @@ inline void RegisterWikiAntDropRates()
     RegisterWikiTermiteOvermindCompassDropTable();
 }
 
+inline void RegisterExtendedHighRarityDropRates()
+{
+    // Super petals are intentionally rarer than the already rare Ultra-petal rolls.
+    constexpr double super_petal_rate = 0.00000001; // 0.000001%
+    constexpr double eternal_super_min_rate = 0.030108;
+    constexpr double eternal_super_max_rate = 0.099892;
+    constexpr double easy_super_ultra_rate = 0.45;
+
+    std::unordered_map<EMobType, std::vector<EPetalType>> drop_types;
+    for (const auto& [key, drops] : GetDropRateTable())
+    {
+        if (key.mob_type == EMobType::None) continue;
+        auto& types = drop_types[key.mob_type];
+        for (const SDropRate& drop : drops)
+        {
+            if (drop.type == EPetalType::None) continue;
+            if (std::find(types.begin(), types.end(), drop.type) == types.end())
+                types.push_back(drop.type);
+        }
+    }
+
+    for (const auto& [mob_type, types] : drop_types)
+    {
+        auto& super_drops = GetDropRateTable()[SDropRateKey{mob_type, ERarity::Super}];
+        auto& eternal_drops = GetDropRateTable()[SDropRateKey{mob_type, ERarity::Eternal}];
+
+        for (EPetalType type : types)
+        {
+            double source_ultra_rate = 0.0;
+            double source_mythic_rate = 0.0;
+            bool has_super_petal = false;
+            for (SDropRate& drop : super_drops)
+            {
+                if (drop.type != type) continue;
+                if (drop.rarity == ERarity::Ultra)
+                    source_ultra_rate += drop.drop_rate;
+                else if (drop.rarity == ERarity::Mythic)
+                    source_mythic_rate += drop.drop_rate;
+                else if (drop.rarity == ERarity::Super)
+                {
+                    drop.drop_rate = super_petal_rate;
+                    has_super_petal = true;
+                }
+            }
+            if (!has_super_petal) super_drops.push_back({type, ERarity::Super, super_petal_rate});
+
+            double ease = std::clamp(source_ultra_rate / easy_super_ultra_rate, 0.0, 1.0);
+            double eternal_super_rate = eternal_super_min_rate +
+                (eternal_super_max_rate - eternal_super_min_rate) * ease * ease * ease;
+
+            double source_total = source_ultra_rate + source_mythic_rate;
+            double ultra_share = source_total > 0.0 ? source_ultra_rate / source_total : 0.65;
+            double remaining_rate = 1.0 - eternal_super_rate;
+            double eternal_ultra_rate = remaining_rate * ultra_share;
+            double eternal_mythic_rate = remaining_rate - eternal_ultra_rate;
+
+            eternal_drops.erase(std::remove_if(eternal_drops.begin(), eternal_drops.end(),
+                                               [type](const SDropRate& drop) { return drop.type == type; }),
+                                eternal_drops.end());
+            eternal_drops.push_back({type, ERarity::Super, eternal_super_rate});
+            eternal_drops.push_back({type, ERarity::Ultra, eternal_ultra_rate});
+            eternal_drops.push_back({type, ERarity::Mythic, eternal_mythic_rate});
+        }
+
+        auto sort_drops = [](std::vector<SDropRate>& drops)
+        {
+            std::sort(drops.begin(), drops.end(), [](const SDropRate& lhs, const SDropRate& rhs)
+            {
+                if (lhs.type != rhs.type) return static_cast<int>(lhs.type) < static_cast<int>(rhs.type);
+                return GetRaritySortRank(lhs.rarity) > GetRaritySortRank(rhs.rarity);
+            });
+        };
+        sort_drops(super_drops);
+        sort_drops(eternal_drops);
+    }
+}
+
 inline void RegisterDropRates()
 {
     ClearDropRateTable();
@@ -999,6 +1076,7 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::Beetle, ERarity::Super, EPetalType::BeetleEgg, ERarity::Mythic, 0.535);
 
     RegisterWikiAntDropRates();
+    RegisterExtendedHighRarityDropRates();
 }
 
 inline const std::vector<SDropRate>& QueryDropRates(EMobType mob_type, ERarity rarity)

@@ -20,7 +20,7 @@ class CPetalSlot
     void ClearPetal();
     void KillCopy(int copy_index);
     void RefreshPetalState(CFlower* flower);
-    void Tick(float dt, CFlower* flower);
+    void Tick(float dt, CFlower* flower, bool state_refreshed = false);
     void ApplyStatsTo(SFlowerStats& target, const CFlower* flower = nullptr) const;
     int GetBonusCopyCount(const CFlower* flower = nullptr) const;
     int GetCurrentCopyCount(const CFlower* flower = nullptr) const;

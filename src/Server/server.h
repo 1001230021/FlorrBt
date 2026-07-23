@@ -56,6 +56,7 @@ class CServer
     static bool MeetsPetalReportRarity(ERarity rarity, int min_rarity);
     bool BroadcastPetalReport(std::string_view done, ERarity rarity, std::string_view petal_name,
                               std::string_view doer);
+    bool BroadcastMobReport(std::string_view action, ERarity rarity, std::string_view mob_name);
 
   private:
     void ExecuteStartupCommands();

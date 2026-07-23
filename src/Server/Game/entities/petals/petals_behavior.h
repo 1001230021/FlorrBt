@@ -1942,6 +1942,14 @@ class CYggdrasilBehavior : public CPetalBehavior
         return stats;
     }
 
+    static bool IsValidCorpse(const CYggdrasilPetal* owner, const CFlower* flower,
+                              const CPlayerFlower* corpse)
+    {
+        if (!owner || !flower || !corpse || !corpse->m_is_dead || corpse->m_is_marked_for_des) return false;
+        if (!CheckTeam(corpse->m_team, flower->m_team)) return false;
+        return !BlocksNullifiedInteraction(owner, corpse);
+    }
+
     static CPlayerFlower* FindCorpse(CYggdrasilPetal* owner, CFlower* flower)
     {
         if (!owner || !flower || !flower->GameWorld()) return nullptr;
@@ -1949,18 +1957,19 @@ class CYggdrasilBehavior : public CPetalBehavior
         float range = owner->m_radius * 5.f;
         if (range <= 0.f) return nullptr;
 
-        auto filter = [owner, flower](const CEntity* entity) -> bool
+        CPlayerFlower* closest = nullptr;
+        float closest_edge_distance = range;
+        flower->GameWorld()->ForEachEntity([&](CEntity* entity)
         {
-            if (!entity || entity->m_is_marked_for_des) return false;
-            if (!CheckTeam(entity->m_team, flower->m_team)) return false;
-            if (BlocksNullifiedInteraction(owner, entity)) return false;
-            const auto* corpse = dynamic_cast<const CPlayerFlower*>(entity);
-            return corpse && corpse->m_is_dead;
-        };
+            auto* corpse = dynamic_cast<CPlayerFlower*>(entity);
+            if (!IsValidCorpse(owner, flower, corpse)) return;
 
-        CEntity* raw = PetalGetCachedTarget(owner, flower, owner->m_pos, range, filter);
-        if (!raw) raw = PetalFindClosestTarget(owner, flower, owner->m_pos, range, filter);
-        return dynamic_cast<CPlayerFlower*>(raw);
+            float edge_distance = PetalEdgeDistance(owner->m_pos, corpse);
+            if (edge_distance > closest_edge_distance) return;
+            closest_edge_distance = edge_distance;
+            closest = corpse;
+        });
+        return closest;
     }
 
     void OnTick(CPetal* raw_owner, ERarity rarity, CFlower* flower, float dt) override
@@ -1974,7 +1983,7 @@ class CYggdrasilBehavior : public CPetalBehavior
             target = dynamic_cast<CPlayerFlower*>(
                 flower->GameWorld()->GetEntity(owner->m_revive_target_id, owner->m_revive_target_generation));
             const float range = owner->m_radius * 5.f;
-            if (!target || !target->m_is_dead || !CheckTeam(target->m_team, flower->m_team) ||
+            if (!IsValidCorpse(owner, flower, target) ||
                 !PetalTargetInRange(owner->m_pos, range, target))
             {
                 owner->m_revive_target_id = -1;
@@ -2013,7 +2022,14 @@ class CYggdrasilBehavior : public CPetalBehavior
         owner->m_revive_timer += dt;
         if (owner->m_revive_timer < YggdrasilChannelTime(rarity)) return;
 
-        target->ReviveFromYggdrasil(owner->m_final_petal_stats.medicine);
+        if (!target->ReviveFromYggdrasil(owner->m_final_petal_stats.medicine))
+        {
+            owner->m_revive_target_id = -1;
+            owner->m_revive_target_generation = 0;
+            owner->m_revive_timer = 0.f;
+            PetalClearTarget(owner);
+            return;
+        }
         owner->m_reload_override = YggdrasilChannelTime(rarity);
         owner->m_reload_ignore_multiplier = true;
         owner->m_health = 0.f;

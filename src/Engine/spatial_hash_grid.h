@@ -28,7 +28,96 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
     {
     }
 
-    void Clear() { m_grid.clear(); }
+    void Clear()
+    {
+        m_grid.clear();
+        m_tracked.clear();
+    }
+
+    void InsertTracked(TObject* object)
+    {
+        if (!object || !IsValid(*object)) return;
+        if (m_query_depth > 0)
+        {
+            m_pending_tracked_ops.push_back({tracked_op_type::Insert, object, m_get_id(*object)});
+            return;
+        }
+
+        const TId id = m_get_id(*object);
+        RemoveTracked(id);
+
+        const sf::Vector2f pos = m_get_position(*object);
+        const std::uint64_t cell = HashCell(CellX(pos.x), CellY(pos.y));
+        std::vector<TId>& ids = m_grid[cell];
+        m_tracked[id] = {cell, ids.size()};
+        ids.push_back(id);
+    }
+
+    void UpdateTracked(TObject* object)
+    {
+        if (!object) return;
+        const TId id = m_get_id(*object);
+        if (m_query_depth > 0)
+        {
+            m_pending_tracked_ops.push_back({tracked_op_type::Update, object, id});
+            return;
+        }
+        if (!IsValid(*object))
+        {
+            RemoveTracked(id);
+            return;
+        }
+
+        const sf::Vector2f pos = m_get_position(*object);
+        const std::uint64_t cell = HashCell(CellX(pos.x), CellY(pos.y));
+        auto tracked = m_tracked.find(id);
+        if (tracked != m_tracked.end() && tracked->second.cell == cell) return;
+
+        RemoveTracked(id);
+        std::vector<TId>& ids = m_grid[cell];
+        m_tracked[id] = {cell, ids.size()};
+        ids.push_back(id);
+    }
+
+    void RemoveTracked(TId id)
+    {
+        if (m_query_depth > 0)
+        {
+            m_pending_tracked_ops.push_back({tracked_op_type::Remove, nullptr, id});
+            return;
+        }
+
+        auto tracked = m_tracked.find(id);
+        if (tracked == m_tracked.end()) return;
+
+        auto cell_it = m_grid.find(tracked->second.cell);
+        if (cell_it != m_grid.end())
+        {
+            std::vector<TId>& ids = cell_it->second;
+            const size_t index = tracked->second.index;
+            if (index < ids.size())
+            {
+                const TId moved_id = ids.back();
+                ids[index] = moved_id;
+                ids.pop_back();
+                if (index < ids.size())
+                {
+                    auto moved = m_tracked.find(moved_id);
+                    if (moved != m_tracked.end()) moved->second.index = index;
+                }
+            }
+            if (ids.empty()) m_grid.erase(cell_it);
+        }
+        m_tracked.erase(tracked);
+    }
+
+    void RebuildTracked(const std::vector<TObject*>& objects)
+    {
+        Clear();
+        m_grid.reserve(objects.size());
+        m_tracked.reserve(objects.size());
+        for (TObject* object : objects) InsertTracked(object);
+    }
 
     void Insert(TObject* object)
     {
@@ -89,6 +178,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
 
     TObject* FindClosest(const sf::Vector2f& center, float max_range, query_filter filter = nullptr) const
     {
+        query_guard guard(*this);
         TObject* target = nullptr;
         float min_dist_sq = (max_range == global_range) ? std::numeric_limits<float>::max() : max_range * max_range;
 
@@ -145,6 +235,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
     template <typename TVisitor> void ForEachInRange(const sf::Vector2f& center, float radius, TVisitor visitor) const
     {
         if (radius <= 0.f) return;
+        query_guard guard(*this);
 
         float radius_sq = radius * radius;
         VisitCellsInRange(center, radius, [&](const std::vector<TId>& ids)
@@ -166,9 +257,10 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
 
     template <typename TVisitor>
     void ForEachInRangeBroadphase(const sf::Vector2f& center, float radius, std::unordered_set<TId>& visited,
-                                  TVisitor visitor) const
+                                   TVisitor visitor) const
     {
         if (radius <= 0.f) return;
+        query_guard guard(*this);
 
         visited.clear();
         VisitCellsInRange(center, radius, [&](const std::vector<TId>& ids)
@@ -184,6 +276,65 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
     }
 
   private:
+    enum class tracked_op_type : std::uint8_t
+    {
+        Insert,
+        Update,
+        Remove,
+    };
+
+    struct tracked_location
+    {
+        std::uint64_t cell = 0;
+        size_t index = 0;
+    };
+
+    struct pending_tracked_op
+    {
+        tracked_op_type type = tracked_op_type::Update;
+        TObject* object = nullptr;
+        TId id{};
+    };
+
+    class query_guard
+    {
+      public:
+        explicit query_guard(const CSpatialHashGrid& grid) : m_grid(grid) { ++m_grid.m_query_depth; }
+        ~query_guard()
+        {
+            if (--m_grid.m_query_depth == 0)
+                const_cast<CSpatialHashGrid&>(m_grid).FlushPendingTrackedOps();
+        }
+
+      private:
+        const CSpatialHashGrid& m_grid;
+    };
+
+    void FlushPendingTrackedOps()
+    {
+        if (m_query_depth > 0 || m_pending_tracked_ops.empty()) return;
+
+        std::vector<pending_tracked_op> pending;
+        pending.swap(m_pending_tracked_ops);
+        for (const pending_tracked_op& op : pending)
+        {
+            switch (op.type)
+            {
+            case tracked_op_type::Insert:
+                if (!op.object || m_get_id(*op.object) != op.id || Resolve(op.id) != op.object) break;
+                InsertTracked(op.object);
+                break;
+            case tracked_op_type::Update:
+                if (!op.object || m_get_id(*op.object) != op.id || Resolve(op.id) != op.object) break;
+                UpdateTracked(op.object);
+                break;
+            case tracked_op_type::Remove:
+                RemoveTracked(op.id);
+                break;
+            }
+        }
+    }
+
     template <typename TVisitor> void VisitCellsInRange(const sf::Vector2f& center, float radius, TVisitor visitor) const
     {
         int min_cell_x = CellX(center.x - radius);
@@ -219,4 +370,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
     resolver m_resolve;
     valid_filter m_is_valid;
     std::unordered_map<std::uint64_t, std::vector<TId>> m_grid;
+    std::unordered_map<TId, tracked_location> m_tracked;
+    mutable size_t m_query_depth = 0;
+    mutable std::vector<pending_tracked_op> m_pending_tracked_ops;
 };

@@ -4,14 +4,31 @@
 #include "../player.h"
 #include "../../server.h"
 #include <algorithm>
+#include <cmath>
 #include <limits>
+
+namespace
+{
+float InitialDropMergeTimer(sf::Vector2f pos, int owner_id)
+{
+    const float interval = std::max(game_config::server_fixed_dt, game_config::default_drop_merge_interval);
+    if (interval <= 0.f) return 0.f;
+
+    const float owner = static_cast<float>(owner_id + 1);
+    float seed = std::fabs(pos.x) * 0.6180339f + std::fabs(pos.y) * 0.4142135f + std::fabs(owner) * 0.2718281f;
+    float phase = std::fmod(seed, 1.f);
+    if (phase < 0.f) phase += 1.f;
+    return interval * std::clamp(phase, 0.05f, 0.95f);
+}
+}
 
 CDrop::CDrop() : CDrop(nullptr, {0.f, 0.f}, PetalType::None, ERarity::Null, drop_owner_all, 0.f, 0) {}
 
 CDrop::CDrop(CGameWorld* world, sf::Vector2f pos, PetalType type, ERarity rarity, int owner_id, float lifetime,
              uint16_t stack_num)
     : CEntity(world, pos.x, pos.y, game_config::default_drop_radius), m_type(type), m_rarity(rarity),
-      m_owner_id(owner_id), m_stack_num(stack_num), m_timer(std::max(0.f, lifetime))
+      m_owner_id(owner_id), m_stack_num(stack_num), m_merge_timer(InitialDropMergeTimer(pos, owner_id)),
+      m_timer(std::max(0.f, lifetime))
 {
     m_health = 1.f;
     m_mass = game_config::default_drop_mass;

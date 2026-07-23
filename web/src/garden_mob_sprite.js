@@ -93,7 +93,7 @@ export function drawBabyAnt(ctx, pos, radius, entityId, angle, motion, time) {
 export function drawWorkerAnt(ctx, pos, radius, entityId, angle, motion, time) {
   drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/worker_ant.svg",
-    sizeScale: 5.3,
+    sizeScale: 5.83,
     stripWings: false,
     forelimbAmplitude: 0.18,
   });
