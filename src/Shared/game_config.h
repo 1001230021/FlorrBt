@@ -25,6 +25,7 @@ inline std::string server_log_path = "data/server.log";
 inline std::string startup_commands_path = "data/server.cfg";
 inline int min_craft_report_rarity = 8;
 inline int min_drop_report_rarity = 8;
+inline int min_mob_spawn_report_rarity = 8;
 inline float default_acceleration = WorldUnits(150.0f);
 inline float default_air_base_mass = 16.0f;
 inline float default_air_base_radius = WorldUnits(8.0f);
@@ -733,6 +734,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("gui_console", gui_console_enabled),
         REGISTER_CONFIG("min_craft_report_rarity", min_craft_report_rarity),
         REGISTER_CONFIG("min_drop_report_rarity", min_drop_report_rarity),
+        REGISTER_CONFIG("min_mob_spawn_report_rarity", min_mob_spawn_report_rarity),
         REGISTER_CONFIG("acceleration", default_acceleration),
         REGISTER_CONFIG("air_base_mass", default_air_base_mass),
         REGISTER_CONFIG("air_base_radius", default_air_base_radius),

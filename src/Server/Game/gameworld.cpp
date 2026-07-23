@@ -15,6 +15,7 @@
 #include "../../Shared/game_config.h"
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cctype>
 #include <filesystem>
@@ -30,6 +31,7 @@ namespace
 constexpr const char* default_map_path = "data/maps/garden.tmj";
 constexpr int transfer_spawn_position_attempts = 32;
 constexpr float wall_contact_skin = 0.5f;
+constexpr float active_tick_view_padding = 4096.f;
 std::mutex g_server_crash_context_mutex;
 std::string g_last_server_crash_context = "startup";
 
@@ -39,14 +41,65 @@ struct summon_owner_link
     int root_owner_id = -1;
 };
 
-struct active_tick_view
-{
-    sf::Vector2f center;
-    float radius = 0.f;
-};
+using active_tick_view = CActiveTickView;
 
 float Dot(sf::Vector2f a, sf::Vector2f b);
 bool CollisionPairAlive(const CEntity* lhs, const CEntity* rhs);
+
+bool TryMergeActiveTickViews(active_tick_view& base, const active_tick_view& incoming)
+{
+    if (incoming.radius <= 0.f) return true;
+    if (base.radius <= 0.f)
+    {
+        base = incoming;
+        return true;
+    }
+
+    sf::Vector2f delta = incoming.center - base.center;
+    const float dist_sq = delta.x * delta.x + delta.y * delta.y;
+    const float dist = std::sqrt(std::max(0.f, dist_sq));
+    if (dist + incoming.radius <= base.radius) return true;
+    if (dist + base.radius <= incoming.radius)
+    {
+        base = incoming;
+        return true;
+    }
+
+    const float min_radius = std::min(base.radius, incoming.radius);
+    if (dist > min_radius * 0.5f) return false;
+    if (dist <= game_config::entity_collision_epsilon)
+    {
+        base.radius = std::max(base.radius, incoming.radius);
+        return true;
+    }
+
+    const float merged_radius = (dist + base.radius + incoming.radius) * 0.5f;
+    const sf::Vector2f dir = delta / dist;
+    base.center += dir * (merged_radius - base.radius);
+    base.radius = merged_radius;
+    return true;
+}
+
+void AddActiveTickView(std::vector<active_tick_view>& views, active_tick_view view)
+{
+    if (view.radius <= 0.f) return;
+
+    for (size_t i = 0; i < views.size();)
+    {
+        active_tick_view merged = views[i];
+        if (!TryMergeActiveTickViews(merged, view))
+        {
+            ++i;
+            continue;
+        }
+
+        view = merged;
+        views.erase(views.begin() + static_cast<std::ptrdiff_t>(i));
+        i = 0;
+    }
+
+    views.push_back(view);
+}
 
 std::string WarpKey(std::string text)
 {
@@ -278,11 +331,11 @@ bool IsSameTeamSandstormMobCollision(const CMobBase* lhs, const CMobBase* rhs)
     return CheckTeam(lhs->m_team, rhs->m_team);
 }
 
-std::vector<active_tick_view> BuildActiveTickViews(CGameWorld& world)
+void BuildActiveTickViews(CGameWorld& world, std::vector<active_tick_view>& views)
 {
-    std::vector<active_tick_view> views;
+    views.clear();
     CGameContext* context = world.GameContext();
-    if (!context) return views;
+    if (!context) return;
 
     const auto& players = context->Players();
     views.reserve(players.size());
@@ -296,12 +349,9 @@ std::vector<active_tick_view> BuildActiveTickViews(CGameWorld& world)
         if (owner && owner->GameWorld() != &world) continue;
         if (!owner || owner->m_is_marked_for_des || !stats) continue;
 
-        float radius = std::max(0.f, stats->horizon) * 2.f;
-        if (game_config::simulation_active_view_radius_cap > 0.f)
-            radius = std::min(radius, game_config::simulation_active_view_radius_cap);
-        views.push_back({owner->m_pos, radius});
+        float radius = active_tick_view_padding + std::max(0.f, stats->horizon);
+        AddActiveTickView(views, {owner->m_pos, radius});
     }
-    return views;
 }
 
 bool IsSameTeamPetalFlowerCollision(const CEntity* lhs, const CEntity* rhs)
@@ -597,7 +647,7 @@ void ApplyPhysicalDamageHits(CEntity* target, float damage, CEntity* attacker, i
 
     for (int hit = 0; hit < hit_count; ++hit)
     {
-        if (target->m_is_marked_for_des || target->IsDead() || target->m_health <= 0.f) break;
+        if (target->IsDead() || target->m_health <= 0.f) break;
         target->TakeDamage(damage, attacker, EDamageType::Normal);
     }
 }
@@ -621,8 +671,8 @@ void ApplyPetalHits(CPetal* petal, CMobBase* target, float dt)
     const CPetalPrototype* proto = FindPetalPrototype(petal->m_type);
     for (int hit = 0; hit < hit_count; ++hit)
     {
-        if (hit > 0 && (petal->m_is_marked_for_des || petal->m_health <= 0.f)) break;
-        if (target->m_is_marked_for_des) break;
+        if (hit > 0 && petal->m_health <= 0.f) break;
+        if (target->IsDead()) break;
 
         float damage = petal->m_final_petal_stats.damage;
         if (proto && proto->m_p_behavior)
@@ -635,7 +685,7 @@ void ApplyPetalHits(CPetal* petal, CMobBase* target, float dt)
 
 void ApplyMobHitToPetal(CMobBase* mob, CPetal* petal)
 {
-    if (!mob || !petal || mob->m_is_marked_for_des || petal->m_is_marked_for_des) return;
+    if (!mob || !petal) return;
 
     const SMobStats* stats = mob->GetFinalStats();
     if (!stats || stats->damage <= 0.f) return;
@@ -652,7 +702,7 @@ void ApplyContactDamageToMissile(CMissile* missile, CEntity* target, float dt)
         int hit_count = PetalPhysicalHitCountForTick(petal, missile, dt);
         for (int hit = 0; hit < hit_count; ++hit)
         {
-            if (missile->m_is_marked_for_des || missile->m_health <= 0.f) break;
+            if (missile->m_health <= 0.f) break;
             float damage = petal->m_final_petal_stats.damage;
             if (damage <= 0.f) break;
             missile->TakeDamage(damage, petal->GetOwner(), EDamageType::Normal);
@@ -735,8 +785,7 @@ bool ApplyPollenHit(CPollenProjectile* pollen, CEntity* target)
 
 bool CollisionPairAlive(const CEntity* lhs, const CEntity* rhs)
 {
-    return lhs && rhs && !lhs->m_is_marked_for_des && !rhs->m_is_marked_for_des &&
-           lhs->GameWorld() && lhs->GameWorld() == rhs->GameWorld();
+    return lhs && rhs && lhs->GameWorld() && lhs->GameWorld() == rhs->GameWorld();
 }
 
 void ApplyBodyPoison(CMobBase* attacker, CEntity* target)
@@ -1126,13 +1175,15 @@ CGameWorld::CGameWorld(const std::string& path)
           game_config::spatial_grid_cell_size, [](const CEntity& entity) { return entity.m_pos; },
           [](const CEntity& entity) { return entity.m_id; },
           [this](int id) { return GetEntity(id); },
-          [](const CEntity& entity) { return entity.m_id >= 0 && !entity.m_is_marked_for_des; }),
+          [](const CEntity& entity) { return entity.m_id >= 0; }),
       m_wall_grid(
           game_config::spatial_grid_cell_size, [](const FlorrBtMap::Wall& wall) { return sf::Vector2f{wall.center.x, wall.center.y}; },
           [](const FlorrBtMap::Wall& wall) { return wall.id; },
           [this](int id) { return GetWall(id); },
           [](const FlorrBtMap::Wall& wall) { return wall.id >= 0; })
 {
+    m_normal_entity_radius_limit =
+        std::max(game_config::spatial_grid_cell_size * 0.5f, game_config::default_horizon * 0.25f);
     if (!m_map)
         LOG_ERROR("gameworld", "Failed to load map: " + path);
     BuildWallGrid();
@@ -1141,6 +1192,8 @@ CGameWorld::CGameWorld(const std::string& path)
 
 CGameWorld::~CGameWorld()
 {
+    m_large_entities.clear();
+    m_live_entities.clear();
     m_p_entities.clear();
     m_p_entity_refs.clear();
 }
@@ -1151,20 +1204,95 @@ int CGameWorld::GetNewID()
     {
         int id = m_free_ids.back();
         m_free_ids.pop_back();
+        if (id < 0 || id >= static_cast<int>(m_id_in_use.size()) || m_id_in_use[id])
+        {
+            LOG_FATAL("gameworld", "Corrupt free ID " + std::to_string(id));
+            return GetNewID();
+        }
+        m_id_in_use[id] = 1;
         return id;
     }
-    return m_next_id++;
+
+    const int id = m_next_id++;
+    if (id >= static_cast<int>(m_id_in_use.size())) m_id_in_use.resize(static_cast<size_t>(id) + 1, 0);
+    m_id_in_use[id] = 1;
+    return id;
 }
 
 void CGameWorld::FreeID(int id)
 {
-    if (std::find(m_free_ids.begin(), m_free_ids.end(), id) != m_free_ids.end())
+    if (id < 0 || id >= static_cast<int>(m_id_in_use.size()) || !m_id_in_use[id])
     {
         LOG_FATAL("gameworld", "Free ID " + std::to_string(id) + " twice");
         return;
     }
 
+    m_id_in_use[id] = 0;
     m_free_ids.push_back(id);
+}
+
+void CGameWorld::RegisterLiveEntity(CEntity* entity)
+{
+    if (!entity) return;
+    entity->m_live_index = m_live_entities.size();
+    m_live_entities.push_back(entity);
+    m_spatial_grid.InsertTracked(entity);
+    SyncLargeEntityMembership(entity);
+}
+
+void CGameWorld::UnregisterLiveEntity(CEntity* entity)
+{
+    if (!entity) return;
+    m_spatial_grid.RemoveTracked(entity->m_id);
+    RemoveLargeEntity(entity);
+
+    const size_t index = entity->m_live_index;
+    if (index >= m_live_entities.size() || m_live_entities[index] != entity)
+    {
+        LOG_FATAL("gameworld", "Invalid live entity index for ID " + std::to_string(entity->m_id));
+        return;
+    }
+
+    CEntity* moved = m_live_entities.back();
+    m_live_entities[index] = moved;
+    moved->m_live_index = index;
+    m_live_entities.pop_back();
+    entity->m_live_index = std::numeric_limits<size_t>::max();
+}
+
+void CGameWorld::SyncLargeEntityMembership(CEntity* entity)
+{
+    if (!entity) return;
+    const bool should_be_large = entity->m_radius > m_normal_entity_radius_limit;
+    const bool is_large = entity->m_large_spatial_index < m_large_entities.size() &&
+                          m_large_entities[entity->m_large_spatial_index] == entity;
+    if (should_be_large == is_large) return;
+
+    if (!should_be_large)
+    {
+        RemoveLargeEntity(entity);
+        return;
+    }
+
+    entity->m_large_spatial_index = m_large_entities.size();
+    m_large_entities.push_back(entity);
+}
+
+void CGameWorld::RemoveLargeEntity(CEntity* entity)
+{
+    if (!entity) return;
+    const size_t index = entity->m_large_spatial_index;
+    if (index >= m_large_entities.size() || m_large_entities[index] != entity)
+    {
+        entity->m_large_spatial_index = std::numeric_limits<size_t>::max();
+        return;
+    }
+
+    CEntity* moved = m_large_entities.back();
+    m_large_entities[index] = moved;
+    moved->m_large_spatial_index = index;
+    m_large_entities.pop_back();
+    entity->m_large_spatial_index = std::numeric_limits<size_t>::max();
 }
 
 CEntity* CGameWorld::InsertEntity(std::unique_ptr<CEntity> entity)
@@ -1192,6 +1320,7 @@ CEntity* CGameWorld::InsertEntity(std::unique_ptr<CEntity> entity)
     entity->m_generation = m_next_generation++;
     if (m_next_generation == 0) m_next_generation = 1;
     m_p_entities[id] = std::move(entity);
+    RegisterLiveEntity(raw_entity);
     return raw_entity;
 }
 
@@ -1225,6 +1354,7 @@ CEntity* CGameWorld::InsertNonOwningEntity(CEntity* entity)
     entity->m_id = id;
     entity->m_generation = m_next_generation++;
     if (m_next_generation == 0) m_next_generation = 1;
+    RegisterLiveEntity(entity);
     return entity;
 }
 
@@ -1250,10 +1380,7 @@ void CGameWorld::DestroyProjectilesOwnedBy(int owner_id)
         if (projectile && projectile->m_owner_id == owner_id) projectile->m_is_marked_for_des = true;
     };
 
-    for (const auto& entity : m_p_entities)
-        if (entity) destroy_if_owned(entity.get());
-    for (CEntity* entity : m_p_entity_refs)
-        if (entity) destroy_if_owned(entity);
+    ForEachEntity(destroy_if_owned);
 }
 
 void CGameWorld::DestroySummonedMobsOwnedBy(int owner_id, std::uint64_t owner_generation)
@@ -1276,10 +1403,7 @@ void CGameWorld::DestroySummonedMobsOwnedBy(int owner_id, std::uint64_t owner_ge
         mob->m_is_marked_for_des = true;
     };
 
-    for (const auto& entity : m_p_entities)
-        if (entity) destroy_if_owned(entity.get());
-    for (CEntity* entity : m_p_entity_refs)
-        if (entity) destroy_if_owned(entity);
+    ForEachEntity(destroy_if_owned);
 }
 
 void CGameWorld::SpawnMapPortals()
@@ -1353,6 +1477,7 @@ CEntity* CGameWorld::TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& ta
     DestroySummonedMobsOwnedBy(old_id, old_generation);
 
     std::unique_ptr<CEntity> moved_entity = std::move(m_p_entities[old_id]);
+    UnregisterLiveEntity(moved_entity.get());
 
     const int new_id = target_world.GetNewID();
     if (new_id >= static_cast<int>(target_world.m_p_entities.size()))
@@ -1364,6 +1489,7 @@ CEntity* CGameWorld::TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& ta
         moved_entity->m_generation = old_generation;
         moved_entity->SetGameWorld(this);
         m_p_entities[old_id] = std::move(moved_entity);
+        RegisterLiveEntity(m_p_entities[old_id].get());
         player.SetOwnedEntity(m_p_entities[old_id].get());
         LOG_ERROR("gameworld", "Transfer failed: target ID " + std::to_string(new_id) + " is occupied");
         return nullptr;
@@ -1379,10 +1505,11 @@ CEntity* CGameWorld::TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& ta
 
     CEntity* transferred = moved_entity.get();
     target_world.m_p_entities[new_id] = std::move(moved_entity);
+    target_world.RegisterLiveEntity(transferred);
     FreeID(old_id);
-    m_spatial_grid.Clear();
-
     player.SetOwnedEntity(transferred);
+    player.m_cp_stack.clear();
+    player.m_cp_check_phase = static_cast<uint8_t>(player.GetId() & 0x07);
     player.m_logged_missing_entity = false;
     if (CGameContext* context = target_world.GameContext())
         context->Network().NotifyPlayerWorldChanged(player);
@@ -1402,16 +1529,8 @@ void CGameWorld::Tick(float dt)
     CollectEntities(m_tick_entities);
 
     std::vector<CEntity*>& entities = m_tick_entities;
-    m_cached_max_entity_radius = 0.f;
-    for (const CEntity* entity : entities)
-    {
-        if (entity && !entity->m_is_marked_for_des)
-            m_cached_max_entity_radius = std::max(m_cached_max_entity_radius, std::max(0.f, entity->m_radius));
-    }
-
-    m_spatial_grid.Rebuild(entities);
-
-    std::vector<active_tick_view> active_tick_views = BuildActiveTickViews(*this);
+    BuildActiveTickViews(*this, m_active_tick_views);
+    const std::vector<active_tick_view>& active_tick_views = m_active_tick_views;
     m_active_entities.clear();
     std::vector<CEntity*>& active_entities = m_active_entities;
     active_entities.reserve(entities.size());
@@ -1426,7 +1545,7 @@ void CGameWorld::Tick(float dt)
 
     auto add_active_entity = [this, &active_entities](CEntity* entity)
     {
-        if (!entity || entity->m_is_marked_for_des) return;
+        if (!entity) return;
         if (entity->m_active_tick_marker == m_active_tick_marker) return;
         entity->m_active_tick_marker = m_active_tick_marker;
         active_entities.push_back(entity);
@@ -1441,12 +1560,9 @@ void CGameWorld::Tick(float dt)
 
     for (const active_tick_view& view : active_tick_views)
     {
-        float query_radius = view.radius + std::max(m_cached_max_entity_radius, game_config::default_flower_radius);
-        m_spatial_grid.ForEachInRange(view.center, query_radius, [&](CEntity* entity)
+        ForEachEntityInEdgeRange(view.center, view.radius, [&](CEntity* entity)
         {
             if (!entity || !entity->m_allow_skip_tick) return;
-            float radius = view.radius + std::max(0.f, entity->m_radius);
-            if (DistanceSq(entity->m_pos, view.center) > radius * radius) return;
             add_active_entity(entity);
         });
     }
@@ -1457,6 +1573,7 @@ void CGameWorld::Tick(float dt)
         if (entity->GameWorld() != this) continue;
         if (!entity->m_skip_world_tick) entity->Tick(dt);
     }
+    SyncSpatialGrid(active_entities);
 
     if (m_p_controller)
         m_p_controller->OnTick(*this, dt);
@@ -1470,12 +1587,12 @@ void CGameWorld::Tick(float dt)
     entities.erase(std::remove_if(entities.begin(), entities.end(), remove_transferred), entities.end());
 
     ResolveWallCollisions(active_entities);
-
-    m_spatial_grid.Rebuild(entities);
+    SyncSpatialGrid(active_entities);
 
     ResolveCollisions(active_entities, dt);
 
     RefreshAttachedMissileTransforms(active_entities);
+    SyncSpatialGrid(active_entities);
 
     Cleanup();
 }
@@ -1509,8 +1626,7 @@ CEntity* CGameWorld::FindClosestEntityByEdge(const sf::Vector2f& center, float m
 
     CEntity* target = nullptr;
     float best_edge_distance = max_edge_range;
-    float query_radius = max_edge_range + std::max(m_cached_max_entity_radius, game_config::default_flower_radius);
-    m_spatial_grid.ForEachInRange(center, query_radius, [&](CEntity* candidate)
+    ForEachEntityInEdgeRange(center, max_edge_range, [&](CEntity* candidate)
     {
         if (!candidate) return;
         if (filter && !filter(candidate)) return;
@@ -1526,15 +1642,16 @@ CEntity* CGameWorld::FindClosestEntityByEdge(const sf::Vector2f& center, float m
 
 void CGameWorld::CollectEntities(std::vector<CEntity*>& result) const
 {
-    result.clear();
-    result.reserve(m_p_entities.size() + m_p_entity_refs.size());
-    for (const auto& entity : m_p_entities)
+    result.assign(m_live_entities.begin(), m_live_entities.end());
+}
+
+void CGameWorld::SyncSpatialGrid(const std::vector<CEntity*>& entities)
+{
+    for (CEntity* entity : entities)
     {
-        if (entity) result.push_back(entity.get());
-    }
-    for (CEntity* entity : m_p_entity_refs)
-    {
-        if (entity) result.push_back(entity);
+        if (!entity || entity->GameWorld() != this) continue;
+        m_spatial_grid.UpdateTracked(entity);
+        SyncLargeEntityMembership(entity);
     }
 }
 
@@ -1689,7 +1806,7 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
 
     for (CEntity* entity : entities)
     {
-        if (!entity || entity->GameWorld() != this || entity->m_is_marked_for_des || !entity->CanCollide()) continue;
+        if (!entity || entity->GameWorld() != this || !entity->CanCollide()) continue;
         if (!CollidesWithWalls(entity)) continue;
         if (auto* raw_missile = dynamic_cast<CMissile*>(entity);
             raw_missile && raw_missile->IsAttachedToOwner())
@@ -1712,7 +1829,7 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
                 continue;
             } else if (blocking_wall && HandleFiredMissileWallHit(*entity, *blocking_wall, blocking_segment, start, end))
             {
-                if (entity->m_is_marked_for_des) continue;
+                if (!entity->CanCollide()) continue;
             } else {
                 sf::Vector2f motion = end - start;
                 sf::Vector2f wall_normal = {0.f, 0.f};
@@ -1748,7 +1865,7 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
             }
         }
 
-        if (entity->m_is_marked_for_des) continue;
+        if (!entity->CanCollide()) continue;
         push_out_of_current_walls(*entity);
     }
 }
@@ -1758,13 +1875,16 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
     float normal_max_radius = 0.f;
     float large_max_radius = 0.f;
     const float large_radius_threshold = std::max(game_config::spatial_grid_cell_size * 0.5f, game_config::default_horizon * 0.25f);
-    std::vector<CEntity*> normal_entities;
-    std::vector<std::pair<float, CEntity*>> large_entities;
+    std::vector<CEntity*>& normal_entities = m_collision_normal_entities;
+    std::vector<std::pair<float, CEntity*>>& large_entities = m_collision_large_entities;
+    normal_entities.clear();
+    large_entities.clear();
     normal_entities.reserve(entities.size());
+    large_entities.reserve(entities.size());
 
     for (const CEntity* entity : entities)
     {
-        if (!entity || entity->GameWorld() != this || entity->m_is_marked_for_des || !entity->CanCollide()) continue;
+        if (!entity || entity->GameWorld() != this || !entity->CanCollide()) continue;
 
         if (entity->m_radius > large_radius_threshold)
         {
@@ -1780,7 +1900,7 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
 
     auto process_pair = [dt](CEntity* entity, CEntity* other)
     {
-        if (!other || other->GameWorld() != entity->GameWorld() || other->m_is_marked_for_des) return;
+        if (!other || other->GameWorld() != entity->GameWorld()) return;
         if (!other->CanCollide() || other == entity) return;
         if (ShouldSkipDiggingCollision(entity, other)) return;
         if (!entity->IsCollision(*other)) return;
@@ -1973,8 +2093,10 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
 
 void CGameWorld::Cleanup()
 {
-    std::vector<std::pair<int, std::uint64_t>> clear_owned_owner_keys;
-    std::vector<std::pair<int, std::uint64_t>> clear_summon_owner_keys;
+    auto& clear_owned_owner_keys = m_clear_owned_owner_keys;
+    auto& clear_summon_owner_keys = m_clear_summon_owner_keys;
+    clear_owned_owner_keys.clear();
+    clear_summon_owner_keys.clear();
 
     auto collect_clear_owner = [&clear_owned_owner_keys, &clear_summon_owner_keys](const CEntity* entity)
     {
@@ -1984,25 +2106,29 @@ void CGameWorld::Cleanup()
             clear_summon_owner_keys.emplace_back(entity->m_id, entity->m_generation);
     };
 
-    for (size_t i = 0; i < m_p_entities.size(); ++i)
+    for (size_t i = 0; i < m_live_entities.size();)
     {
-        if (m_p_entities[i] && m_p_entities[i]->m_is_marked_for_des)
+        CEntity* entity = m_live_entities[i];
+        if (!entity || !entity->m_is_marked_for_des)
         {
-            if (m_p_controller) m_p_controller->OnEntityDie(*this, m_p_entities[i].get());
-            collect_clear_owner(m_p_entities[i].get());
-            FreeID(m_p_entities[i]->m_id);
-            m_p_entities[i].reset();
+            ++i;
+            continue;
         }
-    }
 
-    for (CEntity*& entity : m_p_entity_refs)
-    {
-        if (entity && entity->m_is_marked_for_des)
+        if (m_p_controller) m_p_controller->OnEntityDie(*this, entity);
+        collect_clear_owner(entity);
+
+        const int id = entity->m_id;
+        UnregisterLiveEntity(entity);
+        FreeID(id);
+
+        if (id >= 0 && id < static_cast<int>(m_p_entities.size()) && m_p_entities[id].get() == entity)
         {
-            if (m_p_controller) m_p_controller->OnEntityDie(*this, entity);
-            collect_clear_owner(entity);
-            FreeID(entity->m_id);
-            entity = nullptr;
+            m_p_entities[id].reset();
+        } else if (id >= 0 && id < static_cast<int>(m_p_entity_refs.size()) && m_p_entity_refs[id] == entity) {
+            m_p_entity_refs[id] = nullptr;
+        } else {
+            LOG_FATAL("gameworld", "Destroyed entity ID " + std::to_string(id) + " has no storage slot");
         }
     }
 
@@ -2038,8 +2164,5 @@ void CGameWorld::Cleanup()
             mob->m_is_marked_for_des = true;
     };
 
-    for (const auto& entity : m_p_entities)
-        if (entity) destroy_if_owned(entity.get());
-    for (CEntity* entity : m_p_entity_refs)
-        if (entity) destroy_if_owned(entity);
+    ForEachEntity(destroy_if_owned);
 }

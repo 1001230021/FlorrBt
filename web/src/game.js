@@ -295,6 +295,11 @@ const bloodSacrificeInitialHeading = Math.PI * 0.5;
 const bloodSacrificeInnerRadiusScale = 0.5;
 const bloodSacrificeOuterAlpha = 0.25;
 const bloodSacrificeShakeAmplitudePx = 9;
+const particleLifetimeSeconds = 0.1;
+const particleMaxCount = 4096;
+const particleSpeedMin = 28;
+const particleSpeedMax = 64;
+const particleSize = 3.5;
 const directionalPetalAngleOffset = -Math.PI * 0.25;
 const renderCullPaddingPx = 120;
 const renderLoadMediumEntityCount = 260;
@@ -308,19 +313,28 @@ const ownerRenderSnapBaseDistance = 120;
 const serverFixedDt = 0.016;
 const ownerBaseMaxVelocity = 150 * 1.25;
 const ownerBaseAcceleration = 300 * 1.25;
+const ownerMovementTalentMultiplierByRarity = Object.freeze({
+  3: 1.1,
+  4: 1.2,
+  5: 1.3,
+  6: 1.4,
+  7: 1.5,
+  8: 1.75,
+  9: 2,
+});
 const ownerDiggingSpeedMultiplier = 0.5;
 const ownerStopDampingPerTick = 0.9;
 const ownerStopVelocityEpsilon = 0.00001;
 const ownerSlowToMaxVelocityTime = 0.35;
 const ownerPredictionTeleportDistance = 320;
 const ownerPredictionHardCorrectionDistance = 144;
-const ownerPredictionSoftCorrectionRate = 12;
-const ownerPredictionHardCorrectionRate = 34;
+const ownerPredictionCorrectionDeadzone = 0.5;
+const ownerPredictionSoftCorrectionRate = 4;
+const ownerPredictionHardCorrectionRate = 18;
 const ownerPredictionSpeedSampleMinDt = 0.005;
-const ownerPredictionSpeedScaleBlend = 0.08;
-const ownerPredictionSpeedScaleMin = 0.8;
-const ownerPredictionSpeedScaleMax = 1.35;
-const ownerPredictionSnapshotStaleLimit = 0.22;
+const ownerPredictionSnapshotStaleMin = 0.22;
+const ownerPredictionTimingSampleCount = 7;
+const ownerPredictionMinTickScale = 0.2;
 const entitySnapshotVelocityBlend = 0.35;
 const entityExtrapolateMaxSeconds = 0.05;
 const entityExtrapolateMaxDistance = 32;
@@ -563,6 +577,8 @@ function handleServerMessage(msg) {
     resetNetworkScene();
     state.playerId = msg.playerId;
     state.ownerEntityId = msg.ownerEntityId;
+    state.serverTickInterval = msg.tickRate > 0 ? 1 / msg.tickRate : serverFixedDt;
+    resetOwnerPredictionTiming(state.serverTickInterval);
     if (msg.mapName) loadMap(msg.mapName);
     setStatus(`Player ${msg.playerId}`, true);
     return;
@@ -591,10 +607,17 @@ function handleServerMessage(msg) {
   }
 
   if (msg.type === ServerType.OwnerState) {
+    const previousMovementMultiplier = state.ownerMovementMultiplier || 1;
     state.ownerLevel = Math.max(1, msg.level || 1);
     state.ownerExpProgress = clamp(msg.expProgress || 0, 0, 1);
     state.talentPoints = Math.max(0, msg.talentPoints || 0);
     state.talents = msg.talents || [];
+    const movementMultiplier = ownerMovementTalentMultiplier(state.talents);
+    state.ownerMovementMultiplier = movementMultiplier;
+    if (movementMultiplier !== previousMovementMultiplier) {
+      const owner = state.entities.get(state.ownerEntityId);
+      if (owner?.snapshot) initOwnerPrediction(owner, owner.snapshot, true);
+    }
     updateQuickActionButtons();
     const primaryCount = Math.max(1, (msg.ownerSlots || []).length || state.ownerSlots.length || 5);
     state.ownerSlots = normalizeSlots(msg.ownerSlots, primaryCount);
@@ -634,11 +657,22 @@ function resetNetworkScene() {
   state.receiveBuffer = new Uint8Array();
   state.entities.clear();
   state.snapshotId = -1;
+  state.serverTickInterval = serverFixedDt;
+  resetOwnerPredictionTiming(state.serverTickInterval);
   state.ownerStateLoaded = false;
   state.inventoryLoaded = false;
   state.localMoveInput = { x: 0, y: 0 };
-  state.predictionDebug = { errorDistance: 0, speedScale: 1, staleTime: 0, snapped: false };
+  state.ownerMovementMultiplier = 1;
+  state.predictionDebug = {
+    errorDistance: 0,
+    speedScale: 1,
+    tickScale: 1,
+    snapshotInterval: state.ownerPredictionTiming.expectedSnapshotInterval,
+    staleTime: 0,
+    snapped: false,
+  };
   state.screenShake = { x: 0, y: 0 };
+  state.particles = [];
   state.deathOverlayClosed = false;
   state.wasOwnerDead = false;
 }
@@ -861,6 +895,7 @@ async function loadMap(mapName) {
 function applySnapshot(msg) {
   if ((msg.snapshotId || 0) <= (state.snapshotId || 0)) return;
   const snapshotNow = performance.now() / 1000;
+  updateOwnerPredictionTiming(msg.snapshotId, snapshotNow);
   state.snapshotId = msg.snapshotId;
   state.ownerEntityId = msg.ownerEntityId || state.ownerEntityId;
   const nextViewRadius = msg.viewRadius || state.viewRadius;
@@ -882,9 +917,12 @@ function applySnapshot(msg) {
       existing.snapshotAt = snapshotNow;
       updateEntitySnapshotVelocity(existing, snap, previousSnapshot);
       existing.snapshot = snap;
+      if (!Number.isFinite(existing.particleBurstNextAt)) existing.particleBurstNextAt = null;
+      if (snap.entityType === bloodSacrificeEffectType && !Number.isFinite(existing.bloodSacrificeAngle))
+        existing.bloodSacrificeAngle = Math.random() * Math.PI * 2;
       const slotRarity = highestSlotRarity(snap.primarySlots);
       if (snap.entityType === playerFlowerType && slotRarity > 0) existing.playerPrimarySlotRarity = slotRarity;
-      if (snap.entityId === state.ownerEntityId) handleOwnerSnapshot(existing, snap, snapshotNow, previousSnapshot, wasDead, isDead);
+      if (snap.entityId === state.ownerEntityId) handleOwnerSnapshot(existing, snap, snapshotNow, wasDead, isDead);
       if (!existing.renderPos || !Number.isFinite(existing.renderPos.x) || !Number.isFinite(existing.renderPos.y))
         syncEntityRenderToSnapshot(existing, snap);
       existing.dying = false;
@@ -908,6 +946,8 @@ function applySnapshot(msg) {
         deathAge: 0,
         hurtFlashAge: hurtFlashDuration,
         deathAngle: isDead ? Math.random() * Math.PI * 2 : null,
+        particleBurstNextAt: null,
+        bloodSacrificeAngle: snap.entityType === bloodSacrificeEffectType ? Math.random() * Math.PI * 2 : null,
       });
       const created = state.entities.get(snap.entityId);
       if (snap.entityId === state.ownerEntityId) initOwnerPrediction(created, snap, true);
@@ -973,6 +1013,60 @@ function updateEntitySnapshotVelocity(entity, snap, previousSnapshot) {
   };
 }
 
+function ownerMovementTalentMultiplier(talents) {
+  let multiplier = 1;
+  for (const talent of talents || []) {
+    if (talent?.id !== TalentId.Movement) continue;
+    multiplier = Math.max(multiplier, ownerMovementTalentMultiplierByRarity[talent.rarity] || 1);
+  }
+  return multiplier;
+}
+
+function resetOwnerPredictionTiming(tickInterval = serverFixedDt) {
+  const safeTickInterval = clamp(tickInterval || serverFixedDt, 0.001, 0.25);
+  const ticksPerSnapshot = Math.max(1, Math.ceil(packetInterval / safeTickInterval - 0.000001));
+  const expectedSnapshotInterval = ticksPerSnapshot * safeTickInterval;
+  state.ownerPredictionTiming = {
+    expectedSnapshotInterval,
+    snapshotInterval: expectedSnapshotInterval,
+    simulationScale: 1,
+    samples: [],
+    lastSnapshotAt: 0,
+    lastSnapshotId: -1,
+  };
+}
+
+function updateOwnerPredictionTiming(snapshotId, snapshotNow) {
+  const timing = state.ownerPredictionTiming;
+  if (!timing || !Number.isFinite(snapshotNow)) return;
+
+  const idDelta = snapshotId - timing.lastSnapshotId;
+  const elapsed = snapshotNow - timing.lastSnapshotAt;
+  if (timing.lastSnapshotId >= 0 && idDelta > 0 && idDelta <= 120 && elapsed > 0) {
+    const sample = elapsed / idDelta;
+    const expected = timing.expectedSnapshotInterval;
+    if (sample >= expected * 0.5 && sample <= Math.max(2, expected * 12)) {
+      timing.samples.push(sample);
+      if (timing.samples.length > ownerPredictionTimingSampleCount) timing.samples.shift();
+
+      const sorted = [...timing.samples].sort((a, b) => a - b);
+      const middle = Math.floor(sorted.length / 2);
+      timing.snapshotInterval = sorted.length % 2 === 0
+        ? (sorted[middle - 1] + sorted[middle]) * 0.5
+        : sorted[middle];
+
+      if (timing.samples.length >= 3) {
+        const targetScale = clamp(expected / timing.snapshotInterval, ownerPredictionMinTickScale, 1);
+        const blend = targetScale < timing.simulationScale ? 0.32 : 0.08;
+        timing.simulationScale += (targetScale - timing.simulationScale) * blend;
+      }
+    }
+  }
+
+  timing.lastSnapshotAt = snapshotNow;
+  timing.lastSnapshotId = snapshotId;
+}
+
 function initOwnerPrediction(entity, snap = entity?.snapshot, forceSnap = false) {
   if (!entity || !snap?.pos) return null;
   const prediction = entity.ownerPrediction || {};
@@ -984,7 +1078,6 @@ function initOwnerPrediction(entity, snap = entity?.snapshot, forceSnap = false)
     prediction.vel = { x: 0, y: 0 };
     prediction.correction = { x: 0, y: 0 };
     prediction.lastServerPos = { x: snap.pos.x, y: snap.pos.y };
-    prediction.speedScale = 1;
     prediction.lastSnapshotAt = entity.snapshotAt || performance.now() / 1000;
     prediction.staleTime = 0;
     prediction.snapped = true;
@@ -1001,26 +1094,9 @@ function initOwnerPrediction(entity, snap = entity?.snapshot, forceSnap = false)
   return prediction;
 }
 
-function handleOwnerSnapshot(entity, snap, snapshotNow, previousSnapshot, wasDead, isDead) {
+function handleOwnerSnapshot(entity, snap, snapshotNow, wasDead, isDead) {
   const prediction = initOwnerPrediction(entity, snap, false);
   if (!prediction || !snap?.pos) return;
-
-  const previousPos = previousSnapshot?.pos || prediction.lastServerPos || snap.pos;
-  const snapshotDt = Math.max(ownerPredictionSpeedSampleMinDt,
-    snapshotNow - (entity.lastSnapshotAt || prediction.lastSnapshotAt || snapshotNow));
-  const serverDx = snap.pos.x - previousPos.x;
-  const serverDy = snap.pos.y - previousPos.y;
-  const serverSpeed = Math.hypot(serverDx, serverDy) / snapshotDt;
-  const localSpeed = Math.hypot(prediction.vel?.x || 0, prediction.vel?.y || 0);
-  if (serverSpeed > 1 && localSpeed > 1) {
-    const targetScale = clamp(serverSpeed / Math.max(1, localSpeed),
-      ownerPredictionSpeedScaleMin, ownerPredictionSpeedScaleMax);
-    prediction.speedScale = clamp(
-      (prediction.speedScale || 1) + (targetScale - (prediction.speedScale || 1)) * ownerPredictionSpeedScaleBlend,
-      ownerPredictionSpeedScaleMin,
-      ownerPredictionSpeedScaleMax,
-    );
-  }
 
   const dx = snap.pos.x - prediction.pos.x;
   const dy = snap.pos.y - prediction.pos.y;
@@ -1033,21 +1109,27 @@ function handleOwnerSnapshot(entity, snap, snapshotNow, previousSnapshot, wasDea
     initOwnerPrediction(entity, snap, true);
     state.predictionDebug = {
       errorDistance: Number.isFinite(errorDistance) ? errorDistance : 0,
-      speedScale: entity.ownerPrediction?.speedScale || 1,
+      speedScale: state.ownerMovementMultiplier || 1,
+      tickScale: state.ownerPredictionTiming?.simulationScale || 1,
+      snapshotInterval: state.ownerPredictionTiming?.snapshotInterval || 0,
       staleTime: 0,
       snapped: true,
     };
     return;
   }
 
-  prediction.correction = { x: dx, y: dy };
+  prediction.correction = errorDistance <= ownerPredictionCorrectionDeadzone
+    ? { x: 0, y: 0 }
+    : { x: dx, y: dy };
   prediction.lastServerPos = { x: snap.pos.x, y: snap.pos.y };
   prediction.lastSnapshotAt = snapshotNow;
   prediction.staleTime = 0;
   prediction.snapped = false;
   state.predictionDebug = {
     errorDistance,
-    speedScale: prediction.speedScale || 1,
+    speedScale: state.ownerMovementMultiplier || 1,
+    tickScale: state.ownerPredictionTiming?.simulationScale || 1,
+    snapshotInterval: state.ownerPredictionTiming?.snapshotInterval || 0,
     staleTime: 0,
     snapped: false,
   };
@@ -1061,16 +1143,27 @@ function stepOwnerPrediction(entity, dt) {
 
   const staleNow = Math.max(0, performance.now() / 1000 - (prediction.lastSnapshotAt || entity.snapshotAt || 0));
   prediction.staleTime = staleNow;
-  const staleMultiplier = staleNow > ownerPredictionSnapshotStaleLimit ? 0 : 1;
+  const timing = state.ownerPredictionTiming;
+  const snapshotInterval = Math.max(
+    timing?.expectedSnapshotInterval || 0,
+    timing?.snapshotInterval || 0,
+  );
+  const staleGrace = Math.max(ownerPredictionSnapshotStaleMin, snapshotInterval * 2.5);
+  const staleFadeDuration = Math.max(0.08, snapshotInterval);
+  const staleMultiplier = staleNow <= staleGrace
+    ? 1
+    : clamp(1 - (staleNow - staleGrace) / staleFadeDuration, 0, 1);
+  const simulationScale = timing?.simulationScale || 1;
+  const simulationDt = dt * simulationScale;
   const diggingMultiplier = (snap.flags & flagDigging) !== 0 ? ownerDiggingSpeedMultiplier : 1;
-  const speedScale = clamp(prediction.speedScale || 1, ownerPredictionSpeedScaleMin, ownerPredictionSpeedScaleMax);
+  const speedScale = state.ownerMovementMultiplier || 1;
   const maxVelocity = ownerBaseMaxVelocity * diggingMultiplier * speedScale * staleMultiplier;
   const acceleration = ownerBaseAcceleration * diggingMultiplier * speedScale * staleMultiplier;
 
   let vel = prediction.vel || { x: 0, y: 0 };
   const speed = Math.hypot(vel.x, vel.y);
   if (speed > maxVelocity && ownerSlowToMaxVelocityTime > 0) {
-    const slowAmount = (speed - maxVelocity) * dt / ownerSlowToMaxVelocityTime;
+    const slowAmount = (speed - maxVelocity) * simulationDt / ownerSlowToMaxVelocityTime;
     const nextSpeed = Math.max(maxVelocity, speed - slowAmount);
     const scale = speed > 0 ? nextSpeed / speed : 0;
     vel = { x: vel.x * scale, y: vel.y * scale };
@@ -1085,7 +1178,7 @@ function stepOwnerPrediction(entity, dt) {
     };
     const diff = { x: desired.x - vel.x, y: desired.y - vel.y };
     const diffLength = Math.hypot(diff.x, diff.y);
-    const maxAccel = acceleration * dt;
+    const maxAccel = acceleration * simulationDt;
     if (diffLength <= maxAccel || diffLength <= 0.000001) {
       vel = desired;
     } else {
@@ -1095,22 +1188,45 @@ function stepOwnerPrediction(entity, dt) {
       };
     }
   } else {
-    const damping = Math.pow(ownerStopDampingPerTick, dt / serverFixedDt);
+    const tickInterval = state.serverTickInterval || serverFixedDt;
+    const damping = Math.pow(ownerStopDampingPerTick, simulationDt / tickInterval);
     vel = { x: vel.x * damping, y: vel.y * damping };
     if (vel.x * vel.x + vel.y * vel.y <= ownerStopVelocityEpsilon) vel = { x: 0, y: 0 };
   }
 
   prediction.vel = vel;
-  prediction.pos.x += vel.x * dt;
-  prediction.pos.y += vel.y * dt;
+  const radius = Math.max(0, Number(snap.radius) || 0);
+  const predictedStart = { x: prediction.pos.x, y: prediction.pos.y };
+  const predictedEnd = {
+    x: predictedStart.x + vel.x * simulationDt,
+    y: predictedStart.y + vel.y * simulationDt,
+  };
+  const predictedMotion = mapRenderer.resolvePredictedCircleMotion(predictedStart, predictedEnd, radius);
+  prediction.pos = predictedMotion.pos;
+  if (predictedMotion.normals?.length) {
+    for (const normal of predictedMotion.normals) {
+      const intoWall = vel.x * normal.x + vel.y * normal.y;
+      if (intoWall < 0) {
+        vel = {
+          x: vel.x - normal.x * intoWall,
+          y: vel.y - normal.y * intoWall,
+        };
+      }
+    }
+    prediction.vel = vel;
+  }
 
   const correctionDistance = Math.hypot(prediction.correction?.x || 0, prediction.correction?.y || 0);
   if (correctionDistance > 0) {
     const correctionRate = correctionDistance >= ownerPredictionHardCorrectionDistance ?
       ownerPredictionHardCorrectionRate : ownerPredictionSoftCorrectionRate;
     const amount = smoothFactor(correctionRate, dt);
-    prediction.pos.x += prediction.correction.x * amount;
-    prediction.pos.y += prediction.correction.y * amount;
+    const correctionStart = { x: prediction.pos.x, y: prediction.pos.y };
+    const correctionEnd = {
+      x: correctionStart.x + prediction.correction.x * amount,
+      y: correctionStart.y + prediction.correction.y * amount,
+    };
+    prediction.pos = mapRenderer.resolvePredictedCircleMotion(correctionStart, correctionEnd, radius).pos;
     prediction.correction.x *= 1 - amount;
     prediction.correction.y *= 1 - amount;
     if (Math.hypot(prediction.correction.x, prediction.correction.y) < 0.01)
@@ -1126,7 +1242,9 @@ function stepOwnerPrediction(entity, dt) {
 
   state.predictionDebug = {
     errorDistance: Math.hypot(snap.pos.x - prediction.pos.x, snap.pos.y - prediction.pos.y),
-    speedScale: prediction.speedScale || 1,
+    speedScale,
+    tickScale: simulationScale,
+    snapshotInterval,
     staleTime: prediction.staleTime || 0,
     snapped: !!prediction.snapped,
   };
@@ -3521,6 +3639,7 @@ function resizeCanvas() {
 }
 
 function updateRenderPositions(dt) {
+  updateParticles(dt);
   const owner = state.entities.get(state.ownerEntityId);
   if (owner && !owner.dying) {
     updateEntityMotion(owner, dt);
@@ -3655,7 +3774,7 @@ function updateDebugInfo() {
   debugInfo.textContent = [
     `pos (${debugNumber(ownerPos?.x)}, ${debugNumber(ownerPos?.y)})  id ${state.ownerEntityId || "-"}  hp ${debugNumber(ownerSnap?.hpPercent * 100, 0)}%`,
     `cam (${debugNumber(state.camera.x)}, ${debugNumber(state.camera.y)})  mouse ${mouseWorld ? `(${debugNumber(mouseWorld.x)}, ${debugNumber(mouseWorld.y)})` : "(-, -)"}`,
-    `view ${debugNumber(state.viewRadius, 0)}  scale ${debugNumber(worldScale(), 4)}  fps ${debugNumber(state.fps, 1)}  dpr ${debugNumber(state.dpr, 2)}  pred err ${debugNumber(prediction.errorDistance)} scale ${debugNumber(prediction.speedScale, 2)} stale ${debugNumber(prediction.staleTime, 2)}${prediction.snapped ? " snap" : ""}`,
+    `view ${debugNumber(state.viewRadius, 0)}  scale ${debugNumber(worldScale(), 4)}  fps ${debugNumber(state.fps, 1)}  dpr ${debugNumber(state.dpr, 2)}  pred err ${debugNumber(prediction.errorDistance)} mmt ${debugNumber(prediction.speedScale, 2)} tick ${debugNumber(prediction.tickScale, 2)} pkt ${debugNumber((prediction.snapshotInterval || 0) * 1000, 0)}ms stale ${debugNumber(prediction.staleTime, 2)}${prediction.snapped ? " snap" : ""}`,
     `entities ${state.entities.size}/${currentVisibleEntityCount}  render load ${currentRenderLoad}  map ${map?.path || "-"}  chunks ${chunkCache}/${visibleChunks} q${chunkQueue} ${chunkProfile}  input ${inputMode}  ws ${socketState}`,
   ].join("\n");
 }
@@ -3721,6 +3840,111 @@ function drawDeathEffect(pos, radius, progress, rarity) {
   ctx.restore();
 }
 
+function particleBurstIntervalSeconds(ticks) {
+  return Math.max(0.001, state.serverTickInterval || serverFixedDt) * ticks;
+}
+
+function shouldEmitParticleBurst(entity, ticks) {
+  if (!entity) return false;
+
+  const now = currentRenderTimeSeconds;
+  const interval = particleBurstIntervalSeconds(ticks);
+  if (!Number.isFinite(entity.particleBurstNextAt)) {
+    entity.particleBurstNextAt = now + interval;
+    return false;
+  }
+  if (now < entity.particleBurstNextAt) return false;
+
+  entity.particleBurstNextAt = now + interval;
+  return true;
+}
+
+function emitParticleBurst(origin, color, radius = 0) {
+  if (!origin || !Number.isFinite(origin.x) || !Number.isFinite(origin.y) || !color) return;
+
+  const ringRadius = Math.max(0, Number(radius) || 0);
+  const ringAngle = Math.random() * Math.PI * 2;
+  const directionAngle = Math.random() * Math.PI * 2;
+  const speed = particleSpeedMin + Math.random() * (particleSpeedMax - particleSpeedMin);
+  state.particles.push({
+    pos: {
+      x: origin.x + Math.cos(ringAngle) * ringRadius,
+      y: origin.y + Math.sin(ringAngle) * ringRadius,
+    },
+    velocity: {
+      x: Math.cos(directionAngle) * speed,
+      y: Math.sin(directionAngle) * speed,
+    },
+    color,
+    age: 0,
+  });
+  if (state.particles.length > particleMaxCount)
+    state.particles.splice(0, state.particles.length - particleMaxCount);
+}
+
+function updateParticles(dt) {
+  if (!state.particles.length) return;
+  for (let i = state.particles.length - 1; i >= 0; i -= 1) {
+    const particle = state.particles[i];
+    particle.age += dt;
+    if (particle.age >= particleLifetimeSeconds) {
+      state.particles.splice(i, 1);
+      continue;
+    }
+    particle.pos.x += particle.velocity.x * dt;
+    particle.pos.y += particle.velocity.y * dt;
+  }
+}
+
+function drawParticlePass() {
+  if (!state.particles.length) return;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const particle of state.particles) {
+    const progress = clamp(particle.age / particleLifetimeSeconds, 0, 1);
+    const pos = worldToScreen(particle.pos);
+    const size = Math.max(0.8, worldLengthToScreen(particleSize) * (1 - progress * 0.4));
+    ctx.globalAlpha = 1 - progress;
+    ctx.fillStyle = particle.color;
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function isPetalBurstRarity(rarity) {
+  return rarity === 9 || rarity === 10 || rarity === 11;
+}
+
+function flowerRadiusForPetal(entity) {
+  const snap = entity?.snapshot;
+  if (!snap) return 0;
+
+  let closestRadius = 0;
+  let closestDistance = Infinity;
+  for (const candidate of state.entities.values()) {
+    if (!candidate || candidate === entity || candidate.dying || !candidate.snapshot || !candidate.renderPos ||
+        (candidate.snapshot.flags & flagDead) !== 0) continue;
+    const candidateSnap = candidate.snapshot;
+    if (candidateSnap.team !== snap.team || isPetalEntity(candidateSnap.entityType) ||
+        isDropEntity(candidateSnap.entityType) || isProjectileSnap(candidateSnap) ||
+        isBloodSacrificeEffectSnap(candidateSnap) || candidateSnap.entityType === portalType) continue;
+    const distance = Math.hypot(candidate.renderPos.x - entity.renderPos.x, candidate.renderPos.y - entity.renderPos.y);
+    if (distance >= closestDistance) continue;
+    closestDistance = distance;
+    closestRadius = Math.max(0, candidateSnap.radius || 0);
+  }
+  return closestRadius || Math.max(0, snap.radius || 0);
+}
+
+function emitPetalParticleBurst(entity, snap) {
+  if (!isPetalBurstRarity(snap?.rarity) || entity?.dying || !entity?.renderPos ||
+      (snap.flags & flagDead) !== 0) return;
+  if (!shouldEmitParticleBurst(entity, 6)) return;
+  emitParticleBurst(entity.renderPos, rarityColor(snap.rarity, 1), flowerRadiusForPetal(entity));
+}
+
 function bloodSacrificePhase(progress) {
   const value = clamp(Number.isFinite(progress) ? progress : 0, 0, 1);
   if (value < bloodSacrificeDrawPhaseEnd) {
@@ -3751,7 +3975,7 @@ function bloodSacrificeStarPoints(pos, radius, angle = 0) {
 }
 
 function traceBloodSacrificeStar(points, progress) {
-  if (!points || points.length < 2 || progress <= 0) return;
+  if (!points || points.length < 2 || progress <= 0) return null;
 
   let totalLength = 0;
   const segmentLengths = [];
@@ -3760,10 +3984,11 @@ function traceBloodSacrificeStar(points, progress) {
     segmentLengths.push(length);
     totalLength += length;
   }
-  if (totalLength <= 0) return;
+  if (totalLength <= 0) return null;
 
   const targetLength = totalLength * clamp(progress, 0, 1);
   let travelled = 0;
+  let latestPoint = points[0];
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);
   for (let i = 0; i < points.length - 1; i += 1) {
@@ -3773,16 +3998,19 @@ function traceBloodSacrificeStar(points, progress) {
     if (travelled + segmentLength <= targetLength) {
       ctx.lineTo(end.x, end.y);
       travelled += segmentLength;
+      latestPoint = end;
       continue;
     }
     const segmentProgress = segmentLength > 0 ? (targetLength - travelled) / segmentLength : 0;
-    ctx.lineTo(
-      start.x + (end.x - start.x) * clamp(segmentProgress, 0, 1),
-      start.y + (end.y - start.y) * clamp(segmentProgress, 0, 1),
-    );
+    latestPoint = {
+      x: start.x + (end.x - start.x) * clamp(segmentProgress, 0, 1),
+      y: start.y + (end.y - start.y) * clamp(segmentProgress, 0, 1),
+    };
+    ctx.lineTo(latestPoint.x, latestPoint.y);
     break;
   }
   ctx.stroke();
+  return latestPoint;
 }
 
 function fillBloodSacrificeStar(points) {
@@ -3794,7 +4022,7 @@ function fillBloodSacrificeStar(points) {
   ctx.fill();
 }
 
-function drawBloodSacrificeEffect(pos, outerRadius, progress, angle = 0) {
+function drawBloodSacrificeEffect(worldPos, pos, outerRadius, progress, angle = 0, entity = null) {
   const phase = bloodSacrificePhase(progress);
   if (phase.alpha <= 0 || outerRadius < entityPixelMinScreenRadius) return;
 
@@ -3814,8 +4042,16 @@ function drawBloodSacrificeEffect(pos, outerRadius, progress, angle = 0) {
   ctx.lineWidth = lineWidth;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  traceBloodSacrificeStar(innerPoints, phase.drawProgress);
+  const latestPoint = traceBloodSacrificeStar(innerPoints, phase.drawProgress);
   ctx.restore();
+
+  if (latestPoint && shouldEmitParticleBurst(entity, 4)) {
+    const scale = Math.max(0.0001, worldScale());
+    emitParticleBurst({
+      x: worldPos.x + (latestPoint.x - pos.x) / scale,
+      y: worldPos.y + (latestPoint.y - pos.y) / scale,
+    }, "#ff0000");
+  }
 }
 
 function hornetSkill2WindupMissileWobble(entity, time) {
@@ -3870,6 +4106,8 @@ function drawEntity(entity) {
   const deathAlpha = entity.dying ? 1 - deathEase : 1;
   const hurtFlash = entity.dying ? 0 : hurtFlashAmount(entity);
 
+  if (isPetal) emitPetalParticleBurst(entity, snap);
+
   ctx.save();
   ctx.globalAlpha *= deathAlpha;
   if (hurtFlash > 0) ctx.filter = `brightness(${1 + hurtFlash * 3.5}) saturate(${1 - hurtFlash * 0.92})`;
@@ -3888,7 +4126,8 @@ function drawEntity(entity) {
   }
 
   if (!isPetal && !isDrop && snap.entityType === bloodSacrificeEffectType) {
-    drawBloodSacrificeEffect(pos, visibleRadius, snap.hpPercent, entity.renderAngle ?? snap.angle);
+    drawBloodSacrificeEffect(entity.renderPos, pos, visibleRadius, snap.hpPercent,
+                             entity.bloodSacrificeAngle ?? Math.random() * Math.PI * 2, entity);
     ctx.restore();
     return;
   }
@@ -5679,6 +5918,7 @@ function drawScene(now = performance.now()) {
   drawEntityPass(passes.petals);
   if (passes.owner) drawEntity(passes.owner);
   drawEntityPass(passes.overlays);
+  drawParticlePass();
   drawSceneHitboxes(passes);
   drawBossBars(passes.bosses);
   drawSelfHud();

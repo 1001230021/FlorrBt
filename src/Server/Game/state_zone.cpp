@@ -54,10 +54,9 @@ void CStateZone::Apply()
     CGameWorld* world = GameWorld();
     if (!world || !m_state || m_radius <= 0.f) return;
 
-    const float query_radius = m_radius + std::max(0.f, world->GetMaxEntityRadius());
-    world->GetSpatialGrid().ForEachInRangeBroadphase(m_pos, query_radius, [this](CEntity* entity)
+    world->ForEachEntityInEdgeRange(m_pos, m_radius, [this](CEntity* entity)
     {
-        if (!entity || entity == this || entity->m_is_marked_for_des) return;
+        if (!entity || entity == this) return;
         if (entity->IsDead() || !entity->CanCollide()) return;
         const float radius = m_radius + std::max(0.f, entity->m_radius);
         if (DistanceSq(m_pos, entity->m_pos) > radius * radius) return;

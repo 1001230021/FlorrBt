@@ -1,7 +1,9 @@
 #pragma once
 #include "../../Shared/shared.h"
 #include <SFML/System/Vector2.hpp>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 
 class CGameWorld;
 class CGameContext;
@@ -27,7 +29,7 @@ class CEntity
     bool IsCollision(const CEntity& other) const;
     virtual void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type);
     virtual void OnCollision(CEntity* other);
-    virtual bool IsDead() const { return m_is_marked_for_des; }
+    virtual bool IsDead() const { return m_health <= 0.f; }
     virtual bool CanCollide() const { return !IsDead(); }
     virtual bool IsVisible() const { return !IsDead(); }
 
@@ -44,6 +46,8 @@ class CEntity
 
     int m_id = -1;
     std::uint64_t m_generation = 0;
+    size_t m_live_index = std::numeric_limits<size_t>::max();
+    size_t m_large_spatial_index = std::numeric_limits<size_t>::max();
     std::uint64_t m_active_tick_marker = 0;
     bool m_is_marked_for_des = false;
     std::uint32_t m_tags = 0;

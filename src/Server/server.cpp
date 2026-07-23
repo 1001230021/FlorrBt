@@ -59,18 +59,25 @@ void EnsureRconPasswordInitialized()
     LOG_INFO("rcon", "Generated RCON password: " + game_config::rcon_password);
 }
 
-std::string PetalReportArticle(ERarity rarity)
+std::string ReportArticle(std::string_view word)
 {
-    switch (rarity)
+    if (word.empty()) return "A";
+
+    std::string lowered(word.begin(), word.end());
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch)
     {
-    case ERarity::Epic:
-    case ERarity::Ultra:
-    case ERarity::Eternal:
-    case ERarity::Exotic:
-        return "An";
-    default:
-        return "A";
-    }
+        return static_cast<char>(std::tolower(ch));
+    });
+
+    if (lowered.rfind("uni", 0) == 0) return "A";
+
+    const char first = lowered.front();
+    return first == 'a' || first == 'e' || first == 'i' || first == 'o' || first == 'u' ? "An" : "A";
+}
+
+std::string RarityReportArticle(ERarity rarity)
+{
+    return ReportArticle(GetRarityName(rarity));
 }
 
 }
@@ -260,7 +267,7 @@ bool CServer::BroadcastPetalReport(std::string_view done, ERarity rarity, std::s
     message += "<";
     message += rarity_name;
     message += ">(";
-    message += PetalReportArticle(rarity);
+    message += RarityReportArticle(rarity);
     message += " ";
     message += rarity_name;
     message += " ";
@@ -269,6 +276,34 @@ bool CServer::BroadcastPetalReport(std::string_view done, ERarity rarity, std::s
     message.append(done);
     message += " by ";
     message.append(doer);
+    message += ")";
+
+    const SChatEntry* chat = SubmitChat(nullptr, {0.f, 0.f}, EChatFlag::Server, 0, "Server", message);
+    if (!chat) return false;
+    network->BroadcastChat(*chat);
+    return true;
+}
+
+bool CServer::BroadcastMobReport(std::string_view action, ERarity rarity, std::string_view mob_name)
+{
+    if (action.empty() || mob_name.empty() || !IsKnownRarity(rarity)) return false;
+
+    INetworkModule* network = GetNetworkModule();
+    if (!network) return false;
+
+    std::string rarity_name(GetRarityName(rarity));
+    std::string message;
+    message.reserve(rarity_name.size() * 2 + mob_name.size() + action.size() + 24);
+    message += "<";
+    message += rarity_name;
+    message += ">(";
+    message += RarityReportArticle(rarity);
+    message += " ";
+    message += rarity_name;
+    message += " ";
+    message.append(mob_name);
+    message += " ";
+    message.append(action);
     message += ")";
 
     const SChatEntry* chat = SubmitChat(nullptr, {0.f, 0.f}, EChatFlag::Server, 0, "Server", message);

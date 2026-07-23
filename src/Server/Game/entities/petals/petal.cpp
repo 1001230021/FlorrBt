@@ -321,6 +321,7 @@ void CPetalSlot::SpawnCopy(int copy_index, CFlower* flower)
 
     m_p_petals[copy_index] = p_petal;
     m_bonus_active[copy_index] = true;
+    flower->MarkFinalStatsDirty();
     runtime_proto->m_p_behavior->OnPetalSpawned(p_petal, m_stored_rarity, flower);
 }
 
@@ -386,6 +387,7 @@ void CPetalSlot::RefreshPetalState(CFlower* flower)
         m_reload_timers.assign(copies, std::max(0.f, petal_stats.preload));
         m_reload_ignore_multiplier.assign(copies, false);
         m_runtime_type = runtime_type;
+        if (flower) flower->MarkFinalStatsDirty();
         return;
     }
 
@@ -407,12 +409,13 @@ void CPetalSlot::RefreshPetalState(CFlower* flower)
     {
         if (petal) petal->m_max_slot_num = copies;
     }
+    if (flower) flower->MarkFinalStatsDirty();
 }
 
-void CPetalSlot::Tick(float dt, CFlower* flower)
+void CPetalSlot::Tick(float dt, CFlower* flower, bool state_refreshed)
 {
     if (m_banned || !m_p_proto || !m_p_proto->m_p_behavior || !flower) return;
-    RefreshPetalState(flower);
+    if (!state_refreshed) RefreshPetalState(flower);
 
     for (size_t i = 0; i < m_reload_timers.size(); ++i)
     {
@@ -450,6 +453,7 @@ void CPetalSlot::Tick(float dt, CFlower* flower)
                 m_p_petals[i] = nullptr;
                 m_reload_timers[i] = reload;
                 if (i < m_reload_ignore_multiplier.size()) m_reload_ignore_multiplier[i] = petal->m_reload_ignore_multiplier;
+                flower->MarkFinalStatsDirty();
             }
             continue;
         }
@@ -465,9 +469,11 @@ void CPetalSlot::Tick(float dt, CFlower* flower)
                     m_p_petals[i] = nullptr;
                     m_reload_timers[i] = petal->m_final_petal_stats.reload;
                     if (i < m_reload_ignore_multiplier.size()) m_reload_ignore_multiplier[i] = false;
+                    flower->MarkFinalStatsDirty();
                 }
             } else {
                 m_p_petals[i] = nullptr;
+                flower->MarkFinalStatsDirty();
             }
             continue;
         }
@@ -482,6 +488,7 @@ void CPetalSlot::Tick(float dt, CFlower* flower)
             m_p_petals[i] = nullptr;
             m_reload_timers[i] = reload;
             if (i < m_reload_ignore_multiplier.size()) m_reload_ignore_multiplier[i] = petal->m_reload_ignore_multiplier;
+            flower->MarkFinalStatsDirty();
             continue;
         }
 
@@ -497,11 +504,13 @@ void CPetalSlot::Tick(float dt, CFlower* flower)
                 m_p_petals[i] = nullptr;
                 m_reload_timers[i] = reload;
                 if (i < m_reload_ignore_multiplier.size()) m_reload_ignore_multiplier[i] = petal->m_reload_ignore_multiplier;
+                flower->MarkFinalStatsDirty();
             } else {
                 petal->m_hidden = true;
                 petal->m_vel = {0.f, 0.f};
                 petal->m_is_marked_for_des = false;
                 petal->m_health = std::max(1.f, petal->m_health);
+                flower->MarkFinalStatsDirty();
             }
         }
     }

@@ -865,7 +865,9 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                 auto* flower = dynamic_cast<CPlayerFlower*>(player.GetEntity());
                 if (!player.GetEntity() || (flower && flower->m_is_dead))
                 {
-                    if (m_player_lifecycle_service.Respawn(player, m_lobby_world))
+                    CGameWorld* respawn_world = player.GetEntity() ? player.GetEntity()->GameWorld() : nullptr;
+                    if (!respawn_world) respawn_world = &m_lobby_world;
+                    if (m_player_lifecycle_service.Respawn(player, *respawn_world))
                         m_player_lifecycle_service.NotifyPlayerWorldChanged(player, *this);
                 }
                 else

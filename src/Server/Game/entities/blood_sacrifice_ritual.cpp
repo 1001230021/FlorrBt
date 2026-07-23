@@ -1,7 +1,9 @@
 #include "blood_sacrifice_ritual.h"
 #include "mob.h"
 #include "../gameworld.h"
+#include "../../server.h"
 #include "../../../Engine/logger.h"
+#include "../../../Shared/game_config.h"
 #include <algorithm>
 
 namespace
@@ -63,6 +65,15 @@ void CBloodSacrificeRitual::Tick(float dt)
             {
                 spawned = true;
                 spawned_id = raw_mob->m_id;
+                if (CServer::MeetsPetalReportRarity(raw_mob->GetRarity(), game_config::min_mob_spawn_report_rarity))
+                {
+                    const CMobPrototype* proto = FindMobPrototype(raw_mob->m_mob_type);
+                    const std::string mob_name = proto && !proto->m_name.empty()
+                                                     ? proto->m_name
+                                                     : std::string(GetMobTypeName(raw_mob->m_mob_type));
+                    if (CServer* server = CServer::GetInstance())
+                        server->BroadcastMobReport("has been summoned", raw_mob->GetRarity(), mob_name);
+                }
             }
         }
     }

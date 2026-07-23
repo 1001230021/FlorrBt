@@ -64,7 +64,7 @@ void CMissile::Tick(float dt)
 bool CMissile::ApplyHit(CEntity* target)
 {
     if (m_attached_to_owner) return false;
-    if (!target || target == this || m_is_marked_for_des) return false;
+    if (!target || target == this || m_health <= 0.f) return false;
     if (target->m_id == m_owner_id && (m_owner_generation == 0 || target->m_generation == m_owner_generation))
         return false;
     if (target == GetOwner()) return false;
@@ -181,7 +181,7 @@ void CPollenProjectile::Tick(float dt)
 
 bool CPollenProjectile::ApplyHit(CEntity* target)
 {
-    if (!target || target == this || m_is_marked_for_des) return false;
+    if (!target || target == this || m_health <= 0.f) return false;
     if (target->m_id == m_owner_id && (m_owner_generation == 0 || target->m_generation == m_owner_generation))
         return false;
     if (target == GetOwner()) return false;

@@ -31,9 +31,13 @@ void CPortal::Tick(float dt)
     CGameContext* context = GameContext();
     if (!context) return;
 
+    CGameWorld* world = GameWorld();
     for (const auto& player : context->Players())
     {
-        if (player) AttractAndTransferPlayer(*player, dt);
+        if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
+        CEntity* entity = player->GetEntity();
+        if (!entity || entity->GameWorld() != world) continue;
+        AttractAndTransferPlayer(*player, dt);
     }
 }
 

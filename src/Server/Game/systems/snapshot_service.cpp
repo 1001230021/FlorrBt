@@ -16,7 +16,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -57,28 +59,6 @@ float GetHealthPercent(const CEntity& entity)
     return entity.m_health;
 }
 
-float GetPrimordialDefaultMobRadius()
-{
-    float base_radius = std::max({game_config::mob_beetle_radius, game_config::mob_normal_ladybug_radius,
-                                  game_config::default_flower_radius, game_config::mob_player_flower_radius,
-                                  game_config::mob_summoned_beetle_radius, game_config::mob_soldier_ant_radius,
-                                  game_config::mob_soldier_fire_ant_radius, game_config::mob_soldier_termite_radius,
-                                  game_config::mob_summoned_soldier_ant_radius, game_config::mob_bee_radius,
-                                  game_config::mob_hornet_radius, game_config::mob_bumblebee_radius,
-                                  game_config::mob_dandelion_radius,
-                                  game_config::mob_ant_egg_radius,
-                                  game_config::mob_rock_radius, game_config::mob_baby_ant_radius,
-                                  game_config::mob_worker_ant_radius, game_config::mob_queen_ant_radius,
-                                  game_config::mob_leaf_piece_radius *
-                                      std::max(game_config::mob_leaf_piece_radius_scale_min,
-                                               game_config::mob_leaf_piece_radius_scale_max),
-                                  game_config::mob_soldier_ant_radius *
-                                      game_config::mob_termite_overmind_radius_multiplier,
-                                  game_config::mob_ant_hole_radius, game_config::mob_spider_radius,
-                                  game_config::mob_soldier_ant_radius});
-    return base_radius * game_config::MobRadiusScaleForLevel(GetLevel(ERarity::Primordial));
-}
-
 bool FlowerHasAvailablePetal(const CFlower& flower, EPetalType type)
 {
     for (const auto& slot : flower.GetSlots())
@@ -89,18 +69,40 @@ bool FlowerHasAvailablePetal(const CFlower& flower, EPetalType type)
     return false;
 }
 
-bool CanSnapshotEntityForPlayer(const CEntity& entity, const CPlayer& player)
+enum class snapshot_pool : std::uint8_t
 {
-    const auto* drop = dynamic_cast<const CDrop*>(&entity);
-    if (!drop) return true;
+    Mob,
+    Projectile,
+    Misc,
+};
 
-    const int owner_id = drop->GetOwnerId();
-    return owner_id == drop_owner_all || owner_id == static_cast<int>(player.GetId());
-}
+struct cached_snapshot_entity
+{
+    const CEntity* entity = nullptr;
+    const CEntity* root_owner = nullptr;
+    ServerEntitySnap snap;
+    float rarity_rank = 0.f;
+    int drop_owner_id = drop_owner_all;
+    snapshot_pool pool = snapshot_pool::Misc;
+    bool is_private_drop = false;
+    bool player_entity = false;
+    bool attached = false;
+};
+
+struct snapshot_world_cache
+{
+    std::unordered_map<const CEntity*, cached_snapshot_entity> entities;
+};
+
+struct snapshot_frame_cache
+{
+    std::uint32_t snapshot_id = std::numeric_limits<std::uint32_t>::max();
+    std::unordered_map<const CGameWorld*, snapshot_world_cache> worlds;
+};
 
 struct visible_candidate
 {
-    const CEntity* entity = nullptr;
+    const cached_snapshot_entity* cached = nullptr;
     float dist_sq = 0.f;
     float rarity_rank = 0.f;
     bool owner_related = false;
@@ -108,6 +110,17 @@ struct visible_candidate
     bool same_team = false;
     bool attached = false;
 };
+
+struct snapshot_scratch
+{
+    std::vector<visible_candidate> mobs;
+    std::vector<visible_candidate> projectiles;
+    std::vector<visible_candidate> misc;
+    std::vector<visible_candidate> visible;
+};
+
+thread_local snapshot_frame_cache g_snapshot_frame_cache;
+thread_local snapshot_scratch g_snapshot_scratch;
 
 float SnapshotRarityRank(const CEntity& entity)
 {
@@ -121,22 +134,68 @@ float SnapshotRarityRank(const CEntity& entity)
     return 0.f;
 }
 
-bool IsSnapshotProjectileLike(const CEntity& entity)
+cached_snapshot_entity BuildCachedSnapshotEntity(const CSnapshotService& service, const CEntity& entity)
 {
-    return dynamic_cast<const CProjectile*>(&entity) || dynamic_cast<const CStateZone*>(&entity);
+    cached_snapshot_entity cached;
+    cached.entity = &entity;
+    cached.root_owner = FindRootOwnerEntity(&entity);
+    cached.snap = service.BuildEntitySnap(entity, entity);
+    cached.snap.flags &= ~static_cast<std::uint16_t>(ServerEntityFlag::Owner);
+    cached.rarity_rank = SnapshotRarityRank(entity);
+    cached.player_entity = dynamic_cast<const CPlayerFlower*>(&entity) != nullptr;
+
+    if (const auto* drop = dynamic_cast<const CDrop*>(&entity))
+    {
+        cached.is_private_drop = drop->GetOwnerId() != drop_owner_all;
+        cached.drop_owner_id = drop->GetOwnerId();
+    }
+
+    if (dynamic_cast<const CMobBase*>(&entity))
+        cached.pool = snapshot_pool::Mob;
+    else if (dynamic_cast<const CProjectile*>(&entity) || dynamic_cast<const CStateZone*>(&entity))
+        cached.pool = snapshot_pool::Projectile;
+
+    if (const auto* missile = dynamic_cast<const CMissile*>(&entity))
+        cached.attached = missile->IsAttachedToOwner();
+    return cached;
 }
 
-visible_candidate MakeVisibleCandidate(const CEntity& entity, const CEntity& owner, float dist_sq)
+const cached_snapshot_entity& CachedSnapshotEntity(const CSnapshotService& service, const CGameWorld& world,
+                                                   const CEntity& entity, std::uint32_t snapshot_id)
 {
-    const auto* missile = dynamic_cast<const CMissile*>(&entity);
+    if (g_snapshot_frame_cache.snapshot_id != snapshot_id)
+    {
+        g_snapshot_frame_cache.snapshot_id = snapshot_id;
+        for (auto& [world, cache] : g_snapshot_frame_cache.worlds)
+        {
+            (void)world;
+            cache.entities.clear();
+        }
+    }
+
+    snapshot_world_cache& world_cache = g_snapshot_frame_cache.worlds[&world];
+    if (world_cache.entities.empty()) world_cache.entities.reserve(1024);
+    auto [it, inserted] = world_cache.entities.try_emplace(&entity);
+    if (inserted) it->second = BuildCachedSnapshotEntity(service, entity);
+    return it->second;
+}
+
+bool CanSnapshotEntityForPlayer(const cached_snapshot_entity& cached, const CPlayer& player)
+{
+    return !cached.is_private_drop || cached.drop_owner_id == static_cast<int>(player.GetId());
+}
+
+visible_candidate MakeVisibleCandidate(const cached_snapshot_entity& cached, const cached_snapshot_entity& owner,
+                                       float dist_sq)
+{
     visible_candidate candidate;
-    candidate.entity = &entity;
+    candidate.cached = &cached;
     candidate.dist_sq = dist_sq;
-    candidate.rarity_rank = SnapshotRarityRank(entity);
-    candidate.owner_related = ShareRootOwner(&entity, &owner);
-    candidate.player_entity = dynamic_cast<const CPlayerFlower*>(&entity) != nullptr;
-    candidate.same_team = CheckTeam(entity.m_team, owner.m_team);
-    candidate.attached = missile && missile->IsAttachedToOwner();
+    candidate.rarity_rank = cached.rarity_rank;
+    candidate.owner_related = cached.root_owner && cached.root_owner == owner.root_owner;
+    candidate.player_entity = cached.player_entity;
+    candidate.same_team = CheckTeam(cached.entity->m_team, owner.entity->m_team);
+    candidate.attached = cached.attached;
     return candidate;
 }
 
@@ -163,7 +222,6 @@ void TrimSnapshotPool(std::vector<visible_candidate>& pool, size_t budget)
                          BetterSnapshotCandidate);
         pool.resize(budget);
     }
-    std::sort(pool.begin(), pool.end(), BetterSnapshotCandidate);
 }
 }
 
@@ -191,29 +249,33 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
         std::clamp(game_config::network_snapshot_misc_budget, size_t{0}, CSnapshotService::entity_budget);
     const size_t configured_packet_budget =
         std::clamp(game_config::network_snapshot_packet_budget, size_t{128}, CSnapshotService::packet_budget);
-    float snap_radius = snap_view_radius + GetPrimordialDefaultMobRadius();
-    std::vector<visible_candidate> mob_entities;
-    std::vector<visible_candidate> projectile_entities;
-    std::vector<visible_candidate> misc_entities;
+    const cached_snapshot_entity& owner_cached =
+        CachedSnapshotEntity(*this, *owner->GameWorld(), *owner, snapshot_id);
+    auto& mob_entities = g_snapshot_scratch.mobs;
+    auto& projectile_entities = g_snapshot_scratch.projectiles;
+    auto& misc_entities = g_snapshot_scratch.misc;
+    mob_entities.clear();
+    projectile_entities.clear();
+    misc_entities.clear();
     mob_entities.reserve(std::min<size_t>(configured_mob_budget, 128));
     projectile_entities.reserve(std::min<size_t>(configured_projectile_budget, 256));
     misc_entities.reserve(std::min<size_t>(configured_misc_budget, 64));
 
     size_t visible_count = 1;
 
-    owner->GameWorld()->GetSpatialGrid().ForEachInRange(owner->m_pos, snap_radius, [&](CEntity* entity)
+    owner->GameWorld()->ForEachEntityInEdgeRange(owner->m_pos, snap_view_radius, [&](CEntity* entity)
     {
         if (!entity || !entity->IsVisible() || entity == owner) return;
-        if (!CanSnapshotEntityForPlayer(*entity, player)) return;
-        float radius = snap_view_radius + std::max(0.f, entity->m_radius);
+        const cached_snapshot_entity& cached =
+            CachedSnapshotEntity(*this, *owner->GameWorld(), *entity, snapshot_id);
+        if (!CanSnapshotEntityForPlayer(cached, player)) return;
         float dist_sq = DistanceSq(owner->m_pos, entity->m_pos);
-        if (dist_sq > radius * radius) return;
         ++visible_count;
 
-        visible_candidate candidate = MakeVisibleCandidate(*entity, *owner, dist_sq);
-        if (dynamic_cast<const CMobBase*>(entity))
+        visible_candidate candidate = MakeVisibleCandidate(cached, owner_cached, dist_sq);
+        if (cached.pool == snapshot_pool::Mob)
             mob_entities.push_back(candidate);
-        else if (IsSnapshotProjectileLike(*entity))
+        else if (cached.pool == snapshot_pool::Projectile)
             projectile_entities.push_back(candidate);
         else
             misc_entities.push_back(candidate);
@@ -223,7 +285,8 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
     TrimSnapshotPool(projectile_entities, configured_projectile_budget);
     TrimSnapshotPool(misc_entities, configured_misc_budget);
 
-    std::vector<visible_candidate> visible_entities;
+    auto& visible_entities = g_snapshot_scratch.visible;
+    visible_entities.clear();
     visible_entities.reserve(std::min(configured_entity_budget,
                                       mob_entities.size() + projectile_entities.size() + misc_entities.size() + 1));
     visible_entities.insert(visible_entities.end(), mob_entities.begin(), mob_entities.end());
@@ -245,7 +308,8 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
     msg.view_radius = view_radius;
     msg.entities.reserve(std::min(visible_entities.size() + 1, configured_entity_budget));
 
-    ServerEntitySnap owner_snap = BuildEntitySnap(*owner, *owner);
+    ServerEntitySnap owner_snap = owner_cached.snap;
+    owner_snap.flags |= static_cast<std::uint16_t>(ServerEntityFlag::Owner);
     size_t packed_size = snapshot_header_size + ServerEntitySnap::GetPackedSize(owner_snap);
     msg.entities.push_back(std::move(owner_snap));
     sf::Vector2f snapshot_origin = msg.entities.front().pos;
@@ -255,12 +319,13 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
 
     for (const visible_candidate& candidate : visible_entities)
     {
-        const CEntity* entity = candidate.entity;
+        const cached_snapshot_entity* cached = candidate.cached;
+        const CEntity* entity = cached ? cached->entity : nullptr;
         if (!entity || !entity->IsVisible()) continue;
-        if (!CanSnapshotEntityForPlayer(*entity, player)) continue;
+        if (!CanSnapshotEntityForPlayer(*cached, player)) continue;
         if (msg.entities.size() >= configured_entity_budget) break;
 
-        ServerEntitySnap snap = BuildEntitySnap(*entity, *owner);
+        ServerEntitySnap snap = cached->snap;
         size_t snap_size = ServerEntitySnap::GetPackedSize(snap, snapshot_origin, owner_id, true);
         if (packed_size + snap_size > packet_budget_for_owner) break;
         packed_size += snap_size;

@@ -14340,6 +14340,24 @@
                  "width":0,
                  "x":98630,
                  "y":22549
+                },
+                {
+                 "class":"warp",
+                 "height":0,
+                 "id":123,
+                 "name":"from_ant_hel",
+                 "point":true,
+                 "properties":[
+                        {
+                         "name":"warp_point",
+                         "type":"string",
+                         "value":"from_ant_hel"
+                        }],
+                 "rotation":0,
+                 "visible":true,
+                 "width":0,
+                 "x":97606,
+                 "y":22549
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -14348,7 +14366,7 @@
          "y":0
         }],
  "nextlayerid":15,
- "nextobjectid":123,
+ "nextobjectid":124,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.9.1",
