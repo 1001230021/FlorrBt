@@ -1,10 +1,12 @@
 #pragma once
+#include "../../../../Shared/game_config.h"
 #include "../../../../Shared/shared.h"
 #include "../flower.h"
 #include "../projectile.h"
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -25,6 +27,16 @@ inline bool KeepsBonusDuringReload(EPetalBonusMode mode)
     return mode == EPetalBonusMode::ReloadKeepsBonus || mode == EPetalBonusMode::PreloadKeepsBonus;
 }
 inline bool LosesBonusDuringReload(EPetalBonusMode mode) { return mode == EPetalBonusMode::AliveOnly; }
+
+// A stack's combat budget is split only after its final copy count is known.
+inline void NormalizePetalStatsPerCopy(SPetalStats& stats, int copies = 0)
+{
+    const int count = std::max(1, copies > 0 ? copies : stats.copy);
+    stats.health /= static_cast<float>(count);
+    stats.damage /= static_cast<float>(count);
+    stats.armor /= static_cast<float>(count);
+    stats.medicine /= static_cast<float>(count);
+}
 
 class CPetalBehavior
 {
@@ -57,8 +69,8 @@ class CPetalBehavior
     }
 
     virtual void OnTick(CPetal* owner, ERarity rarity, CFlower* flower, float dt) = 0;
-    virtual void OnFlowerTakeDamage(CPetal* owner, ERarity rarity, CFlower* flower, float& dmg,
-                                    EDamageType damage_type, CEntity* attacker) = 0;
+    virtual void OnFlowerTakeDamage(CPetal* owner, ERarity rarity, CFlower* flower, float& dmg, EDamageType damage_type,
+                                    CEntity* attacker) = 0;
     virtual void OnPetalHit(CPetal*, ERarity, CEntity*, float&) {}
     virtual void OnPetalSpawned(CPetal* owner, ERarity rarity, CFlower* flower) = 0;
     virtual void OnPetalCleared(CPetal*, ERarity, CFlower*) {}
@@ -80,6 +92,7 @@ class CPetalPrototype
     EPetalType m_type = EPetalType::None;
     std::string m_name;
     float m_base_radius = 0.f;
+    std::optional<int> m_extra_hit_num;
     std::unique_ptr<CPetalBehavior> m_p_behavior;
     petal_factory m_factory;
 };
@@ -91,6 +104,7 @@ class CPetal : public CProjectile
     void Tick(float dt) override;
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
+    const SEntityStats& GetEntityStats() const override { return m_final_petal_stats; }
     bool CanCollide() const override { return !m_hidden && CProjectile::CanCollide(); }
     bool CollidesWithWalls() const;
     bool IsVisible() const override { return !m_hidden && CProjectile::IsVisible(); }
@@ -141,17 +155,17 @@ class CThrownPetal : public CPetal
     using CPetal::CPetal;
 
     void Tick(float dt) override;
-    void BeginThrow(sf::Vector2f direction, float speed, float deceleration_time,
-                    bool destroy_when_stopped, bool tick_from_world, bool decelerates = true);
+    void BeginThrow(sf::Vector2f direction, float speed, float deceleration_time, bool destroy_when_stopped,
+                    bool tick_from_world, bool decelerates = true);
     void StopThrow(bool destroy);
 
     bool m_thrown = false;
     bool m_throw_decelerates = true;
     bool m_destroy_when_stopped = false;
     float m_throw_age = 0.f;
-    float m_throw_deceleration_time = 0.25f;
+    float m_throw_deceleration_time = game_config::default_petal_throw_initial_deceleration;
     float m_throw_initial_speed = 0.f;
-    sf::Vector2f m_throw_direction = {1.f, 0.f};
+    sf::Vector2f m_throw_direction = { 1.f, 0.f };
 };
 
 class CMissilePetal : public CThrownPetal
@@ -222,8 +236,6 @@ class CYggdrasilPetal : public CPetal
   public:
     using CPetal::CPetal;
 
-    int m_revive_target_id = -1;
-    std::uint64_t m_revive_target_generation = 0;
     float m_revive_timer = 0.f;
 };
 
@@ -233,12 +245,13 @@ template <typename TPetal> bool RegisterPetalPrototype(EPetalType type, CPetalPr
 {
     auto ptr = std::make_unique<CPetalPrototype>(std::move(prototype));
     CPetalPrototype* raw_ptr = ptr.get();
-    raw_ptr->m_factory = [raw_ptr](CFlower* flower, int slot, ERarity rarity) -> std::unique_ptr<CPetal>
-    {
+    raw_ptr->m_factory = [raw_ptr](CFlower* flower, int slot, ERarity rarity) -> std::unique_ptr<CPetal> {
         if (!flower || !raw_ptr->m_p_behavior) return nullptr;
 
         SPetalStats petal_stats = raw_ptr->m_p_behavior->GetPetalStats(rarity);
-        petal_stats.radius *= 0.5f;
+        if (raw_ptr->m_extra_hit_num) petal_stats.extra_hit_num = *raw_ptr->m_extra_hit_num;
+        NormalizePetalStatsPerCopy(petal_stats);
+        petal_stats.radius *= game_config::default_petal_collision_radius_multiplier;
         auto petal = std::make_unique<TPetal>(petal_stats.radius, flower, slot, petal_stats);
         petal->m_type = raw_ptr->m_type;
         petal->m_rarity = rarity;

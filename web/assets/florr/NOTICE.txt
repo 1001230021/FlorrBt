@@ -1,0 +1,10 @@
+Source: florr.io frontend build 7ae6745ee673332621597b5ea1fdbf8e6b1110f2
+
+The files in this directory are frontend runtime assets supplied by m28.
+They are used with permission for this project's non-commercial frontend.
+The permission does not cover server code or commercial use.
+
+Imported asset:
+- Ubuntu-B.ttf
+
+No decompiled code, WebAssembly binary, or server implementation is included.

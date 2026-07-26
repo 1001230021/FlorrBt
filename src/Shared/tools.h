@@ -11,8 +11,8 @@ class CEntity;
 class CPlayer;
 
 #if defined(__EMSCRIPTEN__)
-#include <emscripten.h>
 #include <cstddef>
+#include <emscripten.h>
 
 #elif defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -21,15 +21,16 @@ class CPlayer;
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0600
 #endif
+// clang-format off
 #include <windows.h>
 #include <wincrypt.h>
+// clang-format on
 
 #else
 #include <fcntl.h>
 #include <sys/random.h>
 #include <unistd.h>
 #endif
-
 
 inline std::mt19937& GetRng()
 {
@@ -54,8 +55,7 @@ inline bool CheckChance(double chance)
 
 inline bool CheckTeam(int t1, int t2)
 {
-    if (t1 == 0 || t2 == 0)
-        return false;
+    if (t1 == 0 || t2 == 0) return false;
     return t1 == t2;
 }
 
@@ -104,7 +104,7 @@ inline float BlendUltraSuper(float ultra_value, float super_value, float super_w
 inline float BlendRarityUltraSuper(ERarity rarity, float ultra_value, float super_value, float super_weight = 0.5f)
 {
     return rarity == ERarity::Exotic ? BlendUltraSuper(ultra_value, super_value, super_weight)
-                                    : (rarity == ERarity::Super ? super_value : ultra_value);
+                                     : (rarity == ERarity::Super ? super_value : ultra_value);
 }
 
 inline bool IsAtLeastRarity(ERarity rarity, ERarity threshold)
@@ -121,7 +121,7 @@ inline float Distance(sf::Vector2f v1, sf::Vector2f v2)
 {
     float dx = v1.x - v2.x;
     float dy = v1.y - v2.y;
-    return sqrtf(dx*dx + dy*dy);
+    return sqrtf(dx * dx + dy * dy);
 }
 
 inline float DistanceSq(sf::Vector2f v1, sf::Vector2f v2)
@@ -131,15 +131,9 @@ inline float DistanceSq(sf::Vector2f v1, sf::Vector2f v2)
     return dx * dx + dy * dy;
 }
 
-inline float Length(sf::Vector2f v)
-{
-    return sqrtf(v.x * v.x + v.y * v.y);
-}
+inline float Length(sf::Vector2f v) { return sqrtf(v.x * v.x + v.y * v.y); }
 
-inline float LengthSq(sf::Vector2f v)
-{
-    return v.x * v.x + v.y * v.y;
-}
+inline float LengthSq(sf::Vector2f v) { return v.x * v.x + v.y * v.y; }
 
 CPlayer* FindPlayerFromEntity(CEntity* entity, const std::vector<std::unique_ptr<CPlayer>>& players);
 CEntity* FindRootOwnerEntity(CEntity* entity);
@@ -152,11 +146,13 @@ EM_JS(void, emscripten_get_random_bytes, (void* ptr, size_t len), {
     var heapU8 = HEAPU8;
     var byteOffset = ptr;
     var remaining = len;
-    while (remaining > 0) {
+    while (remaining > 0)
+    {
         var chunk = Math.min(remaining, CHUNK_SIZE);
         var array = new Uint8Array(chunk);
         crypto.getRandomValues(array);
-        for (var i = 0; i < chunk; ++i) {
+        for (var i = 0; i < chunk; ++i)
+        {
             heapU8[byteOffset + i] = array[i];
         }
         byteOffset += chunk;
@@ -165,14 +161,14 @@ EM_JS(void, emscripten_get_random_bytes, (void* ptr, size_t len), {
 });
 #endif
 
-inline bool PlatformRandomBytes(uint8_t *buf, size_t len)
+inline bool PlatformRandomBytes(uint8_t* buf, size_t len)
 {
 #if defined(__EMSCRIPTEN__)
     emscripten_get_random_bytes(buf, len);
     return true;
 #elif defined(_WIN32)
     HCRYPTPROV h_provider = 0;
-    if(!CryptAcquireContextW(&h_provider, nullptr, nullptr, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT | CRYPT_SILENT))
+    if (!CryptAcquireContextW(&h_provider, nullptr, nullptr, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT | CRYPT_SILENT))
     {
         return false;
     }
@@ -184,13 +180,12 @@ inline bool PlatformRandomBytes(uint8_t *buf, size_t len)
     return true;
 #elif defined(__ANDROID__)
     int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
-    if(fd < 0)
-        return false;
+    if (fd < 0) return false;
     size_t bytes_read = 0;
-    while(bytes_read < len)
+    while (bytes_read < len)
     {
         ssize_t r = read(fd, buf + bytes_read, len - bytes_read);
-        if(r <= 0)
+        if (r <= 0)
         {
             close(fd);
             return false;
@@ -201,22 +196,22 @@ inline bool PlatformRandomBytes(uint8_t *buf, size_t len)
     return true;
 #else
     ssize_t ret = getrandom(buf, len, 0);
-    if(ret == static_cast<ssize_t>(len))
+    if (ret == static_cast<ssize_t>(len))
     {
         return true;
     }
 
     int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
-    if(fd < 0)
+    if (fd < 0)
     {
         return false;
     }
 
     size_t bytes_read = 0;
-    while(bytes_read < len)
+    while (bytes_read < len)
     {
         ssize_t r = read(fd, buf + bytes_read, len - bytes_read);
-        if(r <= 0)
+        if (r <= 0)
         {
             close(fd);
             return false;

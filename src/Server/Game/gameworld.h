@@ -1,10 +1,10 @@
 #pragma once
+#include "../../Engine/logger.h"
 #include "../../Engine/map_tools.h"
 #include "../../Engine/spatial_hash_grid.h"
-#include "../../Engine/logger.h"
 #include "../../Shared/shared.h"
-#include "gamecontroller.h"
 #include "entity.h"
+#include "gamecontroller.h"
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -28,8 +28,9 @@ class CGameWorld
     using wall_spatial_grid = CSpatialHashGrid<FlorrBtMap::Wall, int>;
 
     CGameWorld();
-    explicit CGameWorld(const std::string& path);
+    explicit CGameWorld(const std::string& path, std::uint32_t world_id = 0);
     ~CGameWorld();
+    std::uint32_t GetId() const { return m_world_id; }
 
     int GetNewID();
     void FreeID(int id);
@@ -56,6 +57,7 @@ class CGameWorld
 
     CEntity* GetEntity(int id) const;
     CEntity* GetEntity(int id, std::uint64_t generation) const;
+    void QueueEntityForCleanup(CEntity* entity);
     CEntity* FindClosestEntity(const sf::Vector2f& center, float max_range,
                                std::function<bool(const CEntity*)> filter = nullptr) const;
     CEntity* FindClosestEntityByEdge(const sf::Vector2f& center, float max_edge_range,
@@ -73,14 +75,14 @@ class CGameWorld
 
     const entity_spatial_grid& GetSpatialGrid() const { return m_spatial_grid; }
     float GetMaxEntityRadius() const { return m_normal_entity_radius_limit; }
-    template <typename TVisitor> void ForEachEntityInEdgeRange(const sf::Vector2f& center, float edge_range,
-                                                               TVisitor visitor) const
+    std::size_t GetPlayerCount() const;
+    template <typename TVisitor>
+    void ForEachEntityInEdgeRange(const sf::Vector2f& center, float edge_range, TVisitor visitor) const
     {
         if (edge_range <= 0.f) return;
 
         const float query_radius = edge_range + m_normal_entity_radius_limit;
-        m_spatial_grid.ForEachInRange(center, query_radius, [&](CEntity* entity)
-        {
+        m_spatial_grid.ForEachInRange(center, query_radius, [&](CEntity* entity) {
             if (!entity || entity->m_radius > m_normal_entity_radius_limit) return;
             const float reach = edge_range + std::max(0.f, entity->m_radius);
             if (DistanceSq(center, entity->m_pos) <= reach * reach) visitor(entity);
@@ -104,6 +106,9 @@ class CGameWorld
   private:
     void RegisterLiveEntity(CEntity* entity);
     void UnregisterLiveEntity(CEntity* entity);
+    void RemoveQueuedCleanupEntity(CEntity* entity);
+    void SyncAlwaysTickMembership(CEntity* entity);
+    void RemoveAlwaysTickEntity(CEntity* entity);
     void SyncLargeEntityMembership(CEntity* entity);
     void RemoveLargeEntity(CEntity* entity);
     void SpawnMapPortals();
@@ -118,6 +123,7 @@ class CGameWorld
     std::vector<int> m_free_ids;
     std::vector<std::uint8_t> m_id_in_use;
     int m_next_id = 0;
+    std::uint32_t m_world_id = 0;
     std::uint64_t m_next_generation = 1;
     CGameContext* m_p_game_context = nullptr;
 
@@ -131,8 +137,9 @@ class CGameWorld
     std::vector<std::unique_ptr<CEntity>> m_p_entities;
     std::vector<CEntity*> m_p_entity_refs;
     std::vector<CEntity*> m_live_entities;
+    std::vector<CEntity*> m_cleanup_entities;
+    std::vector<CEntity*> m_always_tick_entities;
     std::vector<CEntity*> m_large_entities;
-    std::vector<CEntity*> m_tick_entities;
     std::vector<CEntity*> m_active_entities;
     std::vector<CActiveTickView> m_active_tick_views;
     std::vector<CEntity*> m_collision_normal_entities;

@@ -1,6 +1,7 @@
 #include "network_module.h"
 #include "../../Engine/account_data.h"
 #include "../../Engine/logger.h"
+#include "../../Shared/network_msg.h"
 #include "../Game/controllers/player_controller.h"
 #include "../Game/entities/flower.h"
 #include "../Game/entities/petals/petal.h"
@@ -9,15 +10,15 @@
 #include "../Game/player.h"
 #include "../Game/talent.h"
 #include "../report.h"
-#include "../../Shared/network_msg.h"
 #include <SFML/Network.hpp>
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
-#include <cctype>
 #include <cstdint>
 #include <exception>
+#include <limits>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -29,8 +30,8 @@ uint16_t EncodeExpProgressBps(const CPlayerFlower& flower)
     const std::int64_t required = flower.ExpRequired();
     if (required <= 0) return 0;
 
-    long double progress = static_cast<long double>(std::max<std::int64_t>(0, flower.m_exp)) /
-                           static_cast<long double>(required);
+    long double progress =
+        static_cast<long double>(std::max<std::int64_t>(0, flower.m_exp)) / static_cast<long double>(required);
     progress = std::clamp(progress, 0.0L, 1.0L);
     return static_cast<uint16_t>(std::clamp<long long>(std::llround(progress * 10000.0L), 0, 10000));
 }
@@ -73,9 +74,14 @@ size_t PendingSendBytes(const CPlayer& player)
 
 size_t SnapshotBacklogSkipBytes()
 {
+    const size_t max_backlog = CSnapshotService::backlog_skip_bytes;
+    const size_t min_backlog =
+        std::min(std::max<size_t>(1, game_config::network_snapshot_backlog_min_bytes), max_backlog);
+    const size_t packet_multiplier = std::max<size_t>(1, game_config::network_snapshot_backlog_packet_multiplier);
     size_t configured = game_config::network_snapshot_backlog_skip_bytes;
-    if (configured == 0) configured = std::max<size_t>(512, game_config::network_snapshot_packet_budget * 2u);
-    return std::clamp(configured, size_t{512}, CSnapshotService::backlog_skip_bytes);
+    if (configured == 0)
+        configured = std::max(min_backlog, game_config::network_snapshot_packet_budget * packet_multiplier);
+    return std::clamp(configured, min_backlog, max_backlog);
 }
 
 bool IsSlotOperate(const ClientOperate& op)
@@ -93,10 +99,12 @@ std::string ToLower(std::string text)
 std::string Trim(std::string_view text)
 {
     size_t begin = 0;
-    while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin]))) ++begin;
+    while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin])))
+        ++begin;
 
     size_t end = text.size();
-    while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1]))) --end;
+    while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1])))
+        --end;
 
     return std::string(text.substr(begin, end - begin));
 }
@@ -105,11 +113,16 @@ std::string LogPriorityName(ELogPriority priority)
 {
     switch (priority)
     {
-    case ELogPriority::Debug: return "DEBUG";
-    case ELogPriority::Info: return "INFO";
-    case ELogPriority::Warning: return "WARN";
-    case ELogPriority::Error: return "ERROR";
-    case ELogPriority::Fatal: return "FATAL";
+    case ELogPriority::Debug:
+        return "DEBUG";
+    case ELogPriority::Info:
+        return "INFO";
+    case ELogPriority::Warning:
+        return "WARN";
+    case ELogPriority::Error:
+        return "ERROR";
+    case ELogPriority::Fatal:
+        return "FATAL";
     }
     return "UNKNOWN";
 }
@@ -140,9 +153,8 @@ void SendPrivateServerMessage(INetworkModule& network, CPlayer& player, const st
     {
         std::string part = text.substr(offset, max_chat_message_size);
         offset += part.size();
-        if (const CServer::SChatEntry* chat =
-                server->SubmitChat(nullptr, {0.f, 0.f}, EChatFlag::Server, 0, "RCON", part,
-                                   static_cast<int>(player.GetId())))
+        if (const CServer::SChatEntry* chat = server->SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "RCON",
+                                                                 part, static_cast<int>(player.GetId())))
         {
             network.SendChatToPlayer(player, *chat);
         }
@@ -158,9 +170,8 @@ bool HandleRconCommand(INetworkModule& network, CPlayer& player, const std::stri
 
     if (payload.empty())
     {
-        SendPrivateServerMessage(network, player,
-                                 player.IsRconAuthorized() ? "Usage: /rcon [server command]" :
-                                                             "Usage: /rcon [password]");
+        SendPrivateServerMessage(
+            network, player, player.IsRconAuthorized() ? "Usage: /rcon [server command]" : "Usage: /rcon [password]");
         return true;
     }
 
@@ -177,7 +188,8 @@ bool HandleRconCommand(INetworkModule& network, CPlayer& player, const std::stri
             player.SetRconAuthorized(true);
             LOG_INFO("rcon", "Player " + player.GetName() + " authorized from " + player.GetRemoteAddress());
             SendPrivateServerMessage(network, player, "RCON authorized.");
-        } else {
+        } else
+        {
             LOG_WARN("rcon", "Failed RCON login for player " + player.GetName() + " from " + player.GetRemoteAddress());
             SendPrivateServerMessage(network, player, "RCON authorization failed.");
         }
@@ -194,21 +206,18 @@ bool HandleRconCommand(INetworkModule& network, CPlayer& player, const std::stri
     LOG_INFO("rcon", "Player " + player.GetName() + " executed: " + payload);
 
     std::vector<std::string> captured_lines;
-    size_t sink_id = CLogger::AddSink([&captured_lines](const std::string& sender, ELogPriority priority,
-                                                        const std::string& msg)
-    {
-        captured_lines.push_back("[" + sender + "][" + LogPriorityName(priority) + "] " + msg);
-    });
+    size_t sink_id =
+        CLogger::AddSink([&captured_lines](const std::string& sender, ELogPriority priority, const std::string& msg) {
+            captured_lines.push_back("[" + sender + "][" + LogPriorityName(priority) + "] " + msg);
+        });
 
     try
     {
         server->GetConsole().ExecuteLine(payload);
-    }
-    catch (const std::exception& e)
+    } catch (const std::exception& e)
     {
         captured_lines.push_back(std::string("[rcon][ERROR] ") + e.what());
-    }
-    catch (...)
+    } catch (...)
     {
         captured_lines.push_back("[rcon][ERROR] Unknown exception");
     }
@@ -217,9 +226,9 @@ bool HandleRconCommand(INetworkModule& network, CPlayer& player, const std::stri
     if (captured_lines.empty())
     {
         SendPrivateServerMessage(network, player, "Executed: " + payload);
-    } else {
-        constexpr size_t max_rcon_reply_lines = 12;
-        size_t count = std::min(captured_lines.size(), max_rcon_reply_lines);
+    } else
+    {
+        size_t count = std::min(captured_lines.size(), game_config::network_rcon_max_reply_lines);
         for (size_t i = 0; i < count; ++i)
             SendPrivateServerMessage(network, player, captured_lines[i]);
         if (captured_lines.size() > count)
@@ -228,7 +237,7 @@ bool HandleRconCommand(INetworkModule& network, CPlayer& player, const std::stri
     }
     return true;
 }
-}
+} // namespace
 
 bool INetworkModule::Init()
 {
@@ -238,7 +247,8 @@ bool INetworkModule::Init()
         m_listener_v6.setBlocking(false);
         m_listening_v6 = true;
         LOG_INFO("network", "Listening on IPv6 port " + std::to_string(port));
-    } else {
+    } else
+    {
         LOG_WARN("network", "IPv6 listen failed on port " + std::to_string(port));
     }
 
@@ -247,7 +257,8 @@ bool INetworkModule::Init()
         m_listener_v4.setBlocking(false);
         m_listening_v4 = true;
         LOG_INFO("network", "Listening on IPv4 port " + std::to_string(port));
-    } else {
+    } else
+    {
         LOG_WARN("network", "IPv4 listen failed on port " + std::to_string(port));
     }
 
@@ -301,7 +312,7 @@ void INetworkModule::SendSnapshots()
         DropQueuedSnapshots(*player);
         if (PendingSendBytes(*player) > SnapshotBacklogSkipBytes())
         {
-            if ((m_snapshot_id % 60) == 0)
+            if ((m_snapshot_id % std::max(1, game_config::network_snapshot_backlog_log_interval)) == 0)
             {
                 LOG_WARN("network", "Skipping snapshot for player " + std::to_string(player->GetId()) +
                                         " because output backlog is " + std::to_string(PendingSendBytes(*player)) +
@@ -309,7 +320,8 @@ void INetworkModule::SendSnapshots()
             }
             if (!FlushSendBuffer(*player))
             {
-                LOG_INFO("network", "Player " + std::to_string(player->GetId()) + " disconnected while flushing backlog");
+                LOG_INFO("network",
+                         "Player " + std::to_string(player->GetId()) + " disconnected while flushing backlog");
                 player->DetachSocket();
             }
             continue;
@@ -320,8 +332,8 @@ void INetworkModule::SendSnapshots()
 
         if (!QueueMessage(*player, snapshot.message))
         {
-            LOG_WARN("network", "Failed to queue snapshot for player " + std::to_string(player->GetId()) +
-                                    " (" + std::to_string(snapshot.message.entities.size()) + " entities, " +
+            LOG_WARN("network", "Failed to queue snapshot for player " + std::to_string(player->GetId()) + " (" +
+                                    std::to_string(snapshot.message.entities.size()) + " entities, " +
                                     std::to_string(ServerMessage::GetPackedSize(snapshot.message)) +
                                     " bytes, backlog " + std::to_string(PendingSendBytes(*player)) + " bytes)");
         }
@@ -346,8 +358,7 @@ void INetworkModule::ShutDown()
 
 void INetworkModule::AcceptConnections()
 {
-    auto accept_from = [this](sf::TcpListener& listener)
-    {
+    auto accept_from = [this](sf::TcpListener& listener) {
         sf::TcpSocket new_socket;
         if (listener.accept(new_socket) != sf::Socket::Status::Done) return;
 
@@ -420,11 +431,13 @@ void INetworkModule::ProcessMessages()
                 continue;
             }
             ++i;
-        } else if (status == sf::Socket::Status::Disconnected) {
+        } else if (status == sf::Socket::Status::Disconnected)
+        {
             LOG_INFO("network", "Player " + std::to_string(player->GetId()) + " disconnected");
             player->DetachSocket();
             ++i;
-        } else {
+        } else
+        {
             ++i;
         }
     }
@@ -493,7 +506,8 @@ void INetworkModule::DropQueuedSnapshots(CPlayer& player)
         if (type == static_cast<uint8_t>(ServerMessage::Type::Snapshot))
         {
             dropped_packets++;
-        } else {
+        } else
+        {
             kept.insert(kept.end(), player.m_send_buffer.begin() + offset, player.m_send_buffer.begin() + packet_end);
         }
         offset = packet_end;
@@ -529,8 +543,7 @@ bool INetworkModule::QueueMessage(CPlayer& player, const ServerMessage& msg)
     thread_local std::vector<uint8_t> payload(UINT16_MAX);
     if (payload.size() < UINT16_MAX) payload.resize(UINT16_MAX);
     size_t packed_len = ServerMessage::pack(msg, payload.data());
-    if (packed_len == 0 || packed_len > UINT16_MAX)
-        return false;
+    if (packed_len == 0 || packed_len > UINT16_MAX) return false;
     if (PendingSendBytes(player) + packed_len + packet_length_prefix_size > game_config::network_max_send_buffer_size)
     {
         LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " output buffer overflow");
@@ -566,14 +579,15 @@ bool INetworkModule::QueueWelcome(CPlayer& player)
     {
         msg.owner_entity_id = static_cast<net_entity_id>(entity->m_id);
         if (CGameWorld* world = entity->GameWorld()) msg.map_name = world->GetMapPath();
-    }
-    else
+    } else
     {
         msg.owner_entity_id = 0;
         msg.map_name = m_lobby_world.GetMapPath();
     }
 
-    return QueueMessage(player, msg);
+    const bool queued = QueueMessage(player, msg);
+    if (queued) report::SyncSquadMetadata(player);
+    return queued;
 }
 
 bool INetworkModule::QueueOwnerState(CPlayer& player)
@@ -587,14 +601,16 @@ bool INetworkModule::QueueOwnerState(CPlayer& player)
     for (const ITalent* talent : player.GetTalents())
     {
         if (!talent) continue;
-        msg.talents.push_back({talent->m_id, static_cast<uint8_t>(talent->m_rarity),
-                               static_cast<uint8_t>(std::clamp(talent->m_rank, 0, 255))});
+        msg.talents.push_back({ talent->m_id, static_cast<uint8_t>(talent->m_rarity),
+                                static_cast<uint8_t>(std::clamp(
+                                    talent->m_rank, 0, static_cast<int>(std::numeric_limits<uint8_t>::max()))) });
     }
 
     auto* player_flower = dynamic_cast<CPlayerFlower*>(player.GetEntity());
     if (player_flower)
     {
-        msg.level = static_cast<uint8_t>(std::clamp(player_flower->m_level, 0, 255));
+        msg.level = static_cast<uint8_t>(
+            std::clamp(player_flower->m_level, 0, static_cast<int>(std::numeric_limits<uint8_t>::max())));
         msg.exp_progress_bps = EncodeExpProgressBps(*player_flower);
     }
 
@@ -633,15 +649,9 @@ bool INetworkModule::QueueOwnerState(CPlayer& player)
     return QueueMessage(player, msg);
 }
 
-bool INetworkModule::QueueOwnerStateUpdate(CPlayer& player)
-{
-    return QueueOwnerState(player);
-}
+bool INetworkModule::QueueOwnerStateUpdate(CPlayer& player) { return QueueOwnerState(player); }
 
-bool INetworkModule::QueueInventoryUpdate(CPlayer& player)
-{
-    return QueueInventory(player);
-}
+bool INetworkModule::QueueInventoryUpdate(CPlayer& player) { return QueueInventory(player); }
 
 bool INetworkModule::QueueInventory(CPlayer& player)
 {
@@ -690,26 +700,30 @@ void INetworkModule::BroadcastChat(const CServer::SChatEntry& chat)
         if (chat.flag == EChatFlag::Server)
         {
             if (chat.target_player_id >= 0 && static_cast<int>(player->GetId()) != chat.target_player_id) continue;
+            if (chat.world)
+            {
+                CEntity* entity = player->GetEntity();
+                if (!entity || entity->m_is_marked_for_des || entity->GameWorld() != chat.world) continue;
+            }
             QueueChat(*player, chat);
             continue;
         }
 
         if (chat.flag == EChatFlag::Whisper)
         {
-            if (static_cast<int>(player->GetId()) == chat.target_player_id ||
-                player->GetId() == chat.player_id)
+            if (static_cast<int>(player->GetId()) == chat.target_player_id || player->GetId() == chat.player_id)
                 QueueChat(*player, chat);
             continue;
         }
-
-        CEntity* entity = player->GetEntity();
-        if (!entity || entity->m_is_marked_for_des || entity->GameWorld() != chat.world) continue;
 
         if (chat.flag == EChatFlag::Global)
         {
             QueueChat(*player, chat);
             continue;
         }
+
+        CEntity* entity = player->GetEntity();
+        if (!entity || entity->m_is_marked_for_des || entity->GameWorld() != chat.world) continue;
 
         auto* mob = dynamic_cast<CMobBase*>(entity);
         const SMobStats* stats = mob ? mob->GetFinalStats() : nullptr;
@@ -722,14 +736,12 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
 {
     CAccountDataStore::CSaveBatch account_save_batch;
     bool queue_slot_state = false;
-    auto flush_slot_state = [&]() -> EPlayerBufferResult
-    {
+    auto flush_slot_state = [&]() -> EPlayerBufferResult {
         if (!queue_slot_state) return EPlayerBufferResult::Continue;
         QueueInventory(player);
         QueueOwnerState(player);
         queue_slot_state = false;
-        if (!FlushSendBuffer(player))
-            return EPlayerBufferResult::RequestedDisconnect;
+        if (!FlushSendBuffer(player)) return EPlayerBufferResult::RequestedDisconnect;
         return EPlayerBufferResult::Continue;
     };
 
@@ -737,12 +749,14 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
     {
         if (ClientAuthRequest::IsPacketStart(player.m_receive_buffer[0]))
         {
-            size_t packet_size = ClientAuthRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
+            size_t packet_size =
+                ClientAuthRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
             if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
 
             bool ok = false;
             ClientAuthRequest request = ClientAuthRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
-            player.m_receive_buffer.erase(player.m_receive_buffer.begin(), player.m_receive_buffer.begin() + packet_size);
+            player.m_receive_buffer.erase(player.m_receive_buffer.begin(),
+                                          player.m_receive_buffer.begin() + packet_size);
             if (!ok)
             {
                 QueueAuthResult(player, false, "Bad auth packet");
@@ -756,12 +770,14 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
 
         if (ClientChatRequest::IsPacketStart(player.m_receive_buffer[0]))
         {
-            size_t packet_size = ClientChatRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
+            size_t packet_size =
+                ClientChatRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
             if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
 
             bool ok = false;
             ClientChatRequest request = ClientChatRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
-            player.m_receive_buffer.erase(player.m_receive_buffer.begin(), player.m_receive_buffer.begin() + packet_size);
+            player.m_receive_buffer.erase(player.m_receive_buffer.begin(),
+                                          player.m_receive_buffer.begin() + packet_size);
             if (!player.IsAuthenticated())
             {
                 QueueAuthResult(player, false, "Please login first");
@@ -773,12 +789,15 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
 
         if (ClientSecondarySlotRequest::IsPacketStart(player.m_receive_buffer[0]))
         {
-            size_t packet_size = ClientSecondarySlotRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
+            size_t packet_size = ClientSecondarySlotRequest::GetPacketSize(player.m_receive_buffer.data(),
+                                                                           player.m_receive_buffer.size());
             if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
 
             bool ok = false;
-            ClientSecondarySlotRequest request = ClientSecondarySlotRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
-            player.m_receive_buffer.erase(player.m_receive_buffer.begin(), player.m_receive_buffer.begin() + packet_size);
+            ClientSecondarySlotRequest request =
+                ClientSecondarySlotRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
+            player.m_receive_buffer.erase(player.m_receive_buffer.begin(),
+                                          player.m_receive_buffer.begin() + packet_size);
             if (!player.IsAuthenticated())
             {
                 QueueAuthResult(player, false, "Please login first");
@@ -794,12 +813,14 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
 
         if (ClientCraftRequest::IsPacketStart(player.m_receive_buffer[0]))
         {
-            size_t packet_size = ClientCraftRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
+            size_t packet_size =
+                ClientCraftRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
             if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
 
             bool ok = false;
             ClientCraftRequest request = ClientCraftRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
-            player.m_receive_buffer.erase(player.m_receive_buffer.begin(), player.m_receive_buffer.begin() + packet_size);
+            player.m_receive_buffer.erase(player.m_receive_buffer.begin(),
+                                          player.m_receive_buffer.begin() + packet_size);
             if (!player.IsAuthenticated())
             {
                 QueueAuthResult(player, false, "Please login first");
@@ -811,12 +832,14 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
 
         if (ClientTalentRequest::IsPacketStart(player.m_receive_buffer[0]))
         {
-            size_t packet_size = ClientTalentRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
+            size_t packet_size =
+                ClientTalentRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
             if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
 
             bool ok = false;
             ClientTalentRequest request = ClientTalentRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
-            player.m_receive_buffer.erase(player.m_receive_buffer.begin(), player.m_receive_buffer.begin() + packet_size);
+            player.m_receive_buffer.erase(player.m_receive_buffer.begin(),
+                                          player.m_receive_buffer.begin() + packet_size);
             if (!player.IsAuthenticated())
             {
                 QueueAuthResult(player, false, "Please login first");
@@ -837,8 +860,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
             QueueInventory(player);
             QueueOwnerState(player);
             queue_slot_state = false;
-            if (!FlushSendBuffer(player))
-                return EPlayerBufferResult::RequestedDisconnect;
+            if (!FlushSendBuffer(player)) return EPlayerBufferResult::RequestedDisconnect;
             continue;
         }
 
@@ -869,10 +891,9 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                     if (!respawn_world) respawn_world = &m_lobby_world;
                     if (m_player_lifecycle_service.Respawn(player, *respawn_world))
                         m_player_lifecycle_service.NotifyPlayerWorldChanged(player, *this);
-                }
-                else
-                    player.HandleOperate(op);
-            } else {
+                } else player.HandleOperate(op);
+            } else
+            {
                 auto* flower = dynamic_cast<CPlayerFlower*>(player.GetEntity());
                 if (!flower || !flower->m_is_dead) player.HandleOperate(op);
             }
@@ -885,8 +906,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
 
 void INetworkModule::HandleChatRequest(CPlayer& player, const ClientChatRequest& request)
 {
-    if (HandleRconCommand(*this, player, request.message))
-        return;
+    if (HandleRconCommand(*this, player, request.message)) return;
 
     CEntity* entity = player.GetEntity();
     if (!entity || entity->m_is_marked_for_des) return;
@@ -903,16 +923,18 @@ void INetworkModule::HandleChatRequest(CPlayer& player, const ClientChatRequest&
         entry.flag = EChatFlag::Server;
         entry.target_player_id = static_cast<int>(player.GetId());
         entry.player_name = "Server";
-        entry.message = "You are muted for " + std::to_string(static_cast<int>(std::ceil(player.GetMuteTimer()))) + "s.";
+        entry.message =
+            "You are muted for " + std::to_string(static_cast<int>(std::ceil(player.GetMuteTimer()))) + "s.";
         entry.system_time = static_cast<uint32_t>(
-            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count());
         SendChatToPlayer(player, entry);
         return;
     }
 
     EChatFlag flag = request.flag == EChatFlag::Local ? EChatFlag::Local : EChatFlag::Global;
-    if (const CServer::SChatEntry* chat = CServer::GetInstance()->SubmitChat(entity->GameWorld(), entity->m_pos, flag,
-                                                                             player.GetId(), player.GetName(), request.message))
+    if (const CServer::SChatEntry* chat = CServer::GetInstance()->SubmitChat(
+            entity->GameWorld(), entity->m_pos, flag, player.GetId(), player.GetName(), request.message))
     {
         BroadcastChat(*chat);
     }
@@ -925,7 +947,8 @@ void INetworkModule::HandleSecondarySlotRequest(CPlayer& player, const ClientSec
     if (request.petal_type == 0 || request.rarity == 0)
         CAccountDataStore::ClearSecondarySlot(player.GetAccountName(), request.slot_index);
     else
-        CAccountDataStore::SetSecondarySlot(player.GetAccountName(), request.slot_index, request.petal_type, request.rarity);
+        CAccountDataStore::SetSecondarySlot(player.GetAccountName(), request.slot_index, request.petal_type,
+                                            request.rarity);
 }
 
 void INetworkModule::HandleCraftRequest(CPlayer& player, const ClientCraftRequest& request)
@@ -948,8 +971,7 @@ void INetworkModule::HandleTalentRequest(CPlayer& player, const ClientTalentRequ
         int rank = static_cast<int>(item.rank);
         if (request.action == ClientTalentAction::Remove)
             changed = player.RemoveTalent(item.id, rarity, rank) || changed;
-        else
-            changed = player.AddTalent(item.id, rarity, rank) || changed;
+        else changed = player.AddTalent(item.id, rarity, rank) || changed;
     }
 
     QueueOwnerState(player);
@@ -1005,14 +1027,14 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
             reconnect_player->DetachSocket();
             return EPlayerBufferResult::RemovePendingPlayer;
         }
-        LOG_INFO("network", "Account " + request.name + " reconnected as player " + std::to_string(reconnect_player->GetId()));
+        LOG_INFO("network",
+                 "Account " + request.name + " reconnected as player " + std::to_string(reconnect_player->GetId()));
         return EPlayerBufferResult::RemovePendingPlayer;
     }
 
     player.Authenticate(request.name);
     player.SetUseNewPlayerSpawn(register_mode);
-    if (auto* controller = m_lobby_world.GetController())
-        controller->OnPlayerConnect(m_lobby_world, &player);
+    if (auto* controller = m_lobby_world.GetController()) controller->OnPlayerConnect(m_lobby_world, &player);
 
     QueueAuthResult(player, true, register_mode ? "Registered" : "Logged in");
     m_player_lifecycle_service.NotifyPlayerLogin(player, *this);
@@ -1050,14 +1072,14 @@ void INetworkModule::BanPlayerIp(uint32_t player_id, float seconds)
     CPlayer* player = FindPlayerById(player_id);
     if (!player || player->GetRemoteAddress().empty()) return;
 
-    m_ip_bans.push_back({player->GetRemoteAddress(), seconds});
+    m_ip_bans.push_back({ player->GetRemoteAddress(), seconds });
     KickPlayer(player_id, "IP banned");
 }
 
 void INetworkModule::BanName(const std::string& name, float seconds)
 {
     std::string target = ToLower(name);
-    m_name_bans.push_back({target, seconds});
+    m_name_bans.push_back({ target, seconds });
     for (size_t i = 0; i < m_players.size();)
     {
         CPlayer* player = m_players[i].get();
@@ -1089,12 +1111,12 @@ bool INetworkModule::IsNameBanned(const std::string& name) const
     return false;
 }
 
-bool INetworkModule::AssignPlayerEntity(uint32_t player_id, int entity_id)
+bool INetworkModule::AssignPlayerEntity(uint32_t player_id, CGameWorld& world, int entity_id)
 {
     CPlayer* player = FindPlayerById(player_id);
     if (!player || !player->IsAuthenticated()) return false;
 
-    CEntity* entity = m_lobby_world.GetEntity(entity_id);
+    CEntity* entity = world.GetEntity(entity_id);
     auto* mob = dynamic_cast<CMobBase*>(entity);
     if (!mob || mob->IsDead()) return false;
 
@@ -1103,14 +1125,12 @@ bool INetworkModule::AssignPlayerEntity(uint32_t player_id, int entity_id)
     player->SetOwnedEntity(mob);
     player->m_logged_missing_entity = false;
     m_player_lifecycle_service.NotifyPlayerWorldChanged(*player, *this);
-    LOG_INFO("network", "Player " + std::to_string(player_id) + " now controls entity " + std::to_string(entity_id));
+    LOG_INFO("network", "Player " + std::to_string(player_id) + " now controls entity " +
+                            std::to_string(entity_id) + " in world " + std::to_string(world.GetId()));
     return true;
 }
 
-CGameContext* INetworkModule::GameContext() const
-{
-    return m_lobby_world.GameContext();
-}
+CGameContext* INetworkModule::GameContext() const { return m_lobby_world.GameContext(); }
 
 void INetworkModule::NotifyPlayerWorldChanged(CPlayer& player)
 {
@@ -1152,18 +1172,15 @@ void INetworkModule::TickTimeouts(float dt)
 
 void INetworkModule::TickBans(float dt)
 {
-    auto tick = [dt](auto& bans)
-    {
+    auto tick = [dt](auto& bans) {
         for (auto& [key, timer] : bans)
         {
             (void)key;
             if (timer > 0.f) timer -= dt;
         }
-        bans.erase(std::remove_if(bans.begin(), bans.end(),
-                                  [](const auto& ban)
-                                  {
-                                      return ban.second == 0.f || (ban.second > -1.f && ban.second <= 0.f);
-                                  }),
+        bans.erase(std::remove_if(
+                       bans.begin(), bans.end(),
+                       [](const auto& ban) { return ban.second == 0.f || (ban.second > -1.f && ban.second <= 0.f); }),
                    bans.end());
     };
 
@@ -1177,10 +1194,8 @@ void INetworkModule::DropPlayer(size_t index, const std::string& reason)
 
     CPlayer& player = *m_players[index];
     LOG_INFO("network", "Player " + std::to_string(player.GetId()) + " dropped: " + reason);
-    if (auto* flower = dynamic_cast<CPlayerFlower*>(player.GetEntity()))
-        flower->PrepareRespawnDestroy();
-    else if (CEntity* entity = player.GetEntity())
-        entity->m_is_marked_for_des = true;
+    if (auto* flower = dynamic_cast<CPlayerFlower*>(player.GetEntity())) flower->PrepareRespawnDestroy();
+    else if (CEntity* entity = player.GetEntity()) entity->MarkForDestroy();
     FreePlayerId(player.GetId());
     m_players.erase(m_players.begin() + index);
 }
@@ -1196,7 +1211,4 @@ int INetworkModule::GetNewPlayerId()
     return m_next_player_id++;
 }
 
-void INetworkModule::FreePlayerId(int id)
-{
-    m_free_player_ids.insert(id);
-}
+void INetworkModule::FreePlayerId(int id) { m_free_player_ids.insert(id); }

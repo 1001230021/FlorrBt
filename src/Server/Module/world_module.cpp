@@ -1,7 +1,7 @@
 #include "world_module.h"
-#include "../Game/gamecontrollers/opencontroller.h"
 #include "../../Shared/game_config.h"
 #include "../../Shared/tools.h"
+#include "../Game/gamecontrollers/opencontroller.h"
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -12,9 +12,9 @@ namespace
 
 constexpr const char* ant_hel_map_path = "data/maps/ant_hel.tmj";
 
-std::unique_ptr<CGameWorld> CreateOpenWorld(const std::string& map_path)
+std::unique_ptr<CGameWorld> CreateOpenWorld(std::uint32_t world_id, const std::string& map_path)
 {
-    auto world = std::make_unique<CGameWorld>(map_path);
+    auto world = std::make_unique<CGameWorld>(map_path, world_id);
     auto controller = std::make_unique<COpenController>();
     world->SetController(std::move(controller));
     return world;
@@ -27,25 +27,20 @@ std::string NormalizeMapName(std::string name)
     if (path.has_extension()) name = path.stem().generic_string();
     else if (path.has_parent_path()) name = path.filename().generic_string();
 
-    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch)
-    {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return name;
 }
 
-}
+} // namespace
 
 IWorldModule::IWorldModule()
 {
-    m_worlds.emplace_back(CreateOpenWorld(game_config::lobby_map_path));
-    m_worlds.emplace_back(CreateOpenWorld(ant_hel_map_path));
+    m_worlds.emplace_back(CreateOpenWorld(0, game_config::lobby_map_path));
+    m_worlds.emplace_back(CreateOpenWorld(1, ant_hel_map_path));
 }
 
-bool IWorldModule::Init()
-{
-    return true;
-}
+bool IWorldModule::Init() { return true; }
 
 void IWorldModule::Tick(float dt)
 {
@@ -56,6 +51,15 @@ void IWorldModule::Tick(float dt)
 }
 
 void IWorldModule::ShutDown() {}
+
+CGameWorld* IWorldModule::FindWorldById(std::uint32_t world_id) const
+{
+    for (const auto& world : m_worlds)
+    {
+        if (world && world->GetId() == world_id) return world.get();
+    }
+    return nullptr;
+}
 
 std::vector<CGameWorld*> IWorldModule::FindWorldsByMapName(const std::string& map_name) const
 {

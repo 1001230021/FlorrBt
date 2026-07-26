@@ -1,27 +1,27 @@
 #include "server.h"
 #include "../Engine/account_data.h"
-#include "Game/gamecontext.h"
+#include "../Engine/logger.h"
+#include "../Shared/drop_rate.h"
+#include "../Shared/game_config.h"
 #include "Game/entities/mob.h"
 #include "Game/entities/petals/petals_behavior.h"
+#include "Game/gamecontext.h"
 #include "Module/console_module.h"
 #include "Module/network_module.h"
 #include "Module/server_gui_module.h"
 #include "Module/world_module.h"
 #include "report.h"
-#include "../Engine/logger.h"
-#include "../Shared/drop_rate.h"
-#include "../Shared/game_config.h"
+#include <SFML/System/Clock.hpp>
+#include <SFML/System/Sleep.hpp>
 #include <algorithm>
-#include <chrono>
 #include <cctype>
+#include <chrono>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <random>
 #include <stdexcept>
 #include <string_view>
-#include <SFML/System/Clock.hpp>
-#include <SFML/System/Sleep.hpp>
 
 namespace
 {
@@ -34,18 +34,18 @@ std::string GenerateRconPassword()
 
     std::random_device random_device;
     std::mt19937 rng(random_device());
-    auto pick = [&rng](const std::string& pool)
-    {
+    auto pick = [&rng](const std::string& pool) {
         std::uniform_int_distribution<size_t> dist(0, pool.size() - 1);
         return pool[dist(rng)];
     };
 
+    const size_t password_length = std::max<size_t>(3, game_config::rcon_generated_password_length);
     std::string password;
-    password.reserve(6);
+    password.reserve(password_length);
     password.push_back(pick(upper));
     password.push_back(pick(lower));
     password.push_back(pick(digits));
-    while (password.size() < 6)
+    while (password.size() < password_length)
         password.push_back(pick(all));
     std::shuffle(password.begin(), password.end(), rng);
     return password;
@@ -64,10 +64,8 @@ std::string ReportArticle(std::string_view word)
     if (word.empty()) return "A";
 
     std::string lowered(word.begin(), word.end());
-    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch)
-    {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 
     if (lowered.rfind("uni", 0) == 0) return "A";
 
@@ -75,12 +73,9 @@ std::string ReportArticle(std::string_view word)
     return first == 'a' || first == 'e' || first == 'i' || first == 'o' || first == 'u' ? "An" : "A";
 }
 
-std::string RarityReportArticle(ERarity rarity)
-{
-    return ReportArticle(GetRarityName(rarity));
-}
+std::string RarityReportArticle(ERarity rarity) { return ReportArticle(GetRarityName(rarity)); }
 
-}
+} // namespace
 
 CServer* CServer::s_p_instance = nullptr;
 
@@ -150,6 +145,11 @@ std::vector<CGameWorld*> CServer::FindWorldsByMapName(const std::string& map_nam
     return m_p_world_module ? m_p_world_module->FindWorldsByMapName(map_name) : std::vector<CGameWorld*>{};
 }
 
+CGameWorld* CServer::FindWorldById(std::uint32_t world_id) const
+{
+    return m_p_world_module ? m_p_world_module->FindWorldById(world_id) : nullptr;
+}
+
 CGameWorld* CServer::FindRandomWorldByMapName(const std::string& map_name) const
 {
     return m_p_world_module ? m_p_world_module->FindRandomWorldByMapName(map_name) : nullptr;
@@ -166,7 +166,8 @@ void CServer::InstallLogSink()
         std::filesystem::create_directories(log_path.parent_path(), ec);
         if (ec)
         {
-            LOG_WARN("server", "Failed to create log directory: " + log_path.parent_path().string() + " (" + ec.message() + ")");
+            LOG_WARN("server",
+                     "Failed to create log directory: " + log_path.parent_path().string() + " (" + ec.message() + ")");
         }
     }
 
@@ -183,13 +184,13 @@ void CServer::InstallLogSink()
 
     m_log_file = file;
     m_log_mutex = mutex;
-    m_log_sink_id = CLogger::AddSink([file, mutex](const std::string& sender, ELogPriority priority, const std::string& msg)
-    {
-        std::lock_guard<std::mutex> lock(*mutex);
-        if (!file->is_open()) return;
-        *file << CLogger::FormatLine(sender, priority, msg) << std::endl;
-        file->flush();
-    });
+    m_log_sink_id =
+        CLogger::AddSink([file, mutex](const std::string& sender, ELogPriority priority, const std::string& msg) {
+            std::lock_guard<std::mutex> lock(*mutex);
+            if (!file->is_open()) return;
+            *file << CLogger::FormatLine(sender, priority, msg) << std::endl;
+            file->flush();
+        });
 
     LOG_INFO("server", "Saving server log to " + log_path.string());
 }
@@ -205,7 +206,8 @@ void CServer::ExecuteStartupCommands()
         if (!line.empty() && line.back() == '\r') line.pop_back();
 
         size_t begin = 0;
-        while (begin < line.size() && std::isspace(static_cast<unsigned char>(line[begin]))) ++begin;
+        while (begin < line.size() && std::isspace(static_cast<unsigned char>(line[begin])))
+            ++begin;
         if (begin >= line.size()) continue;
         if (line.compare(begin, 2, "//") == 0) continue;
 
@@ -231,7 +233,7 @@ const CServer::SChatEntry* CServer::SubmitChat(CGameWorld* world, sf::Vector2f p
         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
 
     m_chats.push_back(std::move(entry));
-    constexpr size_t max_saved_chats = 256;
+    const size_t max_saved_chats = std::max<size_t>(1, game_config::server_max_saved_chats);
     if (m_chats.size() > max_saved_chats)
         m_chats.erase(m_chats.begin(), m_chats.begin() + static_cast<std::ptrdiff_t>(m_chats.size() - max_saved_chats));
 
@@ -240,7 +242,7 @@ const CServer::SChatEntry* CServer::SubmitChat(CGameWorld* world, sf::Vector2f p
 
 const CServer::SChatEntry* CServer::SubmitServerChat(const std::string& message)
 {
-    return SubmitChat(nullptr, {0.f, 0.f}, EChatFlag::Server, 0, "Server", message);
+    return SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Server", message);
 }
 
 bool CServer::MeetsPetalReportRarity(ERarity rarity, int min_rarity)
@@ -278,7 +280,7 @@ bool CServer::BroadcastPetalReport(std::string_view done, ERarity rarity, std::s
     message.append(doer);
     message += ")";
 
-    const SChatEntry* chat = SubmitChat(nullptr, {0.f, 0.f}, EChatFlag::Server, 0, "Server", message);
+    const SChatEntry* chat = SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Server", message);
     if (!chat) return false;
     network->BroadcastChat(*chat);
     return true;
@@ -306,10 +308,54 @@ bool CServer::BroadcastMobReport(std::string_view action, ERarity rarity, std::s
     message.append(action);
     message += ")";
 
-    const SChatEntry* chat = SubmitChat(nullptr, {0.f, 0.f}, EChatFlag::Server, 0, "Server", message);
+    const SChatEntry* chat = SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Server", message);
     if (!chat) return false;
     network->BroadcastChat(*chat);
     return true;
+}
+
+bool CServer::BroadcastMobSpawnReport(CGameWorld& source_world, std::string_view action, ERarity rarity,
+                                      std::string_view mob_name)
+{
+    if (action.empty() || mob_name.empty() || !IsKnownRarity(rarity) || !m_p_world_module) return false;
+
+    INetworkModule* network = GetNetworkModule();
+    if (!network) return false;
+
+    std::string rarity_name(GetRarityName(rarity));
+    std::string message;
+    message.reserve(rarity_name.size() * 2 + mob_name.size() + action.size() + 24);
+    message += "<";
+    message += rarity_name;
+    message += ">(";
+    message += RarityReportArticle(rarity);
+    message += " ";
+    message += rarity_name;
+    message += " ";
+    message.append(mob_name);
+    message += " ";
+    message.append(action);
+    message += ")";
+
+    bool sent = false;
+    for (const auto& world : m_p_world_module->GetWorlds())
+    {
+        if (!world) continue;
+
+        std::string world_message = message;
+        if (world.get() != &source_world)
+        {
+            world_message += " <";
+            world_message += rarity_name;
+            world_message += ">(somewhere)";
+        }
+
+        const SChatEntry* chat = SubmitChat(world.get(), { 0.f, 0.f }, EChatFlag::Server, 0, "Server", world_message);
+        if (!chat) continue;
+        network->BroadcastChat(*chat);
+        sent = true;
+    }
+    return sent;
 }
 
 void CServer::Run()
@@ -328,13 +374,11 @@ void CServer::Run()
             {
                 module->Tick(dt);
             }
-        }
-        catch (const std::exception& e)
+        } catch (const std::exception& e)
         {
             LOG_FATAL("server", std::string("Unhandled exception in server tick: ") + e.what());
             m_running = false;
-        }
-        catch (...)
+        } catch (...)
         {
             LOG_FATAL("server", "Unhandled unknown exception in server tick");
             m_running = false;

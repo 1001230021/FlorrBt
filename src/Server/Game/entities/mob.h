@@ -43,6 +43,11 @@ class CMobBase : public CEntity
 
     virtual const SMobStats* GetBaseStats() const = 0;
     virtual const SMobStats* GetFinalStats() const = 0;
+    const SEntityStats& GetEntityStats() const override
+    {
+        const SMobStats* stats = GetFinalStats();
+        return stats ? static_cast<const SEntityStats&>(*stats) : CEntity::GetEntityStats();
+    }
     virtual ERarity GetRarity() const = 0;
     virtual bool IsFacingLocked() const { return false; }
 
@@ -80,10 +85,7 @@ class CMobBase : public CEntity
         return nullptr;
     }
 
-    template <typename TState> bool HasState() const
-    {
-        return FindFirstState<TState>() != nullptr;
-    }
+    template <typename TState> bool HasState() const { return FindFirstState<TState>() != nullptr; }
 
     template <typename TState, typename TVisitor> void ForEachState(TVisitor visitor)
     {
@@ -109,7 +111,7 @@ class CMobBase : public CEntity
     IController* GetController() { return m_p_controller.get(); }
     const IController* GetController() const { return m_p_controller.get(); }
 
-    sf::Vector2f m_vel = {0.f, 0.f};
+    sf::Vector2f m_vel = { 0.f, 0.f };
     EMobType m_mob_type = EMobType::None;
 
   protected:
@@ -272,17 +274,14 @@ template <typename TMob> bool RegisterMobPrototype(EMobType type, CMobPrototype 
 {
     auto ptr = std::make_unique<CMobPrototype>(std::move(prototype));
     CMobPrototype* raw_ptr = ptr.get();
-    raw_ptr->m_factory = [raw_ptr](CGameWorld* world, sf::Vector2f pos, ERarity rarity) -> std::unique_ptr<CMobBase>
-    {
+    raw_ptr->m_factory = [raw_ptr](CGameWorld* world, sf::Vector2f pos, ERarity rarity) -> std::unique_ptr<CMobBase> {
         if (!world) return nullptr;
 
         typename TMob::stats_type stats = raw_ptr->BuildTypedStats<typename TMob::stats_type>(rarity);
         auto mob = std::make_unique<TMob>(world, pos, stats.radius, rarity, stats);
         mob->m_mob_type = raw_ptr->m_type;
         mob->m_team = raw_ptr->m_team;
-        mob->m_allow_skip_tick = raw_ptr->m_type != EMobType::PlayerFlower &&
-                                 raw_ptr->m_type != EMobType::LeafPiece &&
-                                 !IsAtLeastRarity(rarity, ERarity::Super);
+        mob->m_allow_skip_tick = raw_ptr->m_type != EMobType::PlayerFlower;
         if (raw_ptr->m_controller_factory) mob->SetController(raw_ptr->m_controller_factory());
         return mob;
     };

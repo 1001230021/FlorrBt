@@ -2,7 +2,10 @@ const movementRadius = 62;
 const movementDeadzone = 7;
 
 function isMobileInputMode() {
-  return window.matchMedia?.("(pointer: coarse)")?.matches || window.innerWidth <= 720;
+  return (
+    window.matchMedia?.("(pointer: coarse)")?.matches ||
+    window.innerWidth <= 720
+  );
 }
 
 function setPressed(button, pressed) {
@@ -34,12 +37,17 @@ export function createMobileControls({
 
   const joystick = document.createElement("div");
   joystick.className = "mobile-joystick hidden";
-  joystick.innerHTML = '<div class="mobile-joystick-base"></div><div class="mobile-joystick-knob"></div>';
+  joystick.innerHTML =
+    '<div class="mobile-joystick-base"></div><div class="mobile-joystick-knob"></div>';
   const knob = joystick.querySelector(".mobile-joystick-knob");
 
   const actionGroup = document.createElement("div");
   actionGroup.className = "mobile-panel-actions";
-  const backpackButton = createButton("Bag", "mobile-panel-button", "Inventory");
+  const backpackButton = createButton(
+    "Bag",
+    "mobile-panel-button",
+    "Inventory",
+  );
   const talentButton = createButton("Tal", "mobile-panel-button", "Talents");
   const craftButton = createButton("Craft", "mobile-panel-button", "Craft");
   const chatButton = createButton("Chat", "mobile-panel-button", "Chat");
@@ -67,7 +75,10 @@ export function createMobileControls({
     const active = shouldUseMobileMode();
     root.classList.toggle("force-mobile", mode === "on");
     root.classList.toggle("hidden", !active);
-    document.body.classList.toggle("mobile-mode-forced", active && mode === "on");
+    document.body.classList.toggle(
+      "mobile-mode-forced",
+      active && mode === "on",
+    );
     if (!active) resetMovement();
   }
 
@@ -151,17 +162,33 @@ export function createMobileControls({
     });
   }
 
-  bindHoldButton(attackButton, (value) => { attacking = value; });
-  bindHoldButton(defendButton, (value) => { defending = value; });
+  bindHoldButton(attackButton, (value) => {
+    attacking = value;
+  });
+  bindHoldButton(defendButton, (value) => {
+    defending = value;
+  });
   bindTapButton(backpackButton, onBackpack);
   bindTapButton(talentButton, onTalent);
   bindTapButton(craftButton, onCraft);
   bindTapButton(chatButton, onChat);
 
-  window.addEventListener("pointerdown", beginMovement, { capture: true, passive: false });
-  window.addEventListener("pointermove", updateMovement, { capture: true, passive: false });
-  window.addEventListener("pointerup", endMovement, { capture: true, passive: false });
-  window.addEventListener("pointercancel", endMovement, { capture: true, passive: false });
+  window.addEventListener("pointerdown", beginMovement, {
+    capture: true,
+    passive: false,
+  });
+  window.addEventListener("pointermove", updateMovement, {
+    capture: true,
+    passive: false,
+  });
+  window.addEventListener("pointerup", endMovement, {
+    capture: true,
+    passive: false,
+  });
+  window.addEventListener("pointercancel", endMovement, {
+    capture: true,
+    passive: false,
+  });
 
   return {
     setEnabled(value) {
@@ -176,7 +203,10 @@ export function createMobileControls({
     },
     hasMovement() {
       if (!shouldUseMobileMode() || movementPointerId === null) return false;
-      return Math.hypot(current.x - origin.x, current.y - origin.y) > movementDeadzone;
+      return (
+        Math.hypot(current.x - origin.x, current.y - origin.y) >
+        movementDeadzone
+      );
     },
     isMobileMode() {
       return shouldUseMobileMode();

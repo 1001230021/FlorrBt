@@ -1,8 +1,8 @@
 #include "drop.h"
-#include "petals/petal.h"
+#include "../../server.h"
 #include "../gameworld.h"
 #include "../player.h"
-#include "../../server.h"
+#include "petals/petal.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -15,14 +15,17 @@ float InitialDropMergeTimer(sf::Vector2f pos, int owner_id)
     if (interval <= 0.f) return 0.f;
 
     const float owner = static_cast<float>(owner_id + 1);
-    float seed = std::fabs(pos.x) * 0.6180339f + std::fabs(pos.y) * 0.4142135f + std::fabs(owner) * 0.2718281f;
+    float seed = std::fabs(pos.x) * game_config::default_drop_merge_phase_x_coefficient +
+                 std::fabs(pos.y) * game_config::default_drop_merge_phase_y_coefficient +
+                 std::fabs(owner) * game_config::default_drop_merge_phase_owner_coefficient;
     float phase = std::fmod(seed, 1.f);
     if (phase < 0.f) phase += 1.f;
-    return interval * std::clamp(phase, 0.05f, 0.95f);
+    return interval *
+           std::clamp(phase, game_config::default_drop_merge_phase_min, game_config::default_drop_merge_phase_max);
 }
-}
+} // namespace
 
-CDrop::CDrop() : CDrop(nullptr, {0.f, 0.f}, PetalType::None, ERarity::Null, drop_owner_all, 0.f, 0) {}
+CDrop::CDrop() : CDrop(nullptr, { 0.f, 0.f }, PetalType::None, ERarity::Null, drop_owner_all, 0.f, 0) {}
 
 CDrop::CDrop(CGameWorld* world, sf::Vector2f pos, PetalType type, ERarity rarity, int owner_id, float lifetime,
              uint16_t stack_num)
@@ -40,7 +43,7 @@ void CDrop::Tick(float dt)
 
     if (m_type == PetalType::None || m_rarity == ERarity::Null || m_stack_num == 0)
     {
-        m_is_marked_for_des = true;
+        MarkForDestroy();
         return;
     }
 
@@ -48,14 +51,14 @@ void CDrop::Tick(float dt)
 
     if (m_timer <= 0.f)
     {
-        m_is_marked_for_des = true;
+        MarkForDestroy();
         return;
     }
 
     m_timer -= dt;
     if (m_timer <= 0.f)
     {
-        m_is_marked_for_des = true;
+        MarkForDestroy();
         return;
     }
 
@@ -78,7 +81,8 @@ bool CDrop::PickUpTo(CPlayer& player)
 {
     if (!CanBePickedUpBy(player.GetId())) return false;
 
-    if (!player.ObtainPetalCard(static_cast<uint8_t>(m_type), static_cast<uint8_t>(m_rarity), m_stack_num)) return false;
+    if (!player.ObtainPetalCard(static_cast<uint8_t>(m_type), static_cast<uint8_t>(m_rarity), m_stack_num))
+        return false;
     if (CServer::MeetsPetalReportRarity(m_rarity, game_config::min_drop_report_rarity))
     {
         if (const CPetalPrototype* proto = FindPetalPrototype(m_type))
@@ -87,7 +91,7 @@ bool CDrop::PickUpTo(CPlayer& player)
                 server->BroadcastPetalReport("found", m_rarity, proto->m_name, player.GetName());
         }
     }
-    m_is_marked_for_des = true;
+    MarkForDestroy();
     return true;
 }
 
@@ -96,8 +100,7 @@ void CDrop::MergeNearbyDrops()
     CGameWorld* world = GameWorld();
     if (!world || game_config::default_drop_stack_range <= 0.f) return;
 
-    world->GetSpatialGrid().ForEachInRange(m_pos, game_config::default_drop_stack_range, [this](CEntity* entity)
-    {
+    world->GetSpatialGrid().ForEachInRange(m_pos, game_config::default_drop_stack_range, [this](CEntity* entity) {
         auto* other = dynamic_cast<CDrop*>(entity);
         if (!other || other == this || other->m_is_marked_for_des) return;
         if (other->m_type != m_type || other->m_rarity != m_rarity) return;
@@ -111,6 +114,6 @@ void CDrop::MergeNearbyDrops()
         uint16_t moved_stack = std::min(free_stack, other->m_stack_num);
         m_stack_num = static_cast<uint16_t>(m_stack_num + moved_stack);
         other->m_stack_num = static_cast<uint16_t>(other->m_stack_num - moved_stack);
-        if (other->m_stack_num == 0) other->m_is_marked_for_des = true;
+        if (other->m_stack_num == 0) other->MarkForDestroy();
     });
 }

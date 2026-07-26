@@ -216,7 +216,8 @@ struct ClientAuthRequest
         if (password_len > max_auth_password_size) return request;
         if (offset + name_len + password_len > len) return request;
 
-        request.name.assign(reinterpret_cast<const char*>(data + offset), reinterpret_cast<const char*>(data + offset + name_len));
+        request.name.assign(reinterpret_cast<const char*>(data + offset),
+                            reinterpret_cast<const char*>(data + offset + name_len));
         offset += name_len;
         request.password.assign(reinterpret_cast<const char*>(data + offset),
                                 reinterpret_cast<const char*>(data + offset + password_len));
@@ -372,8 +373,7 @@ struct ClientCraftRequest
         size_t offset = 1;
         request.petal_type = data[offset++];
         request.rarity = data[offset++];
-        request.count = static_cast<uint32_t>(data[offset]) |
-                        (static_cast<uint32_t>(data[offset + 1]) << 8) |
+        request.count = static_cast<uint32_t>(data[offset]) | (static_cast<uint32_t>(data[offset + 1]) << 8) |
                         (static_cast<uint32_t>(data[offset + 2]) << 16) |
                         (static_cast<uint32_t>(data[offset + 3]) << 24);
         if (ok) *ok = true;
@@ -482,21 +482,27 @@ struct ClientTalentRequest
     static size_t GetPackedSize(const ClientTalentRequest& request)
     {
         if (request.talents.empty()) return 0;
-        return client_talent_header_size + std::min(request.talents.size(), max_client_talent_items) * talent_packet_item_size;
+        return client_talent_header_size +
+               std::min(request.talents.size(), max_client_talent_items) * talent_packet_item_size;
     }
 };
 
 // Server packets:
 // Welcome:    [type:1 byte][player_id:2 bytes][owner_entity_id:2 bytes][tick_rate:1 byte][map_len:1 byte][map_name]
-// Snapshot:   [type:1 byte][snapshot_id:4 bytes][owner_entity_id:2 bytes][view_radius:4 bytes][count:2 bytes][entity_snap...]
-// EntitySnap full:    [format:1 byte][entity_id:2 bytes][entity_type:1 byte][team:1 byte][x:4 bytes][y:4 bytes][radius:2 bytes][hp_percent:1 byte][flags:2 bytes][angle:2 bytes][rarity:1 byte][name_len:1 byte][name][primary_slots:1 byte][petal_type:1 byte][rarity:1 byte]...
-// EntitySnap compact: [format:1 byte][entity_id:2 bytes][entity_type:1 byte][team:1 byte][rel_x:2 bytes][rel_y:2 bytes][radius:2 bytes][hp_percent:1 byte][flags:2 bytes][angle:2 bytes][rarity:1 byte]
+// Snapshot:   [type:1 byte][snapshot_id:4 bytes][owner_entity_id:2 bytes][view_radius:4 bytes][count:2
+// bytes][entity_snap...] EntitySnap full:    [format:1 byte][entity_id:2 bytes][entity_type:1 byte][team:1 byte][x:4
+// bytes][y:4 bytes][radius:2 bytes][hp_percent:1 byte][flags:2 bytes][angle:2 bytes][rarity:1 byte][name_len:1
+// byte][name][primary_slots:1 byte][petal_type:1 byte][rarity:1 byte]... EntitySnap compact: [format:1
+// byte][entity_id:2 bytes][entity_type:1 byte][team:1 byte][rel_x:2 bytes][rel_y:2 bytes][radius:2 bytes][hp_percent:1
+// byte][flags:2 bytes][angle:2 bytes][rarity:1 byte]
 //             live petal entity_type = 100 + petal_type, drop entity_type = 180 + petal_type.
-// OwnerState: [type:1 byte][level:1 byte][flags:1 byte][petal_slots:1 byte][secondary_slots:1 byte][exp_progress_bps:2 bytes][petal_type:1 byte][rarity:1 byte]...[talent_points:2 bytes][talent_count:1 byte][talent_id:2 bytes][rarity:1 byte][rank:1 byte]...
-// Inventory:  [type:1 byte][count:2 bytes][petal_type:1 byte][rarity:1 byte][count:4 bytes]...
+// OwnerState: [type:1 byte][level:1 byte][flags:1 byte][petal_slots:1 byte][secondary_slots:1 byte][exp_progress_bps:2
+// bytes][petal_type:1 byte][rarity:1 byte]...[talent_points:2 bytes][talent_count:1 byte][talent_id:2 bytes][rarity:1
+// byte][rank:1 byte]... Inventory:  [type:1 byte][count:2 bytes][petal_type:1 byte][rarity:1 byte][count:4 bytes]...
 // AuthResult: [type:1 byte][success:1 byte][message_len:1 byte][message]
-// Chat:       [type:1 byte][flag:1 byte][player_id:2 bytes][time:4 bytes][name_len:1 byte][message_len:1 byte][name][message]
-// CraftResult:[type:1 byte][success:1 byte][petal_type:1 byte][rarity:1 byte][consumed:4 bytes][count:2 bytes][item...]
+// Chat:       [type:1 byte][flag:1 byte][player_id:2 bytes][time:4 bytes][name_len:1 byte][message_len:1
+// byte][name][message] CraftResult:[type:1 byte][success:1 byte][petal_type:1 byte][rarity:1 byte][consumed:4
+// bytes][count:2 bytes][item...]
 
 using net_coord = int32_t;
 using net_relative_coord = int16_t;
@@ -512,15 +518,9 @@ constexpr size_t server_entity_fixed_size = 21;
 constexpr size_t server_entity_format_size = 1;
 constexpr size_t server_entity_compact_size = 17;
 
-inline net_coord PackCoord(float value)
-{
-    return static_cast<net_coord>(std::round(value * net_coord_scale));
-}
+inline net_coord PackCoord(float value) { return static_cast<net_coord>(std::round(value * net_coord_scale)); }
 
-inline float UnpackCoord(net_coord value)
-{
-    return static_cast<float>(value) / net_coord_scale;
-}
+inline float UnpackCoord(net_coord value) { return static_cast<float>(value) / net_coord_scale; }
 
 inline bool CanPackRelativeCoord(float value)
 {
@@ -532,8 +532,7 @@ inline bool CanPackRelativeCoord(float value)
 inline net_relative_coord PackRelativeCoord(float value)
 {
     float packed = std::round(value * net_relative_coord_scale);
-    packed = std::clamp(packed,
-                        static_cast<float>(std::numeric_limits<net_relative_coord>::min()),
+    packed = std::clamp(packed, static_cast<float>(std::numeric_limits<net_relative_coord>::min()),
                         static_cast<float>(std::numeric_limits<net_relative_coord>::max()));
     return static_cast<net_relative_coord>(packed);
 }
@@ -543,45 +542,27 @@ inline float UnpackRelativeCoord(net_relative_coord value)
     return static_cast<float>(value) / net_relative_coord_scale;
 }
 
-inline net_coord PackViewRadius(float value)
-{
-    return PackCoord(value);
-}
+inline net_coord PackViewRadius(float value) { return PackCoord(value); }
 
-inline float UnpackViewRadius(net_coord value)
-{
-    return UnpackCoord(value);
-}
+inline float UnpackViewRadius(net_coord value) { return UnpackCoord(value); }
 
 inline uint16_t PackRadius(float value)
 {
     return static_cast<uint16_t>(std::clamp(std::round(std::max(0.f, value) * net_radius_scale), 0.f, 65535.f));
 }
 
-inline float UnpackRadius(uint16_t value)
-{
-    return static_cast<float>(value) / net_radius_scale;
-}
+inline float UnpackRadius(uint16_t value) { return static_cast<float>(value) / net_radius_scale; }
 
 inline uint8_t PackPercent(float value)
 {
     return static_cast<uint8_t>(std::clamp(std::round(value * 255.f), 0.f, 255.f));
 }
 
-inline float UnpackPercent(uint8_t value)
-{
-    return static_cast<float>(value) / 255.f;
-}
+inline float UnpackPercent(uint8_t value) { return static_cast<float>(value) / 255.f; }
 
-inline int16_t PackAngle(float radians)
-{
-    return static_cast<int16_t>(std::round(radians * net_angle_scale));
-}
+inline int16_t PackAngle(float radians) { return static_cast<int16_t>(std::round(radians * net_angle_scale)); }
 
-inline float UnpackAngle(int16_t value)
-{
-    return static_cast<float>(value) / net_angle_scale;
-}
+inline float UnpackAngle(int16_t value) { return static_cast<float>(value) / net_angle_scale; }
 
 inline void WriteU16(uint8_t* out, size_t& offset, uint16_t value)
 {
@@ -675,7 +656,7 @@ struct ServerEntitySnap
     net_entity_id entity_id = 0;
     uint8_t entity_type = 0;
     uint8_t team = 0;
-    sf::Vector2f pos = {0.f, 0.f};
+    sf::Vector2f pos = { 0.f, 0.f };
     float radius = 0.f;
     float hp_percent = 1.f;
     uint16_t flags = 0;
@@ -693,7 +674,7 @@ struct ServerEntitySnap
     }
 
     static bool parse(const uint8_t* data, size_t len, size_t& offset, ServerEntitySnap& snap,
-                      sf::Vector2f origin = {0.f, 0.f}, bool has_origin = false)
+                      sf::Vector2f origin = { 0.f, 0.f }, bool has_origin = false)
     {
         if (!data || offset + server_entity_format_size > len) return false;
 
@@ -734,7 +715,8 @@ struct ServerEntitySnap
         uint8_t name_len = data[offset++];
         if (offset + name_len > len) return false;
 
-        snap.name.assign(reinterpret_cast<const char*>(data + offset), reinterpret_cast<const char*>(data + offset + name_len));
+        snap.name.assign(reinterpret_cast<const char*>(data + offset),
+                         reinterpret_cast<const char*>(data + offset + name_len));
         offset += name_len;
         if (offset + 1 > len) return false;
 
@@ -751,9 +733,8 @@ struct ServerEntitySnap
         return true;
     }
 
-    static void pack(const ServerEntitySnap& snap, uint8_t* out, size_t& offset,
-                     sf::Vector2f origin = {0.f, 0.f}, net_entity_id owner_entity_id = 0,
-                     bool has_origin = false)
+    static void pack(const ServerEntitySnap& snap, uint8_t* out, size_t& offset, sf::Vector2f origin = { 0.f, 0.f },
+                     net_entity_id owner_entity_id = 0, bool has_origin = false)
     {
         if (has_origin && CanPackCompact(snap, origin, owner_entity_id))
         {
@@ -797,15 +778,15 @@ struct ServerEntitySnap
 
     static size_t GetPackedSize(const ServerEntitySnap& snap)
     {
-        return server_entity_format_size + server_entity_fixed_size + std::min<size_t>(snap.name.size(), UINT8_MAX) + 1 +
-               std::min<size_t>(snap.primary_slots.size(), UINT8_MAX) * owner_slot_packet_size;
+        return server_entity_format_size + server_entity_fixed_size + std::min<size_t>(snap.name.size(), UINT8_MAX) +
+               1 + std::min<size_t>(snap.primary_slots.size(), UINT8_MAX) * owner_slot_packet_size;
     }
 
     static size_t GetPackedSize(const ServerEntitySnap& snap, sf::Vector2f origin, net_entity_id owner_entity_id,
                                 bool has_origin)
     {
-        return has_origin && CanPackCompact(snap, origin, owner_entity_id) ? server_entity_compact_size :
-            GetPackedSize(snap);
+        return has_origin && CanPackCompact(snap, origin, owner_entity_id) ? server_entity_compact_size
+                                                                           : GetPackedSize(snap);
     }
 };
 
@@ -893,8 +874,7 @@ struct ServerMessage
                 offset += map_len;
             }
             break;
-        case Type::Snapshot:
-        {
+        case Type::Snapshot: {
             if (len < 13)
             {
                 msg.type = Type::Unknown;
@@ -906,7 +886,7 @@ struct ServerMessage
 
             uint16_t count = ReadU16(data, offset);
             msg.entities.reserve(count);
-            sf::Vector2f snapshot_origin = {0.f, 0.f};
+            sf::Vector2f snapshot_origin = { 0.f, 0.f };
             bool has_snapshot_origin = false;
             for (uint16_t i = 0; i < count; ++i)
             {
@@ -926,8 +906,7 @@ struct ServerMessage
             }
             break;
         }
-        case Type::AuthResult:
-        {
+        case Type::AuthResult: {
             if (len < 3)
             {
                 msg.type = Type::Unknown;
@@ -956,14 +935,13 @@ struct ServerMessage
             msg.petal_slots = data[offset++];
             msg.secondary_slots_count = data[offset++];
             {
-                const size_t slot_bytes = (static_cast<size_t>(*msg.petal_slots) +
-                                           static_cast<size_t>(*msg.secondary_slots_count)) *
-                                          owner_slot_packet_size;
+                const size_t slot_bytes =
+                    (static_cast<size_t>(*msg.petal_slots) + static_cast<size_t>(*msg.secondary_slots_count)) *
+                    owner_slot_packet_size;
                 if (offset + 2 + slot_bytes <= len)
                 {
                     msg.exp_progress_bps = ReadU16(data, offset);
-                }
-                else
+                } else
                 {
                     msg.exp_progress_bps = 0;
                 }
@@ -1018,8 +996,7 @@ struct ServerMessage
                 }
             }
             break;
-        case Type::Inventory:
-        {
+        case Type::Inventory: {
             if (len < 3)
             {
                 msg.type = Type::Unknown;
@@ -1042,8 +1019,7 @@ struct ServerMessage
             }
             break;
         }
-        case Type::Chat:
-        {
+        case Type::Chat: {
             if (len < 10)
             {
                 msg.type = Type::Unknown;
@@ -1073,8 +1049,7 @@ struct ServerMessage
             offset += message_len;
             break;
         }
-        case Type::CraftResult:
-        {
+        case Type::CraftResult: {
             if (len < 10)
             {
                 msg.type = Type::Unknown;
@@ -1128,14 +1103,13 @@ struct ServerMessage
                 offset += map_len;
             }
             return offset;
-        case Type::Snapshot:
-        {
+        case Type::Snapshot: {
             WriteU32(out, offset, msg.snapshot_id.value_or(0));
             WriteU16(out, offset, msg.owner_entity_id.value_or(0));
             WriteI32(out, offset, PackViewRadius(msg.view_radius.value_or(0.f)));
             uint16_t count = static_cast<uint16_t>(std::min<size_t>(msg.entities.size(), UINT16_MAX));
             WriteU16(out, offset, count);
-            sf::Vector2f snapshot_origin = {0.f, 0.f};
+            sf::Vector2f snapshot_origin = { 0.f, 0.f };
             bool has_snapshot_origin = false;
             net_entity_id owner_id = msg.owner_entity_id.value_or(0);
             for (uint16_t i = 0; i < count; ++i)
@@ -1149,8 +1123,7 @@ struct ServerMessage
             }
             return offset;
         }
-        case Type::AuthResult:
-        {
+        case Type::AuthResult: {
             out[offset++] = msg.auth_success.value_or(false) ? 1 : 0;
             uint8_t message_len = static_cast<uint8_t>(std::min<size_t>(msg.auth_message.size(), UINT8_MAX));
             out[offset++] = message_len;
@@ -1158,10 +1131,10 @@ struct ServerMessage
             offset += message_len;
             return offset;
         }
-        case Type::OwnerState:
-        {
+        case Type::OwnerState: {
             uint8_t slot_count = static_cast<uint8_t>(std::min<size_t>(msg.owner_slots.size(), UINT8_MAX));
-            uint8_t secondary_slot_count = static_cast<uint8_t>(std::min<size_t>(msg.secondary_slots.size(), UINT8_MAX));
+            uint8_t secondary_slot_count =
+                static_cast<uint8_t>(std::min<size_t>(msg.secondary_slots.size(), UINT8_MAX));
             out[offset++] = msg.level.value_or(1);
             out[offset++] = msg.flags.value_or(0);
             out[offset++] = slot_count;
@@ -1189,8 +1162,7 @@ struct ServerMessage
             }
             return offset;
         }
-        case Type::Inventory:
-        {
+        case Type::Inventory: {
             uint16_t count = static_cast<uint16_t>(std::min<size_t>(msg.inventory.size(), UINT16_MAX));
             WriteU16(out, offset, count);
             for (uint16_t i = 0; i < count; ++i)
@@ -1202,13 +1174,13 @@ struct ServerMessage
             }
             return offset;
         }
-        case Type::Chat:
-        {
+        case Type::Chat: {
             out[offset++] = static_cast<uint8_t>(msg.chat.flag);
             WriteU16(out, offset, msg.chat.player_id);
             WriteU32(out, offset, msg.chat.time);
             uint8_t name_len = static_cast<uint8_t>(std::min<size_t>(msg.chat.player_name.size(), UINT8_MAX));
-            uint8_t message_len = static_cast<uint8_t>(std::min<size_t>(msg.chat.message.size(), max_chat_message_size));
+            uint8_t message_len =
+                static_cast<uint8_t>(std::min<size_t>(msg.chat.message.size(), max_chat_message_size));
             out[offset++] = name_len;
             out[offset++] = message_len;
             std::copy_n(msg.chat.player_name.data(), name_len, out + offset);
@@ -1245,16 +1217,16 @@ struct ServerMessage
         {
         case Type::Welcome:
             return 7 + std::min<size_t>(msg.map_name.size(), UINT8_MAX);
-        case Type::Snapshot:
-        {
+        case Type::Snapshot: {
             size_t size = 13;
             size_t count = std::min<size_t>(msg.entities.size(), UINT16_MAX);
-            sf::Vector2f snapshot_origin = {0.f, 0.f};
+            sf::Vector2f snapshot_origin = { 0.f, 0.f };
             bool has_snapshot_origin = false;
             net_entity_id owner_id = msg.owner_entity_id.value_or(0);
             for (size_t i = 0; i < count; ++i)
             {
-                size += ServerEntitySnap::GetPackedSize(msg.entities[i], snapshot_origin, owner_id, has_snapshot_origin);
+                size +=
+                    ServerEntitySnap::GetPackedSize(msg.entities[i], snapshot_origin, owner_id, has_snapshot_origin);
                 if (!has_snapshot_origin)
                 {
                     snapshot_origin = msg.entities[i].pos;
@@ -1266,9 +1238,10 @@ struct ServerMessage
         case Type::AuthResult:
             return 3 + std::min<size_t>(msg.auth_message.size(), UINT8_MAX);
         case Type::OwnerState:
-            return 10 + (std::min<size_t>(msg.owner_slots.size(), UINT8_MAX) +
-                         std::min<size_t>(msg.secondary_slots.size(), UINT8_MAX)) *
-                            owner_slot_packet_size +
+            return 10 +
+                   (std::min<size_t>(msg.owner_slots.size(), UINT8_MAX) +
+                    std::min<size_t>(msg.secondary_slots.size(), UINT8_MAX)) *
+                       owner_slot_packet_size +
                    std::min<size_t>(msg.talents.size(), UINT8_MAX) * talent_packet_item_size;
         case Type::Inventory:
             return 3 + std::min<size_t>(msg.inventory.size(), UINT16_MAX) * inventory_item_packet_size;

@@ -17,13 +17,15 @@ std::vector<std::string> SplitString(const std::string& str)
         if (ch == '"')
         {
             in_quotes = !in_quotes;
-        } else if (std::isspace(static_cast<unsigned char>(ch)) && !in_quotes) {
+        } else if (std::isspace(static_cast<unsigned char>(ch)) && !in_quotes)
+        {
             if (!current.empty())
             {
                 args.push_back(current);
                 current.clear();
             }
-        } else {
+        } else
+        {
             current += ch;
         }
     }
@@ -31,11 +33,11 @@ std::vector<std::string> SplitString(const std::string& str)
     if (!current.empty()) args.push_back(current);
     return args;
 }
-}
+} // namespace
 
 void CConsole::RegisterCommand(std::string name, CallBack callback)
 {
-    auto [it, inserted] = m_cmds.insert({name, callback});
+    auto [it, inserted] = m_cmds.insert({ name, callback });
     if (!inserted)
     {
         it->second = std::move(callback);

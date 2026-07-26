@@ -1,8 +1,8 @@
 #pragma once
-#include "../server.h"
 #include "../Game/player.h"
 #include "../Game/systems/player_lifecycle_service.h"
 #include "../Game/systems/snapshot_service.h"
+#include "../server.h"
 #include "module.h"
 #include <SFML/Network/TcpListener.hpp>
 #include <memory>
@@ -32,7 +32,7 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
     void Tick(float dt) override;
     void ShutDown() override;
     CPlayer* FindPlayerById(uint32_t player_id) const;
-    bool AssignPlayerEntity(uint32_t player_id, int entity_id);
+    bool AssignPlayerEntity(uint32_t player_id, CGameWorld& world, int entity_id);
     bool KickPlayer(uint32_t player_id, const std::string& reason);
     void BanPlayerIp(uint32_t player_id, float seconds);
     void BanName(const std::string& name, float seconds);

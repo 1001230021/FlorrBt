@@ -94,7 +94,7 @@ function drawSpiderLegs(ctx, legs, spriteSize, entityId, motion, time) {
   clipSpiderBounds(ctx);
 
   for (const leg of legs) {
-    const groupStep = (SPIDER_LEG_GROUP_A.has(leg.index) ? step : -step);
+    const groupStep = SPIDER_LEG_GROUP_A.has(leg.index) ? step : -step;
     const side = leg.end.x < SPIDER_VIEWBOX * 0.5 ? -1 : 1;
     const swing = groupStep * side * swingAmp;
     const slide = groupStep * slideAmp;
@@ -103,7 +103,10 @@ function drawSpiderLegs(ctx, legs, spriteSize, entityId, motion, time) {
     ctx.save();
     ctx.translate(leg.pivot.x, leg.pivot.y);
     ctx.rotate(swing);
-    ctx.translate(-leg.pivot.x + leg.forward.x * slide, -leg.pivot.y + leg.forward.y * slide);
+    ctx.translate(
+      -leg.pivot.x + leg.forward.x * slide,
+      -leg.pivot.y + leg.forward.y * slide,
+    );
     ctx.strokeStyle = leg.stroke;
     ctx.lineWidth = width;
     ctx.lineCap = "round";
@@ -120,9 +123,13 @@ function spiderAsset() {
 
   const image = new Image();
   image.decoding = "async";
-  image.addEventListener("error", () => {
-    SPIDER_CACHE.failed = true;
-  }, { once: true });
+  image.addEventListener(
+    "error",
+    () => {
+      SPIDER_CACHE.failed = true;
+    },
+    { once: true },
+  );
   SPIDER_CACHE.body = image;
 
   fetch(SPIDER_ASSET)
@@ -132,7 +139,9 @@ function spiderAsset() {
     })
     .then((svgText) => {
       SPIDER_CACHE.legs = extractSpiderLegs(svgText);
-      const blob = new Blob([stripSpiderLegs(svgText)], { type: "image/svg+xml" });
+      const blob = new Blob([stripSpiderLegs(svgText)], {
+        type: "image/svg+xml",
+      });
       image.src = URL.createObjectURL(blob);
     })
     .catch(() => {
@@ -143,7 +152,8 @@ function spiderAsset() {
 }
 
 function extractSpiderLegs(svgText) {
-  if (typeof DOMParser === "undefined" || typeof Path2D === "undefined") return [];
+  if (typeof DOMParser === "undefined" || typeof Path2D === "undefined")
+    return [];
 
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
   const root = doc.documentElement;
@@ -163,13 +173,16 @@ function extractSpiderLegs(svgText) {
         end,
         forward: { x: (end.x - pivot.x) / len, y: (end.y - pivot.y) / len },
         stroke: node.getAttribute("stroke") || "#333",
-        strokeWidth: Number.parseFloat(node.getAttribute("stroke-width") || "4.167"),
+        strokeWidth: Number.parseFloat(
+          node.getAttribute("stroke-width") || "4.167",
+        ),
       };
     });
 }
 
 function stripSpiderLegs(svgText) {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgText;
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
+    return svgText;
 
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
   const root = doc.documentElement;
@@ -193,7 +206,10 @@ function parseMovePivot(d) {
 }
 
 function parseQuadraticEnd(d, pivot) {
-  const match = /q\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/i.exec(d);
+  const match =
+    /q\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/i.exec(
+      d,
+    );
   if (!match) return pivot;
   return {
     x: pivot.x + Number.parseFloat(match[3]),
@@ -204,7 +220,13 @@ function parseQuadraticEnd(d, pivot) {
 function clipSpiderBounds(ctx) {
   if (typeof ctx.roundRect === "function") {
     ctx.beginPath();
-    ctx.roundRect(SPIDER_CLIP_X, SPIDER_CLIP_X, SPIDER_CLIP_SIZE, SPIDER_CLIP_SIZE, 4.167);
+    ctx.roundRect(
+      SPIDER_CLIP_X,
+      SPIDER_CLIP_X,
+      SPIDER_CLIP_SIZE,
+      SPIDER_CLIP_SIZE,
+      4.167,
+    );
     ctx.clip();
     return;
   }
@@ -237,5 +259,5 @@ function seededUnit(seed) {
   value ^= value << 13;
   value ^= value >>> 17;
   value ^= value << 5;
-  return ((value >>> 0) / 4294967296);
+  return (value >>> 0) / 4294967296;
 }

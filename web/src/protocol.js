@@ -35,27 +35,118 @@ export const ServerType = Object.freeze({
 });
 
 export const PetalNames = [
-  "None", "Air", "AntEgg", "Antennae", "Basic", "BeetleEgg", "Bone", "Bubble", "Carrot",
-  "Coin", "Compass", "Cogwheel", "Disc", "Dust", "GoldenLeaf", "Iris", "Lentil", "Moon",
-  "Nullification", "Pincer", "Relic", "Rose", "YinYang", "Missile", "BloodSacrifice",
-  "Corruption", "Bandage", "Heavy", "Faster", "Yggdrasil", "Dahlia", "Wing", "Triangle",
-  "Sawblade", "Fragment", "Mimic", "Glass", "Stinger", "BrokenEgg", "Light",
-  "Leaf", "Rock", "Web", "Cactus", "Pollen", "Corn", "Rice", "Basil", "Soil",
-  "Honey", "Wax", "ThirdEye", "Dandelion", "Orange", "Shovel",
+  "None",
+  "Air",
+  "AntEgg",
+  "Antennae",
+  "Basic",
+  "BeetleEgg",
+  "Bone",
+  "Bubble",
+  "Carrot",
+  "Coin",
+  "Compass",
+  "Cogwheel",
+  "Disc",
+  "Dust",
+  "GoldenLeaf",
+  "Iris",
+  "Lentil",
+  "Moon",
+  "Nullification",
+  "Pincer",
+  "Relic",
+  "Rose",
+  "YinYang",
+  "Missile",
+  "BloodSacrifice",
+  "Corruption",
+  "Bandage",
+  "Heavy",
+  "Faster",
+  "Yggdrasil",
+  "Dahlia",
+  "Wing",
+  "Triangle",
+  "Sawblade",
+  "Fragment",
+  "Mimic",
+  "Glass",
+  "Stinger",
+  "BrokenEgg",
+  "Light",
+  "Leaf",
+  "Rock",
+  "Web",
+  "Cactus",
+  "Pollen",
+  "Corn",
+  "Rice",
+  "Basil",
+  "Soil",
+  "Honey",
+  "Wax",
+  "ThirdEye",
+  "Dandelion",
+  "Orange",
+  "Shovel",
+  "Yucca",
 ];
 
 export const MobNames = [
-  "None", "Beetle", "Gambler", "NormalLadybug", "MechaFlower", "NormalFlower", "PlayerFlower",
-  "SoldierAnt", "SoldierFireAnt", "SoldierTermite", "SummonedBeetle", "SummonedSoldierAnt",
-  "BandageBeetle", "Bee", "Hornet", "BumbleBee", "Rock", "BabyAnt", "WorkerAnt", "QueenAnt",
-  "AntHole", "Spider", "Sandstorm", "Dummy", "Dandelion", "AntEgg", "FireAntEgg", "TermiteEgg",
-  "QueenAntEgg", "QueenFireAntEgg", "BabyFireAnt", "WorkerFireAnt", "FireQueenAnt", "BabyTermite",
-  "WorkerTermite", "TermiteOvermind", "LeafPiece",
+  "None",
+  "Beetle",
+  "Gambler",
+  "NormalLadybug",
+  "MechaFlower",
+  "NormalFlower",
+  "PlayerFlower",
+  "SoldierAnt",
+  "SoldierFireAnt",
+  "SoldierTermite",
+  "SummonedBeetle",
+  "SummonedSoldierAnt",
+  "BandageBeetle",
+  "Bee",
+  "Hornet",
+  "BumbleBee",
+  "Rock",
+  "BabyAnt",
+  "WorkerAnt",
+  "QueenAnt",
+  "AntHole",
+  "Spider",
+  "Sandstorm",
+  "Dummy",
+  "Dandelion",
+  "AntEgg",
+  "FireAntEgg",
+  "TermiteEgg",
+  "QueenAntEgg",
+  "QueenFireAntEgg",
+  "BabyFireAnt",
+  "WorkerFireAnt",
+  "FireQueenAnt",
+  "BabyTermite",
+  "WorkerTermite",
+  "TermiteOvermind",
+  "LeafPiece",
 ];
 
 export const RarityNames = [
-  "Null", "Common", "Unusual", "Rare", "Epic", "Legendary", "Mythic", "Ultra", "Super",
-  "Eternal", "Unique", "Primordial", "Exotic",
+  "Null",
+  "Common",
+  "Unusual",
+  "Rare",
+  "Epic",
+  "Legendary",
+  "Mythic",
+  "Ultra",
+  "Super",
+  "Eternal",
+  "Unique",
+  "Primordial",
+  "Exotic",
 ];
 
 export const RarityColors = [
@@ -92,7 +183,10 @@ export function rarityName(rarity) {
 }
 
 export function isPetalEntity(entityType) {
-  return entityType >= NETWORK_PETAL_TYPE_OFFSET && entityType < NETWORK_DROP_TYPE_OFFSET;
+  return (
+    entityType >= NETWORK_PETAL_TYPE_OFFSET &&
+    entityType < NETWORK_DROP_TYPE_OFFSET
+  );
 }
 
 export function isDropEntity(entityType) {
@@ -218,7 +312,8 @@ function parseEntity(reader, origin = null) {
     entity.primarySlots = [];
     return entity;
   }
-  if (format !== ENTITY_SNAPSHOT_FULL) throw new Error("unknown entity snapshot format");
+  if (format !== ENTITY_SNAPSHOT_FULL)
+    throw new Error("unknown entity snapshot format");
 
   entity.entityId = reader.u16();
   entity.entityType = reader.u8();
@@ -294,7 +389,10 @@ export function parseServerMessage(payload) {
         msg.ownerSlots.push({ petalType: reader.u8(), rarity: reader.u8() });
       }
       for (let i = 0; i < secondaryCount; i += 1) {
-        msg.secondarySlots.push({ petalType: reader.u8(), rarity: reader.u8() });
+        msg.secondarySlots.push({
+          petalType: reader.u8(),
+          rarity: reader.u8(),
+        });
       }
       msg.talentPoints = 0;
       msg.talents = [];
@@ -302,7 +400,11 @@ export function parseServerMessage(payload) {
         msg.talentPoints = reader.u16();
         const talentCount = reader.u8();
         for (let i = 0; i < talentCount; i += 1) {
-          msg.talents.push({ id: reader.u16(), rarity: reader.u8(), rank: reader.u8() });
+          msg.talents.push({
+            id: reader.u16(),
+            rarity: reader.u8(),
+            rank: reader.u8(),
+          });
         }
       }
       return msg;
@@ -312,7 +414,11 @@ export function parseServerMessage(payload) {
       const count = reader.u16();
       msg.inventory = [];
       for (let i = 0; i < count; i += 1) {
-        msg.inventory.push({ petalType: reader.u8(), rarity: reader.u8(), count: reader.u32() });
+        msg.inventory.push({
+          petalType: reader.u8(),
+          rarity: reader.u8(),
+          count: reader.u32(),
+        });
       }
       return msg;
     }
@@ -337,7 +443,11 @@ export function parseServerMessage(payload) {
       const count = reader.u16();
       msg.items = [];
       for (let i = 0; i < count; i += 1) {
-        msg.items.push({ petalType: reader.u8(), rarity: reader.u8(), count: reader.u32() });
+        msg.items.push({
+          petalType: reader.u8(),
+          rarity: reader.u8(),
+          count: reader.u32(),
+        });
       }
       return msg;
     }
@@ -372,7 +482,13 @@ export function packInput(moveX, moveY) {
   return out;
 }
 
-export function packChores(attacking, defending, agree = false, disconnect = false, digging = false) {
+export function packChores(
+  attacking,
+  defending,
+  agree = false,
+  disconnect = false,
+  digging = false,
+) {
   let value = 0x03;
   if (attacking) value |= 1 << 2;
   if (defending) value |= 1 << 3;
@@ -383,7 +499,11 @@ export function packChores(attacking, defending, agree = false, disconnect = fal
 }
 
 export function packEquip(slotIndex, petalType, rarity) {
-  return new Uint8Array([0x01, petalType & 0xff, ((slotIndex & 0x0f) << 4) | (rarity & 0x0f)]);
+  return new Uint8Array([
+    0x01,
+    petalType & 0xff,
+    ((slotIndex & 0x0f) << 4) | (rarity & 0x0f),
+  ]);
 }
 
 export function packUnequip(slotIndex) {
@@ -391,7 +511,12 @@ export function packUnequip(slotIndex) {
 }
 
 export function packSecondarySlot(slotIndex, petalType, rarity) {
-  return new Uint8Array([0xf2, slotIndex & 0xff, petalType & 0xff, rarity & 0xff]);
+  return new Uint8Array([
+    0xf2,
+    slotIndex & 0xff,
+    petalType & 0xff,
+    rarity & 0xff,
+  ]);
 }
 
 export function packCraft(petalType, rarity, count) {

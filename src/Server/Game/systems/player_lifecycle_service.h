@@ -23,8 +23,7 @@ class CPlayerLifecycleService
     void ProcessDropPickups(const std::vector<std::unique_ptr<CPlayer>>& players,
                             IPlayerLifecycleNotifier& notifier) const;
     CEntity* Respawn(CPlayer& player, CGameWorld& world) const;
-    void RespawnDeadControlledEntities(const std::vector<std::unique_ptr<CPlayer>>& players,
-                                       CGameWorld& respawn_world,
+    void RespawnDeadControlledEntities(const std::vector<std::unique_ptr<CPlayer>>& players, CGameWorld& respawn_world,
                                        IPlayerLifecycleNotifier& notifier) const;
     void NotifyPlayerLogin(CPlayer& player, IPlayerLifecycleNotifier& notifier) const;
     void NotifyPlayerWorldChanged(CPlayer& player, IPlayerLifecycleNotifier& notifier) const;

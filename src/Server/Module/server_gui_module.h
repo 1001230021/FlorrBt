@@ -1,7 +1,7 @@
 #pragma once
-#include "module.h"
 #include "../../Engine/console.h"
 #include "../../Engine/logger.h"
+#include "module.h"
 #include <SFML/Graphics.hpp>
 #include <optional>
 #include <string>

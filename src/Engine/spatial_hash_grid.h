@@ -39,7 +39,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         if (!object || !IsValid(*object)) return;
         if (m_query_depth > 0)
         {
-            m_pending_tracked_ops.push_back({tracked_op_type::Insert, object, m_get_id(*object)});
+            m_pending_tracked_ops.push_back({ tracked_op_type::Insert, object, m_get_id(*object) });
             return;
         }
 
@@ -49,7 +49,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         const sf::Vector2f pos = m_get_position(*object);
         const std::uint64_t cell = HashCell(CellX(pos.x), CellY(pos.y));
         std::vector<TId>& ids = m_grid[cell];
-        m_tracked[id] = {cell, ids.size()};
+        m_tracked[id] = { cell, ids.size() };
         ids.push_back(id);
     }
 
@@ -59,7 +59,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         const TId id = m_get_id(*object);
         if (m_query_depth > 0)
         {
-            m_pending_tracked_ops.push_back({tracked_op_type::Update, object, id});
+            m_pending_tracked_ops.push_back({ tracked_op_type::Update, object, id });
             return;
         }
         if (!IsValid(*object))
@@ -75,7 +75,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
 
         RemoveTracked(id);
         std::vector<TId>& ids = m_grid[cell];
-        m_tracked[id] = {cell, ids.size()};
+        m_tracked[id] = { cell, ids.size() };
         ids.push_back(id);
     }
 
@@ -83,7 +83,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
     {
         if (m_query_depth > 0)
         {
-            m_pending_tracked_ops.push_back({tracked_op_type::Remove, nullptr, id});
+            m_pending_tracked_ops.push_back({ tracked_op_type::Remove, nullptr, id });
             return;
         }
 
@@ -116,7 +116,8 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         Clear();
         m_grid.reserve(objects.size());
         m_tracked.reserve(objects.size());
-        for (TObject* object : objects) InsertTracked(object);
+        for (TObject* object : objects)
+            InsertTracked(object);
     }
 
     void Insert(TObject* object)
@@ -182,8 +183,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         TObject* target = nullptr;
         float min_dist_sq = (max_range == global_range) ? std::numeric_limits<float>::max() : max_range * max_range;
 
-        auto visit_object = [&](TId id)
-        {
+        auto visit_object = [&](TId id) {
             TObject* object = Resolve(id);
             if (!object || !IsValid(*object)) return;
             if (filter && !filter(object)) return;
@@ -209,8 +209,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
             return target;
         }
 
-        VisitCellsInRange(center, max_range, [&](const std::vector<TId>& ids)
-        {
+        VisitCellsInRange(center, max_range, [&](const std::vector<TId>& ids) {
             for (TId id : ids)
             {
                 visit_object(id);
@@ -225,8 +224,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         if (radius <= 0.f) return result;
         result.reserve(8);
 
-        ForEachInRange(center, radius, [&](TObject* object)
-        {
+        ForEachInRange(center, radius, [&](TObject* object) {
             if (!filter || filter(object)) result.push_back(object);
         });
         return result;
@@ -238,8 +236,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         query_guard guard(*this);
 
         float radius_sq = radius * radius;
-        VisitCellsInRange(center, radius, [&](const std::vector<TId>& ids)
-        {
+        VisitCellsInRange(center, radius, [&](const std::vector<TId>& ids) {
             for (TId id : ids)
             {
                 TObject* object = Resolve(id);
@@ -249,7 +246,8 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         });
     }
 
-    template <typename TVisitor> void ForEachInRangeBroadphase(const sf::Vector2f& center, float radius, TVisitor visitor) const
+    template <typename TVisitor>
+    void ForEachInRangeBroadphase(const sf::Vector2f& center, float radius, TVisitor visitor) const
     {
         std::unordered_set<TId> visited;
         ForEachInRangeBroadphase(center, radius, visited, visitor);
@@ -257,14 +255,13 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
 
     template <typename TVisitor>
     void ForEachInRangeBroadphase(const sf::Vector2f& center, float radius, std::unordered_set<TId>& visited,
-                                   TVisitor visitor) const
+                                  TVisitor visitor) const
     {
         if (radius <= 0.f) return;
         query_guard guard(*this);
 
         visited.clear();
-        VisitCellsInRange(center, radius, [&](const std::vector<TId>& ids)
-        {
+        VisitCellsInRange(center, radius, [&](const std::vector<TId>& ids) {
             for (TId id : ids)
             {
                 if (!visited.insert(id).second) continue;
@@ -302,8 +299,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         explicit query_guard(const CSpatialHashGrid& grid) : m_grid(grid) { ++m_grid.m_query_depth; }
         ~query_guard()
         {
-            if (--m_grid.m_query_depth == 0)
-                const_cast<CSpatialHashGrid&>(m_grid).FlushPendingTrackedOps();
+            if (--m_grid.m_query_depth == 0) const_cast<CSpatialHashGrid&>(m_grid).FlushPendingTrackedOps();
         }
 
       private:
@@ -335,7 +331,8 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         }
     }
 
-    template <typename TVisitor> void VisitCellsInRange(const sf::Vector2f& center, float radius, TVisitor visitor) const
+    template <typename TVisitor>
+    void VisitCellsInRange(const sf::Vector2f& center, float radius, TVisitor visitor) const
     {
         int min_cell_x = CellX(center.x - radius);
         int max_cell_x = CellX(center.x + radius);

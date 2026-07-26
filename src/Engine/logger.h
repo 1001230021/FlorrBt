@@ -28,7 +28,10 @@ class CLogger
         size_t id = 0;
         Sink callback;
 
-        void operator()(const std::string& sender, ELogPriority priority, const std::string& msg) const { callback(sender, priority, msg); }
+        void operator()(const std::string& sender, ELogPriority priority, const std::string& msg) const
+        {
+            callback(sender, priority, msg);
+        }
     };
 
     explicit CLogger(const std::string& name) : m_sender(name) {}
@@ -49,14 +52,16 @@ class CLogger
 
     static size_t AddSink(Sink sink)
     {
-        Sinks().push_back({++s_next_sink_id, std::move(sink)});
+        Sinks().push_back({ ++s_next_sink_id, std::move(sink) });
         return s_next_sink_id;
     }
 
     static void RemoveSink(size_t id)
     {
         auto& sinks = Sinks();
-        sinks.erase(std::remove_if(sinks.begin(), sinks.end(), [id](const sink_entry& entry) { return entry.id == id; }), sinks.end());
+        sinks.erase(
+            std::remove_if(sinks.begin(), sinks.end(), [id](const sink_entry& entry) { return entry.id == id; }),
+            sinks.end());
     }
 
     void Debug(const std::string& msg)

@@ -1,136 +1,290 @@
 <!doctype html>
 <html lang="zh-Hant">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FlorrBt Web Client</title>
-  <link rel="stylesheet" href="./styles.css">
-</head>
-<body>
-  <canvas id="game" aria-label="FlorrBt game"></canvas>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FlorrBt Web Client</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <canvas id="game" aria-label="FlorrBt game"></canvas>
 
-  <main id="authPanel" class="auth-panel ui">
-    <h1>FlorrBt</h1>
-    <label>
-      <span>Socket</span>
-      <input id="wsUrl" autocomplete="url" spellcheck="false">
-    </label>
-    <label>
-      <span>Account</span>
-      <input id="account" autocomplete="username" spellcheck="false">
-    </label>
-    <label>
-      <span>Password</span>
-      <input id="password" type="password" autocomplete="current-password">
-    </label>
-    <label class="checkbox-row">
-      <input id="registerMode" type="checkbox">
-      <span>Register</span>
-    </label>
-    <button id="connectBtn" type="button">Connect</button>
-    <p id="authStatus" class="auth-status">Disconnected</p>
-  </main>
+    <main id="authPanel" class="auth-panel ui">
+      <h1>FlorrBt</h1>
+      <label>
+        <span>Socket</span>
+        <input id="wsUrl" autocomplete="url" spellcheck="false" />
+      </label>
+      <label>
+        <span>Account</span>
+        <input id="account" autocomplete="username" spellcheck="false" />
+      </label>
+      <label>
+        <span>Password</span>
+        <input id="password" type="password" autocomplete="current-password" />
+      </label>
+      <label class="checkbox-row">
+        <input id="registerMode" type="checkbox" />
+        <span>Register</span>
+      </label>
+      <button id="connectBtn" type="button">Connect</button>
+      <p id="authStatus" class="auth-status">Disconnected</p>
+    </main>
 
-  <section id="hud" class="hud ui" aria-hidden="true"></section>
+    <section id="hud" class="hud ui" aria-hidden="true"></section>
 
-  <section id="deathOverlay" class="death-overlay ui hidden" aria-label="Death screen">
-    <div class="death-stack">
-      <button id="reviveBtn" class="revive-button" type="button">Revive</button>
-      <button id="deathCloseBtn" class="death-close-button" type="button">Close</button>
-    </div>
-  </section>
+    <section
+      id="deathOverlay"
+      class="death-overlay ui hidden"
+      aria-label="Death screen"
+    >
+      <div class="death-card">
+        <div class="death-title">You were destroyed by:</div>
+        <div id="deathSource" class="death-source">A mysterious entity</div>
+        <div class="death-loot-title">Collected this run</div>
+        <div
+          id="deathLoot"
+          class="death-loot"
+          aria-label="Collected petals"
+        ></div>
+        <div class="death-revive-note">You'll be revived soon.</div>
+        <div class="death-actions">
+          <button id="reviveBtn" class="revive-button" type="button">
+            Revive
+          </button>
+          <button id="deathCloseBtn" class="death-close-button" type="button">
+            Close
+          </button>
+        </div>
+      </div>
+    </section>
 
-  <section id="quickActions" class="quick-actions ui hidden" aria-label="Quick actions">
-    <button id="quickBackpackBtn" class="quick-action quick-action-backpack" type="button" title="Inventory [Z]" aria-label="Inventory">
-      <span class="quick-action-icon"></span>
-      <kbd>Z</kbd>
-    </button>
-    <button id="quickTalentBtn" class="quick-action quick-action-talent" type="button" title="Talents [X]" aria-label="Talents">
-      <span class="quick-action-icon"></span>
-      <span id="quickTalentPoints" class="quick-talent-points hidden" aria-hidden="true">0</span>
-      <kbd>X</kbd>
-    </button>
-    <button id="quickCraftBtn" class="quick-action quick-action-craft" type="button" title="Craft [C]" aria-label="Craft">
-      <span class="quick-action-icon"></span>
-      <kbd>C</kbd>
-    </button>
-  </section>
+    <section
+      id="quickActions"
+      class="quick-actions ui hidden"
+      aria-label="Quick actions"
+    >
+      <button
+        id="quickBackpackBtn"
+        class="quick-action quick-action-backpack"
+        type="button"
+        title="Inventory [Z]"
+        aria-label="Inventory"
+      >
+        <span class="quick-action-icon"></span>
+        <kbd>Z</kbd>
+      </button>
+      <button
+        id="quickTalentBtn"
+        class="quick-action quick-action-talent"
+        type="button"
+        title="Talents [X]"
+        aria-label="Talents"
+      >
+        <span class="quick-action-icon"></span>
+        <span
+          id="quickTalentPoints"
+          class="quick-talent-points hidden"
+          aria-hidden="true"
+          >0</span
+        >
+        <kbd>X</kbd>
+      </button>
+      <button
+        id="quickCraftBtn"
+        class="quick-action quick-action-craft"
+        type="button"
+        title="Craft [C]"
+        aria-label="Craft"
+      >
+        <span class="quick-action-icon"></span>
+        <kbd>C</kbd>
+      </button>
+    </section>
 
-  <section id="chatPanel" class="chat-panel ui hidden" aria-label="Chat">
-    <div id="chatChannels" class="chat-channels hidden">
-      <label class="chat-channel chat-channel-local"><input type="checkbox" data-chat-filter="local" checked><span>Local</span></label>
-      <label class="chat-channel chat-channel-global"><input type="checkbox" data-chat-filter="global" checked><span>Global</span></label>
-      <label class="chat-channel chat-channel-whisper"><input type="checkbox" data-chat-filter="whisper" checked><span>Whisper</span></label>
-      <label class="chat-channel chat-channel-server"><input type="checkbox" data-chat-filter="server" checked><span>Server</span></label>
-    </div>
-    <section id="chatLog" class="chat-log"></section>
-    <button id="chatHint" class="chat-hint" type="button">Press [ENTER] or click here to chat</button>
-    <input id="chatInput" class="chat-input hidden" autocomplete="off" spellcheck="false" maxlength="180" placeholder="[Local]">
-  </section>
+    <section id="chatPanel" class="chat-panel ui hidden" aria-label="Chat">
+      <div id="chatChannels" class="chat-channels hidden">
+        <label class="chat-channel chat-channel-local"
+          ><input type="checkbox" data-chat-filter="local" checked /><span
+            >Local</span
+          ></label
+        >
+        <label class="chat-channel chat-channel-global"
+          ><input type="checkbox" data-chat-filter="global" checked /><span
+            >Global</span
+          ></label
+        >
+        <label class="chat-channel chat-channel-whisper"
+          ><input type="checkbox" data-chat-filter="whisper" checked /><span
+            >Whisper</span
+          ></label
+        >
+        <label class="chat-channel chat-channel-server"
+          ><input type="checkbox" data-chat-filter="server" checked /><span
+            >Server</span
+          ></label
+        >
+      </div>
+      <section id="chatLog" class="chat-log"></section>
+      <button id="chatHint" class="chat-hint" type="button">
+        Press [ENTER] or click here to chat
+      </button>
+      <input
+        id="chatInput"
+        class="chat-input hidden"
+        autocomplete="off"
+        spellcheck="false"
+        maxlength="180"
+        placeholder="[Local]"
+      />
+    </section>
 
-  <aside id="petalInfoTooltip" class="petal-info-tooltip ui hidden" aria-hidden="true"></aside>
+    <aside
+      id="petalInfoTooltip"
+      class="petal-info-tooltip ui hidden"
+      aria-hidden="true"
+    ></aside>
 
-  <section id="sliderPanel" class="slider-panel ui hidden" aria-hidden="true">
-    <div class="slider-panel-header">
-      <span id="sliderTitle" class="slider-title">Slider</span>
-      <button id="sliderCloseBtn" class="slider-close" type="button" aria-label="Close slider">x</button>
-    </div>
-    <label class="slider-control">
-      <span id="sliderValue" class="slider-value"></span>
-      <input id="sliderInput" class="slider-input" type="range">
-    </label>
-  </section>
+    <section id="sliderPanel" class="slider-panel ui hidden" aria-hidden="true">
+      <div class="slider-panel-header">
+        <span id="sliderTitle" class="slider-title">Slider</span>
+        <button
+          id="sliderCloseBtn"
+          class="slider-close"
+          type="button"
+          aria-label="Close slider"
+        >
+          x
+        </button>
+      </div>
+      <label class="slider-control">
+        <span id="sliderValue" class="slider-value"></span>
+        <input id="sliderInput" class="slider-input" type="range" />
+      </label>
+    </section>
 
-  <section id="consolePanel" class="console-panel ui">
-    <div id="debugInfo" class="console-debug"></div>
-    <div id="consoleLog" class="console-log"></div>
-    <input id="consoleInput" class="console-input" autocomplete="off" spellcheck="false" maxlength="240" placeholder="Console">
-  </section>
+    <section id="consolePanel" class="console-panel ui">
+      <div id="debugInfo" class="console-debug"></div>
+      <div id="consoleLog" class="console-log"></div>
+      <input
+        id="consoleInput"
+        class="console-input"
+        autocomplete="off"
+        spellcheck="false"
+        maxlength="240"
+        placeholder="Console"
+      />
+    </section>
 
-  <section id="slotsPanel" class="slots-panel ui">
-    <div id="primarySlots" class="slot-row"></div>
-    <div id="secondarySlots" class="slot-row secondary"></div>
-  </section>
+    <section id="slotsPanel" class="slots-panel ui">
+      <div id="primarySlots" class="slot-row"></div>
+      <div id="secondarySlots" class="slot-row secondary"></div>
+    </section>
 
-  <section id="backpackPanel" class="backpack-panel ui" data-drop-kind="backpack">
-    <div class="panel-title">
-      <span>Inventory</span>
-      <button id="backpackCloseBtn" class="panel-close" type="button" aria-label="Close inventory">×</button>
-    </div>
-    <div class="inventory-subtitle">Drag a petal to equip it</div>
-    <div id="inventoryList" class="inventory-list"></div>
-  </section>
+    <section
+      id="backpackPanel"
+      class="backpack-panel ui"
+      data-drop-kind="backpack"
+    >
+      <div class="panel-title">
+        <span>Inventory</span>
+        <button
+          id="backpackCloseBtn"
+          class="panel-close"
+          type="button"
+          aria-label="Close inventory"
+        >
+          x
+        </button>
+      </div>
+      <div class="inventory-controls">
+        <label class="inventory-stacking"
+          ><input id="inventoryStacking" type="checkbox" /><span
+            >Stacking</span
+          ></label
+        >
+        <input
+          id="inventorySearch"
+          class="inventory-search"
+          type="search"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Search"
+        />
+      </div>
+      <div id="inventoryList" class="inventory-list"></div>
+    </section>
 
-  <section id="craftPanel" class="craft-panel ui">
-    <div class="panel-title">
-      <span>Craft</span>
-      <button id="craftCloseBtn" class="panel-close" type="button" aria-label="Close craft">×</button>
-    </div>
-    <div id="craftStage" class="craft-stage" aria-label="Craft slots">
-      <button class="craft-stage-slot slot-0" type="button" data-craft-slot="0"></button>
-      <button class="craft-stage-slot slot-1" type="button" data-craft-slot="1"></button>
-      <button class="craft-stage-slot slot-2" type="button" data-craft-slot="2"></button>
-      <button class="craft-stage-slot slot-3" type="button" data-craft-slot="3"></button>
-      <button class="craft-stage-slot slot-4" type="button" data-craft-slot="4"></button>
-      <button id="craftResultSlot" class="craft-result-slot hidden" type="button"></button>
-    </div>
-    <div class="craft-action">
-      <button id="craftOnceBtn" type="button">Craft</button>
-      <div id="craftSelection" class="craft-selection">Combine 5 of the same petal to craft an upgrade</div>
-      <div id="craftChance" class="craft-chance"></div>
-    </div>
-    <div id="craftList" class="craft-list"></div>
-  </section>
+    <section id="craftPanel" class="craft-panel ui">
+      <div class="panel-title">
+        <span>Craft</span>
+        <button
+          id="craftCloseBtn"
+          class="panel-close"
+          type="button"
+          aria-label="Close craft"
+        >
+          x
+        </button>
+      </div>
+      <div id="craftStage" class="craft-stage" aria-label="Craft slots">
+        <button
+          class="craft-stage-slot slot-0"
+          type="button"
+          data-craft-slot="0"
+        ></button>
+        <button
+          class="craft-stage-slot slot-1"
+          type="button"
+          data-craft-slot="1"
+        ></button>
+        <button
+          class="craft-stage-slot slot-2"
+          type="button"
+          data-craft-slot="2"
+        ></button>
+        <button
+          class="craft-stage-slot slot-3"
+          type="button"
+          data-craft-slot="3"
+        ></button>
+        <button
+          class="craft-stage-slot slot-4"
+          type="button"
+          data-craft-slot="4"
+        ></button>
+        <button
+          id="craftResultSlot"
+          class="craft-result-slot hidden"
+          type="button"
+        ></button>
+      </div>
+      <div class="craft-action">
+        <button id="craftOnceBtn" type="button">Craft</button>
+        <div id="craftSelection" class="craft-selection">
+          Combine 5 of the same petal to craft an upgrade
+        </div>
+        <div id="craftChance" class="craft-chance"></div>
+      </div>
+      <div id="craftList" class="craft-list"></div>
+    </section>
 
-  <section id="talentPanel" class="talent-panel ui">
-    <div class="panel-title">
-      <span>Talents</span>
-      <button id="talentCloseBtn" class="panel-close" type="button" aria-label="Close talents">x</button>
-    </div>
-    <div id="talentPoints" class="talent-points">Talent Points: 0</div>
-    <div id="talentTree" class="talent-tree"></div>
-  </section>
+    <section id="talentPanel" class="talent-panel ui">
+      <div class="panel-title">
+        <span>Talents</span>
+        <button
+          id="talentCloseBtn"
+          class="panel-close"
+          type="button"
+          aria-label="Close talents"
+        >
+          x
+        </button>
+      </div>
+      <div id="talentPoints" class="talent-points">Talent Points: 0</div>
+      <div id="talentTree" class="talent-tree"></div>
+    </section>
 
-  <script type="module" src="./src/game.js"></script>
-</body>
+    <script type="module" src="./src/game.js"></script>
+  </body>
 </html>

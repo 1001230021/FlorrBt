@@ -1,12 +1,17 @@
 #include "entity.h"
-#include "gameworld.h"
 #include "../../Shared/game_config.h"
+#include "entities/flower.h"
+#include "entities/petals/petal.h"
+#include "gameworld.h"
 #include <algorithm>
 #include <cmath>
 
-CGameContext* CEntity::GameContext()
+CGameContext* CEntity::GameContext() { return m_p_game_world ? m_p_game_world->GameContext() : nullptr; }
+
+void CEntity::MarkForDestroy()
 {
-    return m_p_game_world ? m_p_game_world->GameContext() : nullptr;
+    m_is_marked_for_des = true;
+    if (m_p_game_world) m_p_game_world->QueueEntityForCleanup(this);
 }
 
 bool CEntity::IsCollision(const CEntity& other) const
@@ -26,13 +31,16 @@ void CEntity::TakeDamage(float dmg, CEntity*, EDamageType)
     if (m_health <= 0.f)
     {
         m_health = 0.f;
-        m_is_marked_for_des = true;
+        MarkForDestroy();
     }
 }
 
 void CEntity::OnCollision(CEntity* other)
 {
     if (!other) return;
+    CPetal* wax = dynamic_cast<CPetal*>(this);
+    CFlower* other_flower = dynamic_cast<CFlower*>(other);
+    if (wax && wax->m_type != EPetalType::Wax && !other_flower) return;
 
     sf::Vector2f diff = m_pos - other->m_pos;
     float dist = std::sqrt(diff.x * diff.x + diff.y * diff.y);

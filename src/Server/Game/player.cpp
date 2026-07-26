@@ -1,15 +1,15 @@
 #include "player.h"
 #include "../../Engine/account_data.h"
+#include "../../Shared/game_config.h"
+#include "../../Shared/petal_card_exp.h"
 #include "../server.h"
+#include "controllers/player_controller.h"
 #include "entities/drop.h"
 #include "entities/flower.h"
 #include "entities/mob.h"
 #include "entities/petals/petal.h"
-#include "controllers/player_controller.h"
 #include "gameworld.h"
 #include "talent.h"
-#include "../../Shared/game_config.h"
-#include "../../Shared/petal_card_exp.h"
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -21,7 +21,7 @@ bool SameTalent(const ITalent* lhs, const ITalent* rhs)
     return lhs && rhs && lhs->m_id == rhs->m_id && lhs->m_rarity == rhs->m_rarity && lhs->m_rank == rhs->m_rank;
 }
 
-}
+} // namespace
 
 CPlayer::CPlayer(sf::TcpSocket&& socket, uint32_t id, const std::string& name)
     : m_socket(std::move(socket)), m_player_id(id), m_name(name)
@@ -94,15 +94,9 @@ void CPlayer::MuteFor(float seconds)
     m_mute_timer = std::max(m_mute_timer, seconds);
 }
 
-void CPlayer::Unmute()
-{
-    m_mute_timer = 0.f;
-}
+void CPlayer::Unmute() { m_mute_timer = 0.f; }
 
-void CPlayer::RegisterValidReport()
-{
-    m_invalid_report_count = 0;
-}
+void CPlayer::RegisterValidReport() { m_invalid_report_count = 0; }
 
 void CPlayer::RegisterInvalidReport()
 {
@@ -132,10 +126,9 @@ void CPlayer::ResetControlledMob()
     if (!mob) return;
 
     mob->MoveTowards(mob->m_pos, 0.f);
-    mob->m_vel = {0.f, 0.f};
+    mob->m_vel = { 0.f, 0.f };
 
-    if (auto* attackable = dynamic_cast<IAttackableMob*>(mob))
-        attackable->ClearAttackState();
+    if (auto* attackable = dynamic_cast<IAttackableMob*>(mob)) attackable->ClearAttackState();
 
     if (auto* controller = dynamic_cast<CPlayerController*>(mob->GetController()))
     {
@@ -179,8 +172,7 @@ void CPlayer::ApplySavedProgress()
     flower->m_level = std::max(1, level);
     flower->m_exp = std::max<std::int64_t>(0, exp);
     flower->RebuildFinalStats();
-    if (const SFlowerStats* stats = flower->GetFinalStats())
-        flower->m_health = stats->max_health;
+    if (const SFlowerStats* stats = flower->GetFinalStats()) flower->m_health = stats->max_health;
 }
 
 void CPlayer::ApplySavedSlots()
@@ -215,10 +207,8 @@ void CPlayer::ApplySavedTalents()
     {
         ITalent* talent = FindBuiltinTalent(saved.id, saved.rarity, saved.rank);
         if (!talent) continue;
-        if (std::find_if(m_talents.begin(), m_talents.end(), [talent](const ITalent* existing)
-            {
-                return SameTalent(existing, talent);
-            }) != m_talents.end())
+        if (std::find_if(m_talents.begin(), m_talents.end(),
+                         [talent](const ITalent* existing) { return SameTalent(existing, talent); }) != m_talents.end())
             continue;
         m_talents.push_back(talent);
     }
@@ -379,8 +369,7 @@ bool CPlayer::RemoveTalent(ETalentId id, ERarity rarity, int rank)
         if (talent) refund += talent->m_cost;
 
     m_talents.erase(std::remove_if(m_talents.begin(), m_talents.end(),
-                                   [&removing](ITalent* talent)
-                                   {
+                                   [&removing](ITalent* talent) {
                                        return std::find(removing.begin(), removing.end(), talent) != removing.end();
                                    }),
                     m_talents.end());
@@ -402,10 +391,8 @@ void CPlayer::AddTalentPoints(int amount)
 bool CPlayer::HasTalent(const ITalent* talent) const
 {
     if (!talent) return false;
-    return std::find_if(m_talents.begin(), m_talents.end(), [talent](const ITalent* owned)
-    {
-        return SameTalent(owned, talent);
-    }) != m_talents.end();
+    return std::find_if(m_talents.begin(), m_talents.end(),
+                        [talent](const ITalent* owned) { return SameTalent(owned, talent); }) != m_talents.end();
 }
 
 void CPlayer::ApplyTalents(ETalentEvent event, STalentContext& ctx) const
@@ -446,10 +433,7 @@ void CPlayer::RefreshTalentEffects(bool reload_petals)
     if (reload_petals) flower->ReloadAllPetals();
 }
 
-void CPlayer::SetSecondChanceCooldown(float cooldown)
-{
-    m_second_chance_cooldown = std::max(0.f, cooldown);
-}
+void CPlayer::SetSecondChanceCooldown(float cooldown) { m_second_chance_cooldown = std::max(0.f, cooldown); }
 
 bool CPlayer::ConsumeUseNewPlayerSpawn()
 {
@@ -489,10 +473,7 @@ CEntity* CPlayer::GetEntity() const
     return m_p_world->GetEntity(m_entity_id);
 }
 
-CGameContext* CPlayer::GameContext() const
-{
-    return m_p_world ? m_p_world->GameContext() : nullptr;
-}
+CGameContext* CPlayer::GameContext() const { return m_p_world ? m_p_world->GameContext() : nullptr; }
 
 void CPlayer::SaveTalentState() const
 {
@@ -503,7 +484,7 @@ void CPlayer::SaveTalentState() const
     for (const ITalent* talent : m_talents)
     {
         if (!talent) continue;
-        saved.push_back({talent->m_id, talent->m_rarity, talent->m_rank});
+        saved.push_back({ talent->m_id, talent->m_rarity, talent->m_rank });
     }
 
     CAccountDataStore::SetTalentPoints(m_account_name, m_talent_points);
@@ -518,10 +499,8 @@ void CPlayer::NormalizeTalentOrder()
 
     for (ITalent* builtin : builtins)
     {
-        auto it = std::find_if(m_talents.begin(), m_talents.end(), [builtin](const ITalent* owned)
-        {
-            return SameTalent(owned, builtin);
-        });
+        auto it = std::find_if(m_talents.begin(), m_talents.end(),
+                               [builtin](const ITalent* owned) { return SameTalent(owned, builtin); });
         if (it != m_talents.end()) ordered.push_back(builtin);
     }
 
@@ -529,8 +508,7 @@ void CPlayer::NormalizeTalentOrder()
 
     for (;;)
     {
-        auto it = std::find_if(m_talents.begin(), m_talents.end(), [this](const ITalent* talent)
-        {
+        auto it = std::find_if(m_talents.begin(), m_talents.end(), [this](const ITalent* talent) {
             return talent && talent->m_based && !HasTalent(talent->m_based);
         });
         if (it == m_talents.end()) break;

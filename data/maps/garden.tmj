@@ -13706,6 +13706,87 @@
                  "width":0,
                  "x":10752,
                  "y":117760
+                }, 
+                {
+                 "class":"spawn_mobs",
+                 "height":1024,
+                 "id":125,
+                 "name":"",
+                 "properties":[
+                        {
+                         "name":"density",
+                         "type":"float",
+                         "value":0
+                        }, 
+                        {
+                         "name":"difficulty",
+                         "type":"float",
+                         "value":80
+                        }, 
+                        {
+                         "name":"mobs",
+                         "type":"string",
+                         "value":"dummy:1"
+                        }],
+                 "rotation":0,
+                 "visible":true,
+                 "width":1024,
+                 "x":68096,
+                 "y":56320
+                }, 
+                {
+                 "class":"spawn_mobs",
+                 "height":1024,
+                 "id":126,
+                 "name":"",
+                 "properties":[
+                        {
+                         "name":"density",
+                         "type":"float",
+                         "value":0
+                        }, 
+                        {
+                         "name":"difficulty",
+                         "type":"float",
+                         "value":70
+                        }, 
+                        {
+                         "name":"mobs",
+                         "type":"string",
+                         "value":"dummy:1"
+                        }],
+                 "rotation":0,
+                 "visible":true,
+                 "width":1024,
+                 "x":66048,
+                 "y":56832
+                }, 
+                {
+                 "class":"spawn_mobs",
+                 "height":1024,
+                 "id":127,
+                 "name":"",
+                 "properties":[
+                        {
+                         "name":"density",
+                         "type":"float",
+                         "value":0
+                        }, 
+                        {
+                         "name":"difficulty",
+                         "type":"float",
+                         "value":90
+                        }, 
+                        {
+                         "name":"mobs",
+                         "type":"string",
+                         "value":"dummy:1"
+                        }],
+                 "rotation":0,
+                 "visible":true,
+                 "width":1024,
+                 "x":70656,
+                 "y":56320
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -14340,7 +14421,7 @@
                  "width":0,
                  "x":98630,
                  "y":22549
-                },
+                }, 
                 {
                  "class":"warp",
                  "height":0,
@@ -14366,7 +14447,7 @@
          "y":0
         }],
  "nextlayerid":15,
- "nextobjectid":124,
+ "nextobjectid":128,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.9.1",

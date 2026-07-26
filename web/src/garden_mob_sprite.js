@@ -51,10 +51,12 @@ function rockShapePoints(entityId, worldRadius) {
   const cached = ROCK_SHAPE_CACHE.get(cacheKey);
   if (cached) return cached;
 
-  const seed = (((entityId || 0) + 1) * 2654435761 + radiusKey * 1597334677) >>> 0;
+  const seed =
+    (((entityId || 0) + 1) * 2654435761 + radiusKey * 1597334677) >>> 0;
   const rng = seededRng(seed);
   const size01 = clamp01((Math.max(0, worldRadius || 0) - 28) / 240);
-  const pointCount = 10 + Math.floor(size01 * 12) + Math.floor(rng() * (3 + size01 * 4));
+  const pointCount =
+    10 + Math.floor(size01 * 12) + Math.floor(rng() * (3 + size01 * 4));
   const angleOffset = rng() * Math.PI * 2;
   const angleJitter = 0.04 + size01 * 0.13;
   const radialJitter = 0.045 + size01 * 0.18;
@@ -68,7 +70,9 @@ function rockShapePoints(entityId, worldRadius) {
       angle = Math.round(angle / snap) * snap + (rng() - 0.5) * 0.025;
     }
 
-    const wave = Math.sin(t * Math.PI * (4 + Math.floor(size01 * 4)) + seed * 0.000001) * (0.025 + size01 * 0.035);
+    const wave =
+      Math.sin(t * Math.PI * (4 + Math.floor(size01 * 4)) + seed * 0.000001) *
+      (0.025 + size01 * 0.035);
     let radial = 0.92 + wave + (rng() - 0.5) * radialJitter;
     if (rng() < size01 * 0.28) radial -= rng() * (0.08 + size01 * 0.08);
     if (rng() < size01 * 0.18) radial += rng() * 0.045;
@@ -77,7 +81,8 @@ function rockShapePoints(entityId, worldRadius) {
   }
 
   ROCK_SHAPE_CACHE.set(cacheKey, points);
-  if (ROCK_SHAPE_CACHE.size > 640) ROCK_SHAPE_CACHE.delete(ROCK_SHAPE_CACHE.keys().next().value);
+  if (ROCK_SHAPE_CACHE.size > 640)
+    ROCK_SHAPE_CACHE.delete(ROCK_SHAPE_CACHE.keys().next().value);
   return points;
 }
 
@@ -110,19 +115,25 @@ export function drawQueenAnt(ctx, pos, radius, entityId, angle, motion, time) {
 }
 
 export function drawAntEggMob(ctx, pos, radius, variant = "normal") {
-  const src = variant === "fire"
-    ? "./assets/fire_ant_egg.svg"
-    : (variant === "termite" ? "./assets/termite_egg.svg" : "./assets/ant_egg.svg");
-  drawSvgMob(ctx, src, pos, radius, undefined, { sizeScale: ANT_EGG_VISUAL_SCALE });
+  const src =
+    variant === "fire"
+      ? "./assets/fire_ant_egg.svg"
+      : variant === "termite"
+        ? "./assets/termite_egg.svg"
+        : "./assets/ant_egg.svg";
+  drawSvgMob(ctx, src, pos, radius, undefined, {
+    sizeScale: ANT_EGG_VISUAL_SCALE,
+  });
 }
 
 export function drawLeafPiece(ctx, pos, radius, entityId, angle) {
   if (radius < 0.5) return;
-  const variant = ((stableHash(entityId || 0) % 4) + 1);
+  const variant = (stableHash(entityId || 0) % 4) + 1;
   const image = baseImage(`./assets/leaf_piece_${variant}.svg`, "raw", "raw");
   const size = Math.max(1, radius * LEAF_PIECE_VISUAL_SCALE);
   const half = size * 0.5;
-  const fallbackAngle = (stableHash((entityId || 0) + 0x9e3779b9) / 0xffffffff) * Math.PI * 2;
+  const fallbackAngle =
+    (stableHash((entityId || 0) + 0x9e3779b9) / 0xffffffff) * Math.PI * 2;
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
@@ -135,7 +146,15 @@ export function drawLeafPiece(ctx, pos, radius, entityId, angle) {
   ctx.restore();
 }
 
-export function drawBabyFireAnt(ctx, pos, radius, entityId, angle, motion, time) {
+export function drawBabyFireAnt(
+  ctx,
+  pos,
+  radius,
+  entityId,
+  angle,
+  motion,
+  time,
+) {
   drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/baby_fire_ant.svg",
     sizeScale: 5.65,
@@ -144,7 +163,15 @@ export function drawBabyFireAnt(ctx, pos, radius, entityId, angle, motion, time)
   });
 }
 
-export function drawWorkerFireAnt(ctx, pos, radius, entityId, angle, motion, time) {
+export function drawWorkerFireAnt(
+  ctx,
+  pos,
+  radius,
+  entityId,
+  angle,
+  motion,
+  time,
+) {
   drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/worker_fire_ant.svg",
     sizeScale: 5.3,
@@ -153,7 +180,15 @@ export function drawWorkerFireAnt(ctx, pos, radius, entityId, angle, motion, tim
   });
 }
 
-export function drawFireQueenAnt(ctx, pos, radius, entityId, angle, motion, time) {
+export function drawFireQueenAnt(
+  ctx,
+  pos,
+  radius,
+  entityId,
+  angle,
+  motion,
+  time,
+) {
   drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/fire_queen_ant.svg",
     sizeScale: 4.3,
@@ -163,7 +198,15 @@ export function drawFireQueenAnt(ctx, pos, radius, entityId, angle, motion, time
   });
 }
 
-export function drawBabyTermite(ctx, pos, radius, entityId, angle, motion, time) {
+export function drawBabyTermite(
+  ctx,
+  pos,
+  radius,
+  entityId,
+  angle,
+  motion,
+  time,
+) {
   drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/baby_termite.svg",
     sizeScale: 5.65,
@@ -172,7 +215,15 @@ export function drawBabyTermite(ctx, pos, radius, entityId, angle, motion, time)
   });
 }
 
-export function drawWorkerTermite(ctx, pos, radius, entityId, angle, motion, time) {
+export function drawWorkerTermite(
+  ctx,
+  pos,
+  radius,
+  entityId,
+  angle,
+  motion,
+  time,
+) {
   drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/worker_termite.svg",
     sizeScale: 5.3,
@@ -181,15 +232,33 @@ export function drawWorkerTermite(ctx, pos, radius, entityId, angle, motion, tim
   });
 }
 
-export function drawSoldierFireAntMob(ctx, pos, radius, entityId, angle, motion, time) {
+export function drawSoldierFireAntMob(
+  ctx,
+  pos,
+  radius,
+  entityId,
+  angle,
+  motion,
+  time,
+) {
   drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/soldier_fire_ant.svg",
     sizeScale: FULL_ANT_VISUAL_SCALE,
+    stripWings: true,
+    layeredWings: true,
     forelimbAmplitude: 0.22,
   });
 }
 
-export function drawSoldierTermite(ctx, pos, radius, entityId, angle, motion, time) {
+export function drawSoldierTermite(
+  ctx,
+  pos,
+  radius,
+  entityId,
+  angle,
+  motion,
+  time,
+) {
   drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/worker_termite.svg",
     sizeScale: 5.45,
@@ -198,7 +267,15 @@ export function drawSoldierTermite(ctx, pos, radius, entityId, angle, motion, ti
   });
 }
 
-export function drawTermiteOvermind(ctx, pos, radius, entityId, angle, motion, time) {
+export function drawTermiteOvermind(
+  ctx,
+  pos,
+  radius,
+  entityId,
+  angle,
+  motion,
+  time,
+) {
   drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/termite_overmind.svg",
     sizeScale: OVERMIND_VISUAL_SCALE,
@@ -236,7 +313,8 @@ function drawSvgMob(ctx, src, pos, radius, angle, options = {}) {
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
-  if (Number.isFinite(angle) && Number.isFinite(options.faceAngle)) ctx.rotate(angle - options.faceAngle);
+  if (Number.isFinite(angle) && Number.isFinite(options.faceAngle))
+    ctx.rotate(angle - options.faceAngle);
   if (isImageReady(image)) {
     ctx.drawImage(image, -half, -half, size, size);
   } else {
@@ -256,10 +334,25 @@ function drawFallbackLeafPiece(ctx, radius) {
   ctx.stroke();
 }
 
-export function drawDandelion(ctx, pos, radius, _entityId, angle, options = {}) {
-  const image = baseImage("./assets/dandelion_base.svg", "dandelion-base", "raw");
-  const visualScale = Number.isFinite(options.scale) ? options.scale : DANDELION_VISUAL_SCALE;
-  const angleOffset = Number.isFinite(options.angle) ? options.angle : DANDELION_BASE_IMAGE_ANGLE_OFFSET;
+export function drawDandelion(
+  ctx,
+  pos,
+  radius,
+  _entityId,
+  angle,
+  options = {},
+) {
+  const image = baseImage(
+    "./assets/dandelion_base.svg",
+    "dandelion-base",
+    "raw",
+  );
+  const visualScale = Number.isFinite(options.scale)
+    ? options.scale
+    : DANDELION_VISUAL_SCALE;
+  const angleOffset = Number.isFinite(options.angle)
+    ? options.angle
+    : DANDELION_BASE_IMAGE_ANGLE_OFFSET;
   const offsetX = Number.isFinite(options.x) ? options.x : 0;
   const offsetY = Number.isFinite(options.y) ? options.y : 0;
   const size = Math.max(1, radius * visualScale);
@@ -311,7 +404,8 @@ export function drawPortal(ctx, pos, radius, entityId, time, angle = 0) {
   if (radius < 0.5) return;
 
   const image = baseImage("./assets/portal.svg", "portal", "raw");
-  const basePhase = (entityId || 0) * 0.37 + (Number.isFinite(angle) ? angle : 0);
+  const basePhase =
+    (entityId || 0) * 0.37 + (Number.isFinite(angle) ? angle : 0);
   const t = time || 0;
   const layers = [
     { scale: 1.3, alpha: 0.5, speed: 1.8, phase: 0.4 },
@@ -336,42 +430,44 @@ export function drawPortal(ctx, pos, radius, entityId, time, angle = 0) {
   ctx.restore();
 }
 
-function drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, options) {
+function drawGardenAnt(
+  ctx,
+  pos,
+  radius,
+  entityId,
+  angle,
+  motion,
+  time,
+  options,
+) {
   const spriteSize = Math.max(1, radius * options.sizeScale);
   const spriteHalf = spriteSize * 0.5;
   const forelimbs = svgParts(options.src, "forelimbs");
   const wings = svgParts(options.src, "wings");
-  const animation = antAnimation(entityId, motion || 0, time || 0, options.forelimbAmplitude);
+  const animation = antAnimation(
+    entityId,
+    motion || 0,
+    time || 0,
+    options.forelimbAmplitude,
+  );
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
   if (Number.isFinite(angle)) ctx.rotate(angle - ANT_BASE_FACE_ANGLE);
 
-  if (options.layeredWings) {
-    const back = baseImage(options.src, "queen-back", "queen-back");
-    const front = baseImage(options.src, "queen-front", "queen-front");
-    if (isImageReady(back)) {
-      ctx.drawImage(back, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
-    } else {
-      drawFallbackAnt(ctx, radius);
-    }
+  const abdomen = baseImage(options.src, "ant-abdomen", "ant-abdomen");
+  const head = baseImage(options.src, "ant-head", "ant-head");
+
+  if (isImageReady(abdomen) || isImageReady(head)) {
+    if (isImageReady(abdomen))
+      ctx.drawImage(abdomen, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
     drawAnimatedParts(ctx, wings, spriteSize, animation.wing, "fill");
     drawAnimatedParts(ctx, forelimbs, spriteSize, animation.forelimb, "stroke");
-    if (isImageReady(front)) {
-      ctx.drawImage(front, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
-    }
-    ctx.restore();
-    return;
-  }
-
-  const base = baseImage(options.src, options.stripWings ? "no-limbs-wings" : "no-limbs", options.stripWings);
-  drawAnimatedParts(ctx, forelimbs, spriteSize, animation.forelimb, "stroke");
-  if (isImageReady(base)) {
-    ctx.drawImage(base, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
+    if (isImageReady(head))
+      ctx.drawImage(head, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
   } else {
     drawFallbackAnt(ctx, radius);
   }
-  if (!options.stripWings) drawAnimatedParts(ctx, wings, spriteSize, animation.wing, "fill");
   ctx.restore();
 }
 
@@ -386,7 +482,14 @@ function antAnimation(entityId, motion, time, forelimbAmplitude = 0.28) {
   };
 }
 
-function drawAnimatedParts(ctx, parts, spriteSize, amount, mode) {
+function drawAnimatedParts(
+  ctx,
+  parts,
+  spriteSize,
+  amount,
+  mode,
+  wingLayer = null,
+) {
   if (!parts || parts.length === 0) return;
 
   const scale = spriteSize / SVG_VIEWBOX_SIZE;
@@ -394,6 +497,7 @@ function drawAnimatedParts(ctx, parts, spriteSize, amount, mode) {
   ctx.scale(scale, scale);
   ctx.translate(-SVG_VIEWBOX_SIZE * 0.5, -SVG_VIEWBOX_SIZE * 0.5);
   clipSvgBounds(ctx);
+  if (wingLayer) clipWingLayer(ctx, wingLayer);
 
   for (const part of parts) {
     const swing = amount * part.direction;
@@ -418,6 +522,23 @@ function drawAnimatedParts(ctx, parts, spriteSize, amount, mode) {
   ctx.restore();
 }
 
+function clipWingLayer(ctx, layer) {
+  const far = SVG_VIEWBOX_SIZE * 2;
+  const seam = SVG_VIEWBOX_SIZE;
+  ctx.beginPath();
+  if (layer === "front") {
+    ctx.moveTo(-far, -far);
+    ctx.lineTo(far, seam - far);
+    ctx.lineTo(seam - far, far);
+  } else {
+    ctx.moveTo(far, seam - far);
+    ctx.lineTo(far, far);
+    ctx.lineTo(seam - far, far);
+  }
+  ctx.closePath();
+  ctx.clip();
+}
+
 function baseImage(src, key, stripWings) {
   const cacheKey = `${key}:${src}`;
   let entry = BASE_CACHE.get(cacheKey);
@@ -434,7 +555,9 @@ function baseImage(src, key, stripWings) {
       return response.text();
     })
     .then((svgText) => {
-      const blob = new Blob([stripAnimatedSvg(svgText, stripWings)], { type: "image/svg+xml" });
+      const blob = new Blob([stripAnimatedSvg(svgText, stripWings)], {
+        type: "image/svg+xml",
+      });
       const url = URL.createObjectURL(blob);
       entry.url = url;
       image.src = url;
@@ -470,27 +593,55 @@ function svgParts(src, kind) {
 }
 
 function stripAnimatedSvg(svgText, stripWings) {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgText;
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
+    return svgText;
 
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
   const root = doc.documentElement;
   if (!root || root.tagName.toLowerCase() !== "svg") return svgText;
 
-  const mode = typeof stripWings === "string" ? stripWings : (stripWings ? "no-limbs-wings" : "no-limbs");
+  const mode =
+    typeof stripWings === "string"
+      ? stripWings
+      : stripWings
+        ? "no-limbs-wings"
+        : "no-limbs";
   if (mode === "raw") return svgText;
   const paths = Array.from(root.querySelectorAll("path"));
+  const headPaths =
+    mode === "ant-head" || mode === "ant-abdomen"
+      ? classifyAntHeadPaths(paths)
+      : new Set();
   const firstWing = paths.findIndex((path) => isWingPath(path));
-  const lastForelimb = paths.reduce((last, path, index) => (isForelimbPath(path) ? index : last), -1);
+  const lastForelimb = paths.reduce(
+    (last, path, index) => (isForelimbPath(path) ? index : last),
+    -1,
+  );
 
   paths.forEach((path, index) => {
     const forelimb = isForelimbPath(path);
     const wing = isWingPath(path);
+    if (mode === "ant-head") {
+      if (forelimb || wing || !headPaths.has(path)) path.remove();
+      return;
+    }
+    if (mode === "ant-abdomen") {
+      if (forelimb || wing || headPaths.has(path)) path.remove();
+      return;
+    }
     if (mode === "queen-back") {
-      if (forelimb || wing || (lastForelimb >= 0 && index > lastForelimb)) path.remove();
+      if (forelimb || wing || (lastForelimb >= 0 && index > lastForelimb))
+        path.remove();
       return;
     }
     if (mode === "queen-front") {
-      if (forelimb || wing || index <= lastForelimb || (lastForelimb < 0 && firstWing >= 0 && index <= firstWing)) path.remove();
+      if (
+        forelimb ||
+        wing ||
+        index <= lastForelimb ||
+        (lastForelimb < 0 && firstWing >= 0 && index <= firstWing)
+      )
+        path.remove();
       return;
     }
     if (forelimb || (mode === "no-limbs-wings" && wing)) path.remove();
@@ -498,15 +649,38 @@ function stripAnimatedSvg(svgText, stripWings) {
   return new XMLSerializer().serializeToString(root);
 }
 
+function classifyAntHeadPaths(paths) {
+  const bodyPaths = paths
+    .filter((path) => !isForelimbPath(path) && !isWingPath(path))
+    .map((path) => ({
+      path,
+      pivot: parseMovePivot(path.getAttribute("d") || ""),
+    }))
+    .sort((a, b) => a.pivot.x + a.pivot.y - (b.pivot.x + b.pivot.y));
+
+  if (bodyPaths.length === 0) return new Set();
+
+  const headPaths = new Set();
+  const headScore = bodyPaths[0].pivot.x + bodyPaths[0].pivot.y;
+  for (const item of bodyPaths) {
+    const score = item.pivot.x + item.pivot.y;
+    if (score - headScore > 12) break;
+    headPaths.add(item.path);
+  }
+  return headPaths;
+}
+
 function extractSvgParts(svgText, kind) {
-  if (typeof DOMParser === "undefined" || typeof Path2D === "undefined") return [];
+  if (typeof DOMParser === "undefined" || typeof Path2D === "undefined")
+    return [];
 
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
   const root = doc.documentElement;
   if (!root || root.tagName.toLowerCase() !== "svg") return [];
 
   const nodes = Array.from(root.querySelectorAll("path")).filter((path) =>
-    kind === "forelimbs" ? isForelimbPath(path) : isWingPath(path));
+    kind === "forelimbs" ? isForelimbPath(path) : isWingPath(path),
+  );
   return nodes.map((node, index) => {
     const d = node.getAttribute("d") || "";
     const pivot = parseMovePivot(d);
@@ -515,7 +689,9 @@ function extractSvgParts(svgText, kind) {
       pivot,
       direction: index % 2 === 0 ? -1 : 1,
       stroke: node.getAttribute("stroke") || "#292929",
-      strokeWidth: Number.parseFloat(node.getAttribute("stroke-width") || "5.833"),
+      strokeWidth: Number.parseFloat(
+        node.getAttribute("stroke-width") || "5.833",
+      ),
       fill: node.getAttribute("fill") || "#eee",
       opacity: Number.parseFloat(node.getAttribute("fill-opacity") || "0.498"),
     };
@@ -556,7 +732,7 @@ function seededRng(seed) {
     value ^= value << 13;
     value ^= value >>> 17;
     value ^= value << 5;
-    return ((value >>> 0) / 4294967296);
+    return (value >>> 0) / 4294967296;
   };
 }
 
@@ -608,7 +784,7 @@ function drawFallbackSandstorm(ctx, radius, scale) {
   ctx.lineJoin = "round";
   ctx.beginPath();
   for (let i = 0; i < 6; i += 1) {
-    const a = i * Math.PI / 3;
+    const a = (i * Math.PI) / 3;
     const x = Math.cos(a) * size;
     const y = Math.sin(a) * size;
     if (i === 0) ctx.moveTo(x, y);

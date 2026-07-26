@@ -17,7 +17,10 @@ enum class EEntityTag : std::uint32_t
 class CEntity
 {
   public:
-    CEntity(CGameWorld* pworld, float x, float y, float r) : m_p_game_world(pworld), m_pos(x, y), m_prev_pos(x, y), m_radius(r) {}
+    CEntity(CGameWorld* pworld, float x, float y, float r)
+        : m_p_game_world(pworld), m_pos(x, y), m_prev_pos(x, y), m_radius(r)
+    {
+    }
     virtual ~CEntity() = default;
 
     CGameWorld* GameWorld() const { return m_p_game_world; }
@@ -29,9 +32,11 @@ class CEntity
     bool IsCollision(const CEntity& other) const;
     virtual void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type);
     virtual void OnCollision(CEntity* other);
+    virtual const SEntityStats& GetEntityStats() const { return m_entity_stats; }
     virtual bool IsDead() const { return m_health <= 0.f; }
     virtual bool CanCollide() const { return !IsDead(); }
     virtual bool IsVisible() const { return !IsDead(); }
+    void MarkForDestroy();
 
     bool HasTag(EEntityTag tag) const { return (m_tags & static_cast<std::uint32_t>(tag)) != 0; }
     void AddTag(EEntityTag tag) { m_tags |= static_cast<std::uint32_t>(tag); }
@@ -47,6 +52,8 @@ class CEntity
     int m_id = -1;
     std::uint64_t m_generation = 0;
     size_t m_live_index = std::numeric_limits<size_t>::max();
+    size_t m_cleanup_index = std::numeric_limits<size_t>::max();
+    size_t m_always_tick_index = std::numeric_limits<size_t>::max();
     size_t m_large_spatial_index = std::numeric_limits<size_t>::max();
     std::uint64_t m_active_tick_marker = 0;
     bool m_is_marked_for_des = false;
@@ -57,6 +64,7 @@ class CEntity
     float m_health = 1.f;
     float m_facing_angle = 0.f;
     bool m_has_facing = false;
+    SEntityStats m_entity_stats;
 
   private:
     CGameWorld* m_p_game_world = nullptr;

@@ -1,27 +1,29 @@
 import { ChatFlag, clamp, rarityColor } from "./protocol.js";
 import { dom, state } from "./app_context.js";
-
-const chatMaxHistory = 80;
-const chatClosedMaxLines = 6;
-const chatVisibleMs = 10000;
-const chatFadeMs = 3000;
-const chatClosedRenderIntervalMs = 180;
-const rarityExotic = 12;
+import { clientRuntimeConfig } from "./client_config.js";
+import { rarityExotic, rarityPrimordial } from "./game_ids.js";
 
 const {
-  canvas,
-  chatPanel,
-  chatChannels,
-  chatLog,
-  chatInput,
-} = dom;
+  chatMaxHistory,
+  chatClosedMaxLines,
+  chatVisibleMs,
+  chatFadeMs,
+  chatClosedRenderIntervalMs,
+} = clientRuntimeConfig;
+const { canvas, chatPanel, chatChannels, chatLog, chatInput } = dom;
 
 export function isTextInputActive() {
   const active = document.activeElement;
-  return active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+  return (
+    active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")
+  );
 }
 
-export function createChatUi({ beforeOpen = null, executeCommand = null, focusTarget = canvas } = {}) {
+export function createChatUi({
+  beforeOpen = null,
+  executeCommand = null,
+  focusTarget = canvas,
+} = {}) {
   const render = (now = performance.now()) => {
     chatLog.replaceChildren();
     const rows = [];
@@ -89,7 +91,9 @@ export function createChatUi({ beforeOpen = null, executeCommand = null, focusTa
     const text = chatInput.value.trim();
     close();
     if (!text) return;
-    executeCommand?.(text.startsWith("/") ? text.slice(1) : `say local ${text}`);
+    executeCommand?.(
+      text.startsWith("/") ? text.slice(1) : `say local ${text}`,
+    );
   };
 
   const append = (chat, now = performance.now()) => {
@@ -163,7 +167,9 @@ function appendRarityMessageParts(parent, message) {
     if (markStart < 0) break;
 
     const doubleMark = text[markStart + 1] === "<";
-    const markEnd = doubleMark ? text.indexOf(">>", markStart + 2) : text.indexOf(">", markStart + 1);
+    const markEnd = doubleMark
+      ? text.indexOf(">>", markStart + 2)
+      : text.indexOf(">", markStart + 1);
     if (markEnd < 0) break;
 
     const bodyOpen = doubleMark ? markEnd + 2 : markEnd + 1;
@@ -172,7 +178,9 @@ function appendRarityMessageParts(parent, message) {
       continue;
     }
 
-    const rarity = matchRarity(text.slice(markStart + (doubleMark ? 2 : 1), markEnd));
+    const rarity = matchRarity(
+      text.slice(markStart + (doubleMark ? 2 : 1), markEnd),
+    );
     const close = findRarityMessageClose(text, bodyOpen);
     if (rarity <= 0 || close < 0) {
       searchStart = markStart + 1;
@@ -180,7 +188,12 @@ function appendRarityMessageParts(parent, message) {
     }
 
     appendChatText(parent, text.slice(plainStart, markStart));
-    appendChatText(parent, text.slice(bodyOpen + 1, close), rarityColor(rarity, 1));
+    appendChatText(
+      parent,
+      text.slice(bodyOpen + 1, close),
+      rarityColor(rarity, 1),
+      rarity === rarityPrimordial ? "chat-rarity-primordial" : "",
+    );
     plainStart = close + 1;
     searchStart = close + 1;
   }
@@ -201,29 +214,47 @@ function findRarityMessageClose(text, openIndex) {
   return -1;
 }
 
-function appendChatText(parent, text, color = "") {
+function appendChatText(parent, text, color = "", className = "") {
   if (!text) return;
   const span = document.createElement("span");
   span.textContent = text;
   if (color) span.style.color = color;
+  if (className) span.className = className;
   parent.appendChild(span);
 }
 
 function matchRarity(text) {
   const key = String(text).toLowerCase();
   const aliases = {
-    c: 1, common: 1,
-    un: 2, unusual: 2,
-    r: 3, rare: 3,
-    e: 4, epic: 4,
-    l: 5, legendary: 5, leg: 5, led: 5,
-    m: 6, mythic: 6, my: 6,
-    u: 7, ultra: 7, ult: 7,
-    s: 8, super: 8,
-    et: 9, eternal: 9,
-    q: 10, unique: 10, uni: 10,
-    p: 11, primordial: 11,
-    ex: rarityExotic, exotic: rarityExotic,
+    c: 1,
+    common: 1,
+    un: 2,
+    unusual: 2,
+    r: 3,
+    rare: 3,
+    e: 4,
+    epic: 4,
+    l: 5,
+    legendary: 5,
+    leg: 5,
+    led: 5,
+    m: 6,
+    mythic: 6,
+    my: 6,
+    u: 7,
+    ultra: 7,
+    ult: 7,
+    s: 8,
+    super: 8,
+    et: 9,
+    eternal: 9,
+    q: 10,
+    unique: 10,
+    uni: 10,
+    p: 11,
+    primordial: 11,
+    ex: rarityExotic,
+    exotic: rarityExotic,
   };
   return aliases[key] || 0;
 }

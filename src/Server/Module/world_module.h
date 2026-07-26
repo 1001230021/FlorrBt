@@ -1,6 +1,7 @@
 #pragma once
 #include "../Game/gameworld.h"
 #include "module.h"
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -13,6 +14,7 @@ class IWorldModule : public IModule
     void Tick(float dt) override;
     void ShutDown() override;
     const std::vector<std::unique_ptr<CGameWorld>>& GetWorlds() const { return m_worlds; }
+    CGameWorld* FindWorldById(std::uint32_t world_id) const;
     std::vector<CGameWorld*> FindWorldsByMapName(const std::string& map_name) const;
     CGameWorld* FindRandomWorldByMapName(const std::string& map_name) const;
 

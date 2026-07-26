@@ -1,6 +1,7 @@
 #pragma once
 
-class IModule{
+class IModule
+{
   public:
     virtual ~IModule() = default;
     virtual bool Init() = 0;

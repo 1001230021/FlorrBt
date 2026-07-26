@@ -59,67 +59,20 @@ enum class EPetalType : int
     ThirdEye,
     Dandelion,
     Orange,
-    Shovel
+    Shovel,
+    Yucca
 };
 
 using PetalType = EPetalType;
 
-inline constexpr std::array<std::string_view, 55> petal_type_names = {
-    "None",
-    "Air",
-    "AntEgg",
-    "Antennae",
-    "Basic",
-    "BeetleEgg",
-    "Bone",
-    "Bubble",
-    "Carrot",
-    "Coin",
-    "Compass",
-    "Cogwheel",
-    "Disc",
-    "Dust",
-    "GoldenLeaf",
-    "Iris",
-    "Lentil",
-    "Moon",
-    "Nullification",
-    "Pincer",
-    "Relic",
-    "Rose",
-    "YinYang",
-    "Missile",
-    "BloodSacrifice",
-    "Corruption",
-    "Bandage",
-    "Heavy",
-    "Faster",
-    "Yggdrasil",
-    "Dahlia",
-    "Wing",
-    "Triangle",
-    "Sawblade",
-    "Fragment",
-    "Mimic",
-    "Glass",
-    "Stinger",
-    "BrokenEgg",
-    "Light",
-    "Leaf",
-    "Rock",
-    "Web",
-    "Cactus",
-    "Pollen",
-    "Corn",
-    "Rice",
-    "Basil",
-    "Soil",
-    "Honey",
-    "Wax",
-    "ThirdEye",
-    "Dandelion",
-    "Orange",
-    "Shovel",
+inline constexpr std::array<std::string_view, 56> petal_type_names = {
+    "None",           "Air",        "AntEgg",        "Antennae", "Basic",     "BeetleEgg", "Bone",       "Bubble",
+    "Carrot",         "Coin",       "Compass",       "Cogwheel", "Disc",      "Dust",      "GoldenLeaf", "Iris",
+    "Lentil",         "Moon",       "Nullification", "Pincer",   "Relic",     "Rose",      "YinYang",    "Missile",
+    "BloodSacrifice", "Corruption", "Bandage",       "Heavy",    "Faster",    "Yggdrasil", "Dahlia",     "Wing",
+    "Triangle",       "Sawblade",   "Fragment",      "Mimic",    "Glass",     "Stinger",   "BrokenEgg",  "Light",
+    "Leaf",           "Rock",       "Web",           "Cactus",   "Pollen",    "Corn",      "Rice",       "Basil",
+    "Soil",           "Honey",      "Wax",           "ThirdEye", "Dandelion", "Orange",    "Shovel",     "Yucca",
 };
 
 inline std::string_view GetPetalTypeName(EPetalType type)
@@ -242,6 +195,8 @@ inline bool MatchPetalTypeAlias(std::string_view text, EPetalType type)
         return text == "orange" || text == "org";
     case EPetalType::Shovel:
         return text == "shovel" || text == "shv";
+    case EPetalType::Yucca:
+        return text == "yucca" || text == "yuc";
     default:
         return false;
     }

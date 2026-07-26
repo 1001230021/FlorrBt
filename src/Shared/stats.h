@@ -1,4 +1,5 @@
 #pragma once
+#include "game_config.h"
 #include <algorithm>
 
 enum class EPetalRotationMode
@@ -7,22 +8,28 @@ enum class EPetalRotationMode
     YinYang
 };
 
-struct SMobStats
+struct SEntityStats
+{
+    int extra_hit_num = game_config::entity_default_extra_hit_num;
+};
+
+struct SMobStats : public SEntityStats
 {
     float max_health = 1.f;
     float armor = 0.f;
     float damage = 0.f;
-    float radius = 80.0f;
+    float radius = game_config::stats_default_mob_radius;
     float mass = 0.f;
-    float horizon = 8192.f;
+    float horizon = game_config::stats_default_mob_horizon;
     float max_absorb_range = 0.f;
     float detection_multiplier = 1.f;
-    float max_velocity = 400.f;
-    float acceleration = 800.f;
+    float max_velocity = game_config::stats_default_mob_max_velocity;
+    float acceleration = game_config::stats_default_mob_acceleration;
     float turn_speed = 0.f;
 
     void ActedOn(const SMobStats& other)
     {
+        extra_hit_num += other.extra_hit_num;
         max_health += other.max_health;
         armor += other.armor;
         damage += other.damage;
@@ -41,8 +48,10 @@ struct SFlowerStats : public SMobStats
 {
     float max_health_multiplier = 1.f;
     float health_regen = 0.f;
+    float defense_health_regen = 0.f;
+    float tridmgbonus = 0.f;
     float reach = 0.0f;
-    float petal_attraction_range = 40.f;
+    float petal_attraction_range = game_config::stats_default_flower_petal_attraction_range;
 
     float petal_dmg_multiplier = 1.f;
     float petal_reload_multiplier = 1.f;
@@ -55,8 +64,9 @@ struct SFlowerStats : public SMobStats
     float poison_duration_multiplier = 1.f;
     float body_poison_damage_multiplier = 0.f;
     float body_poison_duration = 0.f;
-    float petal_swap_min_reload = 2.5f;
-    float petal_rotation_speed = 3.f;
+    int petal_extra_hit_num = 0;
+    float petal_swap_min_reload = game_config::default_petal_swap_min_reload;
+    float petal_rotation_speed = game_config::stats_default_flower_petal_rotation_speed;
     bool petal_rotation_quantized = false;
     EPetalRotationMode petal_rotation_mode = EPetalRotationMode::Orbit;
 
@@ -67,6 +77,8 @@ struct SFlowerStats : public SMobStats
         max_health *= other.max_health_multiplier;
         max_health_multiplier *= other.max_health_multiplier;
         health_regen += other.health_regen;
+        defense_health_regen += other.defense_health_regen;
+        tridmgbonus += other.tridmgbonus;
         reach += other.reach;
         petal_attraction_range += other.petal_attraction_range;
 
@@ -81,6 +93,7 @@ struct SFlowerStats : public SMobStats
         poison_duration_multiplier *= other.poison_duration_multiplier;
         body_poison_damage_multiplier = std::max(body_poison_damage_multiplier, other.body_poison_damage_multiplier);
         body_poison_duration = std::max(body_poison_duration, other.body_poison_duration);
+        petal_extra_hit_num += other.petal_extra_hit_num;
         petal_swap_min_reload = std::min(petal_swap_min_reload, other.petal_swap_min_reload);
         petal_rotation_speed += other.petal_rotation_speed;
         petal_rotation_quantized = petal_rotation_quantized || other.petal_rotation_quantized;
@@ -88,24 +101,26 @@ struct SFlowerStats : public SMobStats
     }
 };
 
-struct SPetalStats
+struct SPetalStats : public SEntityStats
 {
-    float health = 10.f;
-    float damage = 10.f;
+    float health = game_config::stats_default_petal_health;
+    float damage = game_config::stats_default_petal_damage;
     float armor = 0.f;
     float medicine = 0.f;
-    float reload = 2.5f;
-    float preload = 2.5f;
+    float reload = game_config::stats_default_petal_reload;
+    float preload = game_config::stats_default_petal_preload;
     float mass = 0.f;
-    float radius = 40.f;
+    float radius = game_config::stats_default_petal_radius;
     float angle = 0.f;
-    int copy = 1;
+    int copy = game_config::stats_default_petal_copy;
     bool stack = true;
 
-    void ActedOn(const SFlowerStats& other)
+    void ActedOn(const SFlowerStats& other, float damage_bonus = 0.f)
     {
+        // Each petal owns its baseline; the flower supplies only its explicit petal bonus.
+        extra_hit_num += other.petal_extra_hit_num;
         health *= other.petal_health_multiplier;
-        damage *= other.petal_dmg_multiplier;
+        damage = (damage + damage_bonus) * other.petal_dmg_multiplier;
         medicine *= other.petal_medicine_multiplier;
         reload *= other.petal_reload_multiplier;
         preload *= other.petal_reload_multiplier;

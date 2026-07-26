@@ -122,16 +122,69 @@ export const petalThirdEyeType = 51;
 export const petalDandelionType = 52;
 export const petalOrangeType = 53;
 export const petalShovelType = 54;
+export const petalYuccaType = 55;
 
 export const stingerSplitIconMinRarity = 6;
 export const compassUltraIconMinRarity = 7;
 export const flowerTextureVersion = "20260717a";
 
 export const PetalIconIds = [
-  0, 48, 51, 17, 1, 16, 58, 13, 57, 74, 71, 98, 72, 111, 97, 7, 113, 77,
-  "nullification", 27, 53, 5, 19, 9, 108, 80, 103, 18, 12, 30, 38, 8, 106,
-  109, 94, 93, "glass", 6, "broken_egg", 2, 22, 3, 20, 11, 14,
-  25, 24, 49, 41, 21, 96, 43, 15, 50, 73,
+  0,
+  48,
+  51,
+  17,
+  1,
+  16,
+  58,
+  13,
+  57,
+  74,
+  71,
+  98,
+  72,
+  111,
+  97,
+  7,
+  113,
+  77,
+  "nullification",
+  27,
+  53,
+  5,
+  19,
+  9,
+  108,
+  80,
+  103,
+  18,
+  12,
+  30,
+  38,
+  8,
+  106,
+  109,
+  94,
+  93,
+  "glass",
+  6,
+  "broken_egg",
+  2,
+  22,
+  3,
+  20,
+  11,
+  14,
+  25,
+  24,
+  49,
+  41,
+  21,
+  96,
+  43,
+  15,
+  50,
+  73,
+  28,
 ];
 
 export const worldPetalSizeScale = 6;
@@ -158,6 +211,38 @@ export const nonStackPetalTypes = new Set([
 ]);
 
 export const rarityExotic = 12;
-export const rarityDisplayOrder = [1, 2, 3, 4, 5, 6, 7, rarityExotic, 8, 9, 10, 11];
-export const rarityShortNames = ["", "C", "Un", "R", "E", "L", "M", "U", "S", "Et", "Q", "P", "Ex"];
-export const raritySortRanks = new Map(rarityDisplayOrder.map((rarity, index) => [rarity, index + 1]));
+export const rarityEternal = 9;
+export const rarityUnique = 10;
+export const rarityPrimordial = 11;
+export const rarityDisplayOrder = [
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  rarityExotic,
+  8,
+  rarityEternal,
+  rarityUnique,
+  rarityPrimordial,
+];
+export const rarityShortNames = [
+  "",
+  "C",
+  "Un",
+  "R",
+  "E",
+  "L",
+  "M",
+  "U",
+  "S",
+  "Et",
+  "Q",
+  "P",
+  "Ex",
+];
+export const raritySortRanks = new Map(
+  rarityDisplayOrder.map((rarity, index) => [rarity, index + 1]),
+);

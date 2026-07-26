@@ -76,7 +76,10 @@ class CNullificationState : public CState
   public:
     CNullificationState(CMobBase* owner, float timer, ERarity rarity) : CState(owner, timer, rarity) {}
 
-    void Tick(float dt) override { if (m_timer != endless) m_timer -= dt; }
+    void Tick(float dt) override
+    {
+        if (m_timer != endless) m_timer -= dt;
+    }
 };
 
 class CUndeadState : public CState
@@ -100,7 +103,10 @@ class CCorruptionState : public CState
     CCorruptionState(CMobBase* owner, float timer, ERarity rarity);
     ~CCorruptionState() override;
 
-    void Tick(float dt) override { if (m_timer != endless) m_timer -= dt; }
+    void Tick(float dt) override
+    {
+        if (m_timer != endless) m_timer -= dt;
+    }
 
   private:
     int m_old_team = 0;
@@ -132,7 +138,10 @@ class CDiggingState : public CState
     CDiggingState(CMobBase* owner, float timer, ERarity rarity) : CState(owner, timer, rarity) {}
     ~CDiggingState() override;
 
-    void Tick(float dt) override { if (m_timer != endless) m_timer -= dt; }
+    void Tick(float dt) override
+    {
+        if (m_timer != endless) m_timer -= dt;
+    }
 };
 
 class CPsionicConnectionState : public CState
@@ -140,7 +149,10 @@ class CPsionicConnectionState : public CState
   public:
     CPsionicConnectionState(CMobBase* owner, float timer, ERarity rarity);
 
-    void Tick(float dt) override { if (m_timer != endless) m_timer -= dt; }
+    void Tick(float dt) override
+    {
+        if (m_timer != endless) m_timer -= dt;
+    }
     bool IsValid() const { return m_is_valid; }
 
   private:

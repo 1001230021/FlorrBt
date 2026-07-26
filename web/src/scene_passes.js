@@ -8,7 +8,11 @@ import {
   spiderWebZoneType,
 } from "./game_ids.js";
 
-export function collectSceneRenderPasses({ scale, isEntityInRenderView, isBoss }) {
+export function collectSceneRenderPasses({
+  scale,
+  isEntityInRenderView,
+  isBoss,
+}) {
   const passes = {
     ground: [],
     underlay: [],
@@ -31,7 +35,10 @@ export function collectSceneRenderPasses({ scale, isEntityInRenderView, isBoss }
 
     if ((snap.flags & flagDigging) !== 0) {
       passes.ground.push(entity);
-    } else if (snap.entityType === spiderWebZoneType || snap.entityType === bloodSacrificeEffectType) {
+    } else if (
+      snap.entityType === spiderWebZoneType ||
+      snap.entityType === bloodSacrificeEffectType
+    ) {
       passes.ground.push(entity);
     } else if (isHornetMissileLayerEntity(snap)) {
       passes.underlay.push(entity);
@@ -43,13 +50,23 @@ export function collectSceneRenderPasses({ scale, isEntityInRenderView, isBoss }
     }
   }
 
-  if (owner && !passes.owner && !passes.ground.includes(owner) && isEntityInRenderView(owner, scale))
+  if (
+    owner &&
+    !passes.owner &&
+    !passes.ground.includes(owner) &&
+    isEntityInRenderView(owner, scale)
+  )
     passes.owner = owner;
 
   return passes;
 }
 
 function isHornetMissileLayerEntity(snap) {
-  return snap && !isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType) &&
-    (snap.entityType === hornetMissileType || snap.entityType === dandelionMissileType);
+  return (
+    snap &&
+    !isPetalEntity(snap.entityType) &&
+    !isDropEntity(snap.entityType) &&
+    (snap.entityType === hornetMissileType ||
+      snap.entityType === dandelionMissileType)
+  );
 }

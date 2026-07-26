@@ -1,7 +1,7 @@
 #pragma once
+#include "../../../Shared/game_config.h"
 #include "../controller.h"
 #include "../entities/flower.h"
-#include "../../../Shared/game_config.h"
 #include <cstdint>
 
 class CGameWorld;
@@ -17,15 +17,17 @@ class CMeleeController : public IController
     bool IsRandomIdleDone(float dt);
     void SetTarget(CEntity* target);
     void ClearTarget();
+    void LoseTarget(CMobBase* mob);
     CEntity* ResolveTarget(CMobBase* mob);
     bool ShouldRunTargetScan(CMobBase* mob);
     bool TryAcquireWanderTarget(CMobBase* mob, float search_range, int ignored_id = -1, int ignored_owner_id = -1);
     bool TryAcquireHoneyTarget(CMobBase* mob, float search_range, int ignored_id = -1, int ignored_owner_id = -1);
 
     CEntity* m_p_target = nullptr;
+    std::uint32_t m_target_world_id = 0;
     int m_target_id = -1;
     std::uint64_t m_target_generation = 0;
-    sf::Vector2f m_target_pos = {0.f, 0.f};
+    sf::Vector2f m_target_pos = { 0.f, 0.f };
     float m_change_target_count = game_config::melee_target_time;
     float m_target_los_check_timer = 0.f;
     bool m_has_random_target_pos = false;
@@ -131,19 +133,21 @@ class CSpecialHornetController : public CMeleeController
     float m_state_timer = 0.f;
     float m_action_timer = 0.f;
     float m_fire_timer = 0.f;
-    sf::Vector2f m_skill2_orbit_center = {0.f, 0.f};
+    sf::Vector2f m_skill2_orbit_center = { 0.f, 0.f };
     float m_skill2_orbit_radius = 0.f;
     float m_skill2_orbit_angle = 0.f;
     float m_skill2_orbit_dir = 1.f;
     float m_skill2_remaining_angle = 0.f;
-    sf::Vector2f m_skill2_tangent_dir = {1.f, 0.f};
+    sf::Vector2f m_skill2_tangent_dir = { 1.f, 0.f };
     int m_cycle_phase = 0;
     int m_cycle_attack_count = 0;
+    std::uint32_t m_skill3_target_world_id = 0;
     int m_skill3_target_id = -1;
     std::uint64_t m_skill3_target_generation = 0;
+    std::uint32_t m_skill3_captured_world_id = 0;
     int m_skill3_captured_id = -1;
     std::uint64_t m_skill3_captured_generation = 0;
-    sf::Vector2f m_skill3_launch_pos = {0.f, 0.f};
+    sf::Vector2f m_skill3_launch_pos = { 0.f, 0.f };
     bool m_skill3_captured_prev_skip_tick = false;
     bool m_skill3_has_captured_prev_skip_tick = false;
 };
@@ -167,6 +171,7 @@ class CBumbleBeeController : public IController
     float m_honey_los_check_timer = 0.f;
     int m_honey_target_scan_cooldown = -1;
     CEntity* m_p_honey_target = nullptr;
+    std::uint32_t m_honey_target_world_id = 0;
     int m_honey_target_id = -1;
     std::uint64_t m_honey_target_generation = 0;
     bool m_initialized = false;

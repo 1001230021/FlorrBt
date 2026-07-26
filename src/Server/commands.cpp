@@ -1,22 +1,24 @@
-#include "../Engine/commands_registry.h"
 #include "../Engine/account_data.h"
+#include "../Engine/commands_registry.h"
 #include "../Engine/console.h"
 #include "../Engine/logger.h"
-#include "server.h"
-#include "Game/gamecontext.h"
-#include "Module/network_module.h"
+#include "../Shared/damage_type.h"
 #include "../Shared/game_config.h"
 #include "../Shared/rarity.h"
 #include "Game/entities/flower.h"
 #include "Game/entities/mob.h"
 #include "Game/entities/petals/petal.h"
+#include "Game/gamecontext.h"
 #include "Game/gameworld.h"
 #include "Game/player.h"
+#include "Module/network_module.h"
+#include "server.h"
 #include <algorithm>
-#include <charconv>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string_view>
 
@@ -51,6 +53,13 @@ std::optional<float> ParseFloat(std::string_view text)
     auto [ptr, error] = std::from_chars(begin, end, value);
     if (error != std::errc{} || ptr != end) return std::nullopt;
     return value;
+}
+
+std::optional<std::uint32_t> ParseWorldId(std::string_view text)
+{
+    auto value = ParseInt(text);
+    if (!value || *value < 0) return std::nullopt;
+    return static_cast<std::uint32_t>(*value);
 }
 
 std::optional<ERarity> ParseRarity(std::string_view text)
@@ -138,7 +147,8 @@ const CMobPrototype* FindMobPrototypeByText(std::string_view text)
     for (const auto& [type, proto] : g_mob_registry)
     {
         if (!proto) continue;
-        if (MatchMobTypeAlias(target, type) || ToLower(proto->m_name) == target || ToLower(GetMobTypeName(type)) == target)
+        if (MatchMobTypeAlias(target, type) || ToLower(proto->m_name) == target ||
+            ToLower(GetMobTypeName(type)) == target)
             return proto.get();
     }
     return nullptr;
@@ -183,8 +193,7 @@ CPlayer* FindPlayerByName(CGameContext* context, std::string_view name)
     for (const auto& player : context->Players())
     {
         if (!player) continue;
-        if (ToLower(player->GetName()) == target || ToLower(player->GetAccountName()) == target)
-            return player.get();
+        if (ToLower(player->GetName()) == target || ToLower(player->GetAccountName()) == target) return player.get();
     }
     return nullptr;
 }
@@ -193,8 +202,7 @@ CPlayer* FindPlayerByIdOrName(CGameContext* context, std::string_view text)
 {
     if (!context) return nullptr;
     auto* network = &context->Network();
-    if (auto id = ParseInt(text))
-        return *id >= 0 ? network->FindPlayerById(static_cast<uint32_t>(*id)) : nullptr;
+    if (auto id = ParseInt(text)) return *id >= 0 ? network->FindPlayerById(static_cast<uint32_t>(*id)) : nullptr;
     return FindPlayerByName(context, text);
 }
 
@@ -209,22 +217,28 @@ std::string JoinArgs(const std::vector<std::string>& args, size_t begin)
     return result;
 }
 
+void LogWorldInfo(const CGameWorld& world)
+{
+    LOG_INFO("console", "id: " + std::to_string(world.GetId()) + ", map: " + world.GetMapName() +
+                            ", players: " + std::to_string(world.GetPlayerCount()));
+}
+
 int TalentPointGainForCommandLevel(int level)
 {
     if (level <= 1) return 0;
 
-    int gain = 1;
-    if (level % 5 == 0) gain += 5;
-    if (level % 10 == 0) gain += 10;
+    int gain = game_config::player_talent_point_base_gain;
+    const int minor_interval = game_config::player_talent_point_minor_level_interval;
+    const int major_interval = game_config::player_talent_point_major_level_interval;
+    if (minor_interval > 0 && level % minor_interval == 0) gain += game_config::player_talent_point_minor_bonus;
+    if (major_interval > 0 && level % major_interval == 0) gain += game_config::player_talent_point_major_bonus;
     return gain;
 }
-}
+} // namespace
 
 REGISTER_CONSOLE_COMMAND(quit, {
-    if (auto* server = CServer::GetInstance())
-        server->RequestStop();
-    else
-        LOG_FATAL("server", "Can't find instance of the server");
+    if (auto* server = CServer::GetInstance()) server->RequestStop();
+    else LOG_FATAL("server", "Can't find instance of the server");
 })
 
 REGISTER_CONSOLE_COMMAND(echo, {
@@ -245,9 +259,10 @@ REGISTER_CONSOLE_COMMAND(repeat, {
         LOG_WARN("console", "Invalid repeat count: " + args[0]);
         return;
     }
-    if (*times > 1000)
+    const int max_repeat_count = std::max(1, game_config::console_repeat_max_count);
+    if (*times > max_repeat_count)
     {
-        LOG_WARN("console", "Repeat count is capped at 1000.");
+        LOG_WARN("console", "Repeat count is capped at " + std::to_string(max_repeat_count) + ".");
         return;
     }
 
@@ -282,8 +297,8 @@ REGISTER_CONSOLE_COMMAND(who, {
 
     CEntity* entity = player->GetEntity();
     LOG_INFO("console", "name=" + player->GetName() + " account=" + player->GetAccountName() +
-                            " player_id=" + std::to_string(player->GetId()) + " entity_id=" +
-                            std::to_string(entity ? entity->m_id : -1));
+                            " player_id=" + std::to_string(player->GetId()) +
+                            " entity_id=" + std::to_string(entity ? entity->m_id : -1));
 })
 
 REGISTER_CONSOLE_COMMAND(level_up, {
@@ -318,7 +333,8 @@ REGISTER_CONSOLE_COMMAND(level_up, {
 
     int gained_talent_points = 0;
     int old_level = flower->m_level;
-    for (int i = 0; i < *num && flower->m_level < 255; ++i)
+    const int max_level = std::max(1, game_config::player_level_max);
+    for (int i = 0; i < *num && flower->m_level < max_level; ++i)
     {
         ++flower->m_level;
         flower->m_exp = 0;
@@ -332,8 +348,7 @@ REGISTER_CONSOLE_COMMAND(level_up, {
     if (context) context->Network().QueueOwnerStateUpdate(*player);
 
     LOG_INFO("console", "Level " + player->GetName() + " " + std::to_string(old_level) + " -> " +
-                            std::to_string(flower->m_level) + ", +" +
-                            std::to_string(gained_talent_points) + " TP.");
+                            std::to_string(flower->m_level) + ", +" + std::to_string(gained_talent_points) + " TP.");
 })
 
 REGISTER_CONSOLE_COMMAND(query_player_id, {
@@ -385,22 +400,103 @@ REGISTER_CONSOLE_COMMAND(query_entity_id, {
                             " entity_id=" + std::to_string(entity ? entity->m_id : -1));
 })
 
-REGISTER_CONSOLE_COMMAND(tele, {
-    if (args.size() < 2)
+REGISTER_CONSOLE_COMMAND(kill, {
+    if (args.empty())
     {
-        LOG_INFO("console", "Usage: tele [player id/name] [x,y] or tele [player id/name] [x] [y]");
+        LOG_INFO("console", "Usage: kill [player id]");
         return;
     }
 
-    std::optional<sf::Vector2f> pos = ParsePosition(args, 1);
-    if (!pos)
+    auto player_id = ParseInt(args[0]);
+    if (!player_id || *player_id < 0)
     {
-        LOG_WARN("console", "Invalid position. Usage: tele [player id/name] [x,y] or tele [player id/name] [x] [y]");
+        LOG_WARN("console", "Invalid player id: " + args[0]);
         return;
     }
 
     auto* server = CServer::GetInstance();
     CGameContext* context = server ? server->GameContext() : nullptr;
+    auto* network = context ? &context->Network() : nullptr;
+    CPlayer* player = network ? network->FindPlayerById(static_cast<std::uint32_t>(*player_id)) : nullptr;
+    if (!player)
+    {
+        LOG_WARN("console", "Player not found: " + args[0]);
+        return;
+    }
+
+    CEntity* entity = player->GetEntity();
+    if (!entity)
+    {
+        LOG_WARN("console", "Player has no controlled entity: " + args[0]);
+        return;
+    }
+
+    entity->TakeDamage(std::numeric_limits<float>::max(), nullptr, EDamageType::Poison);
+    LOG_INFO("console", "Killed player_id=" + std::to_string(player->GetId()) + " name=" + player->GetName());
+})
+
+REGISTER_CONSOLE_COMMAND(query_world, {
+    if (args.empty())
+    {
+        LOG_INFO("console", "Usage: query_world [world map|world id]");
+        return;
+    }
+
+    auto* server = CServer::GetInstance();
+    if (!server)
+    {
+        LOG_WARN("console", "No active server.");
+        return;
+    }
+
+    if (auto world_id = ParseWorldId(args[0]))
+    {
+        CGameWorld* world = server->FindWorldById(*world_id);
+        if (!world)
+        {
+            LOG_WARN("console", "World not found: " + args[0]);
+            return;
+        }
+        LogWorldInfo(*world);
+        return;
+    }
+
+    const std::vector<CGameWorld*> worlds = server->FindWorldsByMapName(args[0]);
+    if (worlds.empty())
+    {
+        LOG_WARN("console", "World not found: " + args[0]);
+        return;
+    }
+    for (CGameWorld* world : worlds)
+        if (world) LogWorldInfo(*world);
+})
+
+REGISTER_CONSOLE_COMMAND(tele, {
+    if (args.size() < 3)
+    {
+        LOG_INFO("console",
+                 "Usage: tele [player id/name] [world id] [x,y] or tele [player id/name] [world id] [x] [y]");
+        return;
+    }
+
+    std::optional<sf::Vector2f> pos = ParsePosition(args, 2);
+    if (!pos)
+    {
+        LOG_WARN("console", "Invalid position. Usage: tele [player id/name] [world id] [x,y] or tele [player id/name] "
+                            "[world id] [x] [y]");
+        return;
+    }
+
+    auto* server = CServer::GetInstance();
+    CGameContext* context = server ? server->GameContext() : nullptr;
+    auto world_id = ParseWorldId(args[1]);
+    CGameWorld* target_world = world_id && server ? server->FindWorldById(*world_id) : nullptr;
+    if (!target_world)
+    {
+        LOG_WARN("console", "World not found: " + args[1]);
+        return;
+    }
+
     CPlayer* player = FindPlayerByIdOrName(context, args[0]);
     if (!player)
     {
@@ -415,11 +511,18 @@ REGISTER_CONSOLE_COMMAND(tele, {
         return;
     }
 
+    CGameWorld* source_world = entity->GameWorld();
     sf::Vector2f old_pos = entity->m_pos;
-    entity->m_pos = *pos;
-    entity->m_prev_pos = *pos;
-    LOG_INFO("console", "Teleported " + player->GetName() + " from " + std::to_string(old_pos.x) + "," +
-                            std::to_string(old_pos.y) + " to " + std::to_string(pos->x) + "," +
+    const std::uint32_t old_world_id = source_world ? source_world->GetId() : 0;
+    if (!source_world || !source_world->TransferPlayerEntityToWorld(*player, *target_world, *pos))
+    {
+        LOG_WARN("console", "Failed to teleport player: " + player->GetName());
+        return;
+    }
+
+    LOG_INFO("console", "Teleported " + player->GetName() + " from world " + std::to_string(old_world_id) + " at " +
+                            std::to_string(old_pos.x) + "," + std::to_string(old_pos.y) + " to world " +
+                            std::to_string(target_world->GetId()) + " at " + std::to_string(pos->x) + "," +
                             std::to_string(pos->y));
 })
 
@@ -462,10 +565,8 @@ REGISTER_CONSOLE_COMMAND(set, {
     if (args.size() < 2) return;
 
     const std::string& value = args[1];
-    if (game_config::SetConfig(args[0], value))
-        LOG_INFO("console", "Set " + args[0] + " to " + value);
-    else
-        LOG_WARN("console", "Unknown config: " + args[0]);
+    if (game_config::SetConfig(args[0], value)) LOG_INFO("console", "Set " + args[0] + " to " + value);
+    else LOG_WARN("console", "Unknown config: " + args[0]);
 })
 
 REGISTER_CONSOLE_COMMAND(get, {
@@ -527,7 +628,7 @@ REGISTER_CONSOLE_COMMAND(mute, {
         return;
     }
 
-    float seconds = 60.f;
+    float seconds = std::max(0.f, game_config::console_mute_default_seconds);
     if (args.size() >= 2)
     {
         auto parsed = ParseFloat(args[1]);
@@ -540,8 +641,8 @@ REGISTER_CONSOLE_COMMAND(mute, {
     }
 
     player->MuteFor(seconds);
-    LOG_INFO("console", "Muted " + player->GetName() + " for " +
-                            std::to_string(static_cast<int>(std::round(seconds))) + "s.");
+    LOG_INFO("console",
+             "Muted " + player->GetName() + " for " + std::to_string(static_cast<int>(std::round(seconds))) + "s.");
 })
 
 REGISTER_CONSOLE_COMMAND(unmute, {
@@ -583,8 +684,7 @@ REGISTER_CONSOLE_COMMAND(kick, {
 
     uint32_t id = player->GetId();
     std::string name = player->GetName();
-    if (network->KickPlayer(id, "kicked by console"))
-        LOG_INFO("console", "Kicked " + name + ".");
+    if (network->KickPlayer(id, "kicked by console")) LOG_INFO("console", "Kicked " + name + ".");
 })
 
 REGISTER_CONSOLE_COMMAND(ban_ip, {
@@ -648,22 +748,28 @@ REGISTER_CONSOLE_COMMAND(ban_name, {
 })
 
 REGISTER_CONSOLE_COMMAND(control, {
-    if (args.size() < 2)
+    if (args.size() < 3)
     {
-        LOG_INFO("console", "Usage: control [player id] [entity id]");
+        LOG_INFO("console", "Usage: control [player id] [world id] [entity id]");
         return;
     }
 
     auto player_id = ParseInt(args[0]);
-    auto entity_id = ParseInt(args[1]);
+    auto world_id = ParseWorldId(args[1]);
+    auto entity_id = ParseInt(args[2]);
     if (!player_id || *player_id < 0)
     {
         LOG_WARN("console", "Invalid player id: " + args[0]);
         return;
     }
+    if (!world_id)
+    {
+        LOG_WARN("console", "Invalid world id: " + args[1]);
+        return;
+    }
     if (!entity_id || *entity_id < 0)
     {
-        LOG_WARN("console", "Invalid entity id: " + args[1]);
+        LOG_WARN("console", "Invalid entity id: " + args[2]);
         return;
     }
 
@@ -675,16 +781,22 @@ REGISTER_CONSOLE_COMMAND(control, {
         LOG_WARN("console", "No active network module for control command.");
         return;
     }
+    CGameWorld* world = server->FindWorldById(*world_id);
+    if (!world)
+    {
+        LOG_WARN("console", "World not found: " + std::to_string(*world_id));
+        return;
+    }
 
-    if (!network->AssignPlayerEntity(static_cast<uint32_t>(*player_id), *entity_id))
+    if (!network->AssignPlayerEntity(static_cast<uint32_t>(*player_id), *world, *entity_id))
     {
         LOG_WARN("console", "Failed to let player " + std::to_string(*player_id) + " control entity " +
-                                std::to_string(*entity_id) + ".");
+                                std::to_string(*entity_id) + " in world " + std::to_string(*world_id) + ".");
         return;
     }
 
     LOG_INFO("console", "Player " + std::to_string(*player_id) + " is now controlling entity " +
-                            std::to_string(*entity_id) + ".");
+                            std::to_string(*entity_id) + " in world " + std::to_string(*world_id) + ".");
 })
 
 REGISTER_CONSOLE_COMMAND(add, {
@@ -734,11 +846,10 @@ REGISTER_CONSOLE_COMMAND(add, {
     const uint8_t rarity_id = static_cast<uint8_t>(*rarity);
     CAccountDataStore::AddItem(account_name, petal_type, rarity_id, count);
 
-    if (player && player->IsAuthenticated() && context)
-        context->Network().QueueInventoryUpdate(*player);
+    if (player && player->IsAuthenticated() && context) context->Network().QueueInventoryUpdate(*player);
 
-    LOG_INFO("console", "Added " + std::to_string(count) + " " + RarityName(*rarity) + " " + proto->m_name +
-                            " to " + account_name + ".");
+    LOG_INFO("console", "Added " + std::to_string(count) + " " + RarityName(*rarity) + " " + proto->m_name + " to " +
+                            account_name + ".");
 })
 
 REGISTER_CONSOLE_COMMAND(equip, {
@@ -796,8 +907,7 @@ REGISTER_CONSOLE_COMMAND(equip, {
         target_entity = target_player->GetEntity();
     } else if (network && id && *id >= 0)
     {
-        if (CPlayer* player = network->FindPlayerById(static_cast<uint32_t>(*id)))
-            target_entity = player->GetEntity();
+        if (CPlayer* player = network->FindPlayerById(static_cast<uint32_t>(*id))) target_entity = player->GetEntity();
     }
     if (!target_entity && id) target_entity = world->GetEntity(*id);
 
@@ -859,33 +969,50 @@ REGISTER_CONSOLE_COMMAND(say, {
             ++message_index;
         }
         std::string message = JoinArgs(args, message_index);
-        chat = server->SubmitChat(nullptr, {0.f, 0.f}, EChatFlag::Server, 0, teller, message, target_player_id);
-    } else if (flag == "global") {
+        chat = server->SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, teller, message, target_player_id);
+    } else if (flag == "global")
+    {
         if (args.size() < 3)
         {
             LOG_INFO("console", "Usage: say global [teller] [msg]");
             return;
         }
-        chat = server->SubmitChat(context ? &context->World() : nullptr, {0.f, 0.f}, EChatFlag::Global, 0,
-                                  args[1], JoinArgs(args, 2));
-    } else if (flag == "local") {
+        chat = server->SubmitChat(context ? &context->World() : nullptr, { 0.f, 0.f }, EChatFlag::Global, 0, args[1],
+                                  JoinArgs(args, 2));
+    } else if (flag == "local")
+    {
         if (args.size() < 5)
         {
-            LOG_INFO("console", "Usage: say local [teller] [x,y] [msg] or say local [teller] [x] [y] [msg]");
+            LOG_INFO("console",
+                     "Usage: say local [teller] [world id] [x,y] [msg] or say local [teller] [world id] [x] [y] [msg]");
             return;
         }
 
-        size_t message_index = 3;
-        auto pos = ParsePosition(args, 2);
+        auto world_id = ParseWorldId(args[2]);
+        CGameWorld* world = world_id && server ? server->FindWorldById(*world_id) : nullptr;
+        if (!world)
+        {
+            LOG_WARN("console", "World not found: " + args[2]);
+            return;
+        }
+
+        size_t message_index = 4;
+        auto pos = ParsePosition(args, 3);
         if (!pos)
         {
             LOG_WARN("console", "Invalid local chat position.");
             return;
         }
-        if (args[2].find(',') == std::string::npos) message_index = 4;
-        chat = server->SubmitChat(context ? &context->World() : nullptr, *pos, EChatFlag::Local, 0,
-                                  args[1], JoinArgs(args, message_index));
-    } else if (flag == "whisper") {
+        if (args[3].find(',') == std::string::npos) message_index = 5;
+        if (args.size() <= message_index)
+        {
+            LOG_INFO("console",
+                     "Usage: say local [teller] [world id] [x,y] [msg] or say local [teller] [world id] [x] [y] [msg]");
+            return;
+        }
+        chat = server->SubmitChat(world, *pos, EChatFlag::Local, 0, args[1], JoinArgs(args, message_index));
+    } else if (flag == "whisper")
+    {
         if (args.size() < 4)
         {
             LOG_INFO("console", "Usage: say whisper [target name] [teller] [msg]");
@@ -897,9 +1024,10 @@ REGISTER_CONSOLE_COMMAND(say, {
             LOG_WARN("console", "Whisper target not found: " + args[1]);
             return;
         }
-        chat = server->SubmitChat(context ? &context->World() : nullptr, {0.f, 0.f}, EChatFlag::Whisper, 0,
-                                  args[2], JoinArgs(args, 3), static_cast<int>(target->GetId()));
-    } else {
+        chat = server->SubmitChat(context ? &context->World() : nullptr, { 0.f, 0.f }, EChatFlag::Whisper, 0, args[2],
+                                  JoinArgs(args, 3), static_cast<int>(target->GetId()));
+    } else
+    {
         LOG_WARN("console", "Unknown say flag: " + args[0]);
         return;
     }
@@ -913,9 +1041,10 @@ REGISTER_CONSOLE_COMMAND(say, {
 })
 
 REGISTER_CONSOLE_COMMAND(spawn, {
-    if (args.size() < 3)
+    if (args.size() < 4)
     {
-        LOG_INFO("console", "Usage: spawn [mobtype] [rarity] [x,y] or spawn [mobtype] [rarity] [x] [y]");
+        LOG_INFO("console",
+                 "Usage: spawn [mobtype] [rarity] [world id] [x,y] or spawn [mobtype] [rarity] [world id] [x] [y]");
         return;
     }
 
@@ -933,7 +1062,8 @@ REGISTER_CONSOLE_COMMAND(spawn, {
         return;
     }
 
-    auto pos = ParsePosition(args, 2);
+    auto world_id = ParseWorldId(args[2]);
+    auto pos = ParsePosition(args, 3);
     if (!pos)
     {
         LOG_WARN("console", "Invalid position. Use x,y or x y.");
@@ -941,11 +1071,10 @@ REGISTER_CONSOLE_COMMAND(spawn, {
     }
 
     auto* server = CServer::GetInstance();
-    CGameContext* context = server ? server->GameContext() : nullptr;
-    CGameWorld* world = context ? &context->World() : nullptr;
+    CGameWorld* world = world_id && server ? server->FindWorldById(*world_id) : nullptr;
     if (!world)
     {
-        LOG_WARN("console", "No active world for spawn command.");
+        LOG_WARN("console", "World not found: " + args[2]);
         return;
     }
 
@@ -963,7 +1092,7 @@ REGISTER_CONSOLE_COMMAND(spawn, {
         return;
     }
 
-    LOG_INFO("console", "Spawned " + RarityName(*rarity) + " " + std::string(GetMobTypeName(proto->m_type)) +
-                            " id " + std::to_string(entity->m_id) + " at " + std::to_string(pos->x) + ", " +
+    LOG_INFO("console", "Spawned " + RarityName(*rarity) + " " + std::string(GetMobTypeName(proto->m_type)) + " id " +
+                            std::to_string(entity->m_id) + " at " + std::to_string(pos->x) + ", " +
                             std::to_string(pos->y) + ".");
 })

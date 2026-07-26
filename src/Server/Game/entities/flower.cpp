@@ -1,13 +1,13 @@
 #include "flower.h"
-#include "blood_sacrifice_ritual.h"
-#include "petals/petal.h"
+#include "../../../Engine/account_data.h"
 #include "../gamecontext.h"
 #include "../gameworld.h"
 #include "../player.h"
 #include "../states/states.h"
 #include "../talent.h"
 #include "../zone_mob_tools.h"
-#include "../../../Engine/account_data.h"
+#include "blood_sacrifice_ritual.h"
+#include "petals/petal.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -29,16 +29,10 @@ yin_yang_layout GetYinYangLayout(int count)
     if (count <= 0) return {};
 
     static constexpr yin_yang_layout layouts[] = {
-        {1, screen_counter_clockwise},
-        {6, screen_clockwise},
-        {6, screen_counter_clockwise},
-        {4, screen_clockwise},
-        {4, screen_counter_clockwise},
-        {3, screen_clockwise},
-        {2, screen_counter_clockwise},
-        {2, screen_clockwise},
-        {1, screen_counter_clockwise},
-        {1, screen_clockwise},
+        { 1, screen_counter_clockwise }, { 6, screen_clockwise },         { 6, screen_counter_clockwise },
+        { 4, screen_clockwise },         { 4, screen_counter_clockwise }, { 3, screen_clockwise },
+        { 2, screen_counter_clockwise }, { 2, screen_clockwise },         { 1, screen_counter_clockwise },
+        { 1, screen_clockwise },
     };
     return layouts[std::clamp(count, 1, 10) - 1];
 }
@@ -77,9 +71,11 @@ int TalentPointGainForLevel(int level)
 {
     if (level <= 1) return 0;
 
-    int gain = 1;
-    if (level % 5 == 0) gain += 5;
-    if (level % 10 == 0) gain += 10;
+    int gain = game_config::player_talent_point_base_gain;
+    const int minor_interval = game_config::player_talent_point_minor_level_interval;
+    const int major_interval = game_config::player_talent_point_major_level_interval;
+    if (minor_interval > 0 && level % minor_interval == 0) gain += game_config::player_talent_point_minor_bonus;
+    if (major_interval > 0 && level % major_interval == 0) gain += game_config::player_talent_point_major_bonus;
     return gain;
 }
 
@@ -89,7 +85,7 @@ void SyncFlowerRadiusWithStats(CFlower& flower, SFlowerStats& stats)
     stats.radius = flower.m_radius;
 }
 
-}
+} // namespace
 
 CFlower::~CFlower()
 {
@@ -101,9 +97,11 @@ void CFlower::Tick(float dt)
 {
     CAttackableMob<SFlowerStats>::Tick(dt);
     if (m_final_stats_dirty) RebuildFinalStats();
-    if (m_final_stats.health_regen > 0.f && m_final_stats.max_health > 0.f && m_health > 0.f)
+    float health_regen = m_final_stats.health_regen;
+    if (m_defending && !m_attacking) health_regen += m_final_stats.defense_health_regen;
+    if (health_regen > 0.f && m_final_stats.max_health > 0.f && m_health > 0.f)
     {
-        float regen = m_final_stats.health_regen * std::max(0.f, m_final_stats.petal_medicine_multiplier) *
+        float regen = health_regen * std::max(0.f, m_final_stats.petal_medicine_multiplier) *
                       std::max(0.f, m_final_stats.healing_received_multiplier) *
                       std::max(0.f, GetMedicMultiplier(this));
         m_health = std::min(m_final_stats.max_health, m_health + regen * dt);
@@ -131,7 +129,7 @@ void CFlower::Tick(float dt)
         {
             for (CPetal*& petal : slot.m_p_petals)
             {
-                if (petal) petal->m_is_marked_for_des = true;
+                if (petal) petal->MarkForDestroy();
                 petal = nullptr;
             }
             slot.m_start_copy_index = -1;
@@ -151,7 +149,8 @@ void CFlower::Tick(float dt)
         {
             slot.m_start_copy_index = m_total_copies;
             m_total_copies += copies;
-        } else {
+        } else
+        {
             slot.m_start_copy_index = -1;
         }
     }
@@ -180,7 +179,8 @@ void CFlower::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
         {
             if (petal && !petal->m_is_marked_for_des)
             {
-                slot.m_p_proto->m_p_behavior->OnFlowerTakeDamage(petal, slot.m_stored_rarity, this, dmg, damage_type, attacker);
+                slot.m_p_proto->m_p_behavior->OnFlowerTakeDamage(petal, slot.m_stored_rarity, this, dmg, damage_type,
+                                                                 attacker);
             }
         }
     }
@@ -203,7 +203,7 @@ void CFlower::DestroyPetalEntities()
     {
         for (CPetal*& petal : slot.m_p_petals)
         {
-            if (petal) petal->m_is_marked_for_des = true;
+            if (petal) petal->MarkForDestroy();
             petal = nullptr;
         }
         std::fill(slot.m_bonus_active.begin(), slot.m_bonus_active.end(), 0);
@@ -224,7 +224,7 @@ void CFlower::ReloadAllPetals()
         {
             if (slot.m_p_petals[i])
             {
-                slot.m_p_petals[i]->m_is_marked_for_des = true;
+                slot.m_p_petals[i]->MarkForDestroy();
                 slot.m_p_petals[i] = nullptr;
             }
             if (i < slot.m_bonus_active.size()) slot.m_bonus_active[i] = false;
@@ -295,7 +295,8 @@ float CFlower::GetPetalRotationAngle() const
     float index = normalized / step;
     float base_index = std::floor(index);
     float phase = index - base_index;
-    float moving_fraction = std::clamp(1.f - game_config::default_cogwheel_stop_fraction, 0.001f, 1.f);
+    float moving_fraction = std::clamp(1.f - game_config::default_cogwheel_stop_fraction,
+                                       game_config::flower_cogwheel_moving_fraction_min, 1.f);
     if (phase > game_config::default_cogwheel_stop_fraction)
     {
         base_index += (phase - game_config::default_cogwheel_stop_fraction) / moving_fraction;
@@ -470,7 +471,8 @@ void CFlower::RefreshNullificationState()
     auto states = FindStates<CNullificationState>();
     if (best_rarity == ERarity::Null)
     {
-        for (auto* state : states) RemoveState(state);
+        for (auto* state : states)
+            RemoveState(state);
         return;
     }
 
@@ -502,14 +504,16 @@ void CFlower::RefreshCorruptionState()
     auto states = FindStates<CCorruptionState>();
     if (best_rarity == ERarity::Null)
     {
-        for (auto* state : states) RemoveState(state);
+        for (auto* state : states)
+            RemoveState(state);
         return;
     }
 
     if (states.empty())
     {
         AddState(std::make_unique<CCorruptionState>(this, endless, best_rarity));
-    } else {
+    } else
+    {
         states.front()->m_rarity = best_rarity;
         states.front()->m_timer = endless;
         for (size_t i = 1; i < states.size(); ++i)
@@ -519,14 +523,12 @@ void CFlower::RefreshCorruptionState()
     }
 
     float radius = 0.f;
-    if (best_rarity == ERarity::Primordial)
-        radius = game_config::default_corruption_radius_primordial;
+    if (best_rarity == ERarity::Primordial) radius = game_config::default_corruption_radius_primordial;
     else if (GetLevel(best_rarity) >= GetLevel(ERarity::Eternal))
         radius = game_config::default_corruption_radius_above_ultra;
     if (radius <= 0.f || !GameWorld()) return;
 
-    GameWorld()->GetSpatialGrid().ForEachInRange(m_pos, radius, [this, best_rarity](CEntity* entity)
-    {
+    GameWorld()->GetSpatialGrid().ForEachInRange(m_pos, radius, [this, best_rarity](CEntity* entity) {
         if (!entity || entity == this || entity->m_is_marked_for_des || entity->IsDead()) return;
         auto* flower = dynamic_cast<CFlower*>(entity);
         if (!flower) return;
@@ -578,7 +580,8 @@ float CFlower::GetPetalLayerDistance() const
 
 int CFlower::GetYinYangColumnCount() const
 {
-    if (m_final_stats.petal_rotation_mode != EPetalRotationMode::YinYang || m_yinyang_layout_count <= 0) return std::max(1, m_total_copies);
+    if (m_final_stats.petal_rotation_mode != EPetalRotationMode::YinYang || m_yinyang_layout_count <= 0)
+        return std::max(1, m_total_copies);
     if (!HasNonYinYangPetals()) return 1;
     if (m_yinyang_layout_count == 1) return std::max(1, m_total_copies);
     return GetYinYangLayout(m_yinyang_layout_count).columns;
@@ -711,7 +714,8 @@ void CPlayerFlower::TakeExp(std::int64_t exp)
     m_exp = (exp > max_exp - m_exp) ? max_exp : (m_exp + exp);
     bool leveled = false;
     int gained_talent_points = 0;
-    for (;;)
+    const int max_level = std::max(1, game_config::player_level_max);
+    while (m_level < max_level)
     {
         std::int64_t required = PlayerFlowerExpRequired(m_level);
         if (required <= 0 || m_exp < required) break;
@@ -720,26 +724,23 @@ void CPlayerFlower::TakeExp(std::int64_t exp)
         gained_talent_points += TalentPointGainForLevel(m_level);
         leveled = true;
     }
+    if (m_level >= max_level) m_exp = 0;
 
     if (leveled) RebuildFinalStats();
 
     CGameContext* context = GameContext();
     CPlayer* player = context ? context->FindPlayerFromEntity(this) : nullptr;
     if (player && gained_talent_points > 0) player->AddTalentPoints(gained_talent_points);
-    if (player && player->IsAuthenticated())
-        CAccountDataStore::SetProgress(player->GetAccountName(), m_level, m_exp);
+    if (player && player->IsAuthenticated()) CAccountDataStore::SetProgress(player->GetAccountName(), m_level, m_exp);
 }
 
-std::int64_t CPlayerFlower::ExpRequired() const
-{
-    return PlayerFlowerExpRequired(m_level);
-}
+std::int64_t CPlayerFlower::ExpRequired() const { return PlayerFlowerExpRequired(m_level); }
 
 void CPlayerFlower::Tick(float dt)
 {
     if (m_is_dead)
     {
-        m_vel = {0.f, 0.f};
+        m_vel = { 0.f, 0.f };
         m_attacking = false;
         m_defending = false;
         TickStates(dt);
@@ -801,17 +802,26 @@ void CPlayerFlower::EnterDeathState()
 {
     if (m_is_dead) return;
 
+    const SFlowerStats death_stats = m_final_stats;
+    const float death_radius = m_radius;
+    const float death_mass = m_mass;
+
     ClearCorruptionOnDeath();
 
     m_is_dead = true;
     m_is_marked_for_des = false;
     m_health = 0.f;
-    m_vel = {0.f, 0.f};
+    m_vel = { 0.f, 0.f };
     m_attacking = false;
     m_defending = false;
     BeginBloodSacrifice();
     if (GameWorld()) GameWorld()->DestroySummonedMobsOwnedBy(m_id, m_generation);
     DestroyPetalEntities();
+
+    m_final_stats = death_stats;
+    m_radius = death_radius;
+    m_mass = death_mass;
+    ClearFinalStatsDirty();
 }
 
 void CPlayerFlower::PrepareRespawnDestroy()
@@ -819,7 +829,7 @@ void CPlayerFlower::PrepareRespawnDestroy()
     if (GameWorld()) GameWorld()->DestroySummonedMobsOwnedBy(m_id, m_generation);
     ClearPetals();
     m_is_dead = false;
-    m_is_marked_for_des = true;
+    MarkForDestroy();
 }
 
 bool CPlayerFlower::ReviveFromYggdrasil(float health_fraction)
@@ -830,8 +840,8 @@ bool CPlayerFlower::ReviveFromYggdrasil(float health_fraction)
     m_is_marked_for_des = false;
     RebuildFinalStats();
     float max_health = GetFinalStats() ? GetFinalStats()->max_health : m_base_stats.max_health;
-    m_health = std::max(1.f, max_health * std::clamp(health_fraction, 0.0f, 1.0f));
-    m_vel = {0.f, 0.f};
+    m_health = std::max(game_config::flower_revive_min_health, max_health * std::clamp(health_fraction, 0.0f, 1.0f));
+    m_vel = { 0.f, 0.f };
     m_attacking = false;
     m_defending = false;
     AddState(std::make_unique<CInvincibleState>(this, 1.f, GetRarity()));
@@ -941,8 +951,8 @@ void CPlayerFlower::BeginBloodSacrifice()
                 return;
             }
 
-            auto ritual = std::make_unique<CBloodSacrificeRitual>(
-                world, m_pos, mob_type, slot.m_stored_rarity, game_config::default_blood_sacrifice_delay);
+            auto ritual = std::make_unique<CBloodSacrificeRitual>(world, m_pos, mob_type, slot.m_stored_rarity,
+                                                                  game_config::default_blood_sacrifice_delay);
             CBloodSacrificeRitual* raw_ritual =
                 dynamic_cast<CBloodSacrificeRitual*>(world->InsertEntity(std::move(ritual)));
             if (!raw_ritual)
@@ -952,9 +962,9 @@ void CPlayerFlower::BeginBloodSacrifice()
             }
 
             LOG_INFO("blood_sacrifice", "Created ritual id " + std::to_string(raw_ritual->m_id) + " for " +
-                                           std::string(GetRarityName(slot.m_stored_rarity)) + " " +
-                                           std::string(GetMobTypeName(mob_type)) + " from slot " + std::to_string(i) +
-                                           " at " + std::to_string(m_pos.x) + "," + std::to_string(m_pos.y));
+                                            std::string(GetRarityName(slot.m_stored_rarity)) + " " +
+                                            std::string(GetMobTypeName(mob_type)) + " from slot " + std::to_string(i) +
+                                            " at " + std::to_string(m_pos.x) + "," + std::to_string(m_pos.y));
             ClearBloodSacrificeSlot(static_cast<int>(i));
             return;
         }

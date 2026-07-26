@@ -11,7 +11,7 @@ class CProjectile : public CEntity
 {
   public:
     CProjectile(float x, float y, float r, CEntity* owner)
-        : CProjectile(owner ? owner->GameWorld() : nullptr, {x, y}, r, owner)
+        : CProjectile(owner ? owner->GameWorld() : nullptr, { x, y }, r, owner)
     {
     }
 
@@ -19,6 +19,7 @@ class CProjectile : public CEntity
         : CEntity(world, pos.x, pos.y, r), m_p_owner(owner), m_owner_id(owner ? owner->m_id : -1),
           m_owner_generation(owner ? owner->m_generation : 0)
     {
+        m_allow_skip_tick = owner && owner->m_allow_skip_tick;
         if (owner) owner->AddTag(EEntityTag::ClearOwnedEntitiesOnDestroy);
     }
 
@@ -36,14 +37,14 @@ class CProjectile : public CEntity
     CEntity* m_p_owner = nullptr;
     int m_owner_id = -1;
     std::uint64_t m_owner_generation = 0;
-    sf::Vector2f m_vel = {0.0f, 0.0f};
+    sf::Vector2f m_vel = { 0.0f, 0.0f };
 };
 
 class CMissile : public CProjectile
 {
   public:
-    CMissile(CGameWorld* world, sf::Vector2f pos, float radius, sf::Vector2f direction, float speed,
-             float damage, float health, float lifetime, CEntity* owner = nullptr);
+    CMissile(CGameWorld* world, sf::Vector2f pos, float radius, sf::Vector2f direction, float speed, float damage,
+             float health, float lifetime, CEntity* owner = nullptr);
 
     void Tick(float dt) override;
     bool ApplyHit(CEntity* target);
@@ -66,8 +67,8 @@ class CMissile : public CProjectile
 class CDandelionMissile : public CMissile
 {
   public:
-    CDandelionMissile(CGameWorld* world, sf::Vector2f pos, float radius, float attach_angle,
-                      float damage, float health, float lifetime, ERarity rarity, CEntity* owner = nullptr);
+    CDandelionMissile(CGameWorld* world, sf::Vector2f pos, float radius, float attach_angle, float damage, float health,
+                      float lifetime, ERarity rarity, CEntity* owner = nullptr);
 
     ERarity GetRarity() const { return m_rarity; }
     float GetAttachAngle() const { return m_attach_angle; }
@@ -84,8 +85,8 @@ class CDandelionMissile : public CMissile
 class CPollenProjectile : public CProjectile
 {
   public:
-    CPollenProjectile(CGameWorld* world, sf::Vector2f pos, float radius, float damage, float health,
-                      float lifetime, float mass, CEntity* owner = nullptr);
+    CPollenProjectile(CGameWorld* world, sf::Vector2f pos, float radius, float damage, float health, float lifetime,
+                      float mass, CEntity* owner = nullptr);
 
     void Tick(float dt) override;
     bool ApplyHit(CEntity* target);

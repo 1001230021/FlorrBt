@@ -10,8 +10,9 @@ const SUMMONED_BODY_DARK_FILL = "#d7bd3c";
 const SUMMONED_BODY_STROKE = "#c8ad35";
 const SUMMONED_BODY_CACHE = new Map();
 
-const abdomenSrc = new URL("../assets/soldier_ant_head.svg", import.meta.url).href;
-const headSrc = new URL("../assets/soldier_ant_abdomen.svg", import.meta.url).href;
+const abdomenSrc = new URL("../assets/soldier_ant_abdomen.svg", import.meta.url)
+  .href;
+const headSrc = new URL("../assets/soldier_ant_head.svg", import.meta.url).href;
 const abdomenImage = makeImage(abdomenSrc);
 const headImage = makeImage(headSrc);
 const wingParts = [
@@ -41,10 +42,23 @@ const forelimbParts = [
 let wingPaths = null;
 let forelimbPaths = null;
 
-export function drawSoldierAnt(ctx, pos, radius, entityId, angle, motion, time, options = {}) {
-  const spriteSize = Math.max(1, radius * (SOLDIER_ANT_VIEWBOX_SIZE / SOLDIER_ANT_BODY_RADIUS));
+export function drawSoldierAnt(
+  ctx,
+  pos,
+  radius,
+  entityId,
+  angle,
+  motion,
+  time,
+  options = {},
+) {
+  const spriteSize = Math.max(
+    1,
+    radius * (SOLDIER_ANT_VIEWBOX_SIZE / SOLDIER_ANT_BODY_RADIUS),
+  );
   const spriteHalf = spriteSize * 0.5;
-  const rotation = (Number.isFinite(angle) ? angle : 0) - SOLDIER_ANT_BASE_FACE_ANGLE;
+  const rotation =
+    (Number.isFinite(angle) ? angle : 0) - SOLDIER_ANT_BASE_FACE_ANGLE;
   const move = clamp01(motion || 0);
   const animation = antAnimation(entityId, move, time);
   const summoned = Boolean(options.summoned);
@@ -55,15 +69,15 @@ export function drawSoldierAnt(ctx, pos, radius, entityId, angle, motion, time, 
   ctx.translate(pos.x, pos.y);
   ctx.rotate(rotation);
 
+  if (isImageReady(head)) {
+    ctx.drawImage(head, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
+  }
   drawForelimbs(ctx, spriteSize, animation);
+  drawWings(ctx, spriteSize, animation);
   if (isImageReady(abdomen)) {
     ctx.drawImage(abdomen, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
   } else {
     drawFallback(ctx, radius, summoned);
-  }
-  drawWings(ctx, spriteSize, animation, move);
-  if (isImageReady(head)) {
-    ctx.drawImage(head, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
   }
   ctx.restore();
 }
@@ -77,14 +91,17 @@ function antAnimation(entityId, motion, time) {
   };
 }
 
-function drawWings(ctx, spriteSize, animation, motion) {
+function drawWings(ctx, spriteSize, animation) {
   const paths = getWingPaths();
   if (!paths) return;
   const scale = spriteSize / SOLDIER_ANT_VIEWBOX_SIZE;
 
   ctx.save();
   ctx.scale(scale, scale);
-  ctx.translate(-SOLDIER_ANT_VIEWBOX_SIZE * 0.5, -SOLDIER_ANT_VIEWBOX_SIZE * 0.5);
+  ctx.translate(
+    -SOLDIER_ANT_VIEWBOX_SIZE * 0.5,
+    -SOLDIER_ANT_VIEWBOX_SIZE * 0.5,
+  );
   clipSvgBounds(ctx);
   ctx.fillStyle = "#eee";
   for (const part of paths) {
@@ -104,7 +121,10 @@ function drawForelimbs(ctx, spriteSize, animation) {
 
   ctx.save();
   ctx.scale(scale, scale);
-  ctx.translate(-SOLDIER_ANT_VIEWBOX_SIZE * 0.5, -SOLDIER_ANT_VIEWBOX_SIZE * 0.5);
+  ctx.translate(
+    -SOLDIER_ANT_VIEWBOX_SIZE * 0.5,
+    -SOLDIER_ANT_VIEWBOX_SIZE * 0.5,
+  );
   clipSvgBounds(ctx);
   ctx.lineWidth = SOLDIER_ANT_FORELIMB_WIDTH;
   ctx.lineCap = "round";
@@ -112,7 +132,9 @@ function drawForelimbs(ctx, spriteSize, animation) {
   ctx.strokeStyle = SOLDIER_ANT_FORELIMB_COLOR;
   for (const part of paths) {
     const amount = animation.swing * part.direction * 0.35;
-    drawPathAroundPivot(ctx, part.path, part.pivot, amount, () => ctx.stroke(part.path));
+    drawPathAroundPivot(ctx, part.path, part.pivot, amount, () =>
+      ctx.stroke(part.path),
+    );
   }
   ctx.restore();
 }
@@ -185,7 +207,9 @@ function summonedBodyImage(src) {
       return response.text();
     })
     .then((svgText) => {
-      const blob = new Blob([recolorSummonedBodySvg(svgText)], { type: "image/svg+xml" });
+      const blob = new Blob([recolorSummonedBodySvg(svgText)], {
+        type: "image/svg+xml",
+      });
       const url = URL.createObjectURL(blob);
       entry.url = url;
       image.src = url;
@@ -198,7 +222,10 @@ function summonedBodyImage(src) {
 }
 
 function recolorSummonedBodySvg(svgText) {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") {
+  if (
+    typeof DOMParser === "undefined" ||
+    typeof XMLSerializer === "undefined"
+  ) {
     return svgText
       .replace(/#454545/gi, SUMMONED_BODY_DARK_FILL)
       .replace(/#555\b/gi, SUMMONED_BODY_FILL)

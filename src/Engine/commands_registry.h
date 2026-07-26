@@ -14,8 +14,5 @@ inline auto& GetGlobalCommandRegistry()
 #define REGISTER_CONSOLE_COMMAND(name, body)                                                                           \
     static struct CmdReg_##name                                                                                        \
     {                                                                                                                  \
-        CmdReg_##name()                                                                                                \
-        {                                                                                                              \
-            GetGlobalCommandRegistry()[#name] = [](const std::vector<std::string>& args) body;                         \
-        }                                                                                                              \
+        CmdReg_##name() { GetGlobalCommandRegistry()[#name] = [](const std::vector<std::string>& args) body; }         \
     } CmdReg_##name##_instance;

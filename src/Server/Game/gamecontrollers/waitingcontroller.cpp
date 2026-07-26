@@ -1,10 +1,10 @@
 #include "waitingcontroller.h"
+#include "../../../Shared/tools.h"
 #include "../entities/flower.h"
 #include "../entities/mob.h"
 #include "../gamecontext.h"
 #include "../gameworld.h"
 #include "../player.h"
-#include "../../../Shared/tools.h"
 #include <utility>
 
 namespace
@@ -12,8 +12,7 @@ namespace
 sf::Vector2f PickWaitingSpawnPosition(CGameWorld& world)
 {
     const FlorrBtMap* map = world.GetMap();
-    if (!map)
-        return {0.f, 0.f};
+    if (!map) return { 0.f, 0.f };
 
     for (const FlorrBtMap::Checkpoint& checkpoint : map->checkpoints)
     {
@@ -30,7 +29,7 @@ sf::Vector2f PickWaitingSpawnPosition(CGameWorld& world)
         static_cast<float>(map->height * map->tile_height) * 0.5f,
     };
 }
-}
+} // namespace
 
 CWaitingController::CWaitingController(release_predicate predicate, CGameWorld* destination_world)
     : m_release_predicate(std::move(predicate)), m_p_destination_world(destination_world)
@@ -38,12 +37,9 @@ CWaitingController::CWaitingController(release_predicate predicate, CGameWorld* 
 }
 
 CWaitingController::CWaitingController(std::function<bool(size_t)> predicate, CGameWorld* destination_world)
-    : CWaitingController(
-          [predicate = std::move(predicate)](CGameWorld&, size_t player_count)
-          {
-              return predicate ? predicate(player_count) : false;
-          },
-          destination_world)
+    : CWaitingController([predicate = std::move(predicate)](
+                             CGameWorld&, size_t player_count) { return predicate ? predicate(player_count) : false; },
+                         destination_world)
 {
 }
 
@@ -89,10 +85,7 @@ void CWaitingController::OnEntityDie(CGameWorld& world, CEntity* entity)
     (void)entity;
 }
 
-size_t CWaitingController::CountWaitingPlayers(CGameWorld& world) const
-{
-    return CollectWaitingPlayers(world).size();
-}
+size_t CWaitingController::CountWaitingPlayers(CGameWorld& world) const { return CollectWaitingPlayers(world).size(); }
 
 std::vector<CPlayer*> CWaitingController::CollectWaitingPlayers(CGameWorld& world) const
 {

@@ -1,9 +1,9 @@
 #include "player_controller.h"
+#include "../../../Shared/game_config.h"
 #include "../entities/flower.h"
 #include "../entities/mob.h"
 #include "../entities/petals/petal.h"
 #include "../states/states.h"
-#include "../../../Shared/game_config.h"
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -22,28 +22,25 @@ void CPlayerController::OnTick(CMobBase* mob, float dt)
     {
         sf::Vector2f target = mob->m_pos + m_move_dir * game_config::player_move_target_distance;
         mob->MoveTowards(target, dt);
-    } else {
+    } else
+    {
         mob->MoveTowards(mob->m_pos, dt);
     }
 
     if (auto* attackable = dynamic_cast<IAttackableMob*>(mob); attackable && attackable->IsDefending())
     {
-        if (auto* flower = dynamic_cast<CFlower*>(mob))
-            flower->TryStartBurrowFromShovel();
+        if (auto* flower = dynamic_cast<CFlower*>(mob)) flower->TryStartBurrowFromShovel();
     }
 
     TryManualAttack(mob);
 }
 
-void CPlayerController::PushOperate(const ClientOperate& op)
-{
-    m_op_queue.push(op);
-}
+void CPlayerController::PushOperate(const ClientOperate& op) { m_op_queue.push(op); }
 
 void CPlayerController::ResetOperate()
 {
-    m_move_dir = {0.f, 0.f};
-    m_aim_dir = {1.f, 0.f};
+    m_move_dir = { 0.f, 0.f };
+    m_aim_dir = { 1.f, 0.f };
     m_has_aim_dir = false;
     std::queue<ClientOperate> empty;
     m_op_queue.swap(empty);

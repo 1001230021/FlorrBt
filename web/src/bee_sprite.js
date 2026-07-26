@@ -2,8 +2,9 @@ const BEE_VIEWBOX_SIZE = 110;
 const BEE_EFFECTIVE_BOX = 91.667;
 const BEE_BASE_FACE_ANGLE = -Math.PI * 0.75;
 const HORNET_BASE_FACE_ANGLE = -Math.PI * 0.75;
+const HORNET_BODY_OFFSET = { x: -7, y: -7 };
 const BEE_SPRITE_SCALE = 2.5;
-const HORNET_SPRITE_SCALE = BEE_SPRITE_SCALE * 0.75;
+const HORNET_SPRITE_SCALE = 2.3;
 const BEE_BASE_CACHE = new Map();
 const BEE_ANTENNA_STROKE = "#333";
 const BEE_ANTENNA_LINE_WIDTH = 2.5;
@@ -74,14 +75,24 @@ export function drawBumbleBee(ctx, pos, radius, entityId, angle, motion, time) {
   });
 }
 
-export function drawHornet(ctx, pos, radius, entityId, angle, motion, time, options = {}) {
+export function drawHornet(
+  ctx,
+  pos,
+  radius,
+  entityId,
+  angle,
+  motion,
+  time,
+  options = {},
+) {
   drawInsect(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/hornet.svg",
     baseFaceAngle: HORNET_BASE_FACE_ANGLE,
     antennaParts: getHornetAntennaPaths(),
     strip: "hornet",
     antennaWobble: options.antennaWobble || 0,
-    spriteScale: HORNET_SPRITE_SCALE,
+    spriteScale: options.spriteScale ?? HORNET_SPRITE_SCALE,
+    spriteOffset: options.spriteOffset ?? HORNET_BODY_OFFSET,
   });
 }
 
@@ -91,7 +102,8 @@ export function drawHornetMissile(ctx, pos, radius, angle) {
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
-  if (Number.isFinite(angle)) ctx.rotate(paths.length ? angle - Math.PI * 0.25 : angle);
+  if (Number.isFinite(angle))
+    ctx.rotate(paths.length ? angle - Math.PI * 0.25 : angle);
   if (!paths.length) {
     ctx.fillStyle = "#333";
     ctx.beginPath();
@@ -113,7 +125,8 @@ export function drawHornetMissile(ctx, pos, radius, angle) {
 
 export function drawPollen(ctx, pos, radius, entityId, time) {
   const image = pollenImage();
-  const pulse = 1 + Math.sin((time || 0) * 5.5 + (entityId || 0) * 0.47) * 0.035;
+  const pulse =
+    1 + Math.sin((time || 0) * 5.5 + (entityId || 0) * 0.47) * 0.035;
   const size = Math.max(3, radius * 2.35 * pulse);
 
   ctx.save();
@@ -126,14 +139,26 @@ export function drawPollen(ctx, pos, radius, entityId, time) {
 
 function drawInsect(ctx, pos, radius, entityId, angle, motion, time, options) {
   const spriteScale = options.spriteScale ?? BEE_SPRITE_SCALE;
-  const spriteSize = Math.max(1, radius * 2 * (BEE_VIEWBOX_SIZE / BEE_EFFECTIVE_BOX) * spriteScale);
+  const spriteSize = Math.max(
+    1,
+    radius * 2 * (BEE_VIEWBOX_SIZE / BEE_EFFECTIVE_BOX) * spriteScale,
+  );
   const spriteHalf = spriteSize * 0.5;
   const base = insectBaseImage(options.src, options.strip);
-  const antennaJitter = beeAntennaJitter(entityId, motion || 0, time || 0) + (options.antennaWobble || 0);
+  const antennaJitter =
+    beeAntennaJitter(entityId, motion || 0, time || 0) +
+    (options.antennaWobble || 0);
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
   if (Number.isFinite(angle)) ctx.rotate(angle - options.baseFaceAngle);
+  if (options.spriteOffset) {
+    const spriteUnit = spriteSize / BEE_VIEWBOX_SIZE;
+    ctx.translate(
+      options.spriteOffset.x * spriteUnit,
+      options.spriteOffset.y * spriteUnit,
+    );
+  }
 
   if (isImageReady(base)) {
     ctx.drawImage(base, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
@@ -203,7 +228,9 @@ function insectBaseImage(src, strip) {
       return response.text();
     })
     .then((svgText) => {
-      const blob = new Blob([stripAntennae(svgText, strip)], { type: "image/svg+xml" });
+      const blob = new Blob([stripAntennae(svgText, strip)], {
+        type: "image/svg+xml",
+      });
       const url = URL.createObjectURL(blob);
       entry.url = url;
       image.src = url;
@@ -221,9 +248,13 @@ function pollenImage() {
 
   const image = new Image();
   image.decoding = "async";
-  image.addEventListener("error", () => {
-    POLLEN_CACHE.failed = true;
-  }, { once: true });
+  image.addEventListener(
+    "error",
+    () => {
+      POLLEN_CACHE.failed = true;
+    },
+    { once: true },
+  );
   POLLEN_CACHE.image = image;
   fetch(POLLEN_ASSET)
     .then((response) => {
@@ -231,7 +262,9 @@ function pollenImage() {
       return response.text();
     })
     .then((svgText) => {
-      const blob = new Blob([extractPollenGrain(svgText)], { type: "image/svg+xml" });
+      const blob = new Blob([extractPollenGrain(svgText)], {
+        type: "image/svg+xml",
+      });
       image.src = URL.createObjectURL(blob);
     })
     .catch(() => {
@@ -241,7 +274,8 @@ function pollenImage() {
 }
 
 function extractPollenGrain(svgText) {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgText;
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
+    return svgText;
 
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
   const root = doc.documentElement;
@@ -256,7 +290,8 @@ function extractPollenGrain(svgText) {
 }
 
 function stripAntennae(svgText, strip) {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgText;
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
+    return svgText;
 
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
   const root = doc.documentElement;
@@ -267,9 +302,10 @@ function stripAntennae(svgText, strip) {
     paths.forEach((node) => {
       if (HORNET_MISSILE_PATHS.has(node.getAttribute("d") || "")) node.remove();
     });
-    Array.from(root.querySelectorAll("path")).slice(-2).forEach((node) => node.remove());
-  }
-  else paths.slice(-4).forEach((node) => node.remove());
+    Array.from(root.querySelectorAll("path"))
+      .slice(-2)
+      .forEach((node) => node.remove());
+  } else paths.slice(-4).forEach((node) => node.remove());
   return new XMLSerializer().serializeToString(root);
 }
 
@@ -342,7 +378,15 @@ function drawFallback(ctx, radius) {
   ctx.strokeStyle = "#d3bd46";
   ctx.lineWidth = Math.max(1.5, radius * 0.14);
   ctx.beginPath();
-  ctx.ellipse(0, 0, radius * 0.92, radius * 0.64, Math.PI * 0.25, 0, Math.PI * 2);
+  ctx.ellipse(
+    0,
+    0,
+    radius * 0.92,
+    radius * 0.64,
+    Math.PI * 0.25,
+    0,
+    Math.PI * 2,
+  );
   ctx.fill();
   ctx.stroke();
 

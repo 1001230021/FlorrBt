@@ -14,7 +14,7 @@
 
 inline std::mt19937& ZoneMobRng()
 {
-    static std::mt19937 rng{std::random_device{}()};
+    static std::mt19937 rng{ std::random_device{}() };
     return rng;
 }
 
@@ -51,14 +51,10 @@ struct SZoneMobEntry
 
 inline std::string TrimZoneMobToken(std::string token)
 {
-    token.erase(token.begin(), std::find_if(token.begin(), token.end(), [](unsigned char ch)
-    {
-        return !std::isspace(ch);
-    }));
-    token.erase(std::find_if(token.rbegin(), token.rend(), [](unsigned char ch)
-    {
-        return !std::isspace(ch);
-    }).base(), token.end());
+    token.erase(token.begin(),
+                std::find_if(token.begin(), token.end(), [](unsigned char ch) { return !std::isspace(ch); }));
+    token.erase(std::find_if(token.rbegin(), token.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(),
+                token.end());
     return token;
 }
 
@@ -67,7 +63,7 @@ inline std::vector<SZoneMobEntry> ParseZoneMobEntries(std::string_view mobs)
     std::vector<SZoneMobEntry> result;
 
     std::string token;
-    std::stringstream stream{std::string(mobs)};
+    std::stringstream stream{ std::string(mobs) };
     while (std::getline(stream, token, ','))
     {
         token = TrimZoneMobToken(std::move(token));
@@ -83,8 +79,7 @@ inline std::vector<SZoneMobEntry> ParseZoneMobEntries(std::string_view mobs)
             try
             {
                 weight = std::stof(weight_text);
-            }
-            catch (...)
+            } catch (...)
             {
                 weight = 0.f;
             }
@@ -92,7 +87,7 @@ inline std::vector<SZoneMobEntry> ParseZoneMobEntries(std::string_view mobs)
         if (token.empty() || weight <= 0.f) continue;
 
         EMobType type = EMobType::None;
-        if (TryParseZoneMobType(token, type)) result.push_back({type, weight});
+        if (TryParseZoneMobType(token, type)) result.push_back({ type, weight });
     }
 
     return result;
@@ -110,8 +105,7 @@ inline EMobType PickZoneMobType(const std::vector<SZoneMobEntry>& mob_entries)
 {
     float total_weight = 0.f;
     for (const SZoneMobEntry& entry : mob_entries)
-        if (entry.type != EMobType::None && entry.weight > 0.f)
-            total_weight += entry.weight;
+        if (entry.type != EMobType::None && entry.weight > 0.f) total_weight += entry.weight;
     if (total_weight <= 0.f) return EMobType::None;
 
     std::uniform_real_distribution<float> dist(0.f, total_weight);
@@ -144,8 +138,8 @@ inline bool IsPointInZone(const FlorrBtMap::Zone& zone, const sf::Vector2f& pos)
     {
         const auto& vi = vertices[i];
         const auto& vj = vertices[j];
-        bool crosses = ((vi.y > pos.y) != (vj.y > pos.y)) &&
-                       (pos.x < (vj.x - vi.x) * (pos.y - vi.y) / (vj.y - vi.y) + vi.x);
+        bool crosses =
+            ((vi.y > pos.y) != (vj.y > pos.y)) && (pos.x < (vj.x - vi.x) * (pos.y - vi.y) / (vj.y - vi.y) + vi.x);
         if (crosses) inside = !inside;
     }
     return inside;

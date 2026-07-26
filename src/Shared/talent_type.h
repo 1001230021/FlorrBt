@@ -88,8 +88,8 @@ inline bool MatchTalentIdAlias(std::string_view text, ETalentId id)
     case ETalentId::SecondChance:
         return text == "second_chance" || text == "secondchance" || text == "sc";
     case ETalentId::SlotNum:
-        return text == "slot_num" || text == "slotnum" || text == "slots" || text == "slot" ||
-               text == "loadout" || text == "lo";
+        return text == "slot_num" || text == "slotnum" || text == "slots" || text == "slot" || text == "loadout" ||
+               text == "lo";
     case ETalentId::Medic:
         return text == "medic" || text == "medicine" || text == "healing" || text == "med";
     case ETalentId::Reach:
@@ -101,8 +101,7 @@ inline bool MatchTalentIdAlias(std::string_view text, ETalentId id)
     case ETalentId::Antennae:
         return text == "antennae" || text == "antenna" || text == "ante";
     case ETalentId::ConcentratedPoison:
-        return text == "concentrated_poison" || text == "concentratedpoison" || text == "cpoison" ||
-               text == "cpoi";
+        return text == "concentrated_poison" || text == "concentratedpoison" || text == "cpoison" || text == "cpoi";
     case ETalentId::Movement:
         return text == "movement" || text == "move" || text == "speed" || text == "mmt";
     default:
@@ -123,11 +122,7 @@ enum class ETalentEvent : uint8_t
 using TalentEvent = ETalentEvent;
 
 inline constexpr std::array<std::string_view, 6> talent_event_names = {
-    "RebuildFlowerStats",
-    "RebuildPetalStats",
-    "BeforeFlowerTakeDamage",
-    "OnFlowerFatalDamage",
-    "Tick",
+    "RebuildFlowerStats", "RebuildPetalStats", "BeforeFlowerTakeDamage", "OnFlowerFatalDamage", "Tick",
     "RebuildSlotNum",
 };
 

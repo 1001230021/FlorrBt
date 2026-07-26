@@ -7,7 +7,9 @@ const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
 
-const root = path.resolve(process.env.FLORRBT_ROOT || path.resolve(__dirname, ".."));
+const root = path.resolve(
+  process.env.FLORRBT_ROOT || path.resolve(__dirname, ".."),
+);
 const webRoot = path.join(root, "web");
 const dataRoot = path.join(root, "data");
 const listenHost = process.env.WEB_HOST || "127.0.0.1";
@@ -16,7 +18,9 @@ const gameHost = process.env.GAME_HOST || "127.0.0.1";
 const gamePort = Number(process.env.GAME_PORT || 10012);
 const serverSnapshotType = 0x01;
 const snapshotFlushMs = Number(process.env.WEB_SNAPSHOT_FLUSH_MS || 0);
-const snapshotBacklogDropBytes = Number(process.env.WEB_SNAPSHOT_BACKLOG_DROP_BYTES || 128 * 1024);
+const snapshotBacklogDropBytes = Number(
+  process.env.WEB_SNAPSHOT_BACKLOG_DROP_BYTES || 128 * 1024,
+);
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -39,7 +43,9 @@ function sendFile(res, requestPath) {
   const baseRoot = servingData ? dataRoot : webRoot;
   const relative = servingData
     ? cleanPath.replace(/^\/data\/?/, "")
-    : (cleanPath === "/" ? "index.html" : cleanPath.replace(/^\/+/, ""));
+    : cleanPath === "/"
+      ? "index.html"
+      : cleanPath.replace(/^\/+/, "");
   const filePath = path.resolve(baseRoot, relative);
 
   if (!filePath.startsWith(baseRoot)) {
@@ -55,7 +61,9 @@ function sendFile(res, requestPath) {
       return;
     }
     res.writeHead(200, {
-      "Content-Type": mimeTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream",
+      "Content-Type":
+        mimeTypes[path.extname(filePath).toLowerCase()] ||
+        "application/octet-stream",
       "Cache-Control": "no-store, max-age=0",
     });
     res.end(data);
@@ -247,14 +255,16 @@ server.on("upgrade", (req, socket) => {
     return;
   }
 
-  socket.write([
-    "HTTP/1.1 101 Switching Protocols",
-    "Upgrade: websocket",
-    "Connection: Upgrade",
-    `Sec-WebSocket-Accept: ${makeAcceptValue(key)}`,
-    "",
-    "",
-  ].join("\r\n"));
+  socket.write(
+    [
+      "HTTP/1.1 101 Switching Protocols",
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      `Sec-WebSocket-Accept: ${makeAcceptValue(key)}`,
+      "",
+      "",
+    ].join("\r\n"),
+  );
 
   const tcp = net.createConnection({ host: gameHost, port: gamePort });
   const forwardServerPackets = createServerPacketForwarder(socket);
@@ -274,7 +284,7 @@ server.on("upgrade", (req, socket) => {
       if (!tcp.destroyed) tcp.write(payload);
     },
     () => closePair(socket, tcp),
-    (payload) => writeWsFrame(socket, payload, 0xA),
+    (payload) => writeWsFrame(socket, payload, 0xa),
   );
 
   socket.on("data", parse);
@@ -290,13 +300,17 @@ server.on("upgrade", (req, socket) => {
 
 server.listen(listenPort, listenHost, () => {
   console.log(`FlorrBt web client: http://${listenHost}:${listenPort}`);
-  console.log(`WebSocket proxy: ws://${listenHost}:${listenPort}/ws -> ${gameHost}:${gamePort}`);
+  console.log(
+    `WebSocket proxy: ws://${listenHost}:${listenPort}/ws -> ${gameHost}:${gamePort}`,
+  );
 });
 
 server.on("error", (error) => {
   console.error(`Web server error: ${error.message}`);
   if (error.code === "EADDRINUSE") {
-    console.error(`Port ${listenPort} is already in use. Change WEB_PORT or stop the old web server.`);
+    console.error(
+      `Port ${listenPort} is already in use. Change WEB_PORT or stop the old web server.`,
+    );
   }
   process.exit(1);
 });

@@ -28,7 +28,13 @@ import {
 import { clearLadybugPattern, drawNormalLadybug } from "./ladybug_sprite.js";
 import { drawBeetle } from "./beetle_sprite.js";
 import { drawSoldierAnt } from "./soldier_ant_sprite.js";
-import { drawBee, drawBumbleBee, drawHornet, drawHornetMissile, drawPollen } from "./bee_sprite.js";
+import {
+  drawBee,
+  drawBumbleBee,
+  drawHornet,
+  drawHornetMissile,
+  drawPollen,
+} from "./bee_sprite.js";
 import {
   drawAntEggMob,
   drawAntHole,
@@ -52,8 +58,13 @@ import {
 import { drawSpider, drawSpiderWeb } from "./spider_sprite.js";
 import { dom, emptySlot, slotHasItem, state } from "./app_context.js";
 import { createChatUi, isTextInputActive } from "./chat_ui.js";
-import { loadClientSettings, normalizeMobileControlMode, saveClientSettings } from "./client_settings.js";
 import {
+  loadClientSettings,
+  normalizeMobileControlMode,
+  saveClientSettings,
+} from "./client_settings.js";
+import {
+  clientRuntimeConfig,
   formatClientConfigValue,
   getClientConfigEntry,
   getClientConfigValue,
@@ -158,6 +169,7 @@ import {
   petalWaxType,
   petalWebType,
   petalWingType,
+  petalYuccaType,
   petalYggdrasilType,
   petalYinYangType,
   petalCardIconScale,
@@ -166,9 +178,12 @@ import {
   portalType,
   queenAntType,
   rarityDisplayOrder,
+  rarityEternal,
   rarityExotic,
+  rarityPrimordial,
   rarityShortNames,
   raritySortRanks,
+  rarityUnique,
   rockType,
   sandstormType,
   skillWindupIdFromFlags,
@@ -209,6 +224,8 @@ const {
   registerModeInput,
   connectBtn,
   deathOverlay,
+  deathSource,
+  deathLoot,
   reviveBtn,
   deathCloseBtn,
   quickActions,
@@ -244,6 +261,8 @@ const {
   primarySlots,
   secondarySlots,
   inventoryList,
+  inventoryStacking,
+  inventorySearch,
 } = dom;
 
 let mobileControls = null;
@@ -261,11 +280,12 @@ const chatUi = createChatUi({
 });
 const consoleUi = createConsoleUi({
   beforeOpen: () => closeChat(),
-  executeCommand: (line) => executeClientCommand(line.startsWith("/") ? line.slice(1) : line),
+  executeCommand: (line) =>
+    executeClientCommand(line.startsWith("/") ? line.slice(1) : line),
   focusTarget: canvas,
 });
 
-const defaultMapName = "garden.tmj";
+const defaultMapName = clientRuntimeConfig.loginMapDefaultName;
 const mapRenderer = createMapRenderer({
   ctx,
   defaultMapName,
@@ -275,44 +295,113 @@ const mapRenderer = createMapRenderer({
   worldToScreen,
 });
 let pendingSnapshot = null;
-const packetInterval = 1 / 30;
-const deathFadeDuration = 0.25;
-const deathScaleBoost = 0.72;
-const hurtFlashDuration = 0.14;
-const hurtFlashMinDelta = 0.002;
-const missingEntityViewEdgeGrace = 48;
+const {
+  packetInterval,
+  deathFadeDuration,
+  deathScaleBoost,
+  hurtFlashDuration,
+  hurtFlashMinDelta,
+  missingEntityViewEdgeGrace,
+  viewScreenFill,
+  viewScreenPadding,
+  mouseMoveDeadzonePx,
+  entityFrameMinScreenRadius,
+  entityPixelMinScreenRadius,
+  entityDetailMinScreenRadius,
+  petalDetailMinScreenRadius,
+  dropDetailMinScreenRadius,
+  bloodSacrificeDrawPhaseEnd,
+  bloodSacrificeInitialHeading,
+  bloodSacrificeInnerRadiusScale,
+  bloodSacrificeOuterAlpha,
+  bloodSacrificeShakeAmplitudePx,
+  bloodSacrificeParticleReferenceRadius,
+  bloodSacrificeHeadParticleBurstTicks,
+  bloodSacrificeHeadParticleCount,
+  bloodSacrificeHeadParticleRadius,
+  bloodSacrificeSweepIntervalSeconds,
+  bloodSacrificeSweepDurationSeconds,
+  bloodSacrificeSweepEmissionSpacingPx,
+  bloodSacrificeSweepStepMin,
+  bloodSacrificeSweepStepMax,
+  bloodSacrificeSweepReferenceStep,
+  bloodSacrificeSweepParticleCount,
+  bloodSacrificeSweepParticleRadius,
+  bloodSacrificeVisionMaxAlpha,
+  petalParticleBurstTicks,
+  particleLifetimeSeconds,
+  particleMaxCount,
+  particleSpeedMin,
+  particleSpeedMax,
+  particleVelocityDampingPerSecond,
+  particleSize,
+  directionalPetalAngleOffset,
+  renderCullPaddingPx,
+  renderLoadMediumEntityCount,
+  renderLoadHighEntityCount,
+  ownerRenderLerpRate,
+  entityRenderLerpRate,
+  ownerAngleLerpRate,
+  entityAngleLerpRate,
+  renderSnapBaseDistance,
+  ownerRenderSnapBaseDistance,
+  serverFixedDt,
+  ownerBaseMaxVelocity,
+  ownerBaseAcceleration,
+  ownerDiggingSpeedMultiplier,
+  ownerStopDampingPerTick,
+  ownerStopVelocityEpsilon,
+  ownerSlowToMaxVelocityTime,
+  ownerPredictionTeleportDistance,
+  ownerPredictionHardCorrectionDistance,
+  ownerPredictionCorrectionDeadzone,
+  ownerPredictionSoftCorrectionRate,
+  ownerPredictionHardCorrectionRate,
+  ownerPredictionSpeedSampleMinDt,
+  ownerPredictionSnapshotStaleMin,
+  ownerPredictionTimingSampleCount,
+  ownerPredictionMinTickScale,
+  entitySnapshotVelocityBlend,
+  entityExtrapolateMaxSeconds,
+  entityExtrapolateMaxDistance,
+  petalRenderLerpRate,
+  petalAngleLerpRate,
+  petalExtrapolateMaxSeconds,
+  petalExtrapolateMaxDistance,
+  slotTransactionTimeoutMs,
+  bossBarBandTopRatio,
+  bossBarBandBottomRatio,
+  bossBarWidthRatio,
+  bossBarMinWidthPx,
+  bossBarMaxWidthPx,
+  bossBarHorizontalMarginPx,
+  bossBarHeightPx,
+  bossBarTitleFontPx,
+  bossBarRarityFontPx,
+  bossBarLabelGapPx,
+  bossBarTitleOutlinePx,
+  bossBarRarityOutlinePx,
+  bossBarRadiusPx,
+  loginMapDefaultX,
+  loginMapDefaultY,
+  loginMapDefaultHorizon,
+  minimapMarginPx,
+  minimapLocalMaxPx,
+  minimapFullMaxPx,
+  minimapHudGapPx,
+  minimapTileSubdivisions,
+  minimapBackgroundColor,
+  minimapMaterialColors,
+  minimapUnknownMaterialColor,
+  minimapMonochromeBackgroundColor,
+  minimapMonochromeWallColor,
+  checkpointZoneOutlineColor,
+  checkpointZoneOutlineWidthPx,
+} = clientRuntimeConfig;
 const playerTeam = 1;
-const viewScreenFill = 0.46;
-const viewScreenPadding = 36;
-const mouseMoveDeadzonePx = 16;
-const entityFrameMinScreenRadius = 8;
-const entityPixelMinScreenRadius = 0.45;
-const entityDetailMinScreenRadius = 2.4;
-const petalDetailMinScreenRadius = 0.9;
-const dropDetailMinScreenRadius = 1.15;
-const bloodSacrificeDrawPhaseEnd = 0.5;
-const bloodSacrificeInitialHeading = Math.PI * 0.5;
-const bloodSacrificeInnerRadiusScale = 0.5;
-const bloodSacrificeOuterAlpha = 0.25;
-const bloodSacrificeShakeAmplitudePx = 9;
-const particleLifetimeSeconds = 0.1;
-const particleMaxCount = 4096;
-const particleSpeedMin = 28;
-const particleSpeedMax = 64;
-const particleSize = 3.5;
-const directionalPetalAngleOffset = -Math.PI * 0.25;
-const renderCullPaddingPx = 120;
-const renderLoadMediumEntityCount = 260;
-const renderLoadHighEntityCount = 520;
-const ownerRenderLerpRate = 44;
-const entityRenderLerpRate = 24;
-const ownerAngleLerpRate = 48;
-const entityAngleLerpRate = 28;
-const renderSnapBaseDistance = 220;
-const ownerRenderSnapBaseDistance = 120;
-const serverFixedDt = 0.016;
-const ownerBaseMaxVelocity = 150 * 1.25;
-const ownerBaseAcceleration = 300 * 1.25;
+const craftRarityDisplayOrder = rarityDisplayOrder.filter((rarity) =>
+  canCraftRarity(rarity),
+);
 const ownerMovementTalentMultiplierByRarity = Object.freeze({
   3: 1.1,
   4: 1.2,
@@ -322,39 +411,15 @@ const ownerMovementTalentMultiplierByRarity = Object.freeze({
   8: 1.75,
   9: 2,
 });
-const ownerDiggingSpeedMultiplier = 0.5;
-const ownerStopDampingPerTick = 0.9;
-const ownerStopVelocityEpsilon = 0.00001;
-const ownerSlowToMaxVelocityTime = 0.35;
-const ownerPredictionTeleportDistance = 320;
-const ownerPredictionHardCorrectionDistance = 144;
-const ownerPredictionCorrectionDeadzone = 0.5;
-const ownerPredictionSoftCorrectionRate = 4;
-const ownerPredictionHardCorrectionRate = 18;
-const ownerPredictionSpeedSampleMinDt = 0.005;
-const ownerPredictionSnapshotStaleMin = 0.22;
-const ownerPredictionTimingSampleCount = 7;
-const ownerPredictionMinTickScale = 0.2;
-const entitySnapshotVelocityBlend = 0.35;
-const entityExtrapolateMaxSeconds = 0.05;
-const entityExtrapolateMaxDistance = 32;
-const petalRenderLerpRate = 18;
-const petalAngleLerpRate = 16;
-const petalExtrapolateMaxSeconds = 0.016;
-const petalExtrapolateMaxDistance = 10;
-const slotTransactionTimeoutMs = 3500;
-const craftRarityDisplayOrder = rarityDisplayOrder.filter((rarity) => canCraftRarity(rarity));
-const minimapMarginPx = 12;
-const minimapLocalMaxPx = 164;
-const minimapFullMaxPx = 272;
-const minimapHudGapPx = 12;
 let currentRenderTimeSeconds = 0;
 let currentVisibleEntityCount = 0;
 let currentRenderLoad = 0;
 let currentHornetSkill2WindupOwners = [];
 let minimapHitRect = null;
 let minimapCache = null;
-const PetalNameToType = new Map(PetalNames.map((name, index) => [normalizePetalName(name), index]));
+const PetalNameToType = new Map(
+  PetalNames.map((name, index) => [normalizePetalName(name), index]),
+);
 const assetImages = new Map();
 const livePetalImages = new Map();
 const bandageOverlayImages = new Map();
@@ -364,6 +429,7 @@ const petalLabelIconUrls = new Map();
 const mimicLabelIconUrls = new Map();
 function loadSettings() {
   loadClientSettings();
+  if (!state.loginMapName) state.loginMapName = defaultMapName;
 }
 
 function saveSettings() {
@@ -398,7 +464,10 @@ function updateQuickActionButtons() {
     const points = Math.max(0, Math.floor(state.talentPoints || 0));
     quickTalentPoints.textContent = formatShortCount(points);
     quickTalentPoints.classList.toggle("hidden", points <= 0);
-    quickTalentBtn?.setAttribute("title", points > 0 ? `Talents [X] - ${points} TP` : "Talents [X]");
+    quickTalentBtn?.setAttribute(
+      "title",
+      points > 0 ? `Talents [X] - ${points} TP` : "Talents [X]",
+    );
   }
 }
 
@@ -460,7 +529,7 @@ async function connectAndAuth() {
   closeSocket(false);
   resetNetworkScene();
   setStatus("Preparing map...");
-  await loadMap(defaultMapName);
+  await loadLoginMap();
   setStatus("Connecting...");
 
   const ws = new WebSocket(wsUrl);
@@ -489,6 +558,7 @@ async function connectAndAuth() {
     resetNetworkScene();
     updatePlayUiVisibility();
     authPanel.classList.remove("hidden");
+    loadLoginMap();
     setStatus("Disconnected");
     addConsoleLine("Disconnected", "error");
   });
@@ -509,10 +579,12 @@ function closeSocket(sendDisconnect = true) {
   state.authenticated = false;
   resetNetworkScene();
   updatePlayUiVisibility();
+  loadLoginMap();
 }
 
 function sendBytes(bytes) {
-  if (!bytes || !state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
+  if (!bytes || !state.ws || state.ws.readyState !== WebSocket.OPEN)
+    return false;
   state.ws.send(bytes);
   return true;
 }
@@ -533,7 +605,11 @@ function sendPacketBatch(...packets) {
 }
 
 function sendAuth() {
-  const packet = packAuth(accountInput.value.trim(), passwordInput.value, registerModeInput.checked);
+  const packet = packAuth(
+    accountInput.value.trim(),
+    passwordInput.value,
+    registerModeInput.checked,
+  );
   if (!packet) {
     setStatus("Account is empty");
     return;
@@ -553,7 +629,10 @@ function receiveBytes(bytes) {
     if (frame.payload.length === 0) continue;
     const msg = parseServerMessage(frame.payload);
     if (msg?.type === ServerType.Snapshot) {
-      if (!latestSnapshot || (msg.snapshotId || 0) >= (latestSnapshot.snapshotId || 0))
+      if (
+        !latestSnapshot ||
+        (msg.snapshotId || 0) >= (latestSnapshot.snapshotId || 0)
+      )
         latestSnapshot = msg;
       continue;
     }
@@ -574,10 +653,20 @@ function handleServerMessage(msg) {
   if (!msg || msg.type === 0xff) return;
 
   if (msg.type === ServerType.Welcome) {
-    resetNetworkScene();
+    const previousOwner = state.entities.get(state.ownerEntityId);
+    const previousOwnerWasDead =
+      !!previousOwner && (previousOwner.snapshot.flags & flagDead) !== 0;
+    resetNetworkScene({
+      resetRunCollection:
+        !state.authenticated ||
+        !state.runCollectionBaseline ||
+        state.wasOwnerDead ||
+        previousOwnerWasDead,
+    });
     state.playerId = msg.playerId;
     state.ownerEntityId = msg.ownerEntityId;
-    state.serverTickInterval = msg.tickRate > 0 ? 1 / msg.tickRate : serverFixedDt;
+    state.serverTickInterval =
+      msg.tickRate > 0 ? 1 / msg.tickRate : serverFixedDt;
     resetOwnerPredictionTiming(state.serverTickInterval);
     if (msg.mapName) loadMap(msg.mapName);
     setStatus(`Player ${msg.playerId}`, true);
@@ -586,17 +675,28 @@ function handleServerMessage(msg) {
 
   if (msg.type === ServerType.AuthResult) {
     state.authenticated = !!msg.success;
-    setStatus(msg.message || (msg.success ? "Authenticated" : "Auth failed"), msg.success);
+    setStatus(
+      msg.message || (msg.success ? "Authenticated" : "Auth failed"),
+      msg.success,
+    );
     if (msg.success) {
       state.ownerStateLoaded = false;
       state.inventoryLoaded = false;
+      state.runCollectionBaseline = null;
+      state.runCollectionBaselinePending = true;
+      state.squadMemberNames.clear();
       renderInventoryPanel();
       if (state.craftOpen) renderCraftPanel();
       sendBytes(packStateRequest());
       authPanel.classList.add("hidden");
+    } else {
+      loadLoginMap();
     }
     updatePlayUiVisibility();
-    addConsoleLine(msg.message || (msg.success ? "Authenticated" : "Auth failed"), msg.success ? "" : "error");
+    addConsoleLine(
+      msg.message || (msg.success ? "Authenticated" : "Auth failed"),
+      msg.success ? "" : "error",
+    );
     return;
   }
 
@@ -619,12 +719,20 @@ function handleServerMessage(msg) {
       if (owner?.snapshot) initOwnerPrediction(owner, owner.snapshot, true);
     }
     updateQuickActionButtons();
-    const primaryCount = Math.max(1, (msg.ownerSlots || []).length || state.ownerSlots.length || 5);
+    const primaryCount = Math.max(
+      1,
+      (msg.ownerSlots || []).length || state.ownerSlots.length || 5,
+    );
     state.ownerSlots = normalizeSlots(msg.ownerSlots, primaryCount);
     state.secondarySlots = normalizeSlots(msg.secondarySlots, primaryCount);
-    state.selectedSlot = clamp(state.selectedSlot, 0, state.ownerSlots.length - 1);
+    state.selectedSlot = clamp(
+      state.selectedSlot,
+      0,
+      state.ownerSlots.length - 1,
+    );
     state.ownerStateLoaded = true;
     pruneSlotTransactions();
+    maybeCaptureRunCollectionBaseline();
     renderInventoryPanel();
     if (state.craftOpen) renderCraftPanel();
     if (state.talentOpen) renderTalentPanel();
@@ -635,6 +743,7 @@ function handleServerMessage(msg) {
     state.inventory = msg.inventory || [];
     state.inventoryLoaded = true;
     pruneSlotTransactions();
+    maybeCaptureRunCollectionBaseline();
     renderInventoryPanel();
     if (state.craftOpen) renderCraftPanel();
     return;
@@ -646,12 +755,15 @@ function handleServerMessage(msg) {
   }
 
   if (msg.type === ServerType.Chat) {
-    chatUi.append(msg.chat);
-    addConsoleLine(`${msg.chat.playerName || msg.chat.playerId}: ${msg.chat.message || ""}`);
+    const chat = consumeSquadMetadata(msg.chat);
+    if (chat.message) chatUi.append(chat);
+    addConsoleLine(
+      `${msg.chat.playerName || msg.chat.playerId}: ${msg.chat.message || ""}`,
+    );
   }
 }
 
-function resetNetworkScene() {
+function resetNetworkScene({ resetRunCollection = true } = {}) {
   pendingSnapshot = null;
   clearSlotTransactions();
   state.receiveBuffer = new Uint8Array();
@@ -675,12 +787,20 @@ function resetNetworkScene() {
   state.particles = [];
   state.deathOverlayClosed = false;
   state.wasOwnerDead = false;
+  state.squadMemberNames.clear();
+  if (resetRunCollection) {
+    state.runCollectionBaseline = null;
+    state.runCollectionBaselinePending = true;
+  }
 }
 
 function queueSnapshot(msg) {
   if (!msg || msg.type !== ServerType.Snapshot) return;
   if ((msg.snapshotId || 0) <= (state.snapshotId || 0)) return;
-  if (!pendingSnapshot || (msg.snapshotId || 0) >= (pendingSnapshot.snapshotId || 0))
+  if (
+    !pendingSnapshot ||
+    (msg.snapshotId || 0) >= (pendingSnapshot.snapshotId || 0)
+  )
     pendingSnapshot = msg;
 }
 
@@ -694,13 +814,17 @@ function flushPendingSnapshot() {
 function normalizeSlots(slots, size) {
   const out = Array.from({ length: Math.max(0, size) }, () => emptySlot());
   (slots || []).forEach((slot, index) => {
-    if (index < out.length) out[index] = { petalType: slot.petalType || 0, rarity: slot.rarity || 0 };
+    if (index < out.length)
+      out[index] = { petalType: slot.petalType || 0, rarity: slot.rarity || 0 };
   });
   return out;
 }
 
 function sameSlot(a, b) {
-  return (a?.petalType || 0) === (b?.petalType || 0) && (a?.rarity || 0) === (b?.rarity || 0);
+  return (
+    (a?.petalType || 0) === (b?.petalType || 0) &&
+    (a?.rarity || 0) === (b?.rarity || 0)
+  );
 }
 
 function copySlots(slots, size = slots?.length || 0) {
@@ -715,7 +839,8 @@ function inventoryCountForKey(items, key) {
   let total = 0;
   for (const item of items || []) {
     if (!slotHasItem(item) || (item.count || 0) <= 0) continue;
-    if (inventoryKey(item.petalType, item.rarity) === key) total += item.count || 0;
+    if (inventoryKey(item.petalType, item.rarity) === key)
+      total += item.count || 0;
   }
   return total;
 }
@@ -725,11 +850,98 @@ function copyInventoryItems(items) {
   for (const item of items || []) {
     if (!slotHasItem(item) || (item.count || 0) <= 0) continue;
     const key = inventoryKey(item.petalType, item.rarity);
-    const existing = merged.get(key) || { petalType: item.petalType, rarity: item.rarity, count: 0 };
-    existing.count = clamp(existing.count + Math.max(0, item.count || 0), 0, 1000000000);
+    const existing = merged.get(key) || {
+      petalType: item.petalType,
+      rarity: item.rarity,
+      count: 0,
+    };
+    existing.count = clamp(
+      existing.count + Math.max(0, item.count || 0),
+      0,
+      1000000000,
+    );
     merged.set(key, existing);
   }
   return Array.from(merged.values()).filter((item) => item.count > 0);
+}
+
+function currentRunCollectionItems() {
+  const display = makeDisplaySlotState();
+  const counts = new Map();
+  const add = (item, count) => {
+    if (!slotHasItem(item) || count <= 0) return;
+    const key = inventoryKey(item.petalType, item.rarity);
+    const existing = counts.get(key) || {
+      petalType: item.petalType,
+      rarity: item.rarity,
+      count: 0,
+    };
+    existing.count += count;
+    counts.set(key, existing);
+  };
+
+  for (const item of display.inventory || []) add(item, item.count || 0);
+  for (const slot of display.ownerSlots || []) add(slot, 1);
+  for (const slot of display.secondarySlots || []) add(slot, 1);
+  return Array.from(counts.values()).filter((item) => item.count > 0);
+}
+
+function startRunCollectionBaseline() {
+  state.runCollectionBaseline = null;
+  state.runCollectionBaselinePending = true;
+  maybeCaptureRunCollectionBaseline();
+}
+
+function maybeCaptureRunCollectionBaseline() {
+  if (!state.runCollectionBaselinePending) return;
+  if (!state.ownerStateLoaded || !state.inventoryLoaded || !hasLivingOwner())
+    return;
+  state.runCollectionBaseline = copyInventoryItems(currentRunCollectionItems());
+  state.runCollectionBaselinePending = false;
+}
+
+function collectedThisRunItems() {
+  const current = currentRunCollectionItems();
+  const baseline = state.runCollectionBaseline || current;
+  const baselineCounts = new Map(
+    baseline.map((item) => [inventoryKey(item.petalType, item.rarity), item.count || 0]),
+  );
+
+  return current
+    .map((item) => ({
+      ...item,
+      count: Math.max(
+        0,
+        (item.count || 0) -
+          (baselineCounts.get(inventoryKey(item.petalType, item.rarity)) || 0),
+      ),
+    }))
+    .filter((item) => item.count > 0);
+}
+
+function consumeSquadMetadata(chat) {
+  if (!chat || chat.flag !== ChatFlag.Server) return chat;
+
+  const message = String(chat.message || "");
+  const marker = "<unseen>(";
+  const markerStart = message.indexOf(marker);
+  if (markerStart < 0 || !message.endsWith(")")) return chat;
+
+  const payload = message.slice(markerStart + marker.length, -1);
+  const squadNames = payload
+    ? payload
+        .split("\x1f")
+        .map((name) => name.trim())
+        .filter(Boolean)
+    : [];
+  state.squadMemberNames = new Set(squadNames);
+
+  const visibleMessage = message.slice(0, markerStart);
+
+  return {
+    ...chat,
+    message: visibleMessage.replace(/\s{2,}/g, " ").trim(),
+  };
 }
 
 function touchedInventoryKeysFrom(...items) {
@@ -742,7 +954,10 @@ function touchedInventoryKeysFrom(...items) {
 
 function inventoryTouchedEqual(current, target, keys = []) {
   if (!keys.length) return inventoryArraysEqual(current, target);
-  return keys.every((key) => inventoryCountForKey(current, key) === inventoryCountForKey(target, key));
+  return keys.every(
+    (key) =>
+      inventoryCountForKey(current, key) === inventoryCountForKey(target, key),
+  );
 }
 
 function mergeTouchedInventory(current, target, keys = []) {
@@ -754,9 +969,12 @@ function mergeTouchedInventory(current, target, keys = []) {
     const rarity = Number(rarityText) || 0;
     if (!petalType || !rarity) continue;
     const targetCount = inventoryCountForKey(target, key);
-    const existing = out.find((item) => item.petalType === petalType && item.rarity === rarity);
+    const existing = out.find(
+      (item) => item.petalType === petalType && item.rarity === rarity,
+    );
     if (existing) existing.count = targetCount;
-    else if (targetCount > 0) out.push({ petalType, rarity, count: targetCount });
+    else if (targetCount > 0)
+      out.push({ petalType, rarity, count: targetCount });
   }
   return out.filter((item) => item.count > 0);
 }
@@ -764,12 +982,19 @@ function mergeTouchedInventory(current, target, keys = []) {
 function applyInventoryDelta(items, petalType, rarity, delta) {
   if (!petalType || !rarity || delta === 0) return items;
   const out = copyInventoryItems(items);
-  const existing = out.find((item) => item.petalType === petalType && item.rarity === rarity);
+  const existing = out.find(
+    (item) => item.petalType === petalType && item.rarity === rarity,
+  );
   if (existing) {
-    existing.count = clamp(Math.max(0, (existing.count || 0) + delta), 0, 1000000000);
+    existing.count = clamp(
+      Math.max(0, (existing.count || 0) + delta),
+      0,
+      1000000000,
+    );
     return out.filter((item) => item.count > 0);
   }
-  if (delta > 0) out.push({ petalType, rarity, count: clamp(delta, 0, 1000000000) });
+  if (delta > 0)
+    out.push({ petalType, rarity, count: clamp(delta, 0, 1000000000) });
   return out;
 }
 
@@ -807,9 +1032,14 @@ function pruneSlotTransactions(now = performance.now()) {
     const targetOwner = copySlots(tx.ownerSlots || [], ownerCount);
     const targetSecondary = copySlots(tx.secondarySlots || [], ownerCount);
     const targetInventory = copyInventoryItems(tx.inventory || []);
-    const ownerConfirmed = slotArraysEqual(currentOwner, targetOwner) &&
+    const ownerConfirmed =
+      slotArraysEqual(currentOwner, targetOwner) &&
       slotArraysEqual(currentSecondary, targetSecondary);
-    const inventoryConfirmed = inventoryTouchedEqual(currentInventory, targetInventory, tx.inventoryTouchedKeys || []);
+    const inventoryConfirmed = inventoryTouchedEqual(
+      currentInventory,
+      targetInventory,
+      tx.inventoryTouchedKeys || [],
+    );
     if (ownerConfirmed && inventoryConfirmed) return false;
 
     return true;
@@ -830,7 +1060,11 @@ function makeDisplaySlotState() {
   return {
     ownerSlots: copySlots(latest.ownerSlots, ownerCount),
     secondarySlots: copySlots(latest.secondarySlots, ownerCount),
-    inventory: mergeTouchedInventory(state.inventory, latest.inventory, latest.inventoryTouchedKeys || []),
+    inventory: mergeTouchedInventory(
+      state.inventory,
+      latest.inventory,
+      latest.inventoryTouchedKeys || [],
+    ),
   };
 }
 
@@ -852,25 +1086,47 @@ function highestSlotRarity(slots) {
 }
 
 function highestOwnerSlotRarity() {
-  return Math.max(highestSlotRarity(state.ownerSlots), highestSlotRarity(state.secondarySlots));
+  return Math.max(
+    highestSlotRarity(state.ownerSlots),
+    highestSlotRarity(state.secondarySlots),
+  );
 }
 
 function playerLevelRarity(snap) {
-  const cachedRarity = snap?.entityId ? state.entities.get(snap.entityId)?.playerPrimarySlotRarity || 0 : 0;
-  const ownerRarity = snap?.entityId === state.ownerEntityId ? highestOwnerSlotRarity() : 0;
-  return Math.max(1, highestSlotRarity(snap?.primarySlots), cachedRarity, ownerRarity);
+  const cachedRarity = snap?.entityId
+    ? state.entities.get(snap.entityId)?.playerPrimarySlotRarity || 0
+    : 0;
+  const ownerRarity =
+    snap?.entityId === state.ownerEntityId ? highestOwnerSlotRarity() : 0;
+  return Math.max(
+    1,
+    highestSlotRarity(snap?.primarySlots),
+    cachedRarity,
+    ownerRarity,
+  );
 }
 
 function displayInventory() {
   return makeDisplaySlotState().inventory;
 }
 
-function enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, touchedItems = []) {
+function enqueueSlotTransaction(
+  ownerSlots,
+  secondarySlots,
+  inventory,
+  touchedItems = [],
+) {
   const tx = {
     id: ++state.slotTxSeq,
     createdAt: performance.now(),
-    ownerSlots: copySlots(ownerSlots, Math.max(1, ownerSlots?.length || state.ownerSlots.length || 5)),
-    secondarySlots: copySlots(secondarySlots, Math.max(1, secondarySlots?.length || state.ownerSlots.length || 5)),
+    ownerSlots: copySlots(
+      ownerSlots,
+      Math.max(1, ownerSlots?.length || state.ownerSlots.length || 5),
+    ),
+    secondarySlots: copySlots(
+      secondarySlots,
+      Math.max(1, secondarySlots?.length || state.ownerSlots.length || 5),
+    ),
     inventory: copyInventoryItems(inventory),
     inventoryTouchedKeys: touchedInventoryKeysFrom(...touchedItems),
   };
@@ -892,12 +1148,36 @@ async function loadMap(mapName) {
   return mapRenderer.loadMap(mapName);
 }
 
+function loadLoginMap() {
+  if (state.authenticated) return Promise.resolve(null);
+  applyLoginMapView();
+  return loadMap(state.loginMapName || defaultMapName);
+}
+
+function applyLoginMapView() {
+  if (state.authenticated) return;
+  state.camera.x = state.loginMapX;
+  state.camera.y = state.loginMapY;
+  state.viewRadius = state.loginMapHorizon;
+  minimapCache = null;
+}
+
 function applySnapshot(msg) {
   if ((msg.snapshotId || 0) <= (state.snapshotId || 0)) return;
   const snapshotNow = performance.now() / 1000;
   updateOwnerPredictionTiming(msg.snapshotId, snapshotNow);
   state.snapshotId = msg.snapshotId;
-  state.ownerEntityId = msg.ownerEntityId || state.ownerEntityId;
+  const previousOwnerEntityId = state.ownerEntityId;
+  const nextOwnerEntityId = msg.ownerEntityId || previousOwnerEntityId;
+  const previousOwner = state.entities.get(previousOwnerEntityId);
+  const previousOwnerWasDead =
+    !!previousOwner && (previousOwner.snapshot.flags & flagDead) !== 0;
+  if (
+    nextOwnerEntityId !== previousOwnerEntityId &&
+    (previousOwnerWasDead || state.wasOwnerDead || !state.runCollectionBaseline)
+  )
+    startRunCollectionBaseline();
+  state.ownerEntityId = nextOwnerEntityId;
   const nextViewRadius = msg.viewRadius || state.viewRadius;
   if (nextViewRadius > 0) {
     state.viewRadius = nextViewRadius;
@@ -911,23 +1191,40 @@ function applySnapshot(msg) {
       const previousSnapshot = existing.snapshot;
       const wasDead = (existing.snapshot.flags & flagDead) !== 0;
       const isDead = (snap.flags & flagDead) !== 0;
-      const previousHp = Number.isFinite(existing.snapshot.hpPercent) ? existing.snapshot.hpPercent : snap.hpPercent;
-      existing.snapshotMove = Math.hypot(snap.pos.x - existing.snapshot.pos.x, snap.pos.y - existing.snapshot.pos.y);
+      const previousHp = Number.isFinite(existing.snapshot.hpPercent)
+        ? existing.snapshot.hpPercent
+        : snap.hpPercent;
+      existing.snapshotMove = Math.hypot(
+        snap.pos.x - existing.snapshot.pos.x,
+        snap.pos.y - existing.snapshot.pos.y,
+      );
       existing.lastSnapshotAt = existing.snapshotAt || snapshotNow;
       existing.snapshotAt = snapshotNow;
       updateEntitySnapshotVelocity(existing, snap, previousSnapshot);
       existing.snapshot = snap;
-      if (!Number.isFinite(existing.particleBurstNextAt)) existing.particleBurstNextAt = null;
-      if (snap.entityType === bloodSacrificeEffectType && !Number.isFinite(existing.bloodSacrificeAngle))
-        existing.bloodSacrificeAngle = Math.random() * Math.PI * 2;
+      if (!Number.isFinite(existing.particleBurstNextAt))
+        existing.particleBurstNextAt = null;
+      if (snap.entityType === bloodSacrificeEffectType) {
+        if (!Number.isFinite(existing.bloodSacrificeAngle))
+          existing.bloodSacrificeAngle = Math.random() * Math.PI * 2;
+        if (!Array.isArray(existing.bloodSacrificeSweeps))
+          existing.bloodSacrificeSweeps = [];
+      }
       const slotRarity = highestSlotRarity(snap.primarySlots);
-      if (snap.entityType === playerFlowerType && slotRarity > 0) existing.playerPrimarySlotRarity = slotRarity;
-      if (snap.entityId === state.ownerEntityId) handleOwnerSnapshot(existing, snap, snapshotNow, wasDead, isDead);
-      if (!existing.renderPos || !Number.isFinite(existing.renderPos.x) || !Number.isFinite(existing.renderPos.y))
+      if (snap.entityType === playerFlowerType && slotRarity > 0)
+        existing.playerPrimarySlotRarity = slotRarity;
+      if (snap.entityId === state.ownerEntityId)
+        handleOwnerSnapshot(existing, snap, snapshotNow, wasDead, isDead);
+      if (
+        !existing.renderPos ||
+        !Number.isFinite(existing.renderPos.x) ||
+        !Number.isFinite(existing.renderPos.y)
+      )
         syncEntityRenderToSnapshot(existing, snap);
       existing.dying = false;
       existing.deathAge = 0;
-      if (!isDead && snap.hpPercent < previousHp - hurtFlashMinDelta) existing.hurtFlashAge = 0;
+      if (!isDead && snap.hpPercent < previousHp - hurtFlashMinDelta)
+        existing.hurtFlashAge = 0;
       if (isDead && !wasDead) existing.deathAngle = Math.random() * Math.PI * 2;
       if (!isDead) existing.deathAngle = null;
     } else {
@@ -940,22 +1237,32 @@ function applySnapshot(msg) {
         snapshotVelocity: { x: 0, y: 0 },
         snapshotAt: snapshotNow,
         lastSnapshotAt: snapshotNow,
-        playerPrimarySlotRarity: snap.entityType === playerFlowerType ? highestSlotRarity(snap.primarySlots) : 0,
+        playerPrimarySlotRarity:
+          snap.entityType === playerFlowerType
+            ? highestSlotRarity(snap.primarySlots)
+            : 0,
         motionBlend: 0,
         dying: false,
         deathAge: 0,
         hurtFlashAge: hurtFlashDuration,
         deathAngle: isDead ? Math.random() * Math.PI * 2 : null,
         particleBurstNextAt: null,
-        bloodSacrificeAngle: snap.entityType === bloodSacrificeEffectType ? Math.random() * Math.PI * 2 : null,
+        bloodSacrificeAngle:
+          snap.entityType === bloodSacrificeEffectType
+            ? Math.random() * Math.PI * 2
+            : null,
+        bloodSacrificeSweepNextAt: null,
+        bloodSacrificeSweeps: [],
       });
       const created = state.entities.get(snap.entityId);
-      if (snap.entityId === state.ownerEntityId) initOwnerPrediction(created, snap, true);
+      if (snap.entityId === state.ownerEntityId)
+        initOwnerPrediction(created, snap, true);
     }
   }
   const owner = state.entities.get(state.ownerEntityId);
-  state.digging = !!(owner?.snapshot && (owner.snapshot.flags & flagDigging));
+  state.digging = !!(owner?.snapshot && owner.snapshot.flags & flagDigging);
   syncOwnerSlotsFromSnapshot(owner?.snapshot);
+  maybeCaptureRunCollectionBaseline();
   if (owner?.renderPos && !owner.dying) {
     state.camera.x = owner.renderPos.x;
     state.camera.y = owner.renderPos.y;
@@ -973,18 +1280,28 @@ function applySnapshot(msg) {
     entity.dying = true;
     entity.deathAge = 0;
     entity.hurtFlashAge = hurtFlashDuration;
-    if (entity.deathAngle == null) entity.deathAngle = Math.random() * Math.PI * 2;
+    if (entity.deathAngle == null)
+      entity.deathAngle = Math.random() * Math.PI * 2;
   }
 }
 
 function syncOwnerSlotsFromSnapshot(ownerSnap) {
-  if (state.ownerStateLoaded || !ownerSnap || !Array.isArray(ownerSnap.primarySlots) || ownerSnap.primarySlots.length <= 0)
+  if (
+    state.ownerStateLoaded ||
+    !ownerSnap ||
+    !Array.isArray(ownerSnap.primarySlots) ||
+    ownerSnap.primarySlots.length <= 0
+  )
     return;
 
   const primaryCount = Math.max(1, ownerSnap.primarySlots.length);
   state.ownerSlots = normalizeSlots(ownerSnap.primarySlots, primaryCount);
   state.secondarySlots = normalizeSlots(state.secondarySlots, primaryCount);
-  state.selectedSlot = clamp(state.selectedSlot, 0, state.ownerSlots.length - 1);
+  state.selectedSlot = clamp(
+    state.selectedSlot,
+    0,
+    state.ownerSlots.length - 1,
+  );
   renderInventoryPanel();
   renderCraftPanel();
 }
@@ -1001,7 +1318,10 @@ function syncEntityRenderToSnapshot(entity, snap) {
 
 function updateEntitySnapshotVelocity(entity, snap, previousSnapshot) {
   if (!entity || !snap?.pos || !previousSnapshot?.pos) return;
-  const dt = Math.max(ownerPredictionSpeedSampleMinDt, (entity.snapshotAt || 0) - (entity.lastSnapshotAt || 0));
+  const dt = Math.max(
+    ownerPredictionSpeedSampleMinDt,
+    (entity.snapshotAt || 0) - (entity.lastSnapshotAt || 0),
+  );
   const sample = {
     x: (snap.pos.x - previousSnapshot.pos.x) / dt,
     y: (snap.pos.y - previousSnapshot.pos.y) / dt,
@@ -1017,14 +1337,20 @@ function ownerMovementTalentMultiplier(talents) {
   let multiplier = 1;
   for (const talent of talents || []) {
     if (talent?.id !== TalentId.Movement) continue;
-    multiplier = Math.max(multiplier, ownerMovementTalentMultiplierByRarity[talent.rarity] || 1);
+    multiplier = Math.max(
+      multiplier,
+      ownerMovementTalentMultiplierByRarity[talent.rarity] || 1,
+    );
   }
   return multiplier;
 }
 
 function resetOwnerPredictionTiming(tickInterval = serverFixedDt) {
   const safeTickInterval = clamp(tickInterval || serverFixedDt, 0.001, 0.25);
-  const ticksPerSnapshot = Math.max(1, Math.ceil(packetInterval / safeTickInterval - 0.000001));
+  const ticksPerSnapshot = Math.max(
+    1,
+    Math.ceil(packetInterval / safeTickInterval - 0.000001),
+  );
   const expectedSnapshotInterval = ticksPerSnapshot * safeTickInterval;
   state.ownerPredictionTiming = {
     expectedSnapshotInterval,
@@ -1042,23 +1368,35 @@ function updateOwnerPredictionTiming(snapshotId, snapshotNow) {
 
   const idDelta = snapshotId - timing.lastSnapshotId;
   const elapsed = snapshotNow - timing.lastSnapshotAt;
-  if (timing.lastSnapshotId >= 0 && idDelta > 0 && idDelta <= 120 && elapsed > 0) {
+  if (
+    timing.lastSnapshotId >= 0 &&
+    idDelta > 0 &&
+    idDelta <= 120 &&
+    elapsed > 0
+  ) {
     const sample = elapsed / idDelta;
     const expected = timing.expectedSnapshotInterval;
     if (sample >= expected * 0.5 && sample <= Math.max(2, expected * 12)) {
       timing.samples.push(sample);
-      if (timing.samples.length > ownerPredictionTimingSampleCount) timing.samples.shift();
+      if (timing.samples.length > ownerPredictionTimingSampleCount)
+        timing.samples.shift();
 
       const sorted = [...timing.samples].sort((a, b) => a - b);
       const middle = Math.floor(sorted.length / 2);
-      timing.snapshotInterval = sorted.length % 2 === 0
-        ? (sorted[middle - 1] + sorted[middle]) * 0.5
-        : sorted[middle];
+      timing.snapshotInterval =
+        sorted.length % 2 === 0
+          ? (sorted[middle - 1] + sorted[middle]) * 0.5
+          : sorted[middle];
 
       if (timing.samples.length >= 3) {
-        const targetScale = clamp(expected / timing.snapshotInterval, ownerPredictionMinTickScale, 1);
+        const targetScale = clamp(
+          expected / timing.snapshotInterval,
+          ownerPredictionMinTickScale,
+          1,
+        );
         const blend = targetScale < timing.simulationScale ? 0.32 : 0.08;
-        timing.simulationScale += (targetScale - timing.simulationScale) * blend;
+        timing.simulationScale +=
+          (targetScale - timing.simulationScale) * blend;
       }
     }
   }
@@ -1067,11 +1405,18 @@ function updateOwnerPredictionTiming(snapshotId, snapshotNow) {
   timing.lastSnapshotId = snapshotId;
 }
 
-function initOwnerPrediction(entity, snap = entity?.snapshot, forceSnap = false) {
+function initOwnerPrediction(
+  entity,
+  snap = entity?.snapshot,
+  forceSnap = false,
+) {
   if (!entity || !snap?.pos) return null;
   const prediction = entity.ownerPrediction || {};
-  const shouldSnap = forceSnap || !prediction.pos ||
-    !Number.isFinite(prediction.pos.x) || !Number.isFinite(prediction.pos.y);
+  const shouldSnap =
+    forceSnap ||
+    !prediction.pos ||
+    !Number.isFinite(prediction.pos.x) ||
+    !Number.isFinite(prediction.pos.y);
 
   if (shouldSnap) {
     prediction.pos = { x: snap.pos.x, y: snap.pos.y };
@@ -1086,15 +1431,18 @@ function initOwnerPrediction(entity, snap = entity?.snapshot, forceSnap = false)
   } else {
     if (!prediction.vel) prediction.vel = { x: 0, y: 0 };
     if (!prediction.correction) prediction.correction = { x: 0, y: 0 };
-    if (!prediction.lastServerPos) prediction.lastServerPos = { x: snap.pos.x, y: snap.pos.y };
+    if (!prediction.lastServerPos)
+      prediction.lastServerPos = { x: snap.pos.x, y: snap.pos.y };
   }
 
   entity.ownerPrediction = prediction;
-  if (!Number.isFinite(entity.renderAngle) && Number.isFinite(snap.angle)) entity.renderAngle = snap.angle;
+  if (!Number.isFinite(entity.renderAngle) && Number.isFinite(snap.angle))
+    entity.renderAngle = snap.angle;
   return prediction;
 }
 
 function handleOwnerSnapshot(entity, snap, snapshotNow, wasDead, isDead) {
+  if (wasDead && !isDead) startRunCollectionBaseline();
   const prediction = initOwnerPrediction(entity, snap, false);
   if (!prediction || !snap?.pos) return;
 
@@ -1102,7 +1450,9 @@ function handleOwnerSnapshot(entity, snap, snapshotNow, wasDead, isDead) {
   const dy = snap.pos.y - prediction.pos.y;
   const errorDistance = Math.hypot(dx, dy);
   const largeStateChange = wasDead !== isDead || (snap.flags & flagDead) !== 0;
-  const shouldSnap = largeStateChange || errorDistance >= ownerPredictionTeleportDistance ||
+  const shouldSnap =
+    largeStateChange ||
+    errorDistance >= ownerPredictionTeleportDistance ||
     !Number.isFinite(errorDistance);
 
   if (shouldSnap) {
@@ -1118,9 +1468,10 @@ function handleOwnerSnapshot(entity, snap, snapshotNow, wasDead, isDead) {
     return;
   }
 
-  prediction.correction = errorDistance <= ownerPredictionCorrectionDeadzone
-    ? { x: 0, y: 0 }
-    : { x: dx, y: dy };
+  prediction.correction =
+    errorDistance <= ownerPredictionCorrectionDeadzone
+      ? { x: 0, y: 0 }
+      : { x: dx, y: dy };
   prediction.lastServerPos = { x: snap.pos.x, y: snap.pos.y };
   prediction.lastSnapshotAt = snapshotNow;
   prediction.staleTime = 0;
@@ -1141,29 +1492,41 @@ function stepOwnerPrediction(entity, dt) {
   const prediction = initOwnerPrediction(entity, snap, false);
   if (!prediction) return;
 
-  const staleNow = Math.max(0, performance.now() / 1000 - (prediction.lastSnapshotAt || entity.snapshotAt || 0));
+  const staleNow = Math.max(
+    0,
+    performance.now() / 1000 -
+      (prediction.lastSnapshotAt || entity.snapshotAt || 0),
+  );
   prediction.staleTime = staleNow;
   const timing = state.ownerPredictionTiming;
   const snapshotInterval = Math.max(
     timing?.expectedSnapshotInterval || 0,
     timing?.snapshotInterval || 0,
   );
-  const staleGrace = Math.max(ownerPredictionSnapshotStaleMin, snapshotInterval * 2.5);
+  const staleGrace = Math.max(
+    ownerPredictionSnapshotStaleMin,
+    snapshotInterval * 2.5,
+  );
   const staleFadeDuration = Math.max(0.08, snapshotInterval);
-  const staleMultiplier = staleNow <= staleGrace
-    ? 1
-    : clamp(1 - (staleNow - staleGrace) / staleFadeDuration, 0, 1);
+  const staleMultiplier =
+    staleNow <= staleGrace
+      ? 1
+      : clamp(1 - (staleNow - staleGrace) / staleFadeDuration, 0, 1);
   const simulationScale = timing?.simulationScale || 1;
   const simulationDt = dt * simulationScale;
-  const diggingMultiplier = (snap.flags & flagDigging) !== 0 ? ownerDiggingSpeedMultiplier : 1;
+  const diggingMultiplier =
+    (snap.flags & flagDigging) !== 0 ? ownerDiggingSpeedMultiplier : 1;
   const speedScale = state.ownerMovementMultiplier || 1;
-  const maxVelocity = ownerBaseMaxVelocity * diggingMultiplier * speedScale * staleMultiplier;
-  const acceleration = ownerBaseAcceleration * diggingMultiplier * speedScale * staleMultiplier;
+  const maxVelocity =
+    ownerBaseMaxVelocity * diggingMultiplier * speedScale * staleMultiplier;
+  const acceleration =
+    ownerBaseAcceleration * diggingMultiplier * speedScale * staleMultiplier;
 
   let vel = prediction.vel || { x: 0, y: 0 };
   const speed = Math.hypot(vel.x, vel.y);
   if (speed > maxVelocity && ownerSlowToMaxVelocityTime > 0) {
-    const slowAmount = (speed - maxVelocity) * simulationDt / ownerSlowToMaxVelocityTime;
+    const slowAmount =
+      ((speed - maxVelocity) * simulationDt) / ownerSlowToMaxVelocityTime;
     const nextSpeed = Math.max(maxVelocity, speed - slowAmount);
     const scale = speed > 0 ? nextSpeed / speed : 0;
     vel = { x: vel.x * scale, y: vel.y * scale };
@@ -1183,15 +1546,19 @@ function stepOwnerPrediction(entity, dt) {
       vel = desired;
     } else {
       vel = {
-        x: vel.x + diff.x / diffLength * maxAccel,
-        y: vel.y + diff.y / diffLength * maxAccel,
+        x: vel.x + (diff.x / diffLength) * maxAccel,
+        y: vel.y + (diff.y / diffLength) * maxAccel,
       };
     }
   } else {
     const tickInterval = state.serverTickInterval || serverFixedDt;
-    const damping = Math.pow(ownerStopDampingPerTick, simulationDt / tickInterval);
+    const damping = Math.pow(
+      ownerStopDampingPerTick,
+      simulationDt / tickInterval,
+    );
     vel = { x: vel.x * damping, y: vel.y * damping };
-    if (vel.x * vel.x + vel.y * vel.y <= ownerStopVelocityEpsilon) vel = { x: 0, y: 0 };
+    if (vel.x * vel.x + vel.y * vel.y <= ownerStopVelocityEpsilon)
+      vel = { x: 0, y: 0 };
   }
 
   prediction.vel = vel;
@@ -1201,7 +1568,11 @@ function stepOwnerPrediction(entity, dt) {
     x: predictedStart.x + vel.x * simulationDt,
     y: predictedStart.y + vel.y * simulationDt,
   };
-  const predictedMotion = mapRenderer.resolvePredictedCircleMotion(predictedStart, predictedEnd, radius);
+  const predictedMotion = mapRenderer.resolvePredictedCircleMotion(
+    predictedStart,
+    predictedEnd,
+    radius,
+  );
   prediction.pos = predictedMotion.pos;
   if (predictedMotion.normals?.length) {
     for (const normal of predictedMotion.normals) {
@@ -1216,17 +1587,26 @@ function stepOwnerPrediction(entity, dt) {
     prediction.vel = vel;
   }
 
-  const correctionDistance = Math.hypot(prediction.correction?.x || 0, prediction.correction?.y || 0);
+  const correctionDistance = Math.hypot(
+    prediction.correction?.x || 0,
+    prediction.correction?.y || 0,
+  );
   if (correctionDistance > 0) {
-    const correctionRate = correctionDistance >= ownerPredictionHardCorrectionDistance ?
-      ownerPredictionHardCorrectionRate : ownerPredictionSoftCorrectionRate;
+    const correctionRate =
+      correctionDistance >= ownerPredictionHardCorrectionDistance
+        ? ownerPredictionHardCorrectionRate
+        : ownerPredictionSoftCorrectionRate;
     const amount = smoothFactor(correctionRate, dt);
     const correctionStart = { x: prediction.pos.x, y: prediction.pos.y };
     const correctionEnd = {
       x: correctionStart.x + prediction.correction.x * amount,
       y: correctionStart.y + prediction.correction.y * amount,
     };
-    prediction.pos = mapRenderer.resolvePredictedCircleMotion(correctionStart, correctionEnd, radius).pos;
+    prediction.pos = mapRenderer.resolvePredictedCircleMotion(
+      correctionStart,
+      correctionEnd,
+      radius,
+    ).pos;
     prediction.correction.x *= 1 - amount;
     prediction.correction.y *= 1 - amount;
     if (Math.hypot(prediction.correction.x, prediction.correction.y) < 0.01)
@@ -1237,11 +1617,19 @@ function stepOwnerPrediction(entity, dt) {
   entity.serverRenderPos = { x: snap.pos.x, y: snap.pos.y };
   if (Number.isFinite(snap.angle)) {
     if (!Number.isFinite(entity.renderAngle)) entity.renderAngle = snap.angle;
-    else entity.renderAngle = lerpAngle(entity.renderAngle, snap.angle, smoothFactor(ownerAngleLerpRate, dt));
+    else
+      entity.renderAngle = lerpAngle(
+        entity.renderAngle,
+        snap.angle,
+        smoothFactor(ownerAngleLerpRate, dt),
+      );
   }
 
   state.predictionDebug = {
-    errorDistance: Math.hypot(snap.pos.x - prediction.pos.x, snap.pos.y - prediction.pos.y),
+    errorDistance: Math.hypot(
+      snap.pos.x - prediction.pos.x,
+      snap.pos.y - prediction.pos.y,
+    ),
     speedScale,
     tickScale: simulationScale,
     snapshotInterval,
@@ -1255,21 +1643,34 @@ function stepEntityRenderToSnapshot(entity, dt, isOwner = false) {
   const snap = entity?.snapshot;
   if (!snap?.pos) return;
 
-  if (!entity.renderPos || !Number.isFinite(entity.renderPos.x) || !Number.isFinite(entity.renderPos.y)) {
+  if (
+    !entity.renderPos ||
+    !Number.isFinite(entity.renderPos.x) ||
+    !Number.isFinite(entity.renderPos.y)
+  ) {
     syncEntityRenderToSnapshot(entity, snap);
     return;
   }
 
-  const petalType = isPetalEntity(snap.entityType) ? petalTypeFromEntity(snap.entityType) : 0;
+  const petalType = isPetalEntity(snap.entityType)
+    ? petalTypeFromEntity(snap.entityType)
+    : 0;
   const target = entityInterpolationTarget(entity, snap, isOwner, petalType);
   const dx = target.x - entity.renderPos.x;
   const dy = target.y - entity.renderPos.y;
   const dist = Math.hypot(dx, dy);
-  const snapDistance = (isOwner ? ownerRenderSnapBaseDistance : renderSnapBaseDistance) + Math.max(0, snap.radius || 0) * 3;
+  const snapDistance =
+    (isOwner ? ownerRenderSnapBaseDistance : renderSnapBaseDistance) +
+    Math.max(0, snap.radius || 0) * 3;
   if (dist >= snapDistance) {
     syncEntityRenderToSnapshot(entity, snap);
   } else if (dist > 0) {
-    const renderRate = petalType > 0 ? petalRenderLerpRate : (isOwner ? ownerRenderLerpRate : entityRenderLerpRate);
+    const renderRate =
+      petalType > 0
+        ? petalRenderLerpRate
+        : isOwner
+          ? ownerRenderLerpRate
+          : entityRenderLerpRate;
     const factor = smoothFactor(renderRate, dt);
     entity.renderPos.x += dx * factor;
     entity.renderPos.y += dy * factor;
@@ -1279,8 +1680,17 @@ function stepEntityRenderToSnapshot(entity, dt, isOwner = false) {
     if (!Number.isFinite(entity.renderAngle)) {
       entity.renderAngle = snap.angle;
     } else {
-      const angleRate = petalType > 0 ? petalAngleLerpRate : (isOwner ? ownerAngleLerpRate : entityAngleLerpRate);
-      entity.renderAngle = lerpAngle(entity.renderAngle, snap.angle, smoothFactor(angleRate, dt));
+      const angleRate =
+        petalType > 0
+          ? petalAngleLerpRate
+          : isOwner
+            ? ownerAngleLerpRate
+            : entityAngleLerpRate;
+      entity.renderAngle = lerpAngle(
+        entity.renderAngle,
+        snap.angle,
+        smoothFactor(angleRate, dt),
+      );
     }
   }
 }
@@ -1291,16 +1701,24 @@ function entityInterpolationTarget(entity, snap, isOwner, petalType = 0) {
 
   const age = Math.max(0, performance.now() / 1000 - (entity.snapshotAt || 0));
   if (petalType === petalYinYangType) return snap.pos;
-  const maxLead = petalType > 0 ? petalExtrapolateMaxSeconds : entityExtrapolateMaxSeconds;
+  const maxLead =
+    petalType > 0 ? petalExtrapolateMaxSeconds : entityExtrapolateMaxSeconds;
   const lead = Math.min(maxLead, age + serverFixedDt);
   const vx = entity.snapshotVelocity.x || 0;
   const vy = entity.snapshotVelocity.y || 0;
   let ex = vx * lead;
   let ey = vy * lead;
   const distance = Math.hypot(ex, ey);
-  const maxDistance = petalType > 0 ?
-    Math.max(petalExtrapolateMaxDistance, Math.max(0, snap.radius || 0) * 0.4) :
-    Math.max(entityExtrapolateMaxDistance, Math.max(0, snap.radius || 0) * 1.5);
+  const maxDistance =
+    petalType > 0
+      ? Math.max(
+          petalExtrapolateMaxDistance,
+          Math.max(0, snap.radius || 0) * 0.4,
+        )
+      : Math.max(
+          entityExtrapolateMaxDistance,
+          Math.max(0, snap.radius || 0) * 1.5,
+        );
   if (distance > maxDistance && distance > 0) {
     const scale = maxDistance / distance;
     ex *= scale;
@@ -1330,7 +1748,9 @@ function shouldFadeMissingEntity(entity) {
 
 function isNullVisualEntity(entity) {
   if (!entity || !entity.snapshot) return false;
-  const isOwner = (entity.snapshot.flags & flagOwner) !== 0 || entity.snapshot.entityId === state.ownerEntityId;
+  const isOwner =
+    (entity.snapshot.flags & flagOwner) !== 0 ||
+    entity.snapshot.entityId === state.ownerEntityId;
   return isOwner && ownerHasPetal(petalNullificationType);
 }
 
@@ -1354,13 +1774,18 @@ function readMouseMoveInput() {
   if (!state.mouse.seen || state.mouse.inUi) return { x: 0, y: 0 };
 
   const owner = state.entities.get(state.ownerEntityId);
-  const center = owner ? worldToScreen(owner.renderPos) : { x: state.canvasWidth * 0.5, y: state.canvasHeight * 0.5 };
+  const center = owner
+    ? worldToScreen(owner.renderPos)
+    : { x: state.canvasWidth * 0.5, y: state.canvasHeight * 0.5 };
   let x = state.mouse.x - center.x;
   let y = state.mouse.y - center.y;
   const length = Math.hypot(x, y);
   if (length <= mouseMoveDeadzonePx) return { x: 0, y: 0 };
 
-  const fullSpeedDistance = Math.max(80, Math.min(state.canvasWidth, state.canvasHeight) * 0.18);
+  const fullSpeedDistance = Math.max(
+    80,
+    Math.min(state.canvasWidth, state.canvasHeight) * 0.18,
+  );
   const scale = Math.min(1, length / fullSpeedDistance) / length;
   return { x: x * scale, y: y * scale };
 }
@@ -1404,15 +1829,25 @@ function flushInput(dt) {
     state.sendTimer = 0;
   }
 
-  const attacking = state.attacking || !!mobileControls?.isAttacking();
-  const defending = state.defending || !!mobileControls?.isDefending();
+  const attacking =
+    state.attacking ||
+    state.keys.has("space") ||
+    !!mobileControls?.isAttacking();
+  const defending =
+    state.defending ||
+    state.keys.has("shift") ||
+    !!mobileControls?.isDefending();
   const digging = false;
   const effectiveAttacking = attacking;
   const effectiveDefending = defending;
-  if (effectiveAttacking !== state.lastInput.attacking ||
-      effectiveDefending !== state.lastInput.defending ||
-      digging !== state.lastInput.digging) {
-    sendBytes(packChores(effectiveAttacking, effectiveDefending, false, false, digging));
+  if (
+    effectiveAttacking !== state.lastInput.attacking ||
+    effectiveDefending !== state.lastInput.defending ||
+    digging !== state.lastInput.digging
+  ) {
+    sendBytes(
+      packChores(effectiveAttacking, effectiveDefending, false, false, digging),
+    );
     state.lastInput.attacking = effectiveAttacking;
     state.lastInput.defending = effectiveDefending;
     state.lastInput.digging = digging;
@@ -1420,17 +1855,57 @@ function flushInput(dt) {
 }
 
 function isOwnerDead() {
-  const owner = state.authenticated ? state.entities.get(state.ownerEntityId) : null;
-  return !!owner && ((owner.snapshot.flags & flagDead) !== 0);
+  const owner = state.authenticated
+    ? state.entities.get(state.ownerEntityId)
+    : null;
+  return !!owner && (owner.snapshot.flags & flagDead) !== 0;
+}
+
+function hasLivingOwner() {
+  const owner = state.authenticated
+    ? state.entities.get(state.ownerEntityId)
+    : null;
+  return !!owner && (owner.snapshot.flags & flagDead) === 0;
 }
 
 function updateDeathOverlay() {
   const dead = isOwnerDead();
-  if (dead && !state.wasOwnerDead) state.deathOverlayClosed = false;
+  if (dead && !state.wasOwnerDead) {
+    state.deathOverlayClosed = false;
+    renderDeathOverlayContent();
+  }
   if (!dead) state.deathOverlayClosed = false;
   state.wasOwnerDead = dead;
   deathOverlay.classList.toggle("hidden", !dead);
   deathOverlay.classList.toggle("closed", dead && state.deathOverlayClosed);
+}
+
+function renderDeathOverlayContent() {
+  if (deathSource) deathSource.textContent = "A mysterious entity";
+  if (!deathLoot) return;
+
+  deathLoot.replaceChildren();
+  const items = collectedThisRunItems()
+    .sort(
+      (a, b) =>
+        raritySortRank(b.rarity) - raritySortRank(a.rarity) ||
+        (b.count || 0) - (a.count || 0) ||
+        petalTypeName(a.petalType).localeCompare(
+          petalTypeName(b.petalType),
+          "en",
+        ),
+    )
+    .slice(0, 8);
+
+  deathLoot.classList.toggle("empty", items.length === 0);
+  for (const item of items) {
+    const card = document.createElement("div");
+    card.className = "death-loot-item";
+    card.title = `${petalTypeName(item.petalType)} ${rarityName(item.rarity)} x${formatShortCount(item.count)}`;
+    card.appendChild(makePetalStack(item.petalType, item.rarity, item.count));
+    attachPetalInfoTooltip(card, item.petalType, item.rarity);
+    deathLoot.appendChild(card);
+  }
 }
 
 function requestRevive() {
@@ -1475,9 +1950,12 @@ function executeClientCommand(line) {
     const flagText = String(args.shift()).toLowerCase();
     const message = args.join(" ").trim();
     if (!message) return;
-    if (flagText === "global" || flagText === "g") sendChat(ChatFlag.Global, message);
-    else if (flagText === "local" || flagText === "l") sendChat(ChatFlag.Local, message);
-    else if (flagText === "whisper" || flagText === "w") sendChat(ChatFlag.Whisper, `/whisper ${message}`);
+    if (flagText === "global" || flagText === "g")
+      sendChat(ChatFlag.Global, message);
+    else if (flagText === "local" || flagText === "l")
+      sendChat(ChatFlag.Local, message);
+    else if (flagText === "whisper" || flagText === "w")
+      sendChat(ChatFlag.Whisper, `/whisper ${message}`);
     return;
   }
   if (name === "g") {
@@ -1500,14 +1978,27 @@ function executeClientCommand(line) {
     loadMap(mapName);
     return;
   }
-  if (name === "grid") {
-    state.debugGrid = args.length ? args[0] !== "0" && args[0].toLowerCase() !== "off" : !state.debugGrid;
-    addConsoleLine(`Debug grid ${state.debugGrid ? "on" : "off"}`);
+  if (name === "login_map" || name === "loginmap") {
+    void executeLoginMapCommand(args);
+    return;
+  }
+  if (
+    name === "login_map_x" ||
+    name === "login_map_y" ||
+    name === "login_map_horizon"
+  ) {
+    executeLoginMapViewCommand(name, args);
     return;
   }
   if (name === "hitbox" || name === "hitboxes") {
-    state.debugHitbox = args.length ? args[0] !== "0" && args[0].toLowerCase() !== "off" : !state.debugHitbox;
+    state.debugHitbox = args.length
+      ? args[0] !== "0" && args[0].toLowerCase() !== "off"
+      : !state.debugHitbox;
     addConsoleLine(`Hitbox debug ${state.debugHitbox ? "on" : "off"}`);
+    return;
+  }
+  if (name === "colorful_map") {
+    executeClientSetCommand(["colorful_map", ...args]);
     return;
   }
   if (name === "set") {
@@ -1521,7 +2012,11 @@ function executeClientCommand(line) {
   if (name === "keyboard_control") {
     if (args.length) {
       const value = String(args[0]).toLowerCase();
-      state.keyboardControl = !(value === "0" || value === "off" || value === "false");
+      state.keyboardControl = !(
+        value === "0" ||
+        value === "off" ||
+        value === "false"
+      );
       saveSettings();
     }
     addConsoleLine(`Keyboard control ${state.keyboardControl ? "on" : "off"}`);
@@ -1542,6 +2037,89 @@ function executeClientCommand(line) {
   }
 
   sendChat(ChatFlag.Local, `/${line}`);
+}
+
+async function executeLoginMapCommand(args) {
+  if (state.authenticated) {
+    addConsoleLine("Login map can only be changed while logged out", "error");
+    return;
+  }
+
+  if (!args.length) {
+    addConsoleLine(`Login map = ${state.loginMapName || defaultMapName}`);
+    addConsoleLine("Usage: login_map [map name|reset]");
+    return;
+  }
+
+  const input = args.join(" ").trim();
+  const requestedMap =
+    input.toLowerCase() === "reset"
+      ? defaultMapName
+      : appendMapExtension(input);
+  const previousMap = state.loginMapName || defaultMapName;
+  const loadedMap = await loadMap(requestedMap);
+
+  if (!loadedMap) {
+    addConsoleLine(`Login map unchanged: ${previousMap}`, "error");
+    if (!state.authenticated) await loadMap(previousMap);
+    return;
+  }
+
+  state.loginMapName = requestedMap;
+  saveSettings();
+  addConsoleLine(`Login map = ${requestedMap}`);
+}
+
+function appendMapExtension(mapName) {
+  const normalized = String(mapName || "").trim();
+  if (!normalized || /\.[^/\\]+$/.test(normalized)) return normalized;
+  return `${normalized}.tmj`;
+}
+
+function executeLoginMapViewCommand(name, args) {
+  if (state.authenticated) {
+    addConsoleLine("Login map view can only be changed while logged out", "error");
+    return;
+  }
+
+  const definitions = {
+    login_map_x: {
+      property: "loginMapX",
+      defaultValue: loginMapDefaultX,
+    },
+    login_map_y: {
+      property: "loginMapY",
+      defaultValue: loginMapDefaultY,
+    },
+    login_map_horizon: {
+      property: "loginMapHorizon",
+      defaultValue: loginMapDefaultHorizon,
+      minimum: 0,
+    },
+  };
+  const definition = definitions[name];
+  if (!definition) return;
+
+  if (!args.length) {
+    addConsoleLine(`${name} = ${formatClientConfigValue(state[definition.property])}`);
+    return;
+  }
+
+  const rawValue = String(args[0] || "").trim().toLowerCase();
+  const value =
+    rawValue === "reset" ? definition.defaultValue : Number(rawValue);
+  if (
+    !Number.isFinite(value) ||
+    (Number.isFinite(definition.minimum) && value < definition.minimum)
+  ) {
+    addConsoleLine(`Invalid value for ${name}: ${args[0]}`, "error");
+    return;
+  }
+
+  state[definition.property] = value;
+  applyLoginMapView();
+  saveSettings();
+  addConsoleLine(`${name} = ${formatClientConfigValue(value)}`);
 }
 
 function executeClientSliderCommand(args) {
@@ -1566,7 +2144,10 @@ function executeClientSliderCommand(args) {
   }
 
   const span = Math.abs(end - start);
-  const step = Number.isFinite(explicitStep) && explicitStep > 0 ? explicitStep : span / 200;
+  const step =
+    Number.isFinite(explicitStep) && explicitStep > 0
+      ? explicitStep
+      : span / 200;
   state.slider = {
     name: entry.name,
     min: Math.min(start, end),
@@ -1574,7 +2155,9 @@ function executeClientSliderCommand(args) {
     step,
   };
   renderSliderPanel();
-  addConsoleLine(`Slider ${entry.name}: ${formatClientConfigValue(state.slider.min)}..${formatClientConfigValue(state.slider.max)} step ${formatClientConfigValue(step)}`);
+  addConsoleLine(
+    `Slider ${entry.name}: ${formatClientConfigValue(state.slider.min)}..${formatClientConfigValue(state.slider.max)} step ${formatClientConfigValue(step)}`,
+  );
 }
 
 function executeClientSetCommand(args) {
@@ -1596,7 +2179,9 @@ function executeClientSetCommand(args) {
     state.clientConfig = result.config;
     saveSettings();
     requestAnimationFrame(drawScene);
-    addConsoleLine(result.name === "all" ? "Client config reset" : `${result.name} reset`);
+    addConsoleLine(
+      result.name === "all" ? "Client config reset" : `${result.name} reset`,
+    );
     return;
   }
 
@@ -1611,21 +2196,28 @@ function executeClientSetCommand(args) {
     return;
   }
 
-  const rawValue = String(args[0] || "").trim().toLowerCase();
-  const result = rawValue === "reset" ?
-    resetClientConfig(state.clientConfig, key) :
-    setClientConfigValue(state.clientConfig, key, rawValue);
+  const rawValue = String(args[0] || "")
+    .trim()
+    .toLowerCase();
+  const result =
+    rawValue === "reset"
+      ? resetClientConfig(state.clientConfig, key)
+      : setClientConfigValue(state.clientConfig, key, rawValue);
   if (!result.ok) {
-    addConsoleLine(result.error === "unknown" ?
-      `Unknown client config: ${result.name}` :
-      `Invalid value for ${result.name}: ${args[0]}`);
+    addConsoleLine(
+      result.error === "unknown"
+        ? `Unknown client config: ${result.name}`
+        : `Invalid value for ${result.name}: ${args[0]}`,
+    );
     return;
   }
 
   state.clientConfig = result.config;
   saveSettings();
   requestAnimationFrame(drawScene);
-  addConsoleLine(`${result.name} = ${formatClientConfigValue(getClientConfigValue(state.clientConfig, result.name))}`);
+  addConsoleLine(
+    `${result.name} = ${formatClientConfigValue(getClientConfigValue(state.clientConfig, result.name))}`,
+  );
 }
 
 function closeSliderPanel() {
@@ -1635,11 +2227,21 @@ function closeSliderPanel() {
 }
 
 function renderSliderPanel() {
-  if (!state.slider || !sliderPanel || !sliderInput || !sliderTitle || !sliderValue) return;
+  if (
+    !state.slider ||
+    !sliderPanel ||
+    !sliderInput ||
+    !sliderTitle ||
+    !sliderValue
+  )
+    return;
 
   const { name, min, max, step } = state.slider;
   const current = getClientConfigValue(state.clientConfig, name);
-  const value = Math.max(min, Math.min(max, Number.isFinite(current) ? current : min));
+  const value = Math.max(
+    min,
+    Math.min(max, Number.isFinite(current) ? current : min),
+  );
 
   sliderPanel.classList.remove("hidden");
   sliderPanel.setAttribute("aria-hidden", "false");
@@ -1653,12 +2255,18 @@ function renderSliderPanel() {
 
 function applySliderValue(rawValue) {
   if (!state.slider) return;
-  const result = setClientConfigValue(state.clientConfig, state.slider.name, rawValue);
+  const result = setClientConfigValue(
+    state.clientConfig,
+    state.slider.name,
+    rawValue,
+  );
   if (!result.ok) return;
 
   state.clientConfig = result.config;
   saveSettings();
-  sliderValue.textContent = formatClientConfigValue(getClientConfigValue(state.clientConfig, result.name));
+  sliderValue.textContent = formatClientConfigValue(
+    getClientConfigValue(state.clientConfig, result.name),
+  );
   requestAnimationFrame(drawScene);
 }
 
@@ -1676,7 +2284,7 @@ function splitCommand(text) {
   let current = "";
   let quote = "";
   for (const ch of text) {
-    if ((ch === "\"" || ch === "'") && !quote) {
+    if ((ch === '"' || ch === "'") && !quote) {
       quote = ch;
       continue;
     }
@@ -1704,7 +2312,9 @@ function updateChatVisibility(now) {
 }
 
 function copySlot(slot) {
-  return slotHasItem(slot) ? { petalType: slot.petalType, rarity: slot.rarity } : emptySlot();
+  return slotHasItem(slot)
+    ? { petalType: slot.petalType, rarity: slot.rarity }
+    : emptySlot();
 }
 
 function shouldSuppressClick() {
@@ -1715,12 +2325,25 @@ function renderInventoryPanel(options = {}) {
   const forceInventory = !!options.forceInventory;
   hidePetalInfoTooltip();
   const display = makeDisplaySlotState();
-  renderSlotRow(primarySlots, display.ownerSlots, "primary", display.ownerSlots);
-  renderSlotRow(secondarySlots, display.secondarySlots, "secondary", display.ownerSlots);
+  renderSlotRow(
+    primarySlots,
+    display.ownerSlots,
+    "primary",
+    display.ownerSlots,
+  );
+  renderSlotRow(
+    secondarySlots,
+    display.secondarySlots,
+    "secondary",
+    display.ownerSlots,
+  );
 
   if (state.backpackOpen || forceInventory) {
     inventoryList.replaceChildren();
-    renderInventoryGroups(inventoryList, display.inventory, "inventory");
+    renderInventoryGroups(
+      inventoryList,
+      inventoryPanelItems(display.inventory),
+    );
   }
 }
 
@@ -1728,7 +2351,9 @@ function slotButtonRenderKey(slot, index, kind, primaryForVisual) {
   const petalType = slot?.petalType || 0;
   const rarity = slot?.rarity || 0;
   const count = slot?.count || 0;
-  const visualType = slotHasItem(slot) ? slotVisualPetalType(slot, index, kind, primaryForVisual) : 0;
+  const visualType = slotHasItem(slot)
+    ? slotVisualPetalType(slot, index, kind, primaryForVisual)
+    : 0;
   return `${kind}:${petalType}:${rarity}:${count}:${visualType}`;
 }
 
@@ -1748,7 +2373,10 @@ function renderSlotRow(container, slots, kind, primaryForVisual) {
       else container.appendChild(nextButton);
       button = nextButton;
     }
-    button.classList.toggle("selected", kind === "primary" && index === state.selectedSlot);
+    button.classList.toggle(
+      "selected",
+      kind === "primary" && index === state.selectedSlot,
+    );
   }
 
   while (container.children.length > rowSlots.length) {
@@ -1834,8 +2462,12 @@ function renderTalentBranch(node, ownedKeys, path = new Set()) {
 function makeTalentButton(node, ownedKeys = ownedTalentKeys()) {
   const owned = ownedKeys.has(node.key);
   const addChain = owned ? [] : collectTalentAddChain(node, ownedKeys);
-  const chainCost = addChain.reduce((sum, talent) => sum + (talent.cost || 0), 0);
-  const ready = owned || (addChain.length > 0 && chainCost <= state.talentPoints);
+  const chainCost = addChain.reduce(
+    (sum, talent) => sum + (talent.cost || 0),
+    0,
+  );
+  const ready =
+    owned || (addChain.length > 0 && chainCost <= state.talentPoints);
 
   const button = document.createElement("button");
   button.type = "button";
@@ -1847,7 +2479,8 @@ function makeTalentButton(node, ownedKeys = ownedTalentKeys()) {
 
   const rarity = document.createElement("span");
   rarity.className = "talent-rarity";
-  rarity.textContent = rarityShortNames[node.rarity] || rarityName(node.rarity).slice(0, 2);
+  rarity.textContent =
+    rarityShortNames[node.rarity] || rarityName(node.rarity).slice(0, 2);
   button.appendChild(rarity);
 
   const name = document.createElement("span");
@@ -1865,12 +2498,17 @@ function makeTalentButton(node, ownedKeys = ownedTalentKeys()) {
 }
 
 function talentDisplayName(node) {
-  if (node.id === TalentId.PoisonDamage && node.rarity === 3) return `${node.name} ${node.rank + 1}`;
+  if (node.id === TalentId.PoisonDamage && node.rarity === 3)
+    return `${node.name} ${node.rank + 1}`;
   return node.name;
 }
 
 function ownedTalentKeys() {
-  return new Set((state.talents || []).map((talent) => talentKey(talent.id, talent.rarity, talent.rank || 0)));
+  return new Set(
+    (state.talents || []).map((talent) =>
+      talentKey(talent.id, talent.rarity, talent.rank || 0),
+    ),
+  );
 }
 
 function isTalentOwned(node, ownedKeys = ownedTalentKeys()) {
@@ -1932,18 +2570,25 @@ function submitTalentNode(node) {
   const packet = packTalentRequest(owned ? "remove" : "add", talents);
   if (!packet) return;
   sendBytes(packet);
-  addConsoleLine(`${owned ? "Removing" : "Learning"} ${talentDisplayName(node)}`);
+  addConsoleLine(
+    `${owned ? "Removing" : "Learning"} ${talentDisplayName(node)}`,
+  );
 }
 
 function selectCraftPetal(petalType, rarity, options = {}) {
   if (state.craftPhase === "spinning") return;
   if (!canCraftRarity(rarity)) return;
-  if (state.craftPhase === "success" || state.craftPhase === "returned") clearCraftDisplay();
-  const sameSource = state.craftSource &&
+  if (state.craftPhase === "success" || state.craftPhase === "returned")
+    clearCraftDisplay();
+  const sameSource =
+    state.craftSource &&
     state.craftSource.petalType === petalType &&
     state.craftSource.rarity === rarity;
   const stagedSame = sameSource ? getCraftSlotCount(petalType, rarity) : 0;
-  const available = Math.max(0, getInventoryCount(petalType, rarity) - stagedSame);
+  const available = Math.max(
+    0,
+    getInventoryCount(petalType, rarity) - stagedSame,
+  );
   if (available <= 0) return;
   if (available < 5 && stagedSame + available < 5) return;
 
@@ -1957,7 +2602,34 @@ function selectCraftPetal(petalType, rarity, options = {}) {
   renderCraftPanel();
 }
 
-function renderInventoryGroups(container, items, mode) {
+function inventoryItemVariants(item) {
+  return Array.isArray(item?.typeStack) && item.typeStack.length
+    ? item.typeStack
+    : [item];
+}
+
+function makeInventoryTypeStack(item) {
+  const variants = inventoryItemVariants(item);
+  if (variants.length <= 1)
+    return makePetalStack(item.petalType, item.rarity, item.count);
+
+  const stack = document.createElement("span");
+  stack.className = "inventory-type-stack";
+  for (let depth = Math.min(variants.length, 3) - 1; depth >= 0; depth -= 1) {
+    const variant = variants[depth];
+    const layer = makePetalStack(
+      variant.petalType,
+      variant.rarity,
+      depth === 0 ? variant.count : 0,
+    );
+    layer.classList.add("inventory-type-stack-layer");
+    layer.style.setProperty("--type-stack-depth", String(depth));
+    stack.appendChild(layer);
+  }
+  return stack;
+}
+
+function renderInventoryGroups(container, items) {
   const groups = groupInventoryItems(items);
   container.classList.toggle("hidden", groups.length === 0);
 
@@ -1965,36 +2637,36 @@ function renderInventoryGroups(container, items, mode) {
     const section = document.createElement("section");
     section.className = "inventory-group";
 
-    const header = document.createElement("div");
-    header.className = "inventory-group-title";
-    header.style.color = rarityColor(group.rarity, 1);
-    header.textContent = rarityName(group.rarity);
-    section.appendChild(header);
+    if (group.showHeader) {
+      const header = document.createElement("div");
+      header.className = "inventory-group-title";
+      header.style.color = rarityColor(group.rarity, 1);
+      header.textContent = rarityName(group.rarity);
+      section.appendChild(header);
+    }
 
     const grid = document.createElement("div");
     grid.className = "inventory-grid";
     for (const item of group.items) {
+      const variants = inventoryItemVariants(item);
       const button = document.createElement("button");
-      const lit = mode !== "craft" || canLightCraftItem(item.petalType, item.rarity);
-      button.className = `inventory-item${mode === "craft" ? " craft-inventory-item" : ""}${lit ? "" : " locked"}`;
+      button.className = `inventory-item${variants.length > 1 ? " type-stacked" : ""}`;
       button.type = "button";
-      button.title = `${petalTypeName(item.petalType)} ${rarityName(item.rarity)} x${formatShortCount(item.count)}`;
-      button.appendChild(makePetalStack(item.petalType, item.rarity, item.count));
+      button.title = variants
+        .map(
+          (variant) =>
+            `${petalTypeName(variant.petalType)} ${rarityName(variant.rarity)} x${formatShortCount(variant.count)}`,
+        )
+        .join("\n");
+      button.appendChild(makeInventoryTypeStack(item));
       attachPetalInfoTooltip(button, item.petalType, item.rarity);
-
-      if (mode === "inventory") {
-        button.addEventListener("pointerdown", (event) => beginDrag(event, button, "inventory", -1, item));
-        button.addEventListener("click", () => {
-          if (shouldSuppressClick()) return;
-          equipFromInventory(item);
-        });
-      } else {
-        button.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (lit) selectCraftPetal(item.petalType, item.rarity, { all: event.shiftKey });
-        });
-      }
+      button.addEventListener("pointerdown", (event) =>
+        beginDrag(event, button, "inventory", -1, item),
+      );
+      button.addEventListener("click", () => {
+        if (shouldSuppressClick()) return;
+        equipFromInventory(item);
+      });
       grid.appendChild(button);
     }
     section.appendChild(grid);
@@ -2009,35 +2681,19 @@ function renderCraftMatrix() {
 
   const matrix = document.createElement("div");
   matrix.className = "craft-matrix";
-  matrix.style.setProperty("--craft-rarity-count", String(craftRarityDisplayOrder.length));
-
-  const corner = document.createElement("div");
-  corner.className = "craft-matrix-corner";
-  corner.textContent = "type / rarity";
-  matrix.appendChild(corner);
-
-  for (const rarity of craftRarityDisplayOrder) {
-    const header = document.createElement("div");
-    header.className = "craft-matrix-rarity";
-    header.style.color = rarityColor(rarity, 1);
-    header.textContent = rarityName(rarity).slice(0, 2);
-    header.title = rarityName(rarity);
-    matrix.appendChild(header);
-  }
+  matrix.style.setProperty(
+    "--craft-rarity-count",
+    String(craftRarityDisplayOrder.length),
+  );
 
   for (const row of rows) {
-    const label = document.createElement("div");
-    label.className = "craft-matrix-type";
-    label.textContent = petalTypeName(row.petalType);
-    matrix.appendChild(label);
-
     for (const rarity of craftRarityDisplayOrder) {
       const baseCount = row.counts.get(rarity) || 0;
       const heldCount = getCraftHeldCount(row.petalType, rarity);
-      const count = Math.max(0, baseCount - heldCount);
-      const displayCount = count;
+      const displayCount = Math.max(0, baseCount - heldCount);
       const lit = canLightCraftItem(row.petalType, rarity);
-      const selected = state.craftSource &&
+      const selected =
+        state.craftSource &&
         state.craftSource.petalType === row.petalType &&
         state.craftSource.rarity === rarity;
 
@@ -2046,13 +2702,16 @@ function renderCraftMatrix() {
       if (baseCount > 0) {
         cell.type = "button";
         cell.title = `${petalTypeName(row.petalType)} ${rarityName(rarity)} x${formatShortCount(displayCount)}`;
-        cell.appendChild(makePetalStack(row.petalType, rarity, displayCount));
+        cell.appendChild(
+          makePetalStack(row.petalType, rarity, displayCount),
+        );
         attachPetalInfoTooltip(cell, row.petalType, rarity);
         cell.addEventListener("pointerdown", (event) => {
           if (event.button !== undefined && event.button !== 0) return;
           event.preventDefault();
           event.stopPropagation();
-          if (lit) selectCraftPetal(row.petalType, rarity, { all: event.shiftKey });
+          if (lit)
+            selectCraftPetal(row.petalType, rarity, { all: event.shiftKey });
         });
       }
       matrix.appendChild(cell);
@@ -2065,56 +2724,129 @@ function renderCraftMatrix() {
 function buildCraftRows() {
   const rows = new Map();
   for (const item of displayInventory()) {
-    if (!slotHasItem(item) || item.count <= 0) continue;
-    if (!canCraftRarity(item.rarity)) continue;
+    if (!slotHasItem(item) || item.count <= 0 || !canCraftRarity(item.rarity))
+      continue;
     if (!rows.has(item.petalType)) rows.set(item.petalType, new Map());
     rows.get(item.petalType).set(item.rarity, item.count);
   }
-  return Array.from(rows, ([petalType, counts]) => ({ petalType, counts }))
-    .sort((a, b) => petalTypeName(a.petalType).localeCompare(petalTypeName(b.petalType), "en") || a.petalType - b.petalType);
+  return Array.from(rows, ([petalType, counts]) => ({ petalType, counts })).sort(
+    (a, b) =>
+      petalTypeName(a.petalType).localeCompare(
+        petalTypeName(b.petalType),
+        "en",
+      ) || a.petalType - b.petalType,
+  );
+}
+
+function inventoryPanelItems(items) {
+  const query = normalizePetalName(state.inventorySearchQuery);
+  const filtered = (items || []).filter((item) => {
+    if (!slotHasItem(item) || item.count <= 0) return false;
+    if (!query) return true;
+    return normalizePetalName(
+      `${petalTypeName(item.petalType)} ${rarityName(item.rarity)}`,
+    ).includes(query);
+  });
+  const itemsByTypeAndRarity = new Map();
+  for (const item of filtered) {
+    const key = `${item.petalType}:${item.rarity}`;
+    const existing = itemsByTypeAndRarity.get(key);
+    if (existing) existing.count += Math.max(0, Math.floor(item.count || 0));
+    else
+      itemsByTypeAndRarity.set(key, {
+        ...item,
+        count: Math.max(0, Math.floor(item.count || 0)),
+      });
+  }
+  const merged = Array.from(itemsByTypeAndRarity.values());
+
+  if (state.inventoryStacked) {
+    const variantsByType = new Map();
+    for (const item of merged) {
+      if (!variantsByType.has(item.petalType))
+        variantsByType.set(item.petalType, []);
+      variantsByType.get(item.petalType).push({ ...item });
+    }
+
+    return Array.from(variantsByType.values(), (variants) => {
+      variants.sort(
+        (a, b) =>
+          raritySortRank(b.rarity) - raritySortRank(a.rarity) ||
+          b.rarity - a.rarity,
+      );
+      return { ...variants[0], typeStack: variants };
+    });
+  }
+
+  return merged;
+}
+
+function compareInventoryItemsByName(a, b) {
+  return (
+    petalTypeName(a.petalType).localeCompare(
+      petalTypeName(b.petalType),
+      "en",
+    ) ||
+    a.petalType - b.petalType ||
+    raritySortRank(b.rarity) - raritySortRank(a.rarity) ||
+    b.rarity - a.rarity
+  );
 }
 
 function groupInventoryItems(items) {
+  const visibleItems = items
+    .filter((item) => slotHasItem(item) && item.count > 0)
+    .map((item) => ({ ...item }));
+
+  if (state.inventoryStacked) {
+    return visibleItems.length
+      ? [
+          {
+            showHeader: false,
+            items: visibleItems.sort(compareInventoryItemsByName),
+          },
+        ]
+      : [];
+  }
+
   const groups = new Map();
-  for (const item of items) {
-    if (!slotHasItem(item) || item.count <= 0) continue;
+  for (const item of visibleItems) {
     if (!groups.has(item.rarity)) groups.set(item.rarity, []);
-    groups.get(item.rarity).push({ ...item });
+    groups.get(item.rarity).push(item);
   }
   return Array.from(groups, ([rarity, groupItems]) => ({
+    showHeader: true,
     rarity,
-    items: groupItems.sort((a, b) => {
-      const byName = petalTypeName(a.petalType).localeCompare(petalTypeName(b.petalType), "en");
-      return byName || a.petalType - b.petalType;
-    }),
-  })).sort((a, b) => raritySortRank(b.rarity) - raritySortRank(a.rarity));
-}
-
-function getCraftInventoryItems() {
-  return displayInventory()
-    .filter((item) => canCraftRarity(item.rarity))
-    .map((item) => ({
-      ...item,
-      count: Math.max(0, (item.count || 0) - getCraftHeldCount(item.petalType, item.rarity)),
-    }))
-    .filter((item) => item.count > 0);
+    items: groupItems.sort(compareInventoryItemsByName),
+  })).sort(
+    (a, b) =>
+      raritySortRank(b.rarity) - raritySortRank(a.rarity) ||
+      b.rarity - a.rarity,
+  );
 }
 
 function getInventoryCount(petalType, rarity) {
-  const item = displayInventory().find((entry) => entry.petalType === petalType && entry.rarity === rarity);
+  const item = displayInventory().find(
+    (entry) => entry.petalType === petalType && entry.rarity === rarity,
+  );
   return item ? item.count || 0 : 0;
 }
 
 function getCraftSlotCount(petalType, rarity) {
-  return state.craftSlots.reduce((sum, slot) => (
-    slotHasItem(slot) && slot.petalType === petalType && slot.rarity === rarity
-      ? sum + Math.max(1, slot.count || 1)
-      : sum
-  ), 0);
+  return state.craftSlots.reduce(
+    (sum, slot) =>
+      slotHasItem(slot) &&
+      slot.petalType === petalType &&
+      slot.rarity === rarity
+        ? sum + Math.max(1, slot.count || 1)
+        : sum,
+    0,
+  );
 }
 
 function getActiveCraftStagedCount(petalType, rarity) {
-  if (state.craftPhase !== "staged" && state.craftPhase !== "spinning") return 0;
+  if (state.craftPhase !== "staged" && state.craftPhase !== "spinning")
+    return 0;
   return getCraftSlotCount(petalType, rarity);
 }
 
@@ -2133,7 +2865,10 @@ function getCraftHeldCount(petalType, rarity) {
 function canLightCraftItem(petalType, rarity) {
   if (state.craftPhase === "spinning") return false;
   if (!canCraftRarity(rarity)) return false;
-  const visible = Math.max(0, getInventoryCount(petalType, rarity) - getCraftHeldCount(petalType, rarity));
+  const visible = Math.max(
+    0,
+    getInventoryCount(petalType, rarity) - getCraftHeldCount(petalType, rarity),
+  );
   return visible > 0 && visible + getCraftSlotCount(petalType, rarity) >= 5;
 }
 
@@ -2144,7 +2879,11 @@ function canCraftRarity(rarity) {
 function renderCraftStage() {
   craftStage.classList.toggle("spinning", state.craftPhase === "spinning");
   craftStage.classList.toggle("success", state.craftPhase === "success");
-  craftStage.classList.toggle("burst", state.craftPhase === "returned" && performance.now() < state.craftBurstUntil);
+  craftStage.classList.toggle(
+    "burst",
+    state.craftPhase === "returned" &&
+      performance.now() < state.craftBurstUntil,
+  );
 
   const showRing = state.craftPhase !== "success";
   craftStage.querySelectorAll("[data-craft-slot]").forEach((button) => {
@@ -2159,7 +2898,9 @@ function renderCraftStage() {
       ? `${petalTypeName(slot.petalType)} ${rarityName(slot.rarity)} x${formatShortCount(slot.count || 1)}`
       : "Craft slot";
     if (slotHasItem(slot)) {
-      button.appendChild(makePetalStack(slot.petalType, slot.rarity, slot.count || 1));
+      button.appendChild(
+        makePetalStack(slot.petalType, slot.rarity, slot.count || 1),
+      );
       attachPetalInfoTooltip(button, slot.petalType, slot.rarity);
     }
     button.onclick = (event) => {
@@ -2171,11 +2912,24 @@ function renderCraftStage() {
 
   craftResultSlot.replaceChildren();
   clearPetalInfoTooltip(craftResultSlot);
-  craftResultSlot.classList.toggle("hidden", state.craftPhase !== "success" || !slotHasItem(state.craftResult));
+  craftResultSlot.classList.toggle(
+    "hidden",
+    state.craftPhase !== "success" || !slotHasItem(state.craftResult),
+  );
   if (state.craftPhase === "success" && slotHasItem(state.craftResult)) {
     craftResultSlot.title = `${petalTypeName(state.craftResult.petalType)} ${rarityName(state.craftResult.rarity)} x${formatShortCount(state.craftResult.count || 1)}`;
-    craftResultSlot.appendChild(makePetalStack(state.craftResult.petalType, state.craftResult.rarity, state.craftResult.count || 1));
-    attachPetalInfoTooltip(craftResultSlot, state.craftResult.petalType, state.craftResult.rarity);
+    craftResultSlot.appendChild(
+      makePetalStack(
+        state.craftResult.petalType,
+        state.craftResult.rarity,
+        state.craftResult.count || 1,
+      ),
+    );
+    attachPetalInfoTooltip(
+      craftResultSlot,
+      state.craftResult.petalType,
+      state.craftResult.rarity,
+    );
   }
   craftResultSlot.onclick = (event) => {
     event.preventDefault();
@@ -2183,9 +2937,17 @@ function renderCraftStage() {
     renderCraftPanel();
   };
 
-  const stagedCount = state.craftSource ? getCraftSlotCount(state.craftSource.petalType, state.craftSource.rarity) : 0;
-  craftOnceBtn.disabled = !(state.authenticated && state.craftPhase === "staged" && stagedCount >= 5);
-  craftChance.textContent = state.craftSource ? `${formatCraftChance(state.craftSource.rarity)} success chance` : "";
+  const stagedCount = state.craftSource
+    ? getCraftSlotCount(state.craftSource.petalType, state.craftSource.rarity)
+    : 0;
+  craftOnceBtn.disabled = !(
+    state.authenticated &&
+    state.craftPhase === "staged" &&
+    stagedCount >= 5
+  );
+  craftChance.textContent = state.craftSource
+    ? `${formatCraftChance(state.craftSource.rarity)} success chance`
+    : "";
   if (state.craftPhase === "spinning") {
     craftSelection.textContent = "Crafting...";
   } else if (state.craftPhase === "success") {
@@ -2195,7 +2957,8 @@ function renderCraftStage() {
   } else if (state.craftSource) {
     craftSelection.textContent = `${petalTypeName(state.craftSource.petalType)} ${rarityName(state.craftSource.rarity)} x${stagedCount}`;
   } else {
-    craftSelection.textContent = "Combine 5 of the same petal to craft an upgrade";
+    craftSelection.textContent =
+      "Combine 5 of the same petal to craft an upgrade";
   }
 }
 
@@ -2203,14 +2966,19 @@ function formatCraftChance(rarity) {
   if (rarity === 8) return "0.33%";
   if (rarity === 9) return "0.1%";
   if (rarity >= 1 && rarity < 8) {
-    const chance = 64 / (2 ** (rarity - 1));
+    const chance = 64 / 2 ** (rarity - 1);
     return `${chance.toFixed(chance >= 1 ? 0 : 2)}%`;
   }
   return "0%";
 }
 
 function submitCraft() {
-  if (!state.authenticated || state.craftPhase !== "staged" || !state.craftSource) return;
+  if (
+    !state.authenticated ||
+    state.craftPhase !== "staged" ||
+    !state.craftSource
+  )
+    return;
   const { petalType, rarity } = state.craftSource;
   if (!canCraftRarity(rarity)) return;
   const count = getCraftSlotCount(petalType, rarity);
@@ -2246,15 +3014,35 @@ function compactCraftItems(items) {
   const compacted = [];
   for (const item of items) {
     if (!slotHasItem(item) || item.count <= 0) continue;
-    const existing = compacted.find((entry) => entry.petalType === item.petalType && entry.rarity === item.rarity);
-    if (existing) existing.count = clamp(existing.count + item.count, 0, 1000000000);
-    else compacted.push({ petalType: item.petalType, rarity: item.rarity, count: item.count });
+    const existing = compacted.find(
+      (entry) =>
+        entry.petalType === item.petalType && entry.rarity === item.rarity,
+    );
+    if (existing)
+      existing.count = clamp(existing.count + item.count, 0, 1000000000);
+    else
+      compacted.push({
+        petalType: item.petalType,
+        rarity: item.rarity,
+        count: item.count,
+      });
   }
-  return compacted.sort((a, b) => raritySortRank(b.rarity) - raritySortRank(a.rarity) || petalTypeName(a.petalType).localeCompare(petalTypeName(b.petalType), "en"));
+  return compacted.sort(
+    (a, b) =>
+      raritySortRank(b.rarity) - raritySortRank(a.rarity) ||
+      petalTypeName(a.petalType).localeCompare(
+        petalTypeName(b.petalType),
+        "en",
+      ),
+  );
 }
 
 function pickCraftSuccessItem(items, msg) {
-  return items.find((item) => item.petalType === msg.petalType && item.rarity !== msg.rarity) || null;
+  return (
+    items.find(
+      (item) => item.petalType === msg.petalType && item.rarity !== msg.rarity,
+    ) || null
+  );
 }
 
 function distributeCraftItems(items) {
@@ -2269,7 +3057,11 @@ function distributeCraftItems(items) {
     let remaining = Math.max(0, item.count || 0);
     while (remaining > 0 && slotIndex < slots.length) {
       const count = slotIndex === slots.length - 1 ? remaining : 1;
-      slots[slotIndex] = { petalType: item.petalType, rarity: item.rarity, count };
+      slots[slotIndex] = {
+        petalType: item.petalType,
+        rarity: item.rarity,
+        count,
+      };
       remaining -= count;
       slotIndex += 1;
     }
@@ -2298,7 +3090,12 @@ function clearCraftDisplay() {
   state.craftBurstUntil = 0;
 }
 
-function makeSlotButton(slot, index, kind, primaryForVisual = displayOwnerSlots()) {
+function makeSlotButton(
+  slot,
+  index,
+  kind,
+  primaryForVisual = displayOwnerSlots(),
+) {
   const button = document.createElement("button");
   button.className = `slot${slotHasItem(slot) ? "" : " empty"}${kind === "primary" && index === state.selectedSlot ? " selected" : ""}`;
   button.type = "button";
@@ -2307,12 +3104,22 @@ function makeSlotButton(slot, index, kind, primaryForVisual = displayOwnerSlots(
 
   if (slotHasItem(slot)) {
     button.title = `${petalTypeName(slot.petalType)} ${rarityName(slot.rarity)}`;
-    button.appendChild(makePetalStack(slot.petalType, slot.rarity, 0, slotVisualPetalType(slot, index, kind), {
-      kind,
-      slotIndex: index,
-    }));
+    button.appendChild(
+      makePetalStack(
+        slot.petalType,
+        slot.rarity,
+        0,
+        slotVisualPetalType(slot, index, kind),
+        {
+          kind,
+          slotIndex: index,
+        },
+      ),
+    );
     attachPetalInfoTooltip(button, slot.petalType, slot.rarity);
-    button.addEventListener("pointerdown", (event) => beginDrag(event, button, kind, index, slot));
+    button.addEventListener("pointerdown", (event) =>
+      beginDrag(event, button, kind, index, slot),
+    );
   }
 
   if (kind === "primary") {
@@ -2338,8 +3145,14 @@ function makeSlotButton(slot, index, kind, primaryForVisual = displayOwnerSlots(
   return button;
 }
 
-function slotVisualPetalType(slot, index, kind, primaryForVisual = displayOwnerSlots()) {
-  if (!slotHasItem(slot) || slot.petalType !== petalMimicType) return slot ? slot.petalType : 0;
+function slotVisualPetalType(
+  slot,
+  index,
+  kind,
+  primaryForVisual = displayOwnerSlots(),
+) {
+  if (!slotHasItem(slot) || slot.petalType !== petalMimicType)
+    return slot ? slot.petalType : 0;
   if (kind === "secondary") return slot.petalType;
 
   const slots = primaryForVisual;
@@ -2347,7 +3160,8 @@ function slotVisualPetalType(slot, index, kind, primaryForVisual = displayOwnerS
 
   const targetIndex = index <= 0 ? slots.length - 1 : index - 1;
   const target = slots[targetIndex];
-  if (slotHasItem(target) && target.petalType !== petalMimicType) return target.petalType;
+  if (slotHasItem(target) && target.petalType !== petalMimicType)
+    return target.petalType;
   return slot.petalType;
 }
 
@@ -2360,8 +3174,11 @@ function petalBaseCopy(petalType, rarity) {
     case petalDahliaType:
       return 3;
     case petalDandelionType:
-      return raritySortRank(rarity) >= raritySortRank(8) ? 3 :
-        (raritySortRank(rarity) >= raritySortRank(6) ? 2 : 1);
+      return raritySortRank(rarity) >= raritySortRank(8)
+        ? 3
+        : raritySortRank(rarity) >= raritySortRank(6)
+          ? 2
+          : 1;
     case petalOrangeType:
       return 3;
     case petalShovelType:
@@ -2369,11 +3186,11 @@ function petalBaseCopy(petalType, rarity) {
     case petalStingerType:
       return rarity >= 6 ? 3 : 1;
     case petalLightType:
-      return rarity >= 6 ? 5 : (rarity >= 4 ? 3 : (rarity >= 2 ? 2 : 1));
+      return rarity >= 6 ? 5 : rarity >= 4 ? 3 : rarity >= 2 ? 2 : 1;
     case petalPollenType:
-      return rarity >= 4 ? 3 : (rarity >= 2 ? 2 : 1);
+      return rarity >= 4 ? 3 : rarity >= 2 ? 2 : 1;
     case 34:
-      return rarity === 10 ? 1 : (rarity >= 7 ? 3 : 1);
+      return rarity === 10 ? 1 : rarity >= 7 ? 3 : 1;
     case petalMimicType:
     case petalNullificationType:
     case petalThirdEyeType:
@@ -2394,9 +3211,12 @@ function petalHasMultiCopyVisual(petalType, rarity) {
 }
 
 function talentOwned(id, rarity, rank = 0) {
-  return (state.talents || []).some((talent) => (
-    talent.id === id && talent.rarity === rarity && (talent.rank || 0) === rank
-  ));
+  return (state.talents || []).some(
+    (talent) =>
+      talent.id === id &&
+      talent.rarity === rarity &&
+      (talent.rank || 0) === rank,
+  );
 }
 
 function canDuplicatorAffect(petalType, copy) {
@@ -2410,10 +3230,13 @@ function effectivePetalCardCopy(petalType, rarity, options = {}) {
   if (copy >= 2 && talentOwned(TalentId.PetalSplit, 5)) copy += 1;
   if (copy >= 2 && talentOwned(TalentId.PetalSplit, 7)) copy += 1;
 
-  const inPrimarySlot = options.kind === "primary" && Number.isFinite(options.slotIndex);
+  const inPrimarySlot =
+    options.kind === "primary" && Number.isFinite(options.slotIndex);
   if (inPrimarySlot && options.slotIndex === 0) {
-    if (rarity !== 9 && rarity !== 10 && talentOwned(TalentId.PetalSplit, 8)) copy += 1;
-    if ((rarity === 9 || rarity === 10) && talentOwned(TalentId.PetalSplit, 9)) copy += 1;
+    if (rarity !== 9 && rarity !== 10 && talentOwned(TalentId.PetalSplit, 8))
+      copy += 1;
+    if ((rarity === 9 || rarity === 10) && talentOwned(TalentId.PetalSplit, 9))
+      copy += 1;
   }
   return copy;
 }
@@ -2426,7 +3249,9 @@ function attachPetalInfoTooltip(element, petalType, rarity) {
   if (element.dataset.petalInfoBound === "1") return;
   element.dataset.petalInfoBound = "1";
 
-  element.addEventListener("pointerenter", (event) => showPetalInfoTooltipFromElement(element, event));
+  element.addEventListener("pointerenter", (event) =>
+    showPetalInfoTooltipFromElement(element, event),
+  );
   element.addEventListener("pointermove", movePetalInfoTooltip);
   element.addEventListener("pointerleave", hidePetalInfoTooltip);
   element.addEventListener("pointercancel", hidePetalInfoTooltip);
@@ -2471,12 +3296,23 @@ function hidePetalInfoTooltip() {
 
 function syncPetalInfoTooltipHover() {
   const element = state.petalInfoHoverElement;
-  if (!element || !petalInfoTooltip || petalInfoTooltip.classList.contains("hidden")) return;
-  if (!element.isConnected || !element.matches(":hover")) hidePetalInfoTooltip();
+  if (
+    !element ||
+    !petalInfoTooltip ||
+    petalInfoTooltip.classList.contains("hidden")
+  )
+    return;
+  if (!element.isConnected || !element.matches(":hover"))
+    hidePetalInfoTooltip();
 }
 
 function movePetalInfoTooltip(event) {
-  if (!petalInfoTooltip || petalInfoTooltip.classList.contains("hidden") || !event) return;
+  if (
+    !petalInfoTooltip ||
+    petalInfoTooltip.classList.contains("hidden") ||
+    !event
+  )
+    return;
   syncPetalInfoTooltipHover();
   if (petalInfoTooltip.classList.contains("hidden")) return;
   const offset = 14;
@@ -2484,8 +3320,10 @@ function movePetalInfoTooltip(event) {
   const rect = petalInfoTooltip.getBoundingClientRect();
   let x = event.clientX + offset;
   let y = event.clientY + offset;
-  if (x + rect.width + pad > window.innerWidth) x = event.clientX - rect.width - offset;
-  if (y + rect.height + pad > window.innerHeight) y = event.clientY - rect.height - offset;
+  if (x + rect.width + pad > window.innerWidth)
+    x = event.clientX - rect.width - offset;
+  if (y + rect.height + pad > window.innerHeight)
+    y = event.clientY - rect.height - offset;
   x = clamp(x, pad, Math.max(pad, window.innerWidth - rect.width - pad));
   y = clamp(y, pad, Math.max(pad, window.innerHeight - rect.height - pad));
   petalInfoTooltip.style.left = `${x}px`;
@@ -2543,12 +3381,14 @@ function buildPetalInfo(petalType, rarity) {
     addRow(label, `${sign}${formatPetalStat(value * 100)}%`);
   };
   const addCombat = (damage, health, reload, options = {}) => {
-    if (options.copy && options.copy > 1) addRow("Petals", `x${options.copy}`);
-    addNumber("Damage", damage);
-    addNumber("Durability", health);
-    addNumber("Armor", options.armor || 0);
+    const copy = Math.max(1, options.copy || 1);
+    if (copy > 1) addRow("Petals", `x${copy}`);
+    addNumber("Damage", damage / copy);
+    addNumber("Durability", health / copy);
+    addNumber("Armor", (options.armor || 0) / copy);
     addSeconds("Reload", reload);
-    if (options.preload && Math.abs(options.preload - reload) > 0.0001) addSeconds("Preload", options.preload);
+    if (options.preload && Math.abs(options.preload - reload) > 0.0001)
+      addSeconds("Preload", options.preload);
   };
 
   switch (petalType) {
@@ -2568,8 +3408,12 @@ function buildPetalInfo(petalType, rarity) {
       addSeconds("Undead", bandageUndeadDuration(rarity));
       break;
     case petalBrokenEggType:
-      addPercent("Summon HP", brokenEggSummonHealthBonus(rarity), { sign: true });
-      addPercent("Summon DMG", brokenEggSummonDamageBonus(rarity), { sign: true });
+      addPercent("Summon HP", brokenEggSummonHealthBonus(rarity), {
+        sign: true,
+      });
+      addPercent("Summon DMG", brokenEggSummonDamageBonus(rarity), {
+        sign: true,
+      });
       break;
     case petalRelicType:
       addPercent("Linked HP", relicHealthBonus(rarity), { sign: true });
@@ -2591,12 +3435,16 @@ function buildPetalInfo(petalType, rarity) {
       break;
     case petalLightType: {
       const copy = lightCopy(rarity);
-      addCombat(13 * scale / copy, 5 * scale / copy, 0.8, { copy });
+      addCombat(13 * scale, 5 * scale, 0.8, { copy });
       break;
     }
     case petalLeafType:
       addCombat(16 * scale, 12 * scale, 1.8);
       addNumber("Regen", roseMedicineScale(rarity), "/s");
+      break;
+    case petalYuccaType:
+      addCombat(16 * scale, 12 * scale, 1.8);
+      addNumber("Defend regen", 3 * roseMedicineScale(rarity), "/s");
       break;
     case petalRockType:
       addCombat(25 * scale, 30 * scale, 3);
@@ -2613,7 +3461,7 @@ function buildPetalInfo(petalType, rarity) {
       break;
     case petalPollenType: {
       const copy = pollenCopy(rarity);
-      addCombat(40 * scale / copy, 10 * scale / copy, 2, { copy });
+      addCombat(40 * scale, 10 * scale, 2, { copy });
       addSeconds("Throw CD", 0.5);
       break;
     }
@@ -2656,7 +3504,7 @@ function buildPetalInfo(petalType, rarity) {
       break;
     case petalDahliaType:
       addCombat(1.7 * scale, 1.7 * scale, 1.5, { copy: 3 });
-      addNumber("Heal", 1.2 * roseMedicineScale(rarity));
+      addNumber("Heal", (1.2 * roseMedicineScale(rarity)) / 3);
       break;
     case petalDandelionType: {
       const copy = petalBaseCopy(petalType, rarity);
@@ -2667,7 +3515,7 @@ function buildPetalInfo(petalType, rarity) {
     }
     case petalStingerType: {
       const copy = petalBaseCopy(petalType, rarity);
-      addCombat(100 * scale / copy, 1, 10, { copy });
+      addCombat(100 * scale, 1, 10, { copy });
       break;
     }
     case petalMissileType:
@@ -2691,7 +3539,7 @@ function buildPetalInfo(petalType, rarity) {
       addCombat(18 * scale, 18 * scale, 1);
       break;
     case petalBoneType:
-      addCombat(14 * scale, 10 * scale, 2.5, { armor: 10 * scale });
+      addCombat(14 * scale, 10 * scale, 2.5, { armor: (20 / 3) * scale });
       break;
     case petalCoinType:
       addCombat(15 * scale, 10 * scale, 2.5);
@@ -2738,7 +3586,8 @@ function buildPetalInfo(petalType, rarity) {
       addCombat(20 * scale, 10 * scale, 3);
       break;
     case petalTriangleType:
-      addCombat(5 * scale + triangleBonusDamage(rarity), 10 * scale, 2);
+      addCombat(6 * scale, 10 * scale, 2);
+      addNumber("Tri bonus", triangleBonusDamage(rarity));
       break;
     case petalSawbladeType:
       addCombat(40 * scale, 25 * scale, 2.5);
@@ -2773,11 +3622,15 @@ function rarityLevel(rarity) {
 }
 
 function rarityValueLevel(rarity) {
-  return Math.floor(Number(rarity) || 1) === rarityExotic ? 7.5 : rarityLevel(rarity);
+  return Math.floor(Number(rarity) || 1) === rarityExotic
+    ? 7.5
+    : rarityLevel(rarity);
 }
 
 function raritySpecialLevel(rarity) {
-  return Math.floor(Number(rarity) || 1) === rarityExotic ? 7.25 : rarityLevel(rarity);
+  return Math.floor(Number(rarity) || 1) === rarityExotic
+    ? 7.25
+    : rarityLevel(rarity);
 }
 
 function raritySortRank(rarity) {
@@ -2801,22 +3654,30 @@ function lightCopy(rarity) {
 }
 
 function pollenCopy(rarity) {
-  return rarityLevel(rarity) <= 1 ? 1 : (rarityLevel(rarity) <= 3 ? 2 : 3);
+  return rarityLevel(rarity) <= 1 ? 1 : rarityLevel(rarity) <= 3 ? 2 : 3;
 }
 
 function roseMedicineScale(rarity) {
   const sqrt3 = Math.sqrt(3);
   switch (Math.floor(Number(rarity) || 1)) {
-    case 1: return 1;
-    case 2: return 3;
-    case 3: return 9;
-    case 4: return 27;
-    case 5: return 81;
-    case 6: return 243;
-    case 7: return 243 * sqrt3;
+    case 1:
+      return 1;
+    case 2:
+      return 3;
+    case 3:
+      return 9;
+    case 4:
+      return 27;
+    case 5:
+      return 81;
+    case 6:
+      return 243;
+    case 7:
+      return 243 * sqrt3;
     case rarityExotic:
       return (243 * sqrt3 + 243 * 3) / 2;
-    case 8: return 243 * 3;
+    case 8:
+      return 243 * 3;
     case 9:
     case 10:
       return 243 * 3 * sqrt3;
@@ -2828,11 +3689,17 @@ function roseMedicineScale(rarity) {
 }
 
 function antennaeVisionBonus(rarity) {
-  return bySpecialRarity(rarity, [0, 0.111, 0.176, 0.25, 0.333, 0.429, 1, 1.857, 4, 13.5, 13.5, 38]);
+  return bySpecialRarity(
+    rarity,
+    [0, 0.111, 0.176, 0.25, 0.333, 0.429, 1, 1.857, 4, 13.5, 13.5, 38],
+  );
 }
 
 function thirdEyeReachBonus(rarity) {
-  return bySpecialRarity(rarity, [0, 0, 0, 0, 0, 40, 90, 140, 190, 240, 240, 350]);
+  return bySpecialRarity(
+    rarity,
+    [0, 0, 0, 0, 0, 40, 90, 140, 190, 240, 240, 350],
+  );
 }
 
 function goldenLeafReloadReduction(rarity) {
@@ -2844,39 +3711,51 @@ function dustReloadReduction(rarity) {
 }
 
 function bandageUndeadDuration(rarity) {
-  return bySpecialRarity(rarity, [0, 1.5, 2.1, 2.9, 4.1, 5.8, 8.1, 11.3, 15.8, 22.1, 22.1, 31.3]);
+  return bySpecialRarity(
+    rarity,
+    [0, 1.5, 2.1, 2.9, 4.1, 5.8, 8.1, 11.3, 15.8, 22.1, 22.1, 31.3],
+  );
 }
 
 function brokenEggSummonHealthBonus(rarity) {
   const level = clamp(raritySpecialLevel(rarity), 1, 10);
   if (level <= 8) {
     const t = (level - 1) / 7;
-    return (0.90 + (0.25 - 0.90) * t) - 1;
+    return 0.9 + (0.25 - 0.9) * t - 1;
   }
   const t = (level - 8) / 2;
-  return (0.25 + (0.02 - 0.25) * t) - 1;
+  return 0.25 + (0.02 - 0.25) * t - 1;
 }
 
 function brokenEggSummonDamageBonus(rarity) {
   const level = clamp(raritySpecialLevel(rarity), 1, 10);
   if (level <= 8) {
     const t = (level - 1) / 7;
-    return (1.12 + (7.50 - 1.12) * t) - 1;
+    return 1.12 + (7.5 - 1.12) * t - 1;
   }
   const t = (level - 8) / 2;
-  return (7.50 + (25.00 - 7.50) * t) - 1;
+  return 7.5 + (25.0 - 7.5) * t - 1;
 }
 
 function basilHealingBonus(rarity) {
-  return bySpecialRarity(rarity, [0, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.75, 1.00, 1.00, 2.00]);
+  return bySpecialRarity(
+    rarity,
+    [0, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.75, 1.0, 1.0, 2.0],
+  );
 }
 
 function relicHealthBonus(rarity) {
-  return bySpecialRarity(rarity, [0, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.75, 1.00, 1.50, 1.50, 2.50]);
+  return bySpecialRarity(
+    rarity,
+    [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.75, 1.0, 1.5, 1.5, 2.5],
+  );
 }
 
 function antEggReload(rarity) {
-  return bySpecialRarity(rarity, [0, 24, 8, 9, 10, 12, 16, 24, 60, 180, 180, 480]);
+  return bySpecialRarity(
+    rarity,
+    [0, 24, 8, 9, 10, 12, 16, 24, 60, 180, 180, 480],
+  );
 }
 
 function beetleEggReload(rarity) {
@@ -2884,15 +3763,24 @@ function beetleEggReload(rarity) {
 }
 
 function bubbleReload(rarity) {
-  return bySpecialRarity(rarity, [0, 1, 0.8, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05, 0.05, 0.025]);
+  return bySpecialRarity(
+    rarity,
+    [0, 1, 0.8, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05, 0.05, 0.025],
+  );
 }
 
 function shovelPreload(rarity) {
-  return bySpecialRarity(rarity, [0, 15, 13.1, 11.8, 10.1, 8.5, 6.9, 5.2, 3.6, 2, 2, 1]);
+  return bySpecialRarity(
+    rarity,
+    [0, 15, 13.1, 11.8, 10.1, 8.5, 6.9, 5.2, 3.6, 2, 2, 1],
+  );
 }
 
 function webRadiusValue(rarity) {
-  return bySpecialRarity(rarity, [0, 50, 60, 70, 80, 100, 150, 200, 250, 350, 350, 500]);
+  return bySpecialRarity(
+    rarity,
+    [0, 50, 60, 70, 80, 100, 150, 200, 250, 350, 350, 500],
+  );
 }
 
 function yggdrasilChannelTime(rarity) {
@@ -2905,18 +3793,25 @@ function yggdrasilChannelTime(rarity) {
 }
 
 function triangleBonusDamage(rarity) {
-  return byRarity(rarity, [0, 0, 2, 6, 18, 54, 162, 486, 1458, 4374, 4374, 13122]);
+  return 3.75 * petalRarityScale(rarity);
 }
 
 function fragmentValue(rarity) {
   switch (Math.floor(Number(rarity) || 1)) {
-    case 7: return 364.5;
-    case rarityExotic: return (364.5 + 729) / 2;
-    case 8: return 729;
-    case 9: return 2187;
-    case 10: return 328000;
-    case 11: return 6561;
-    default: return petalRarityScale(rarity);
+    case 7:
+      return 364.5;
+    case rarityExotic:
+      return (364.5 + 729) / 2;
+    case 8:
+      return 729;
+    case 9:
+      return 2187;
+    case 10:
+      return 328000;
+    case 11:
+      return 6561;
+    default:
+      return petalRarityScale(rarity);
   }
 }
 
@@ -2966,7 +3861,7 @@ function petalSingleRadiusFactor(petalType) {
     case petalAntEggType:
       return 0.36;
     case petalDahliaType:
-      return 0.30;
+      return 0.3;
     case petalStingerType:
       return 0.38;
     default:
@@ -2981,7 +3876,7 @@ function petalCopyVisualScale(visualCopies, petalType) {
   if (petalType === petalDahliaType) return 0.78;
   if (visualCopies <= 4) return 0.76;
   if (visualCopies <= 6) return 0.66;
-  return 0.60;
+  return 0.6;
 }
 
 function petalCopyChordFactor(visualCopies, petalType) {
@@ -3023,8 +3918,10 @@ function petalCopyLayout(copy, petalType = 0) {
   const fixedRadius = petalFixedCopyRadius(petalType);
   let radius = fixedRadius;
   if (radius <= 0) {
-    const singleRadius = 50 * petalCardIconScale * scale * petalSingleRadiusFactor(petalType);
-    const chord = singleRadius * 2 * petalCopyChordFactor(visualCopies, petalType);
+    const singleRadius =
+      50 * petalCardIconScale * scale * petalSingleRadiusFactor(petalType);
+    const chord =
+      singleRadius * 2 * petalCopyChordFactor(visualCopies, petalType);
     const ringRadius = chord / (2 * Math.sin(Math.PI / visualCopies));
     const copyGrowth = 1 + Math.max(0, visualCopies - 3) * 0.035;
     const minRadius = petalType === petalDustType ? 2.4 : 2.8;
@@ -3048,11 +3945,19 @@ function petalCopyLayout(copy, petalType = 0) {
   return points;
 }
 
-function makePetalStack(petalType, rarity, count = 0, iconPetalType = petalType, options = {}) {
+function makePetalStack(
+  petalType,
+  rarity,
+  count = 0,
+  iconPetalType = petalType,
+  options = {},
+) {
   const stack = document.createElement("span");
   stack.className = "petal-stack";
-  const mimicVisual = petalType === petalMimicType && iconPetalType !== petalType;
-  const copy = options.copy ?? effectivePetalCardCopy(iconPetalType, rarity, options);
+  const mimicVisual =
+    petalType === petalMimicType && iconPetalType !== petalType;
+  const copy =
+    options.copy ?? effectivePetalCardCopy(iconPetalType, rarity, options);
   const splitLabel = copy > 1;
   if (mimicVisual) stack.classList.add("mimic-visual");
   if (copy > 1) stack.classList.add("multi-copy");
@@ -3066,7 +3971,9 @@ function makePetalStack(petalType, rarity, count = 0, iconPetalType = petalType,
 
   const layout = petalCopyLayout(copy, iconPetalType);
   for (const part of layout) {
-    const icon = makePetalIcon(iconPetalType, rarity, { stripped: mimicVisual || splitLabel });
+    const icon = makePetalIcon(iconPetalType, rarity, {
+      stripped: mimicVisual || splitLabel,
+    });
     if (!icon) continue;
     if (layout.length > 1) {
       icon.classList.add("petal-icon-copy");
@@ -3121,7 +4028,9 @@ function setPetalLabelIconSource(image, src) {
         return response.text();
       })
       .then((svgText) => {
-        const blob = new Blob([extractPetalLabelSvg(svgText)], { type: "image/svg+xml" });
+        const blob = new Blob([extractPetalLabelSvg(svgText)], {
+          type: "image/svg+xml",
+        });
         entry.url = URL.createObjectURL(blob);
         for (const waiter of entry.waiters) waiter.src = entry.url;
         entry.waiters = [];
@@ -3137,7 +4046,10 @@ function setPetalLabelIconSource(image, src) {
 }
 
 function formatShortCount(value) {
-  const count = Math.max(0, Math.min(1000000000, Math.floor(Number(value) || 0)));
+  const count = Math.max(
+    0,
+    Math.min(1000000000, Math.floor(Number(value) || 0)),
+  );
   if (count >= 1000000000) return "1b";
   if (count >= 1000000) return `${formatCompact(count / 1000000)}m`;
   if (count >= 1000) return `${formatCompact(count / 1000)}k`;
@@ -3146,7 +4058,8 @@ function formatShortCount(value) {
 
 function formatCompact(value) {
   if (value >= 100) return String(Math.floor(value));
-  if (value >= 10) return (Math.floor(value * 10) / 10).toFixed(1).replace(/\.0$/, "");
+  if (value >= 10)
+    return (Math.floor(value * 10) / 10).toFixed(1).replace(/\.0$/, "");
   return (Math.floor(value * 10) / 10).toFixed(1).replace(/\.0$/, "");
 }
 
@@ -3179,7 +4092,9 @@ function setStrippedPetalIconSource(image, src) {
         return response.text();
       })
       .then((svgText) => {
-        const blob = new Blob([stripLivePetalLabel(svgText)], { type: "image/svg+xml" });
+        const blob = new Blob([stripLivePetalLabel(svgText)], {
+          type: "image/svg+xml",
+        });
         entry.url = URL.createObjectURL(blob);
         for (const waiter of entry.waiters) waiter.src = entry.url;
         entry.waiters = [];
@@ -3222,7 +4137,9 @@ function setMimicLabelIconSource(image, src) {
         return response.text();
       })
       .then((svgText) => {
-        const blob = new Blob([extractMimicLabelSvg(svgText)], { type: "image/svg+xml" });
+        const blob = new Blob([extractMimicLabelSvg(svgText)], {
+          type: "image/svg+xml",
+        });
         entry.url = URL.createObjectURL(blob);
         for (const waiter of entry.waiters) waiter.src = entry.url;
         entry.waiters = [];
@@ -3246,7 +4163,11 @@ function petalBasePath(rarity) {
 }
 
 function petalIconPath(petalType, rarity = 0, options = {}) {
-  if (!options.live && petalType === petalStingerType && rarity >= stingerSplitIconMinRarity)
+  if (
+    !options.live &&
+    petalType === petalStingerType &&
+    rarity >= stingerSplitIconMinRarity
+  )
     return "./assets/petals/6_5.svg";
   if (petalType === petalCompassType && rarity >= compassUltraIconMinRarity)
     return "./assets/petals/71_7.svg";
@@ -3257,7 +4178,9 @@ function petalIconPath(petalType, rarity = 0, options = {}) {
 }
 
 function normalizePetalName(name) {
-  return String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return String(name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
 function petalTypeFromSnap(snap) {
@@ -3274,11 +4197,17 @@ function assetImage(src) {
   if (!image) {
     image = new Image();
     image.decoding = "async";
-    image.addEventListener("load", () => requestAnimationFrame(drawScene), { once: true });
-    image.addEventListener("error", () => {
-      image.failed = true;
-      requestAnimationFrame(drawScene);
-    }, { once: true });
+    image.addEventListener("load", () => requestAnimationFrame(drawScene), {
+      once: true,
+    });
+    image.addEventListener(
+      "error",
+      () => {
+        image.failed = true;
+        requestAnimationFrame(drawScene);
+      },
+      { once: true },
+    );
     image.src = src;
     assetImages.set(src, image);
   }
@@ -3290,11 +4219,15 @@ function imageReady(image) {
 }
 
 function ownerHasPetal(petalType) {
-  return displayOwnerSlots().some((slot) => slotHasItem(slot) && slot.petalType === petalType);
+  return displayOwnerSlots().some(
+    (slot) => slotHasItem(slot) && slot.petalType === petalType,
+  );
 }
 
 function playerSnapHasPetal(snap, petalType) {
-  return (snap.primarySlots || []).some((slot) => slotHasItem(slot) && slot.petalType === petalType);
+  return (snap.primarySlots || []).some(
+    (slot) => slotHasItem(slot) && slot.petalType === petalType,
+  );
 }
 
 function equipFromInventory(item) {
@@ -3309,13 +4242,23 @@ function equipFromInventoryAt(index, item) {
   const secondarySlots = displaySecondarySlots();
   let inventory = displayInventory();
   if (index < 0 || index >= ownerSlots.length) return;
-  if (getDisplayInventoryCount(item.petalType, item.rarity, inventory) <= 0) return;
+  if (getDisplayInventoryCount(item.petalType, item.rarity, inventory) <= 0)
+    return;
   const oldSlot = copySlot(ownerSlots[index]);
   sendBytes(packEquip(index, item.petalType, item.rarity));
   ownerSlots[index] = copySlot(item);
   inventory = applyInventoryDelta(inventory, item.petalType, item.rarity, -1);
-  if (slotHasItem(oldSlot)) inventory = applyInventoryDelta(inventory, oldSlot.petalType, oldSlot.rarity, 1);
-  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [item, oldSlot]);
+  if (slotHasItem(oldSlot))
+    inventory = applyInventoryDelta(
+      inventory,
+      oldSlot.petalType,
+      oldSlot.rarity,
+      1,
+    );
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [
+    item,
+    oldSlot,
+  ]);
   renderInventoryPanel();
 }
 
@@ -3323,11 +4266,21 @@ function unequipSlot(index) {
   const ownerSlots = displayOwnerSlots();
   const secondarySlots = displaySecondarySlots();
   let inventory = displayInventory();
-  if (!state.authenticated || !ownerSlots[index] || !slotHasItem(ownerSlots[index])) return;
+  if (
+    !state.authenticated ||
+    !ownerSlots[index] ||
+    !slotHasItem(ownerSlots[index])
+  )
+    return;
   const oldSlot = copySlot(ownerSlots[index]);
   sendBytes(packUnequip(index));
   ownerSlots[index] = emptySlot();
-  inventory = applyInventoryDelta(inventory, oldSlot.petalType, oldSlot.rarity, 1);
+  inventory = applyInventoryDelta(
+    inventory,
+    oldSlot.petalType,
+    oldSlot.rarity,
+    1,
+  );
   enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [oldSlot]);
   renderInventoryPanel();
 }
@@ -3338,13 +4291,23 @@ function setSecondaryFromInventory(index, item) {
   const secondarySlots = displaySecondarySlots();
   let inventory = displayInventory();
   if (index < 0 || index >= ownerSlots.length) return;
-  if (getDisplayInventoryCount(item.petalType, item.rarity, inventory) <= 0) return;
+  if (getDisplayInventoryCount(item.petalType, item.rarity, inventory) <= 0)
+    return;
   const oldSlot = copySlot(secondarySlots[index]);
   sendBytes(packSecondarySlot(index, item.petalType, item.rarity));
   secondarySlots[index] = copySlot(item);
   inventory = applyInventoryDelta(inventory, item.petalType, item.rarity, -1);
-  if (slotHasItem(oldSlot)) inventory = applyInventoryDelta(inventory, oldSlot.petalType, oldSlot.rarity, 1);
-  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [item, oldSlot]);
+  if (slotHasItem(oldSlot))
+    inventory = applyInventoryDelta(
+      inventory,
+      oldSlot.petalType,
+      oldSlot.rarity,
+      1,
+    );
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [
+    item,
+    oldSlot,
+  ]);
   renderInventoryPanel();
 }
 
@@ -3352,11 +4315,21 @@ function clearSecondarySlot(index) {
   const ownerSlots = displayOwnerSlots();
   const secondarySlots = displaySecondarySlots();
   let inventory = displayInventory();
-  if (!state.authenticated || !secondarySlots[index] || !slotHasItem(secondarySlots[index])) return;
+  if (
+    !state.authenticated ||
+    !secondarySlots[index] ||
+    !slotHasItem(secondarySlots[index])
+  )
+    return;
   const oldSlot = copySlot(secondarySlots[index]);
   sendBytes(packSecondarySlot(index, 0, 0));
   secondarySlots[index] = emptySlot();
-  inventory = applyInventoryDelta(inventory, oldSlot.petalType, oldSlot.rarity, 1);
+  inventory = applyInventoryDelta(
+    inventory,
+    oldSlot.petalType,
+    oldSlot.rarity,
+    1,
+  );
   enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [oldSlot]);
   renderInventoryPanel();
 }
@@ -3396,7 +4369,9 @@ function quickSwapSlot(index) {
     );
     ownerSlots[index] = oldSecondary;
     secondarySlots[index] = emptySlot();
-    enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [oldSecondary]);
+    enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [
+      oldSecondary,
+    ]);
     renderInventoryPanel();
     return;
   }
@@ -3409,12 +4384,21 @@ function quickSwapSlot(index) {
 
   ownerSlots[index] = oldSecondary;
   secondarySlots[index] = oldPrimary;
-  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [oldPrimary, oldSecondary]);
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [
+    oldPrimary,
+    oldSecondary,
+  ]);
   renderInventoryPanel();
 }
 
-function getDisplayInventoryCount(petalType, rarity, items = displayInventory()) {
-  const item = items.find((entry) => entry.petalType === petalType && entry.rarity === rarity);
+function getDisplayInventoryCount(
+  petalType,
+  rarity,
+  items = displayInventory(),
+) {
+  const item = items.find(
+    (entry) => entry.petalType === petalType && entry.rarity === rarity,
+  );
   return item ? item.count || 0 : 0;
 }
 
@@ -3432,13 +4416,18 @@ function movePrimaryToPrimary(fromIndex, toIndex) {
     packUnequip(fromIndex),
     slotHasItem(target) ? packUnequip(toIndex) : null,
     packEquip(toIndex, source.petalType, source.rarity),
-    slotHasItem(target) ? packEquip(fromIndex, target.petalType, target.rarity) : null,
+    slotHasItem(target)
+      ? packEquip(fromIndex, target.petalType, target.rarity)
+      : null,
   );
 
   ownerSlots[toIndex] = source;
   ownerSlots[fromIndex] = target;
   state.selectedSlot = toIndex;
-  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [source, target]);
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [
+    source,
+    target,
+  ]);
   renderInventoryPanel();
 }
 
@@ -3454,12 +4443,17 @@ function movePrimaryToSecondary(fromIndex, toIndex) {
   sendPacketBatch(
     packUnequip(fromIndex),
     packSecondarySlot(toIndex, source.petalType, source.rarity),
-    slotHasItem(oldSecondary) ? packEquip(fromIndex, oldSecondary.petalType, oldSecondary.rarity) : null,
+    slotHasItem(oldSecondary)
+      ? packEquip(fromIndex, oldSecondary.petalType, oldSecondary.rarity)
+      : null,
   );
 
   ownerSlots[fromIndex] = oldSecondary;
   secondarySlots[toIndex] = source;
-  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [source, oldSecondary]);
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [
+    source,
+    oldSecondary,
+  ]);
   renderInventoryPanel();
 }
 
@@ -3475,13 +4469,18 @@ function moveSecondaryToPrimary(fromIndex, toIndex) {
   sendPacketBatch(
     packSecondarySlot(fromIndex, 0, 0),
     packEquip(toIndex, source.petalType, source.rarity),
-    slotHasItem(oldPrimary) ? packSecondarySlot(fromIndex, oldPrimary.petalType, oldPrimary.rarity) : null,
+    slotHasItem(oldPrimary)
+      ? packSecondarySlot(fromIndex, oldPrimary.petalType, oldPrimary.rarity)
+      : null,
   );
 
   ownerSlots[toIndex] = source;
   secondarySlots[fromIndex] = oldPrimary;
   state.selectedSlot = toIndex;
-  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [source, oldPrimary]);
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [
+    source,
+    oldPrimary,
+  ]);
   renderInventoryPanel();
 }
 
@@ -3498,12 +4497,17 @@ function moveSecondaryToSecondary(fromIndex, toIndex) {
   sendPacketBatch(
     packSecondarySlot(fromIndex, 0, 0),
     packSecondarySlot(toIndex, source.petalType, source.rarity),
-    slotHasItem(target) ? packSecondarySlot(fromIndex, target.petalType, target.rarity) : null,
+    slotHasItem(target)
+      ? packSecondarySlot(fromIndex, target.petalType, target.rarity)
+      : null,
   );
 
   secondarySlots[fromIndex] = target;
   secondarySlots[toIndex] = source;
-  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [source, target]);
+  enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [
+    source,
+    target,
+  ]);
   renderInventoryPanel();
 }
 
@@ -3581,10 +4585,12 @@ function positionDragGhost(drag) {
 
 function dropTargetFromPoint(x, y) {
   const element = document.elementFromPoint(x, y);
-  const target = element && element.closest ? element.closest("[data-drop-kind]") : null;
+  const target =
+    element && element.closest ? element.closest("[data-drop-kind]") : null;
   if (!target) return null;
   const kind = target.dataset.dropKind;
-  if (kind !== "primary" && kind !== "secondary" && kind !== "backpack") return null;
+  if (kind !== "primary" && kind !== "secondary" && kind !== "backpack")
+    return null;
   return {
     element: target,
     kind,
@@ -3595,7 +4601,8 @@ function dropTargetFromPoint(x, y) {
 function highlightDropTarget(target) {
   const drag = state.drag;
   const oldTarget = drag && drag.targetElement;
-  if (oldTarget && (!target || target.element !== oldTarget)) oldTarget.classList.remove("drag-target");
+  if (oldTarget && (!target || target.element !== oldTarget))
+    oldTarget.classList.remove("drag-target");
   if (drag) drag.targetElement = target ? target.element : null;
   if (target) target.element.classList.add("drag-target");
 }
@@ -3610,20 +4617,26 @@ function performDrop(target, drag) {
   }
 
   if (drag.source === "inventory") {
-    if (target.kind === "primary") equipFromInventoryAt(target.index, drag.item);
-    else if (target.kind === "secondary") setSecondaryFromInventory(target.index, drag.item);
+    if (target.kind === "primary")
+      equipFromInventoryAt(target.index, drag.item);
+    else if (target.kind === "secondary")
+      setSecondaryFromInventory(target.index, drag.item);
     return;
   }
 
   if (drag.source === "primary") {
-    if (target.kind === "primary") movePrimaryToPrimary(drag.index, target.index);
-    else if (target.kind === "secondary") movePrimaryToSecondary(drag.index, target.index);
+    if (target.kind === "primary")
+      movePrimaryToPrimary(drag.index, target.index);
+    else if (target.kind === "secondary")
+      movePrimaryToSecondary(drag.index, target.index);
     return;
   }
 
   if (drag.source === "secondary") {
-    if (target.kind === "primary") moveSecondaryToPrimary(drag.index, target.index);
-    else if (target.kind === "secondary") moveSecondaryToSecondary(drag.index, target.index);
+    if (target.kind === "primary")
+      moveSecondaryToPrimary(drag.index, target.index);
+    else if (target.kind === "secondary")
+      moveSecondaryToSecondary(drag.index, target.index);
   }
 }
 
@@ -3653,7 +4666,10 @@ function updateRenderPositions(dt) {
   const dead = [];
   for (const [id, entity] of state.entities) {
     if (entity.hurtFlashAge < hurtFlashDuration)
-      entity.hurtFlashAge = Math.min(hurtFlashDuration, entity.hurtFlashAge + dt);
+      entity.hurtFlashAge = Math.min(
+        hurtFlashDuration,
+        entity.hurtFlashAge + dt,
+      );
 
     if (entity.dying) {
       entity.deathAge = (entity.deathAge || 0) + dt;
@@ -3704,7 +4720,10 @@ function lerpAngle(start, end, amount) {
 }
 
 function screenViewRadius() {
-  const shortSide = Math.max(1, Math.min(state.canvasWidth, state.canvasHeight));
+  const shortSide = Math.max(
+    1,
+    Math.min(state.canvasWidth, state.canvasHeight),
+  );
   return Math.max(96, shortSide * viewScreenFill - viewScreenPadding);
 }
 
@@ -3768,7 +4787,10 @@ function updateDebugInfo() {
   const visibleChunks = map?.visibleChunkKeys?.size || 0;
   const chunkProfile = map?.chunkProfileLabel || "-";
   const inputMode = state.keyboardControl ? "keyboard" : "mouse";
-  const socketState = state.ws ? ["connecting", "open", "closing", "closed"][state.ws.readyState] || state.ws.readyState : "none";
+  const socketState = state.ws
+    ? ["connecting", "open", "closing", "closed"][state.ws.readyState] ||
+      state.ws.readyState
+    : "none";
   const prediction = state.predictionDebug || {};
 
   debugInfo.textContent = [
@@ -3792,14 +4814,17 @@ function drawPixelEntity(snap, pos, radius, isOwner, isPetal, isDrop) {
   ctx.save();
   ctx.globalAlpha *= alpha;
   if (isOwner) ctx.fillStyle = "#ffd446";
-  else if (isPetal || isDrop) ctx.fillStyle = rarityColor(snap.rarity || 1, 0.9);
+  else if (isPetal || isDrop)
+    ctx.fillStyle = rarityColor(snap.rarity || 1, 0.9);
   else ctx.fillStyle = rarityColor(snap.rarity || 1, 0.72);
   ctx.fillRect(x, y, size, size);
   ctx.restore();
 }
 
 function hurtFlashAmount(entity) {
-  const age = Number.isFinite(entity?.hurtFlashAge) ? entity.hurtFlashAge : hurtFlashDuration;
+  const age = Number.isFinite(entity?.hurtFlashAge)
+    ? entity.hurtFlashAge
+    : hurtFlashDuration;
   if (age >= hurtFlashDuration) return 0;
   const progress = clamp(age / hurtFlashDuration, 0, 1);
   return (1 - progress) * (1 - progress);
@@ -3859,25 +4884,58 @@ function shouldEmitParticleBurst(entity, ticks) {
   return true;
 }
 
-function emitParticleBurst(origin, color, radius = 0) {
-  if (!origin || !Number.isFinite(origin.x) || !Number.isFinite(origin.y) || !color) return;
+function emitParticleBurst(
+  origin,
+  color,
+  radius = 0,
+  compositeOperation = "lighter",
+  options = {},
+) {
+  if (
+    !origin ||
+    !Number.isFinite(origin.x) ||
+    !Number.isFinite(origin.y) ||
+    !color
+  )
+    return;
 
   const ringRadius = Math.max(0, Number(radius) || 0);
-  const ringAngle = Math.random() * Math.PI * 2;
-  const directionAngle = Math.random() * Math.PI * 2;
-  const speed = particleSpeedMin + Math.random() * (particleSpeedMax - particleSpeedMin);
-  state.particles.push({
-    pos: {
-      x: origin.x + Math.cos(ringAngle) * ringRadius,
-      y: origin.y + Math.sin(ringAngle) * ringRadius,
-    },
-    velocity: {
-      x: Math.cos(directionAngle) * speed,
-      y: Math.sin(directionAngle) * speed,
-    },
-    color,
-    age: 0,
-  });
+  const particleCount = Math.max(
+    0,
+    Math.floor(Number.isFinite(options.count) ? options.count : 1),
+  );
+  const alphaScale = Number.isFinite(options.alphaScale)
+    ? options.alphaScale
+    : 1;
+  const sizeScale = Number.isFinite(options.sizeScale)
+    ? options.sizeScale
+    : 1;
+  const lifetime = Number.isFinite(options.lifetime)
+    ? options.lifetime
+    : particleLifetimeSeconds;
+
+  for (let i = 0; i < particleCount; i += 1) {
+    const ringAngle = Math.random() * Math.PI * 2;
+    const directionAngle = ringAngle + (Math.random() - 0.5) * 0.7;
+    const speed =
+      particleSpeedMin + Math.random() * (particleSpeedMax - particleSpeedMin);
+    state.particles.push({
+      pos: {
+        x: origin.x + Math.cos(ringAngle) * ringRadius,
+        y: origin.y + Math.sin(ringAngle) * ringRadius,
+      },
+      velocity: {
+        x: Math.cos(directionAngle) * speed,
+        y: Math.sin(directionAngle) * speed,
+      },
+      color,
+      compositeOperation,
+      age: 0,
+      lifetime,
+      size: particleSize * sizeScale,
+      alphaScale,
+    });
+  }
   if (state.particles.length > particleMaxCount)
     state.particles.splice(0, state.particles.length - particleMaxCount);
 }
@@ -3887,24 +4945,59 @@ function updateParticles(dt) {
   for (let i = state.particles.length - 1; i >= 0; i -= 1) {
     const particle = state.particles[i];
     particle.age += dt;
-    if (particle.age >= particleLifetimeSeconds) {
+    const lifetime = Math.max(
+      0.001,
+      particle.lifetime || particleLifetimeSeconds,
+    );
+    if (particle.age >= lifetime) {
       state.particles.splice(i, 1);
+      continue;
+    }
+    if (particle.kind === "portal") {
+      const centerEntity = state.entities.get(particle.entityId);
+      const center = centerEntity?.renderPos || particle.center;
+      const progress = clamp(particle.age / lifetime, 0, 1);
+      const radius = particle.orbitRadius * Math.pow(1 - progress, 0.72);
+      const angle = particle.angle + particle.angularVelocity * particle.age;
+      particle.pos.x = center.x + Math.cos(angle) * radius;
+      particle.pos.y = center.y + Math.sin(angle) * radius;
       continue;
     }
     particle.pos.x += particle.velocity.x * dt;
     particle.pos.y += particle.velocity.y * dt;
+    const velocityRetention = Math.exp(
+      -Math.max(0, particleVelocityDampingPerSecond) * dt,
+    );
+    particle.velocity.x *= velocityRetention;
+    particle.velocity.y *= velocityRetention;
   }
 }
 
 function drawParticlePass() {
   if (!state.particles.length) return;
   ctx.save();
-  ctx.globalCompositeOperation = "lighter";
   for (const particle of state.particles) {
-    const progress = clamp(particle.age / particleLifetimeSeconds, 0, 1);
+    const lifetime = Math.max(
+      0.001,
+      particle.lifetime || particleLifetimeSeconds,
+    );
+    const progress = clamp(particle.age / lifetime, 0, 1);
     const pos = worldToScreen(particle.pos);
-    const size = Math.max(0.8, worldLengthToScreen(particleSize) * (1 - progress * 0.4));
-    ctx.globalAlpha = 1 - progress;
+    const baseSize = particle.size || particleSize;
+    const size = Math.max(
+      0,
+      worldLengthToScreen(baseSize) * Math.pow(1 - progress, 0.82),
+    );
+    if (size <= 0.05) continue;
+    ctx.globalCompositeOperation =
+      particle.compositeOperation || "lighter";
+    const alphaScale = Number.isFinite(particle.alphaScale)
+      ? particle.alphaScale
+      : 1;
+    ctx.globalAlpha =
+      ((particle.kind === "portal"
+        ? Math.min(1, progress * 8) * (1 - progress) * 0.9
+        : 1 - progress) * alphaScale);
     ctx.fillStyle = particle.color;
     ctx.beginPath();
     ctx.arc(pos.x, pos.y, size, 0, Math.PI * 2);
@@ -3913,36 +5006,117 @@ function drawParticlePass() {
   ctx.restore();
 }
 
-function isPetalBurstRarity(rarity) {
-  return rarity === 9 || rarity === 10 || rarity === 11;
+function emitPortalParticleBurst(entity, snap) {
+  if (
+    !entity?.renderPos ||
+    entity.dying ||
+    !snap ||
+    (snap.flags & flagDead) !== 0
+  )
+    return;
+  if (!shouldEmitParticleBurst(entity, 2)) return;
+
+  const radius = Math.max(4, Number(snap.radius) || 0);
+  const angle = Math.random() * Math.PI * 2;
+  const orbitRadius = radius * (0.78 + Math.random() * 0.38);
+  const lifetime = 0.48 + Math.random() * 0.34;
+  const direction = (snap.entityId & 1) === 0 ? 1 : -1;
+  const colors = ["#bce8ff", "#8fb7ff", "#d8c6ff", "#ffffff"];
+  const center = { x: entity.renderPos.x, y: entity.renderPos.y };
+  state.particles.push({
+    kind: "portal",
+    entityId: snap.entityId,
+    center,
+    pos: {
+      x: center.x + Math.cos(angle) * orbitRadius,
+      y: center.y + Math.sin(angle) * orbitRadius,
+    },
+    velocity: { x: 0, y: 0 },
+    angle,
+    orbitRadius,
+    angularVelocity: direction * (3.6 + Math.random() * 2.4),
+    color: colors[Math.floor(Math.random() * colors.length)],
+    age: 0,
+    lifetime,
+    size: clamp(radius * (0.028 + Math.random() * 0.022), 1.8, 5.5),
+  });
+  if (state.particles.length > particleMaxCount)
+    state.particles.splice(0, state.particles.length - particleMaxCount);
 }
 
-function flowerRadiusForPetal(entity) {
-  const snap = entity?.snapshot;
-  if (!snap) return 0;
+function isPetalBurstRarity(rarity) {
+  return (
+    rarity === rarityEternal ||
+    rarity === rarityUnique ||
+    rarity === rarityPrimordial
+  );
+}
 
-  let closestRadius = 0;
-  let closestDistance = Infinity;
-  for (const candidate of state.entities.values()) {
-    if (!candidate || candidate === entity || candidate.dying || !candidate.snapshot || !candidate.renderPos ||
-        (candidate.snapshot.flags & flagDead) !== 0) continue;
-    const candidateSnap = candidate.snapshot;
-    if (candidateSnap.team !== snap.team || isPetalEntity(candidateSnap.entityType) ||
-        isDropEntity(candidateSnap.entityType) || isProjectileSnap(candidateSnap) ||
-        isBloodSacrificeEffectSnap(candidateSnap) || candidateSnap.entityType === portalType) continue;
-    const distance = Math.hypot(candidate.renderPos.x - entity.renderPos.x, candidate.renderPos.y - entity.renderPos.y);
-    if (distance >= closestDistance) continue;
-    closestDistance = distance;
-    closestRadius = Math.max(0, candidateSnap.radius || 0);
+function emitRarityParticleBurst(origin, rarity, radius) {
+  const colors =
+    rarity === rarityPrimordial
+      ? ["#444444", "#989898"]
+      : rarity === rarityUnique
+        ? ["#000000"]
+        : ["#ffffff"];
+  for (const color of colors) {
+    emitParticleBurst(
+      origin,
+      color,
+      radius,
+      rarity === rarityPrimordial || color === "#000000"
+        ? "source-over"
+        : "lighter",
+    );
   }
-  return closestRadius || Math.max(0, snap.radius || 0);
 }
 
 function emitPetalParticleBurst(entity, snap) {
-  if (!isPetalBurstRarity(snap?.rarity) || entity?.dying || !entity?.renderPos ||
-      (snap.flags & flagDead) !== 0) return;
-  if (!shouldEmitParticleBurst(entity, 6)) return;
-  emitParticleBurst(entity.renderPos, rarityColor(snap.rarity, 1), flowerRadiusForPetal(entity));
+  if (
+    !isPetalBurstRarity(snap?.rarity) ||
+    entity?.dying ||
+    !entity?.renderPos ||
+    (snap.flags & flagDead) !== 0
+  )
+    return;
+  if (!shouldEmitParticleBurst(entity, petalParticleBurstTicks)) return;
+  emitRarityParticleBurst(
+    entity.renderPos,
+    snap.rarity,
+    Math.max(0, snap.radius || 0),
+  );
+}
+
+function emitZeroCopyFlowerParticleBurst(entity, snap) {
+  if (
+    snap?.entityType !== playerFlowerType ||
+    entity?.dying ||
+    !entity?.renderPos ||
+    (snap.flags & flagDead) !== 0
+  )
+    return;
+
+  const slots = snap.primarySlots || [];
+  const eligibleRarities = [];
+  for (let index = 0; index < slots.length; index += 1) {
+    const slot = slots[index];
+    if (!slotHasItem(slot) || !isPetalBurstRarity(slot.rarity)) continue;
+    const visualPetalType = slotVisualPetalType(slot, index, "primary", slots);
+    if (petalBaseCopy(visualPetalType, slot.rarity) !== 0) continue;
+    eligibleRarities.push(slot.rarity);
+  }
+
+  if (
+    !eligibleRarities.length ||
+    !shouldEmitParticleBurst(entity, petalParticleBurstTicks)
+  )
+    return;
+  for (const rarity of eligibleRarities)
+    emitRarityParticleBurst(
+      entity.renderPos,
+      rarity,
+      Math.max(0, snap.radius || 0),
+    );
 }
 
 function bloodSacrificePhase(progress) {
@@ -3954,7 +5128,11 @@ function bloodSacrificePhase(progress) {
       alpha: 1,
     };
   }
-  const fadeProgress = clamp((value - bloodSacrificeDrawPhaseEnd) / (1 - bloodSacrificeDrawPhaseEnd), 0, 1);
+  const fadeProgress = clamp(
+    (value - bloodSacrificeDrawPhaseEnd) / (1 - bloodSacrificeDrawPhaseEnd),
+    0,
+    1,
+  );
   return {
     drawProgress: 1,
     fadeProgress,
@@ -3965,7 +5143,7 @@ function bloodSacrificePhase(progress) {
 function bloodSacrificeStarPoints(pos, radius, angle = 0) {
   const vertices = [];
   for (let i = 0; i < 5; i += 1) {
-    const theta = bloodSacrificeInitialHeading + angle + i * Math.PI * 2 / 5;
+    const theta = bloodSacrificeInitialHeading + angle + (i * Math.PI * 2) / 5;
     vertices.push({
       x: pos.x + Math.cos(theta) * radius,
       y: pos.y - Math.sin(theta) * radius,
@@ -3974,34 +5152,68 @@ function bloodSacrificeStarPoints(pos, radius, angle = 0) {
   return [0, 2, 4, 1, 3, 0].map((index) => vertices[index]);
 }
 
-function traceBloodSacrificeStar(points, progress) {
-  if (!points || points.length < 2 || progress <= 0) return null;
-
+function measureBloodSacrificePath(points) {
+  if (!points || points.length < 2) return null;
   let totalLength = 0;
   const segmentLengths = [];
   for (let i = 0; i < points.length - 1; i += 1) {
-    const length = Math.hypot(points[i + 1].x - points[i].x, points[i + 1].y - points[i].y);
+    const length = Math.hypot(
+      points[i + 1].x - points[i].x,
+      points[i + 1].y - points[i].y,
+    );
     segmentLengths.push(length);
     totalLength += length;
   }
   if (totalLength <= 0) return null;
 
-  const targetLength = totalLength * clamp(progress, 0, 1);
+  return { points, segmentLengths, totalLength };
+}
+
+function bloodSacrificePathPoint(path, distance) {
+  if (!path || path.totalLength <= 0) return null;
+
+  const targetDistance = clamp(distance, 0, path.totalLength);
   let travelled = 0;
-  let latestPoint = points[0];
+  for (let i = 0; i < path.segmentLengths.length; i += 1) {
+    const segmentLength = path.segmentLengths[i];
+    const start = path.points[i];
+    const end = path.points[i + 1];
+    if (travelled + segmentLength < targetDistance) {
+      travelled += segmentLength;
+      continue;
+    }
+
+    const segmentProgress =
+      segmentLength > 0 ? (targetDistance - travelled) / segmentLength : 0;
+    return {
+      x: start.x + (end.x - start.x) * clamp(segmentProgress, 0, 1),
+      y: start.y + (end.y - start.y) * clamp(segmentProgress, 0, 1),
+    };
+  }
+
+  return path.points[path.points.length - 1];
+}
+
+function traceBloodSacrificeStar(path, progress) {
+  if (!path || progress <= 0) return null;
+
+  const targetLength = path.totalLength * clamp(progress, 0, 1);
+  let travelled = 0;
+  let latestPoint = path.points[0];
   ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-  for (let i = 0; i < points.length - 1; i += 1) {
-    const segmentLength = segmentLengths[i];
-    const start = points[i];
-    const end = points[i + 1];
+  ctx.moveTo(path.points[0].x, path.points[0].y);
+  for (let i = 0; i < path.segmentLengths.length; i += 1) {
+    const segmentLength = path.segmentLengths[i];
+    const start = path.points[i];
+    const end = path.points[i + 1];
     if (travelled + segmentLength <= targetLength) {
       ctx.lineTo(end.x, end.y);
       travelled += segmentLength;
       latestPoint = end;
       continue;
     }
-    const segmentProgress = segmentLength > 0 ? (targetLength - travelled) / segmentLength : 0;
+    const segmentProgress =
+      segmentLength > 0 ? (targetLength - travelled) / segmentLength : 0;
     latestPoint = {
       x: start.x + (end.x - start.x) * clamp(segmentProgress, 0, 1),
       y: start.y + (end.y - start.y) * clamp(segmentProgress, 0, 1),
@@ -4013,22 +5225,152 @@ function traceBloodSacrificeStar(points, progress) {
   return latestPoint;
 }
 
+function bloodSacrificeParticleRadius(entity, referenceRadius, alpha) {
+  const entityRadius = Number(entity?.snapshot?.radius);
+  const radiusScale =
+    Number.isFinite(entityRadius) && entityRadius > 0
+      ? entityRadius / Math.max(1, bloodSacrificeParticleReferenceRadius)
+      : 1;
+  return Math.max(0.5, referenceRadius * radiusScale * Math.max(0, alpha));
+}
+
+function emitBloodSacrificeSweep(entity, path, drawProgress, effectAlpha = 1) {
+  if (!entity || !path || drawProgress <= 0) return;
+
+  const now = currentRenderTimeSeconds;
+  const sweepDuration = Math.max(
+    0.001,
+    bloodSacrificeSweepDurationSeconds,
+  );
+  const sweepInterval = Math.max(
+    0.001,
+    bloodSacrificeSweepIntervalSeconds,
+  );
+  if (!Array.isArray(entity.bloodSacrificeSweeps))
+    entity.bloodSacrificeSweeps = [];
+  if (!Number.isFinite(entity.bloodSacrificeSweepNextAt)) {
+    entity.bloodSacrificeSweepNextAt = now;
+  }
+
+  if (now >= entity.bloodSacrificeSweepNextAt) {
+    const firstStart = entity.bloodSacrificeSweepNextAt;
+    const dueCount = Math.floor((now - firstStart) / sweepInterval) + 1;
+    const expiredCount = Math.max(
+      0,
+      Math.floor((now - sweepDuration - firstStart) / sweepInterval) + 1,
+    );
+    for (let index = expiredCount; index < dueCount; index += 1) {
+      const minStep = Math.ceil(
+        Math.min(bloodSacrificeSweepStepMin, bloodSacrificeSweepStepMax),
+      );
+      const maxStep = Math.max(
+        minStep,
+        Math.floor(
+          Math.max(bloodSacrificeSweepStepMin, bloodSacrificeSweepStepMax),
+        ),
+      );
+      entity.bloodSacrificeSweeps.push({
+        startedAt: firstStart + index * sweepInterval,
+        startProgress: Math.random(),
+        speedStep:
+          minStep + Math.floor(Math.random() * (maxStep - minStep + 1)),
+        nextTravelProgress: 0,
+        enteredDrawnPath: false,
+      });
+    }
+    entity.bloodSacrificeSweepNextAt = firstStart + dueCount * sweepInterval;
+  }
+
+  const visibleLength = path.totalLength * clamp(drawProgress, 0, 1);
+  const emissionProgress =
+    Math.max(0.25, bloodSacrificeSweepEmissionSpacingPx) / path.totalLength;
+  const referenceStep = Math.max(0.001, bloodSacrificeSweepReferenceStep);
+  const drawing = drawProgress < 1;
+  for (
+    let index = entity.bloodSacrificeSweeps.length - 1;
+    index >= 0;
+    index -= 1
+  ) {
+    const sweep = entity.bloodSacrificeSweeps[index];
+    const age = Math.max(0, now - sweep.startedAt);
+    const lifetimeProgress = clamp(age / sweepDuration, 0, 1);
+    const targetTravelProgress =
+      lifetimeProgress * (Math.max(0, sweep.speedStep) / referenceStep);
+    let hitDrawingHead = false;
+    while (sweep.nextTravelProgress <= targetTravelProgress) {
+      const pathProgress =
+        (sweep.startProgress + sweep.nextTravelProgress) % 1;
+      const pathDistance = pathProgress * path.totalLength;
+      const onDrawnPath = !drawing || pathDistance <= visibleLength;
+      if (drawing && sweep.enteredDrawnPath && !onDrawnPath) {
+        hitDrawingHead = true;
+        break;
+      }
+      if (onDrawnPath) {
+        sweep.enteredDrawnPath = true;
+        const point = bloodSacrificePathPoint(path, pathDistance);
+        const particleCount = Math.max(
+          1,
+          Math.floor(
+            bloodSacrificeSweepParticleCount * Math.max(0, effectAlpha),
+          ),
+        );
+        const particleRadius = bloodSacrificeParticleRadius(
+          entity,
+          bloodSacrificeSweepParticleRadius,
+          effectAlpha,
+        );
+        if (point) {
+          emitParticleBurst(
+            screenToWorld(point),
+            "#ff0000",
+            particleRadius,
+            "lighter",
+            {
+              count: particleCount,
+              alphaScale: Math.max(0, effectAlpha),
+              sizeScale: Math.max(0.25, effectAlpha),
+              lifetime: Math.min(
+                particleLifetimeSeconds,
+                Math.max(0.001, sweepDuration - age),
+              ),
+            },
+          );
+        }
+      }
+      sweep.nextTravelProgress += emissionProgress;
+    }
+
+    if (hitDrawingHead || age >= sweepDuration) {
+      entity.bloodSacrificeSweeps.splice(index, 1);
+    }
+  }
+}
+
 function fillBloodSacrificeStar(points) {
   if (!points || points.length < 2) return;
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);
-  for (let i = 1; i < points.length; i += 1) ctx.lineTo(points[i].x, points[i].y);
+  for (let i = 1; i < points.length; i += 1)
+    ctx.lineTo(points[i].x, points[i].y);
   ctx.closePath();
   ctx.fill();
 }
 
-function drawBloodSacrificeEffect(worldPos, pos, outerRadius, progress, angle = 0, entity = null) {
+function drawBloodSacrificeEffect(
+  pos,
+  outerRadius,
+  progress,
+  angle = 0,
+  entity = null,
+) {
   const phase = bloodSacrificePhase(progress);
   if (phase.alpha <= 0 || outerRadius < entityPixelMinScreenRadius) return;
 
   const innerRadius = Math.max(1, outerRadius * bloodSacrificeInnerRadiusScale);
   const outerPoints = bloodSacrificeStarPoints(pos, outerRadius, angle);
   const innerPoints = bloodSacrificeStarPoints(pos, innerRadius, angle);
+  const innerPath = measureBloodSacrificePath(innerPoints);
   const lineWidth = Math.max(2, Math.min(20, innerRadius * 0.02));
 
   ctx.save();
@@ -4042,21 +5384,42 @@ function drawBloodSacrificeEffect(worldPos, pos, outerRadius, progress, angle = 
   ctx.lineWidth = lineWidth;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  const latestPoint = traceBloodSacrificeStar(innerPoints, phase.drawProgress);
+  const latestPoint = traceBloodSacrificeStar(innerPath, phase.drawProgress);
   ctx.restore();
 
-  if (latestPoint && shouldEmitParticleBurst(entity, 4)) {
-    const scale = Math.max(0.0001, worldScale());
-    emitParticleBurst({
-      x: worldPos.x + (latestPoint.x - pos.x) / scale,
-      y: worldPos.y + (latestPoint.y - pos.y) / scale,
-    }, "#ff0000");
+  emitBloodSacrificeSweep(entity, innerPath, phase.drawProgress, phase.alpha);
+
+  if (
+    phase.drawProgress < 1 &&
+    latestPoint &&
+    shouldEmitParticleBurst(entity, bloodSacrificeHeadParticleBurstTicks)
+  ) {
+    const origin = screenToWorld(latestPoint);
+    const particleCount = Math.max(
+      1,
+      Math.floor(bloodSacrificeHeadParticleCount * Math.max(0, phase.alpha)),
+    );
+    const particleRadius = bloodSacrificeParticleRadius(
+      entity,
+      bloodSacrificeHeadParticleRadius,
+      phase.alpha,
+    );
+    emitParticleBurst(origin, "#ff0000", particleRadius, "lighter", {
+      count: particleCount,
+      alphaScale: Math.max(0, phase.alpha),
+      sizeScale: Math.max(0.25, phase.alpha),
+    });
   }
 }
 
 function hornetSkill2WindupMissileWobble(entity, time) {
   const snap = entity?.snapshot;
-  if (!snap || snap.entityType !== hornetMissileType || (snap.flags & flagAttached) === 0) return 0;
+  if (
+    !snap ||
+    snap.entityType !== hornetMissileType ||
+    (snap.flags & flagAttached) === 0
+  )
+    return 0;
   let bestDistance = Infinity;
   let owner = null;
   for (const candidate of currentHornetSkill2WindupOwners) {
@@ -4064,7 +5427,10 @@ function hornetSkill2WindupMissileWobble(entity, time) {
     const ownerPos = candidate.renderPos || ownerSnap.pos;
     const missilePos = entity.renderPos || snap.pos;
     if (!ownerPos || !missilePos) continue;
-    const distance = Math.hypot(missilePos.x - ownerPos.x, missilePos.y - ownerPos.y);
+    const distance = Math.hypot(
+      missilePos.x - ownerPos.x,
+      missilePos.y - ownerPos.y,
+    );
     const maxDistance = Math.max(ownerSnap.radius * 4.5 + snap.radius * 2, 1);
     if (distance <= maxDistance && distance < bestDistance) {
       bestDistance = distance;
@@ -4076,9 +5442,13 @@ function hornetSkill2WindupMissileWobble(entity, time) {
 }
 
 function detailMinRadiusForEntity(snap, isOwner, isPetal, isDrop) {
-  const base = isPetal ? petalDetailMinScreenRadius :
-    isDrop ? dropDetailMinScreenRadius : entityDetailMinScreenRadius;
-  if (currentRenderLoad <= 0 || isOwner || shouldAlwaysDrawDetailed(snap)) return base;
+  const base = isPetal
+    ? petalDetailMinScreenRadius
+    : isDrop
+      ? dropDetailMinScreenRadius
+      : entityDetailMinScreenRadius;
+  if (currentRenderLoad <= 0 || isOwner || shouldAlwaysDrawDetailed(snap))
+    return base;
   if (isPetal) return currentRenderLoad >= 2 ? base * 3.8 : base * 2.2;
   if (isDrop) return currentRenderLoad >= 2 ? base * 3.2 : base * 2.0;
   return currentRenderLoad >= 2 ? base * 3.0 : base * 1.8;
@@ -4086,8 +5456,11 @@ function detailMinRadiusForEntity(snap, isOwner, isPetal, isDrop) {
 
 function shouldAlwaysDrawDetailed(snap) {
   if (!snap) return false;
-  if (snap.entityType === playerFlowerType || snap.entityType === spiderWebZoneType ||
-      snap.entityType === bloodSacrificeEffectType)
+  if (
+    snap.entityType === playerFlowerType ||
+    snap.entityType === spiderWebZoneType ||
+    snap.entityType === bloodSacrificeEffectType
+  )
     return true;
   return raritySortRank(snap.rarity) >= raritySortRank(bossRarity);
 }
@@ -4096,21 +5469,27 @@ function drawEntity(entity) {
   const snap = entity.snapshot;
   const pos = worldToScreen(entity.renderPos);
   const radius = Math.max(0, worldLengthToScreen(snap.radius));
-  const isOwner = (snap.flags & flagOwner) !== 0 || snap.entityId === state.ownerEntityId;
+  const isOwner =
+    (snap.flags & flagOwner) !== 0 || snap.entityId === state.ownerEntityId;
   const isPetal = isPetalEntity(snap.entityType);
   const isDrop = isDropEntity(snap.entityType);
   const dead = (snap.flags & flagDead) !== 0;
-  const deathProgress = entity.dying ? clamp((entity.deathAge || 0) / deathFadeDuration, 0, 1) : 0;
+  const deathProgress = entity.dying
+    ? clamp((entity.deathAge || 0) / deathFadeDuration, 0, 1)
+    : 0;
   const deathEase = deathProgress * deathProgress * (3 - deathProgress * 2);
   const deathScale = entity.dying ? 1 + deathEase * deathScaleBoost : 1;
   const deathAlpha = entity.dying ? 1 - deathEase : 1;
   const hurtFlash = entity.dying ? 0 : hurtFlashAmount(entity);
 
   if (isPetal) emitPetalParticleBurst(entity, snap);
+  else if (snap.entityType === playerFlowerType)
+    emitZeroCopyFlowerParticleBurst(entity, snap);
 
   ctx.save();
   ctx.globalAlpha *= deathAlpha;
-  if (hurtFlash > 0) ctx.filter = `brightness(${1 + hurtFlash * 3.5}) saturate(${1 - hurtFlash * 0.92})`;
+  if (hurtFlash > 0)
+    ctx.filter = `brightness(${1 + hurtFlash * 3.5}) saturate(${1 - hurtFlash * 0.92})`;
 
   const visibleRadius = radius * deathScale;
   if (visibleRadius < entityPixelMinScreenRadius) {
@@ -4118,7 +5497,12 @@ function drawEntity(entity) {
     return;
   }
 
-  const detailMinRadius = detailMinRadiusForEntity(snap, isOwner, isPetal, isDrop);
+  const detailMinRadius = detailMinRadiusForEntity(
+    snap,
+    isOwner,
+    isPetal,
+    isDrop,
+  );
   if (visibleRadius < detailMinRadius) {
     drawPixelEntity(snap, pos, visibleRadius, isOwner, isPetal, isDrop);
     ctx.restore();
@@ -4126,26 +5510,52 @@ function drawEntity(entity) {
   }
 
   if (!isPetal && !isDrop && snap.entityType === bloodSacrificeEffectType) {
-    drawBloodSacrificeEffect(entity.renderPos, pos, visibleRadius, snap.hpPercent,
-                             entity.bloodSacrificeAngle ?? Math.random() * Math.PI * 2, entity);
+    drawBloodSacrificeEffect(
+      pos,
+      visibleRadius,
+      snap.hpPercent,
+      entity.bloodSacrificeAngle ?? Math.random() * Math.PI * 2,
+      entity,
+    );
     ctx.restore();
     return;
   }
 
-  if (entity.dying) drawDeathEffect(pos, visibleRadius, deathProgress, snap.rarity);
+  if (entity.dying)
+    drawDeathEffect(pos, visibleRadius, deathProgress, snap.rarity);
 
-  if (!isPetal && (snap.entityType === beetleType || snap.entityType === summonedBeetleType)) {
+  if (
+    !isPetal &&
+    (snap.entityType === beetleType || snap.entityType === summonedBeetleType)
+  ) {
     const summoned = snap.entityType === summonedBeetleType;
-    drawBeetle(ctx, "./assets/beetle.svg", pos, radius * deathScale, snap.entityId,
-               entity.renderAngle ?? snap.angle, entity.motionBlend || 0, currentRenderTimeSeconds,
-               { summoned, forwardOffset: radius * deathScale * beetleSpriteForwardOffsetScale });
+    drawBeetle(
+      ctx,
+      "./assets/beetle.svg",
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      currentRenderTimeSeconds,
+      {
+        summoned,
+        forwardOffset: radius * deathScale * beetleSpriteForwardOffsetScale,
+      },
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && snap.entityType === normalLadybugType) {
-    drawNormalLadybug(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle);
+    drawNormalLadybug(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
@@ -4159,44 +5569,78 @@ function drawEntity(entity) {
   }
 
   if (!isPetal && snap.entityType === leafPieceType) {
-    drawLeafPiece(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle);
+    drawLeafPiece(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && snap.entityType === babyAntType) {
-    drawBabyAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                entity.motionBlend || 0, currentRenderTimeSeconds);
+    drawBabyAnt(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      currentRenderTimeSeconds,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && snap.entityType === workerAntType) {
-    drawWorkerAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                  entity.motionBlend || 0, currentRenderTimeSeconds);
+    drawWorkerAnt(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      currentRenderTimeSeconds,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && snap.entityType === queenAntType) {
-    drawQueenAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                 entity.motionBlend || 0, currentRenderTimeSeconds);
+    drawQueenAnt(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      currentRenderTimeSeconds,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
-  if (!isPetal && (snap.entityType === antEggMobType || snap.entityType === queenAntEggType)) {
+  if (
+    !isPetal &&
+    (snap.entityType === antEggMobType || snap.entityType === queenAntEggType)
+  ) {
     drawAntEggMob(ctx, pos, radius * deathScale, "normal");
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
-  if (!isPetal && (snap.entityType === fireAntEggType || snap.entityType === queenFireAntEggType)) {
+  if (
+    !isPetal &&
+    (snap.entityType === fireAntEggType ||
+      snap.entityType === queenFireAntEggType)
+  ) {
     drawAntEggMob(ctx, pos, radius * deathScale, "fire");
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -4211,48 +5655,90 @@ function drawEntity(entity) {
   }
 
   if (!isPetal && snap.entityType === babyFireAntType) {
-    drawBabyFireAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                    entity.motionBlend || 0, currentRenderTimeSeconds);
+    drawBabyFireAnt(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      currentRenderTimeSeconds,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && snap.entityType === workerFireAntType) {
-    drawWorkerFireAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                      entity.motionBlend || 0, currentRenderTimeSeconds);
+    drawWorkerFireAnt(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      currentRenderTimeSeconds,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && snap.entityType === fireQueenAntType) {
-    drawFireQueenAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                     entity.motionBlend || 0, currentRenderTimeSeconds);
+    drawFireQueenAnt(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      currentRenderTimeSeconds,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && snap.entityType === babyTermiteType) {
-    drawBabyTermite(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                    entity.motionBlend || 0, currentRenderTimeSeconds);
+    drawBabyTermite(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      currentRenderTimeSeconds,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && snap.entityType === workerTermiteType) {
-    drawWorkerTermite(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                      entity.motionBlend || 0, currentRenderTimeSeconds);
+    drawWorkerTermite(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      currentRenderTimeSeconds,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && snap.entityType === termiteOvermindType) {
-    drawTermiteOvermind(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                        entity.motionBlend || 0, currentRenderTimeSeconds);
+    drawTermiteOvermind(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      currentRenderTimeSeconds,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
@@ -4266,38 +5752,86 @@ function drawEntity(entity) {
   }
 
   if (!isPetal && snap.entityType === spiderType) {
-    drawSpider(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-               entity.motionBlend || 0, currentRenderTimeSeconds);
+    drawSpider(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      currentRenderTimeSeconds,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && snap.entityType === sandstormType) {
-    drawSandstorm(ctx, pos, radius * deathScale, snap.entityId, currentRenderTimeSeconds);
+    drawSandstorm(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      currentRenderTimeSeconds,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && !isDrop && snap.entityType === portalType) {
-    drawPortal(ctx, pos, radius * deathScale, snap.entityId, currentRenderTimeSeconds, entity.renderAngle ?? snap.angle);
+    emitPortalParticleBurst(entity, snap);
+    drawPortal(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      currentRenderTimeSeconds,
+      entity.renderAngle ?? snap.angle,
+    );
     ctx.restore();
     return;
   }
 
-  if (!isPetal && (snap.entityType === soldierAntType || snap.entityType === summonedSoldierAntType ||
-                   snap.entityType === soldierFireAntType || snap.entityType === soldierTermiteType)) {
+  if (
+    !isPetal &&
+    (snap.entityType === soldierAntType ||
+      snap.entityType === summonedSoldierAntType ||
+      snap.entityType === soldierFireAntType ||
+      snap.entityType === soldierTermiteType)
+  ) {
     const summoned = snap.entityType === summonedSoldierAntType;
     if (snap.entityType === soldierFireAntType) {
-      drawSoldierFireAntMob(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                            entity.motionBlend || 0, currentRenderTimeSeconds);
+      drawSoldierFireAntMob(
+        ctx,
+        pos,
+        radius * deathScale,
+        snap.entityId,
+        entity.renderAngle ?? snap.angle,
+        entity.motionBlend || 0,
+        currentRenderTimeSeconds,
+      );
     } else if (snap.entityType === soldierTermiteType) {
-      drawSoldierTermite(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                         entity.motionBlend || 0, currentRenderTimeSeconds);
+      drawSoldierTermite(
+        ctx,
+        pos,
+        radius * deathScale,
+        snap.entityId,
+        entity.renderAngle ?? snap.angle,
+        entity.motionBlend || 0,
+        currentRenderTimeSeconds,
+      );
     } else {
-      drawSoldierAnt(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                     entity.motionBlend || 0, currentRenderTimeSeconds, { summoned });
+      drawSoldierAnt(
+        ctx,
+        pos,
+        radius * deathScale,
+        snap.entityId,
+        entity.renderAngle ?? snap.angle,
+        entity.motionBlend || 0,
+        currentRenderTimeSeconds,
+        { summoned },
+      );
     }
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -4305,25 +5839,47 @@ function drawEntity(entity) {
   }
 
   if (!isPetal && snap.entityType === bandageBeetleType) {
-    drawBeetle(ctx, "./assets/bandage_beetle.svg", pos, radius * deathScale, snap.entityId,
-               entity.renderAngle ?? snap.angle, entity.motionBlend || 0, currentRenderTimeSeconds,
-               { forwardOffset: radius * deathScale * beetleSpriteForwardOffsetScale });
+    drawBeetle(
+      ctx,
+      "./assets/bandage_beetle.svg",
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      currentRenderTimeSeconds,
+      { forwardOffset: radius * deathScale * beetleSpriteForwardOffsetScale },
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && snap.entityType === beeType) {
-    drawBee(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-            entity.motionBlend || 0, currentRenderTimeSeconds);
+    drawBee(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      currentRenderTimeSeconds,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && snap.entityType === bumbleBeeType) {
-    drawBumbleBee(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-                  entity.motionBlend || 0, currentRenderTimeSeconds);
+    drawBumbleBee(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      currentRenderTimeSeconds,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
@@ -4331,77 +5887,153 @@ function drawEntity(entity) {
 
   if (!isPetal && snap.entityType === hornetType) {
     const windupId = skillWindupIdFromFlags(snap.flags);
-    const antennaWobble = windupId === 2 ? Math.sin((currentRenderTimeSeconds || 0) * Math.PI * 4) * 0.34 : 0;
-    drawHornet(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle,
-               entity.motionBlend || 0, currentRenderTimeSeconds, { antennaWobble });
+    const antennaWobble =
+      windupId === 2
+        ? Math.sin((currentRenderTimeSeconds || 0) * Math.PI * 4) * 0.34
+        : 0;
+    drawHornet(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      currentRenderTimeSeconds,
+      {
+        antennaWobble,
+        spriteScale: getClientConfigValue(
+          state.clientConfig,
+          "hornet_sprite_scale",
+        ),
+        spriteOffset: {
+          x: getClientConfigValue(state.clientConfig, "hornet_body_offset_x"),
+          y: getClientConfigValue(state.clientConfig, "hornet_body_offset_y"),
+        },
+      },
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && snap.entityType === dandelionType) {
-    drawDandelion(ctx, pos, radius * deathScale, snap.entityId, entity.renderAngle ?? snap.angle, {
-      scale: getClientConfigValue(state.clientConfig, "dande_base_scale"),
-      angle: getClientConfigValue(state.clientConfig, "dande_base_angle"),
-      x: getClientConfigValue(state.clientConfig, "dande_base_x"),
-      y: getClientConfigValue(state.clientConfig, "dande_base_y"),
-    });
+    drawDandelion(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      {
+        scale: getClientConfigValue(state.clientConfig, "dande_base_scale"),
+        angle: getClientConfigValue(state.clientConfig, "dande_base_angle"),
+        x: getClientConfigValue(state.clientConfig, "dande_base_x"),
+        y: getClientConfigValue(state.clientConfig, "dande_base_y"),
+      },
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && !isDrop && snap.entityType === pollenProjectileType) {
-    drawPollen(ctx, pos, radius * deathScale, snap.entityId, currentRenderTimeSeconds);
+    drawPollen(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      currentRenderTimeSeconds,
+    );
     ctx.restore();
     return;
   }
 
   if (!isPetal && !isDrop && snap.entityType === spiderWebZoneType) {
-    drawSpiderWeb(ctx, pos, radius * deathScale, snap.entityId, currentRenderTimeSeconds, {
-      playerOwned: snap.team === playerTeam,
-    });
+    drawSpiderWeb(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      currentRenderTimeSeconds,
+      {
+        playerOwned: snap.team === playerTeam,
+      },
+    );
     ctx.restore();
     return;
   }
 
   if (!isPetal && !isDrop && snap.entityType === hornetMissileType) {
-    const wobble = hornetSkill2WindupMissileWobble(entity, currentRenderTimeSeconds);
-    drawHornetMissile(ctx, pos, radius * deathScale, (entity.renderAngle ?? snap.angle) + wobble);
+    const wobble = hornetSkill2WindupMissileWobble(
+      entity,
+      currentRenderTimeSeconds,
+    );
+    drawHornetMissile(
+      ctx,
+      pos,
+      radius * deathScale,
+      (entity.renderAngle ?? snap.angle) + wobble,
+    );
     ctx.restore();
     return;
   }
 
   if (!isPetal && !isDrop && snap.entityType === dandelionMissileType) {
-    drawDandelionMissile(pos, radius * deathScale, entity.renderAngle ?? snap.angle, snap.rarity, snap.entityId);
+    drawDandelionMissile(
+      pos,
+      radius * deathScale,
+      entity.renderAngle ?? snap.angle,
+      snap.rarity,
+      snap.entityId,
+    );
     ctx.restore();
     return;
   }
 
   if (!isPetal && snap.entityType === playerFlowerType) {
-    const flowerAngle = dead ? (entity.deathAngle ?? entity.renderAngle ?? snap.angle) : (entity.renderAngle ?? snap.angle);
+    const flowerAngle = dead
+      ? (entity.deathAngle ?? entity.renderAngle ?? snap.angle)
+      : (entity.renderAngle ?? snap.angle);
     drawPlayerFlower(snap, pos, radius * deathScale, flowerAngle, isOwner);
-    if (!entity.dying && (snap.flags & flagDigging) === 0) drawMobFrame(snap, pos, radius);
+    if (!entity.dying && (snap.flags & flagDigging) === 0)
+      drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (!isPetal && snap.entityType === dummyType) {
-    drawPlayerFlower(snap, pos, radius * deathScale, entity.renderAngle ?? snap.angle, false);
+    drawPlayerFlower(
+      snap,
+      pos,
+      radius * deathScale,
+      entity.renderAngle ?? snap.angle,
+      false,
+    );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
   if (isDrop) {
-    drawDropPetalCard(petalTypeFromSnap(snap), snap.rarity, pos, radius * deathScale);
+    drawDropPetalCard(
+      petalTypeFromSnap(snap),
+      snap.rarity,
+      pos,
+      radius * deathScale,
+    );
     ctx.restore();
     return;
   }
 
   if (isPetal) {
     const petalType = petalTypeFromSnap(snap);
-    drawLivePetal(petalType, snap.rarity, pos, radius * deathScale, entity.renderAngle ?? snap.angle, snap.entityId);
+    drawLivePetal(
+      petalType,
+      snap.rarity,
+      pos,
+      radius * deathScale,
+      entity.renderAngle ?? snap.angle,
+      snap.entityId,
+    );
     ctx.restore();
     return;
   }
@@ -4415,9 +6047,10 @@ function drawEntity(entity) {
   ctx.fill();
 
   ctx.lineWidth = (isOwner ? 3 : 1.5) * deathScale;
-  if (isOwner && (snap.flags & flagDefending)) ctx.strokeStyle = "#467acd";
-  else if (isOwner && (snap.flags & flagAttacking)) ctx.strokeStyle = "#be5e7a";
-  else ctx.strokeStyle = (isPetal || isDrop) ? "#4f6680" : "rgba(48, 62, 82, 0.52)";
+  if (isOwner && snap.flags & flagDefending) ctx.strokeStyle = "#467acd";
+  else if (isOwner && snap.flags & flagAttacking) ctx.strokeStyle = "#be5e7a";
+  else
+    ctx.strokeStyle = isPetal || isDrop ? "#4f6680" : "rgba(48, 62, 82, 0.52)";
   ctx.stroke();
 
   if (!isPetal && !isDrop && !entity.dying) drawMobFrame(snap, pos, radius);
@@ -4439,12 +6072,20 @@ function drawPlayerFlower(snap, pos, radius, angle, isOwner) {
     return;
   }
 
-  const hasAntennae = (flags & flagAntennae) !== 0 || playerSnapHasPetal(snap, petalAntennaeType) ||
+  const hasAntennae =
+    (flags & flagAntennae) !== 0 ||
+    playerSnapHasPetal(snap, petalAntennaeType) ||
     (isOwner && ownerHasPetal(petalAntennaeType));
-  const hasThirdEye = playerSnapHasPetal(snap, petalThirdEyeType) || (isOwner && ownerHasPetal(petalThirdEyeType));
-  const hasBandage = playerSnapHasPetal(snap, petalBandageType) || (isOwner && ownerHasPetal(petalBandageType));
+  const hasThirdEye =
+    playerSnapHasPetal(snap, petalThirdEyeType) ||
+    (isOwner && ownerHasPetal(petalThirdEyeType));
+  const hasBandage =
+    playerSnapHasPetal(snap, petalBandageType) ||
+    (isOwner && ownerHasPetal(petalBandageType));
   const hasRelic = (flags & flagRelic) !== 0;
-  const nullified = playerSnapHasPetal(snap, petalNullificationType) || (isOwner && ownerHasPetal(petalNullificationType));
+  const nullified =
+    playerSnapHasPetal(snap, petalNullificationType) ||
+    (isOwner && ownerHasPetal(petalNullificationType));
   const corrupted = (flags & flagCorrupted) !== 0;
   const undead = (flags & flagUndead) !== 0;
   const poisoned = (flags & flagPoisoned) !== 0;
@@ -4468,10 +6109,15 @@ function drawPlayerFlower(snap, pos, radius, angle, isOwner) {
   } else {
     drawPlayerFlowerFallback(radius, texture);
   }
-  if (hasBandage && !dead && !suppressPetalOverlays) drawBandagePetalLayer(radius);
+  if (hasBandage && !suppressPetalOverlays) drawBandagePetalLayer(radius);
   const attacking = (flags & flagAttacking) !== 0;
   const defending = (flags & flagDefending) !== 0;
-  drawPlayerFlowerFace(radius, angle, texture, dead ? "dead" : (attacking ? "attack" : (defending ? "defend" : "normal")));
+  drawPlayerFlowerFace(
+    radius,
+    angle,
+    texture,
+    dead ? "dead" : attacking ? "attack" : defending ? "defend" : "normal",
+  );
   if (hasAntennae) drawAntennaeOverlay(radius);
   if (hasThirdEye) drawThirdEyeOverlay(radius);
   ctx.restore();
@@ -4501,11 +6147,16 @@ function drawMobSvg(src, pos, radius, angle) {
 }
 
 function playerFlowerTexturePath(texture = "normal") {
-  const textureFile = texture === "undead" ? "player_flower_undead" :
-                      texture === "gambler" ? "player_flower_gambler" :
-                      texture === "poisoned" ? "player_flower_poisoned" :
-                      texture === "relic" ? "player_flower_relic" :
-                      "player_flower";
+  const textureFile =
+    texture === "undead"
+      ? "player_flower_undead"
+      : texture === "gambler"
+        ? "player_flower_gambler"
+        : texture === "poisoned"
+          ? "player_flower_poisoned"
+          : texture === "relic"
+            ? "player_flower_relic"
+            : "player_flower";
   return `./assets/${textureFile}.svg?v=${flowerTextureVersion}`;
 }
 
@@ -4568,9 +6219,19 @@ function drawAntennaeOverlay(radius) {
     ctx.lineCap = "round";
     ctx.beginPath();
     ctx.moveTo(-radius * 0.22, -radius * 0.08);
-    ctx.quadraticCurveTo(-radius * 0.66, -radius * 0.9, -radius * 1.08, -radius * 1.24);
+    ctx.quadraticCurveTo(
+      -radius * 0.66,
+      -radius * 0.9,
+      -radius * 1.08,
+      -radius * 1.24,
+    );
     ctx.moveTo(radius * 0.22, -radius * 0.08);
-    ctx.quadraticCurveTo(radius * 0.66, -radius * 0.9, radius * 1.08, -radius * 1.24);
+    ctx.quadraticCurveTo(
+      radius * 0.66,
+      -radius * 0.9,
+      radius * 1.08,
+      -radius * 1.24,
+    );
     ctx.stroke();
   }
   ctx.restore();
@@ -4602,16 +6263,26 @@ function drawThirdEyeOverlay(radius) {
 }
 
 function drawPlayerFlowerFallback(radius, texture) {
-  const centerFill = texture === "undead" ? "#a7c66f" :
-                     texture === "gambler" ? "#c64136" :
-                     texture === "poisoned" ? "#9a64c7" :
-                     texture === "relic" ? "#c7a93f" :
-                     "#f2cc42";
-  const stroke = texture === "undead" ? "#73934c" :
-                 texture === "gambler" ? "#782821" :
-                 texture === "poisoned" ? "#6a3d94" :
-                 texture === "relic" ? "#9c8430" :
-                 "#d9b638";
+  const centerFill =
+    texture === "undead"
+      ? "#a7c66f"
+      : texture === "gambler"
+        ? "#c64136"
+        : texture === "poisoned"
+          ? "#9a64c7"
+          : texture === "relic"
+            ? "#c7a93f"
+            : "#f2cc42";
+  const stroke =
+    texture === "undead"
+      ? "#73934c"
+      : texture === "gambler"
+        ? "#782821"
+        : texture === "poisoned"
+          ? "#6a3d94"
+          : texture === "relic"
+            ? "#9c8430"
+            : "#d9b638";
   ctx.fillStyle = centerFill;
   ctx.beginPath();
   ctx.arc(0, 0, radius * 0.88, 0, Math.PI * 2);
@@ -4622,7 +6293,9 @@ function drawPlayerFlowerFallback(radius, texture) {
 }
 
 function drawPlayerFlowerFace(radius, angle, texture, expression = "normal") {
-  const look = Number.isFinite(angle) ? { x: Math.cos(angle), y: Math.sin(angle) } : { x: 0, y: 0 };
+  const look = Number.isFinite(angle)
+    ? { x: Math.cos(angle), y: Math.sin(angle) }
+    : { x: 0, y: 0 };
   const eyeFill = texture === "undead" ? "#27351f" : "#333127";
   const smileFill = texture === "undead" ? "#35472a" : "#5a4a26";
 
@@ -4630,15 +6303,14 @@ function drawPlayerFlowerFace(radius, angle, texture, expression = "normal") {
   ctx.translate(0, radius * 0.06);
   ctx.scale(0.86, 0.86);
   if (expression === "dead") drawPlayerFlowerDeadEyes(radius, eyeFill);
-  else if (expression === "attack") drawPlayerFlowerAngryEyes(radius, look, eyeFill);
+  else if (expression === "attack")
+    drawPlayerFlowerAngryEyes(radius, look, eyeFill);
   else drawPlayerFlowerNormalEyes(radius, look, eyeFill);
 
-  if (expression === "dead")
-    drawPlayerFlowerDeadMouth(radius, smileFill);
+  if (expression === "dead") drawPlayerFlowerDeadMouth(radius, smileFill);
   else if (expression === "attack" || expression === "defend")
     drawPlayerFlowerAngryMouth(radius, smileFill);
-  else
-    drawPlayerFlowerSmile(radius, texture, smileFill);
+  else drawPlayerFlowerSmile(radius, texture, smileFill);
   ctx.restore();
 }
 
@@ -4649,16 +6321,46 @@ function drawPlayerFlowerNormalEyes(radius, look, eyeFill) {
 
   ctx.fillStyle = eyeFill;
   ctx.beginPath();
-  ctx.ellipse(leftEye.x, leftEye.y, radius * 0.105, radius * 0.27, 0, 0, Math.PI * 2);
-  ctx.ellipse(rightEye.x, rightEye.y, radius * 0.105, radius * 0.27, 0, 0, Math.PI * 2);
+  ctx.ellipse(
+    leftEye.x,
+    leftEye.y,
+    radius * 0.105,
+    radius * 0.27,
+    0,
+    0,
+    Math.PI * 2,
+  );
+  ctx.ellipse(
+    rightEye.x,
+    rightEye.y,
+    radius * 0.105,
+    radius * 0.27,
+    0,
+    0,
+    Math.PI * 2,
+  );
   ctx.fill();
 
   ctx.fillStyle = "rgba(255, 255, 222, 0.92)";
   ctx.beginPath();
-  ctx.ellipse(leftEye.x - radius * 0.035 + look.x * eyeOffset,
-              leftEye.y - radius * 0.09 + look.y * eyeOffset, radius * 0.032, radius * 0.065, 0, 0, Math.PI * 2);
-  ctx.ellipse(rightEye.x - radius * 0.035 + look.x * eyeOffset,
-              rightEye.y - radius * 0.09 + look.y * eyeOffset, radius * 0.032, radius * 0.065, 0, 0, Math.PI * 2);
+  ctx.ellipse(
+    leftEye.x - radius * 0.035 + look.x * eyeOffset,
+    leftEye.y - radius * 0.09 + look.y * eyeOffset,
+    radius * 0.032,
+    radius * 0.065,
+    0,
+    0,
+    Math.PI * 2,
+  );
+  ctx.ellipse(
+    rightEye.x - radius * 0.035 + look.x * eyeOffset,
+    rightEye.y - radius * 0.09 + look.y * eyeOffset,
+    radius * 0.032,
+    radius * 0.065,
+    0,
+    0,
+    Math.PI * 2,
+  );
   ctx.fill();
 }
 
@@ -4738,8 +6440,10 @@ function drawLivePetal(petalType, rarity, pos, radius, angle, entityId = 0) {
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
-  if (petalHasMultiCopyVisual(petalType, rarity)) ctx.translate(0, -size * 0.035);
-  if (petalType !== petalMoonType && Number.isFinite(angle)) ctx.rotate(livePetalRenderAngle(petalType, angle));
+  if (petalHasMultiCopyVisual(petalType, rarity))
+    ctx.translate(0, -size * 0.035);
+  if (petalType !== petalMoonType && Number.isFinite(angle))
+    ctx.rotate(livePetalRenderAngle(petalType, angle));
 
   if (petalType === petalDustType) {
     drawDustParticlePetal(size, rarity);
@@ -4755,13 +6459,28 @@ function drawLivePetal(petalType, rarity, pos, radius, angle, entityId = 0) {
 
   let icon = null;
   if (petalType === petalAntEggType) {
-    icon = livePetalIconImage(petalType, rarity, extractSingleAntEggLiveSvg, "single-ant-egg");
+    icon = livePetalIconImage(
+      petalType,
+      rarity,
+      extractSingleAntEggLiveSvg,
+      "single-ant-egg",
+    );
   } else if (petalType === petalWaxType) {
-    icon = livePetalIconImage(petalType, rarity, extractWaxLiveSvg, "wax-petal");
+    icon = livePetalIconImage(
+      petalType,
+      rarity,
+      extractWaxLiveSvg,
+      "wax-petal",
+    );
   } else if (petalType === petalShovelType) {
     icon = livePetalIconImage(petalType, rarity);
   } else if (petalType === petalDandelionType) {
-    icon = livePetalIconImage(petalType, rarity, extractDandelionLiveSvg, "dandelion-petal");
+    icon = livePetalIconImage(
+      petalType,
+      rarity,
+      extractDandelionLiveSvg,
+      "dandelion-petal",
+    );
   } else {
     icon = livePetalIconImage(petalType, rarity);
   }
@@ -4777,12 +6496,30 @@ function drawLivePetal(petalType, rarity, pos, radius, angle, entityId = 0) {
 
 function drawDandelionMissile(pos, radius, angle, rarity, entityId = 0) {
   const safeRarity = rarity || 1;
-  const visualScale = getClientConfigValue(state.clientConfig, "dande_missile_scale");
-  const angleOffset = getClientConfigValue(state.clientConfig, "dande_missile_angle");
-  const radialOffset = getClientConfigValue(state.clientConfig, "dande_missile_offset");
-  const yOffset = getClientConfigValue(state.clientConfig, "dande_missile_y_offset");
-  const anchorX = getClientConfigValue(state.clientConfig, "dande_missile_anchor_x");
-  const anchorY = getClientConfigValue(state.clientConfig, "dande_missile_anchor_y");
+  const visualScale = getClientConfigValue(
+    state.clientConfig,
+    "dande_missile_scale",
+  );
+  const angleOffset = getClientConfigValue(
+    state.clientConfig,
+    "dande_missile_angle",
+  );
+  const radialOffset = getClientConfigValue(
+    state.clientConfig,
+    "dande_missile_offset",
+  );
+  const yOffset = getClientConfigValue(
+    state.clientConfig,
+    "dande_missile_y_offset",
+  );
+  const anchorX = getClientConfigValue(
+    state.clientConfig,
+    "dande_missile_anchor_x",
+  );
+  const anchorY = getClientConfigValue(
+    state.clientConfig,
+    "dande_missile_anchor_y",
+  );
   const size = Math.max(1, radius * visualScale);
   const radialAngle = Number.isFinite(angle) ? angle : 0;
 
@@ -4793,7 +6530,12 @@ function drawDandelionMissile(pos, radius, angle, rarity, entityId = 0) {
   ctx.rotate(angleOffset);
   ctx.translate(radius * anchorX, radius * anchorY);
 
-  const icon = livePetalIconImage(petalDandelionType, safeRarity, extractDandelionLiveSvg, "dandelion-missile");
+  const icon = livePetalIconImage(
+    petalDandelionType,
+    safeRarity,
+    extractDandelionLiveSvg,
+    "dandelion-missile",
+  );
   if (imageReady(icon)) {
     drawCenteredImage(icon, size, 1);
   } else {
@@ -4804,7 +6546,11 @@ function drawDandelionMissile(pos, radius, angle, rarity, entityId = 0) {
 }
 
 function livePetalRenderAngle(petalType, angle) {
-  if (petalType === petalMissileType || petalType === petalCarrotType || petalType === petalDandelionType)
+  if (
+    petalType === petalMissileType ||
+    petalType === petalCarrotType ||
+    petalType === petalDandelionType
+  )
     return angle + directionalPetalAngleOffset;
   return angle;
 }
@@ -4957,7 +6703,7 @@ function drawPetalCardCopies(icon, size, rarity, copy, petalType = 0) {
   for (const part of layout) {
     ctx.save();
     if (layout.length > 1) {
-      ctx.translate(size * part.x / 100, size * part.y / 100);
+      ctx.translate((size * part.x) / 100, (size * part.y) / 100);
       ctx.rotate(part.angle);
     }
     const scale = petalCardIconScale * (layout.length > 1 ? part.scale : 1);
@@ -4977,7 +6723,8 @@ function petalIconImage(petalType, rarity = 0) {
 function petalCardIconImage(petalType, rarity = 0, options = {}) {
   const src = petalIconPath(petalType, rarity);
   if (!src) return null;
-  if (options.stripped) return transformedPetalImage(src, stripLivePetalLabel, "card-stripped");
+  if (options.stripped)
+    return transformedPetalImage(src, stripLivePetalLabel, "card-stripped");
   return assetImage(src);
 }
 
@@ -5006,12 +6753,18 @@ function transformedPetalImage(src, transformSvg, cachePrefix) {
       const blob = new Blob([transformSvg(svgText)], { type: "image/svg+xml" });
       const url = URL.createObjectURL(blob);
       entry.url = url;
-      image.addEventListener("load", () => requestAnimationFrame(drawScene), { once: true });
-      image.addEventListener("error", () => {
-        image.failed = true;
-        if (entry.url) URL.revokeObjectURL(entry.url);
-        requestAnimationFrame(drawScene);
-      }, { once: true });
+      image.addEventListener("load", () => requestAnimationFrame(drawScene), {
+        once: true,
+      });
+      image.addEventListener(
+        "error",
+        () => {
+          image.failed = true;
+          if (entry.url) URL.revokeObjectURL(entry.url);
+          requestAnimationFrame(drawScene);
+        },
+        { once: true },
+      );
       image.src = url;
     })
     .catch(() => {
@@ -5022,7 +6775,12 @@ function transformedPetalImage(src, transformSvg, cachePrefix) {
   return image;
 }
 
-function livePetalIconImage(petalType, rarity = 0, transformSvg = stripLivePetalLabel, cacheSuffix = "live") {
+function livePetalIconImage(
+  petalType,
+  rarity = 0,
+  transformSvg = stripLivePetalLabel,
+  cacheSuffix = "live",
+) {
   const src = petalIconPath(petalType, rarity, { live: true });
   if (!src) return null;
 
@@ -5044,12 +6802,18 @@ function livePetalIconImage(petalType, rarity = 0, transformSvg = stripLivePetal
       const blob = new Blob([transformSvg(svgText)], { type: "image/svg+xml" });
       const url = URL.createObjectURL(blob);
       entry.url = url;
-      image.addEventListener("load", () => requestAnimationFrame(drawScene), { once: true });
-      image.addEventListener("error", () => {
-        image.failed = true;
-        if (entry.url) URL.revokeObjectURL(entry.url);
-        requestAnimationFrame(drawScene);
-      }, { once: true });
+      image.addEventListener("load", () => requestAnimationFrame(drawScene), {
+        once: true,
+      });
+      image.addEventListener(
+        "error",
+        () => {
+          image.failed = true;
+          if (entry.url) URL.revokeObjectURL(entry.url);
+          requestAnimationFrame(drawScene);
+        },
+        { once: true },
+      );
       image.src = url;
     })
     .catch(() => {
@@ -5073,11 +6837,13 @@ function extractDandelionLiveSvg(svgText) {
 }
 
 function extractFirstLivePetalPathsSvg(svgText, pathCount, viewBox) {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return stripLivePetalLabel(svgText);
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
+    return stripLivePetalLabel(svgText);
 
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
   const root = doc.documentElement;
-  if (!root || root.tagName.toLowerCase() !== "svg") return stripLivePetalLabel(svgText);
+  if (!root || root.tagName.toLowerCase() !== "svg")
+    return stripLivePetalLabel(svgText);
 
   const paths = Array.from(root.querySelectorAll("path")).slice(0, pathCount);
   if (!paths.length) return stripLivePetalLabel(svgText);
@@ -5105,15 +6871,23 @@ function bandageOverlayImage() {
       return response.text();
     })
     .then((svgText) => {
-      const blob = new Blob([extractBandageOverlaySvg(svgText)], { type: "image/svg+xml" });
+      const blob = new Blob([extractBandageOverlaySvg(svgText)], {
+        type: "image/svg+xml",
+      });
       const url = URL.createObjectURL(blob);
       entry.url = url;
-      image.addEventListener("load", () => requestAnimationFrame(drawScene), { once: true });
-      image.addEventListener("error", () => {
-        image.failed = true;
-        if (entry.url) URL.revokeObjectURL(entry.url);
-        requestAnimationFrame(drawScene);
-      }, { once: true });
+      image.addEventListener("load", () => requestAnimationFrame(drawScene), {
+        once: true,
+      });
+      image.addEventListener(
+        "error",
+        () => {
+          image.failed = true;
+          if (entry.url) URL.revokeObjectURL(entry.url);
+          requestAnimationFrame(drawScene);
+        },
+        { once: true },
+      );
       image.src = url;
     })
     .catch(() => {
@@ -5137,7 +6911,8 @@ function thirdEyeOverlayImage() {
 }
 
 function stripLivePetalLabel(svgText) {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgText;
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
+    return svgText;
 
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
   const root = doc.documentElement;
@@ -5162,7 +6937,8 @@ function stripLivePetalLabel(svgText) {
 }
 
 function extractBandageOverlaySvg(svgText) {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgText;
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
+    return svgText;
 
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
   const root = doc.documentElement;
@@ -5211,12 +6987,15 @@ function extractPetalLabelSvg(svgText) {
   }
 
   const viewBox = root.getAttribute("viewBox") || "0 0 110 110";
-  const body = labelNodes.map((node) => serializer.serializeToString(node)).join("");
+  const body = labelNodes
+    .map((node) => serializer.serializeToString(node))
+    .join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">${body}</svg>`;
 }
 
 function extractMimicLabelSvg(svgText) {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgText;
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
+    return svgText;
 
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
   const root = doc.documentElement;
@@ -5234,7 +7013,9 @@ function extractMimicLabelSvg(svgText) {
   }
 
   const serializer = new XMLSerializer();
-  const body = labelPaths.map((node) => serializer.serializeToString(node)).join("");
+  const body = labelPaths
+    .map((node) => serializer.serializeToString(node))
+    .join("");
   if (!body) return svgText;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="24 68 64 22">${body}</svg>`;
 }
@@ -5242,18 +7023,29 @@ function extractMimicLabelSvg(svgText) {
 function isLabelOutlinePath(path) {
   const stroke = normalizeColorAttr(path.getAttribute("stroke"));
   const fill = normalizeColorAttr(path.getAttribute("fill"));
-  const strokeWidth = Number.parseFloat(path.getAttribute("stroke-width") || "0");
-  return (stroke === "#000" || stroke === "#000000") && (!fill || fill === "none") && strokeWidth >= 1.5;
+  const strokeWidth = Number.parseFloat(
+    path.getAttribute("stroke-width") || "0",
+  );
+  return (
+    (stroke === "#000" || stroke === "#000000") &&
+    (!fill || fill === "none") &&
+    strokeWidth >= 1.5
+  );
 }
 
 function isMatchingLabelFillPath(outline, fill) {
   if (!fill) return false;
   const color = normalizeColorAttr(fill.getAttribute("fill"));
-  return (color === "#fff" || color === "#ffffff") && outline.getAttribute("d") === fill.getAttribute("d");
+  return (
+    (color === "#fff" || color === "#ffffff") &&
+    outline.getAttribute("d") === fill.getAttribute("d")
+  );
 }
 
 function normalizeColorAttr(value) {
-  return String(value || "").trim().toLowerCase();
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
 function petalBaseImage(rarity) {
@@ -5300,22 +7092,34 @@ function drawPetalSilhouette(size, rarity) {
 }
 
 function isMobSnap(snap) {
-  return snap && snap.entityType > 0 && !isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType) &&
-         snap.entityType !== playerFlowerType && snap.entityType !== portalType &&
-         !isBloodSacrificeEffectSnap(snap) && !isProjectileSnap(snap);
+  return (
+    snap &&
+    snap.entityType > 0 &&
+    !isPetalEntity(snap.entityType) &&
+    !isDropEntity(snap.entityType) &&
+    snap.entityType !== playerFlowerType &&
+    snap.entityType !== portalType &&
+    !isBloodSacrificeEffectSnap(snap) &&
+    !isProjectileSnap(snap)
+  );
 }
 
 function isSummonedMobSnap(snap) {
-  return !!snap && (((snap.flags || 0) & flagSummoned) !== 0 ||
-    snap.entityType === summonedBeetleType || snap.entityType === summonedSoldierAntType);
+  return (
+    !!snap &&
+    (((snap.flags || 0) & flagSummoned) !== 0 ||
+      snap.entityType === summonedBeetleType ||
+      snap.entityType === summonedSoldierAntType)
+  );
 }
 
 function isProjectileSnap(snap) {
-  return !!snap && (
-    snap.entityType === dandelionMissileType ||
-    snap.entityType === hornetMissileType ||
-    snap.entityType === pollenProjectileType ||
-    snap.entityType === spiderWebZoneType
+  return (
+    !!snap &&
+    (snap.entityType === dandelionMissileType ||
+      snap.entityType === hornetMissileType ||
+      snap.entityType === pollenProjectileType ||
+      snap.entityType === spiderWebZoneType)
   );
 }
 
@@ -5328,13 +7132,27 @@ function isEffectZoneSnap(snap) {
 }
 
 function isMobHitboxSnap(snap) {
-  return snap && snap.entityType > 0 && !isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType) &&
-         snap.entityType !== portalType && !isBloodSacrificeEffectSnap(snap) && !isProjectileSnap(snap);
+  return (
+    snap &&
+    snap.entityType > 0 &&
+    !isPetalEntity(snap.entityType) &&
+    !isDropEntity(snap.entityType) &&
+    snap.entityType !== portalType &&
+    !isBloodSacrificeEffectSnap(snap) &&
+    !isProjectileSnap(snap)
+  );
 }
 
 function hasHealthFrame(snap) {
-  return snap && snap.entityType > 0 && !isPetalEntity(snap.entityType) && !isDropEntity(snap.entityType) &&
-         snap.entityType !== portalType && !isBloodSacrificeEffectSnap(snap) && !isProjectileSnap(snap);
+  return (
+    snap &&
+    snap.entityType > 0 &&
+    !isPetalEntity(snap.entityType) &&
+    !isDropEntity(snap.entityType) &&
+    snap.entityType !== portalType &&
+    !isBloodSacrificeEffectSnap(snap) &&
+    !isProjectileSnap(snap)
+  );
 }
 
 function mobDisplayName(snap) {
@@ -5361,7 +7179,16 @@ function roundedRectPath(x, y, width, height, radius = height * 0.5) {
   ctx.closePath();
 }
 
-function drawCapsuleBar(x, y, width, height, progress, fill, border = 4, track = "#09090b") {
+function drawCapsuleBar(
+  x,
+  y,
+  width,
+  height,
+  progress,
+  fill,
+  border = 4,
+  track = "#09090b",
+) {
   const safeWidth = Math.max(1, width);
   const safeHeight = Math.max(1, height);
   const inset = Math.min(border, safeWidth * 0.35, safeHeight * 0.35);
@@ -5425,9 +7252,17 @@ function drawLayeredCapsuleBar(x, y, width, height, members, fill, border = 5) {
       const hp = entries[index].hp;
       if (hp > previous) {
         ctx.globalAlpha = covering / totalCount;
-        ctx.fillRect(innerX + innerW * previous, innerY, innerW * (hp - previous), innerH);
+        ctx.fillRect(
+          innerX + innerW * previous,
+          innerY,
+          innerW * (hp - previous),
+          innerH,
+        );
       }
-      while (index < entries.length && Math.abs(entries[index].hp - hp) <= 0.0001) {
+      while (
+        index < entries.length &&
+        Math.abs(entries[index].hp - hp) <= 0.0001
+      ) {
         covering -= entries[index].count;
         index += 1;
       }
@@ -5437,14 +7272,19 @@ function drawLayeredCapsuleBar(x, y, width, height, members, fill, border = 5) {
   ctx.restore();
 }
 
-function drawOutlinedText(text, x, y, {
-  font = "700 14px Segoe UI, Microsoft YaHei, sans-serif",
-  fill = "#fff",
-  stroke = "#050506",
-  lineWidth = 4,
-  align = "center",
-  baseline = "middle",
-} = {}) {
+function drawOutlinedText(
+  text,
+  x,
+  y,
+  {
+    font = "700 14px Segoe UI, Microsoft YaHei, sans-serif",
+    fill = "#fff",
+    stroke = "#050506",
+    lineWidth = 4,
+    align = "center",
+    baseline = "middle",
+  } = {},
+) {
   ctx.font = font;
   ctx.textAlign = align;
   ctx.textBaseline = baseline;
@@ -5461,18 +7301,33 @@ function hitboxStyleForSnap(snap) {
     return { stroke: "rgba(118, 0, 0, 0.96)", fill: "rgba(118, 0, 0, 0.13)" };
   }
   if (isEffectZoneSnap(snap)) {
-    return { stroke: "rgba(36, 255, 112, 0.96)", fill: "rgba(36, 255, 112, 0.10)" };
+    return {
+      stroke: "rgba(36, 255, 112, 0.96)",
+      fill: "rgba(36, 255, 112, 0.10)",
+    };
   }
   if (isPetalEntity(snap?.entityType) || isDropEntity(snap?.entityType)) {
-    return { stroke: rarityColor(snap.rarity || 1, 0.96), fill: rarityColor(snap.rarity || 1, 0.12) };
+    return {
+      stroke: rarityColor(snap.rarity || 1, 0.96),
+      fill: rarityColor(snap.rarity || 1, 0.12),
+    };
   }
   if (isProjectileSnap(snap)) {
-    return { stroke: "rgba(190, 82, 255, 0.96)", fill: "rgba(190, 82, 255, 0.10)" };
+    return {
+      stroke: "rgba(190, 82, 255, 0.96)",
+      fill: "rgba(190, 82, 255, 0.10)",
+    };
   }
   if (isMobHitboxSnap(snap) || snap?.entityType === playerFlowerType) {
-    return { stroke: "rgba(255, 48, 48, 0.96)", fill: "rgba(255, 48, 48, 0.10)" };
+    return {
+      stroke: "rgba(255, 48, 48, 0.96)",
+      fill: "rgba(255, 48, 48, 0.10)",
+    };
   }
-  return { stroke: "rgba(116, 198, 255, 0.86)", fill: "rgba(116, 198, 255, 0.08)" };
+  return {
+    stroke: "rgba(116, 198, 255, 0.86)",
+    fill: "rgba(116, 198, 255, 0.08)",
+  };
 }
 
 function drawCollisionHitbox(pos, radius, style = hitboxStyleForSnap(null)) {
@@ -5514,29 +7369,44 @@ function drawMobFrame(snap, pos, radius) {
   const x = pos.x - width * 0.5;
   const hp = clamp(snap.hpPercent, 0, 1);
   const isPlayerFlower = snap.entityType === playerFlowerType;
-  const labelColor = isPlayerFlower ? rarityColor(playerLevelRarity(snap), 1) : rarityColor(snap.rarity, 1);
+  const labelColor = isPlayerFlower
+    ? rarityColor(playerLevelRarity(snap), 1)
+    : rarityColor(snap.rarity, 1);
   const textSize = Math.max(4, radius * (isPlayerFlower ? 0.24 : 0.2));
   const strokeColor = "#050506";
 
   drawOutlinedText(mobDisplayName(snap), x, y - Math.max(1, radius * 0.05), {
     font: `800 ${textSize}px Segoe UI, Microsoft YaHei, sans-serif`,
-    fill: "#f7f7f7",
+    fill: playerNameColor(snap, "#f7f7f7"),
     stroke: strokeColor,
     lineWidth: Math.max(1.1, textSize * 0.42),
     align: "left",
     baseline: "bottom",
   });
 
-  drawCapsuleBar(x, y, width, barHeight, hp, "#68d443", Math.max(1, barHeight * 0.28));
+  drawCapsuleBar(
+    x,
+    y,
+    width,
+    barHeight,
+    hp,
+    "#68d443",
+    Math.max(1, barHeight * 0.28),
+  );
 
-  drawOutlinedText(rarityOrLevelLabel(snap), x + width, y + barHeight + Math.max(1, radius * 0.05), {
-    font: `800 ${textSize}px Segoe UI, Microsoft YaHei, sans-serif`,
-    fill: labelColor,
-    stroke: strokeColor,
-    lineWidth: Math.max(1.1, textSize * 0.42),
-    align: "right",
-    baseline: "top",
-  });
+  drawOutlinedText(
+    rarityOrLevelLabel(snap),
+    x + width,
+    y + barHeight + Math.max(1, radius * 0.05),
+    {
+      font: `800 ${textSize}px Segoe UI, Microsoft YaHei, sans-serif`,
+      fill: labelColor,
+      stroke: strokeColor,
+      lineWidth: Math.max(1.1, textSize * 0.42),
+      align: "right",
+      baseline: "top",
+    },
+  );
 }
 
 function drawEntityLabel(snap, pos, radius) {
@@ -5545,15 +7415,54 @@ function drawEntityLabel(snap, pos, radius) {
   ctx.font = "12px Segoe UI, Microsoft YaHei, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "bottom";
-  ctx.fillStyle = "rgba(39, 50, 65, 0.86)";
+  ctx.fillStyle = playerNameColor(snap, "rgba(39, 50, 65, 0.86)");
   ctx.fillText(snap.name, pos.x, pos.y - radius - 10);
+}
+
+function playerNameColor(snap, fallback) {
+  if (
+    snap?.entityType === playerFlowerType &&
+    snap.entityId !== state.ownerEntityId &&
+    state.squadMemberNames?.has(snap.name)
+  )
+    return "#f17cab";
+  return fallback;
+}
+
+function currentSquadMemberEntities() {
+  if (!state.squadMemberNames?.size) return [];
+
+  const membersByName = new Map();
+  for (const entity of state.entities.values()) {
+    const snap = entity?.snapshot;
+    if (
+      !snap ||
+      entity.dying ||
+      snap.entityType !== playerFlowerType ||
+      snap.entityId === state.ownerEntityId ||
+      !state.squadMemberNames.has(snap.name)
+    )
+      continue;
+    membersByName.set(snap.name, entity);
+  }
+
+  return Array.from(state.squadMemberNames, (name) => membersByName.get(name)).filter(
+    Boolean,
+  );
 }
 
 function shouldSkipMobFrame(snap, radius) {
   if (currentRenderLoad <= 0 || !snap) return false;
-  if (snap.entityType === playerFlowerType || snap.entityId === state.ownerEntityId) return false;
+  if (
+    snap.entityType === playerFlowerType ||
+    snap.entityId === state.ownerEntityId
+  )
+    return false;
   if (raritySortRank(snap.rarity) >= raritySortRank(bossRarity)) return false;
-  const minRadius = currentRenderLoad >= 2 ? entityFrameMinScreenRadius * 2.5 : entityFrameMinScreenRadius * 1.5;
+  const minRadius =
+    currentRenderLoad >= 2
+      ? entityFrameMinScreenRadius * 2.5
+      : entityFrameMinScreenRadius * 1.5;
   return radius < minRadius;
 }
 
@@ -5564,7 +7473,8 @@ function bossBarCandidates(entities) {
 
   for (const entity of entities) {
     const snap = entity.snapshot;
-    if (!snap || entity.dying || !isMobSnap(snap) || snap.rarity < bossRarity) continue;
+    if (!snap || entity.dying || !isMobSnap(snap) || snap.rarity < bossRarity)
+      continue;
     if (snap.entityType === dummyType) continue;
     if (isSummonedMobSnap(snap)) continue;
     const key = `${snap.entityType}:${snap.rarity}`;
@@ -5583,7 +7493,10 @@ function bossBarCandidates(entities) {
       groups.set(key, group);
     }
 
-    const distance = Math.hypot(entity.renderPos.x - origin.x, entity.renderPos.y - origin.y);
+    const distance = Math.hypot(
+      entity.renderPos.x - origin.x,
+      entity.renderPos.y - origin.y,
+    );
     group.nearestDistance = Math.min(group.nearestDistance, distance);
     group.count += 1;
     const hp = Math.round(clamp(snap.hpPercent, 0, 1) * 1000) / 1000;
@@ -5597,7 +7510,11 @@ function bossBarCandidates(entities) {
   }
 
   return [...groups.values()]
-    .sort((a, b) => (raritySortRank(b.rarity) - raritySortRank(a.rarity)) || (a.nearestDistance - b.nearestDistance))
+    .sort(
+      (a, b) =>
+        raritySortRank(b.rarity) - raritySortRank(a.rarity) ||
+        a.nearestDistance - b.nearestDistance,
+    )
     .slice(0, maxBossBars);
 }
 
@@ -5605,38 +7522,85 @@ function drawBossBars(entities) {
   const groups = bossBarCandidates(entities);
   if (groups.length === 0) return;
 
-  const width = Math.min(500, Math.max(310, state.canvasWidth * 0.31));
-  const height = 60;
-  const gap = 92;
-  const startY = 104;
+  const maxScreenWidth = Math.max(
+    1,
+    state.canvasWidth - bossBarHorizontalMarginPx * 2,
+  );
+  const width = Math.min(
+    maxScreenWidth,
+    bossBarMaxWidthPx,
+    Math.max(bossBarMinWidthPx, state.canvasWidth * bossBarWidthRatio),
+  );
+  const bandTop = Math.max(0, state.canvasHeight * bossBarBandTopRatio);
+  const bandBottom = Math.max(
+    bandTop + 1,
+    state.canvasHeight * bossBarBandBottomRatio,
+  );
+  const slotHeight = (bandBottom - bandTop) / groups.length;
+  const outlinePadding =
+    Math.max(bossBarTitleOutlinePx, bossBarRarityOutlinePx) * 0.5;
+  const naturalBlockHeight =
+    outlinePadding * 2 +
+    bossBarTitleFontPx +
+    bossBarLabelGapPx +
+    bossBarHeightPx +
+    bossBarLabelGapPx +
+    bossBarRarityFontPx;
+  const scale = Math.min(1, slotHeight / naturalBlockHeight);
+  const height = bossBarHeightPx * scale;
+  const titleFontSize = bossBarTitleFontPx * scale;
+  const rarityFontSize = bossBarRarityFontPx * scale;
+  const labelGap = bossBarLabelGapPx * scale;
+  const blockHeight = naturalBlockHeight * scale;
   const x = (state.canvasWidth - width) * 0.5;
 
   groups.forEach((group, index) => {
-    const y = startY + index * (height + gap);
+    const slotTop = bandTop + index * slotHeight;
+    const y =
+      slotTop +
+      (slotHeight - blockHeight) * 0.5 +
+      outlinePadding * scale +
+      titleFontSize +
+      labelGap;
     const rarityFill = rarityColor(group.rarity, 1);
     const count = Math.max(1, group.count || group.members.length);
     const title = count > 1 ? `${group.name} x${count}` : group.name;
 
     ctx.save();
-    drawOutlinedText(title, x + width * 0.5, y - 8, {
-      font: "900 34px Segoe UI, Microsoft YaHei, sans-serif",
+    drawOutlinedText(title, x + width * 0.5, y - labelGap, {
+      font: `900 ${titleFontSize}px Segoe UI, Microsoft YaHei, sans-serif`,
       fill: "#f7f7f7",
-      lineWidth: 7,
+      lineWidth: bossBarTitleOutlinePx * scale,
       baseline: "bottom",
     });
-    drawLayeredCapsuleBar(x, y, width, height, group.members, "#69d33e", 8);
-    drawOutlinedText(rarityName(group.rarity), x + width * 0.5, y + height + 8, {
-      font: "900 27px Segoe UI, Microsoft YaHei, sans-serif",
-      fill: rarityFill,
-      lineWidth: 6,
-      baseline: "top",
-    });
+    drawLayeredCapsuleBar(
+      x,
+      y,
+      width,
+      height,
+      group.members,
+      "#69d33e",
+      bossBarRadiusPx * scale,
+    );
+    drawOutlinedText(
+      rarityName(group.rarity),
+      x + width * 0.5,
+      y + height + labelGap,
+      {
+        font: `900 ${rarityFontSize}px Segoe UI, Microsoft YaHei, sans-serif`,
+        fill: rarityFill,
+        lineWidth: bossBarRarityOutlinePx * scale,
+        baseline: "top",
+      },
+    );
     ctx.restore();
   });
 }
 
 function drawSelfHud() {
-  const owner = state.authenticated ? state.entities.get(state.ownerEntityId) : null;
+  const owner = state.authenticated
+    ? state.entities.get(state.ownerEntityId)
+    : null;
   if (!owner) return;
 
   const health = owner ? clamp(owner.snapshot.hpPercent || 0, 0, 1) : 0;
@@ -5644,7 +7608,9 @@ function drawSelfHud() {
   const name = owner.snapshot?.name || "Player";
   const level = Math.max(1, state.ownerLevel || owner?.snapshot?.rarity || 1);
   const levelColor = rarityColor(playerLevelRarity(owner.snapshot), 1);
-  const fadeProgress = owner.dying ? clamp((owner.deathAge || 0) / deathFadeDuration, 0, 1) : 0;
+  const fadeProgress = owner.dying
+    ? clamp((owner.deathAge || 0) / deathFadeDuration, 0, 1)
+    : 0;
   const fadeEase = fadeProgress * fadeProgress * (3 - fadeProgress * 2);
   const fadeAlpha = owner.dying ? 1 - fadeEase : 1;
   const fadeScale = owner.dying ? 1 + fadeEase * deathScaleBoost : 1;
@@ -5665,13 +7631,34 @@ function drawSelfHud() {
 
   ctx.save();
   ctx.globalAlpha *= fadeAlpha;
-  drawCapsuleBar(healthBackX, healthY, healthBackW, healthH, 0, "#69d348", 6 * scale);
-  drawCapsuleBar(healthX, healthY, healthW, healthH, health, "#69d348", 6 * scale);
+  drawCapsuleBar(
+    healthBackX,
+    healthY,
+    healthBackW,
+    healthH,
+    0,
+    "#69d348",
+    6 * scale,
+  );
+  drawCapsuleBar(
+    healthX,
+    healthY,
+    healthW,
+    healthH,
+    health,
+    "#69d348",
+    6 * scale,
+  );
   drawCapsuleBar(expX, expY, expW, expH, expProgress, "#e8e95a", 4 * scale);
-  drawPlayerFlower(owner.snapshot, flowerPos, flowerRadius * fadeScale,
-                   ownerDead ? (owner.deathAngle ?? owner.renderAngle ?? owner.snapshot.angle) :
-                               (owner.renderAngle ?? owner.snapshot.angle),
-                   true);
+  drawPlayerFlower(
+    owner.snapshot,
+    flowerPos,
+    flowerRadius * fadeScale,
+    ownerDead
+      ? (owner.deathAngle ?? owner.renderAngle ?? owner.snapshot.angle)
+      : (owner.renderAngle ?? owner.snapshot.angle),
+    true,
+  );
   drawOutlinedText(name, healthX + healthW * 0.5, healthY + healthH * 0.5, {
     font: `900 ${26 * scale}px Segoe UI, Microsoft YaHei, sans-serif`,
     fill: "#f7f7f7",
@@ -5686,18 +7673,125 @@ function drawSelfHud() {
   ctx.restore();
 }
 
+function drawSquadHud() {
+  const members = currentSquadMemberEntities().slice(0, 3);
+  if (!members.length) return;
+
+  const scale = Math.min(1, Math.max(0.7, state.canvasWidth / 320));
+  const memberHudScale = 0.6;
+  const flowerX = 55 * memberHudScale * scale;
+  const flowerRadius = 30 * memberHudScale * scale;
+  const healthX = 94 * memberHudScale * scale;
+  const healthW = 220 * memberHudScale * scale;
+  const healthH = 36 * memberHudScale * scale;
+  const healthBackX = 57 * memberHudScale * scale;
+  const healthBackW = healthX + healthW - healthBackX;
+  const healthBorder = 6 * memberHudScale * scale;
+  const firstCenterY = 131 * scale;
+  const rowGap = 42 * scale;
+
+  for (let index = 0; index < members.length; index += 1) {
+    const entity = members[index];
+    const snap = entity.snapshot;
+    const centerY = firstCenterY + index * rowGap;
+    const health = clamp(snap.hpPercent || 0, 0, 1);
+    const level = Math.max(1, snap.rarity || 1);
+    const levelText = `Lvl ${level}`;
+    const levelFont = `900 ${11.5 * scale}px Segoe UI, Microsoft YaHei, sans-serif`;
+    const levelX = healthX + healthW - 5 * scale;
+
+    drawCapsuleBar(
+      healthBackX,
+      centerY - healthH * 0.5,
+      healthBackW,
+      healthH,
+      0,
+      "#69d348",
+      healthBorder,
+    );
+    drawCapsuleBar(
+      healthX,
+      centerY - healthH * 0.5,
+      healthW,
+      healthH,
+      health,
+      "#69d348",
+      healthBorder,
+    );
+    drawPlayerFlower(
+      snap,
+      { x: flowerX, y: centerY },
+      flowerRadius,
+      (snap.flags & flagDead) !== 0
+        ? (entity.deathAngle ?? entity.renderAngle ?? snap.angle)
+        : (entity.renderAngle ?? snap.angle),
+      false,
+    );
+
+    ctx.font = levelFont;
+    const levelWidth = ctx.measureText(levelText).width;
+    const maxNameWidth = Math.max(
+      15 * scale,
+      healthW - levelWidth - 16 * scale,
+    );
+    let nameSize = 14 * scale;
+    ctx.font = `900 ${nameSize}px Segoe UI, Microsoft YaHei, sans-serif`;
+    const measuredNameWidth = ctx.measureText(snap.name || "Player").width;
+    if (measuredNameWidth > maxNameWidth)
+      nameSize = Math.max(9 * scale, nameSize * (maxNameWidth / measuredNameWidth));
+
+    drawOutlinedText(snap.name || "Player", healthX + 6 * scale, centerY, {
+      font: `900 ${nameSize}px Segoe UI, Microsoft YaHei, sans-serif`,
+      fill: "#f7f7f7",
+      lineWidth: 3 * scale,
+      align: "left",
+    });
+    drawOutlinedText(levelText, levelX, centerY, {
+      font: levelFont,
+      fill: rarityColor(playerLevelRarity(snap), 1),
+      lineWidth: 2.8 * scale,
+      align: "right",
+    });
+  }
+}
+
 function minimapLayout() {
   const y = minimapMarginPx;
-  const maxByScreen = Math.max(96, Math.min(state.canvasWidth - minimapMarginPx * 2, state.canvasHeight - y - minimapMarginPx));
-  const localSize = clamp(Math.min(state.canvasWidth * 0.28, minimapLocalMaxPx, maxByScreen), 104, minimapLocalMaxPx);
-  const fullSize = clamp(Math.min(state.canvasWidth * 0.38, state.canvasHeight * 0.42, minimapFullMaxPx, maxByScreen), 132, minimapFullMaxPx);
+  const maxByScreen = Math.max(
+    96,
+    Math.min(
+      state.canvasWidth - minimapMarginPx * 2,
+      state.canvasHeight - y - minimapMarginPx,
+    ),
+  );
+  const localSize = clamp(
+    Math.min(state.canvasWidth * 0.28, minimapLocalMaxPx, maxByScreen),
+    104,
+    minimapLocalMaxPx,
+  );
+  const fullSize = clamp(
+    Math.min(
+      state.canvasWidth * 0.38,
+      state.canvasHeight * 0.42,
+      minimapFullMaxPx,
+      maxByScreen,
+    ),
+    132,
+    minimapFullMaxPx,
+  );
   const size = state.minimapMode === "full" ? fullSize : localSize;
   return { x: state.canvasWidth - minimapMarginPx - size, y, size };
 }
 
 function minimapWorldBounds(map) {
-  const mapWidth = Math.max(1, (map.width || map.layers?.[0]?.width || 1) * map.tileWidth);
-  const mapHeight = Math.max(1, (map.height || map.layers?.[0]?.height || 1) * map.tileHeight);
+  const mapWidth = Math.max(
+    1,
+    (map.width || map.layers?.[0]?.width || 1) * map.tileWidth,
+  );
+  const mapHeight = Math.max(
+    1,
+    (map.height || map.layers?.[0]?.height || 1) * map.tileHeight,
+  );
   if (state.minimapMode === "full") {
     const side = Math.max(mapWidth, mapHeight);
     return { left: 0, top: 0, width: side, height: side };
@@ -5724,21 +7818,87 @@ function drawMinimap() {
   minimapHitRect = layout;
   const bounds = minimapWorldBounds(map);
   const scale = layout.size / Math.max(bounds.width, bounds.height, 1);
-  const cache = getMinimapCache(map, layout, bounds, scale);
+  const cache = getMinimapCache(map, layout, bounds);
 
   ctx.save();
   ctx.beginPath();
   ctx.rect(layout.x, layout.y, layout.size, layout.size);
   ctx.clip();
-  ctx.fillStyle = "#fff";
+  ctx.fillStyle = colorfulMinimapEnabled()
+    ? minimapBackgroundColor
+    : minimapMonochromeBackgroundColor;
   ctx.fillRect(layout.x, layout.y, layout.size, layout.size);
-  if (cache?.canvas) ctx.drawImage(cache.canvas, layout.x, layout.y, layout.size, layout.size);
+  if (cache?.canvas) {
+    const sourceX = bounds.left / cache.cellWidth - cache.renderOriginX;
+    const sourceY = bounds.top / cache.cellHeight - cache.renderOriginY;
+    const sourceWidth = bounds.width / cache.cellWidth;
+    const sourceHeight = bounds.height / cache.cellHeight;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(
+      cache.canvas,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      layout.x,
+      layout.y,
+      layout.size,
+      layout.size,
+    );
+  }
+
+  for (const teammate of currentSquadMemberEntities()) {
+    const teammatePos = teammate.renderPos || teammate.snapshot?.pos;
+    if (!teammatePos) continue;
+    const teammateX = layout.x + (teammatePos.x - bounds.left) * scale;
+    const teammateY = layout.y + (teammatePos.y - bounds.top) * scale;
+    if (
+      teammateX < layout.x ||
+      teammateX > layout.x + layout.size ||
+      teammateY < layout.y ||
+      teammateY > layout.y + layout.size
+    )
+      continue;
+
+    ctx.fillStyle = "#f17cab";
+    ctx.strokeStyle = "rgba(45, 24, 38, 0.88)";
+    ctx.lineWidth = state.minimapMode === "full" ? 1.5 : 1.8;
+    ctx.beginPath();
+    ctx.arc(
+      teammateX,
+      teammateY,
+      state.minimapMode === "full" ? 3.5 : 4,
+      0,
+      Math.PI * 2,
+    );
+    ctx.fill();
+    ctx.stroke();
+
+    if (state.minimapMode === "full")
+      drawOutlinedText(
+        teammate.snapshot.name || "Player",
+        teammateX,
+        teammateY - 6,
+        {
+          font: "800 10px Segoe UI, Microsoft YaHei, sans-serif",
+          fill: "#f17cab",
+          stroke: "rgba(26, 21, 27, 0.94)",
+          lineWidth: 3,
+          baseline: "bottom",
+        },
+      );
+  }
 
   const owner = state.entities.get(state.ownerEntityId);
   const ownerPos = owner?.renderPos || owner?.snapshot?.pos || state.camera;
   const px = layout.x + (ownerPos.x - bounds.left) * scale;
   const py = layout.y + (ownerPos.y - bounds.top) * scale;
-  if (px >= layout.x && px <= layout.x + layout.size && py >= layout.y && py <= layout.y + layout.size) {
+  if (
+    px >= layout.x &&
+    px <= layout.x + layout.size &&
+    py >= layout.y &&
+    py <= layout.y + layout.size
+  ) {
     ctx.fillStyle = "#ffd84f";
     ctx.beginPath();
     ctx.arc(px, py, state.minimapMode === "full" ? 3 : 4, 0, Math.PI * 2);
@@ -5748,49 +7908,279 @@ function drawMinimap() {
   ctx.restore();
 }
 
-function getMinimapCache(map, layout, bounds, scale) {
-  const tileLeft = Math.floor(bounds.left / map.tileWidth);
-  const tileTop = Math.floor(bounds.top / map.tileHeight);
-  const tileSpan = Math.ceil(Math.max(bounds.width / map.tileWidth, bounds.height / map.tileHeight));
-  const size = Math.max(1, Math.round(layout.size));
+function colorfulMinimapEnabled() {
+  return getClientConfigValue(state.clientConfig, "colorful_map") >= 0.5;
+}
+
+function minimapGridMetrics(map) {
+  const subdivisions = Math.max(
+    1,
+    Math.floor(map?.minimapSubdivisions || minimapTileSubdivisions),
+  );
+  return {
+    subdivisions,
+    cellWidth: map.tileWidth / subdivisions,
+    cellHeight: map.tileHeight / subdivisions,
+  };
+}
+
+function getMinimapCache(map, layout, bounds) {
+  const grid = minimapGridMetrics(map);
+  const cellLeft = Math.floor(bounds.left / grid.cellWidth);
+  const cellTop = Math.floor(bounds.top / grid.cellHeight);
+  const cellSpan = Math.ceil(
+    Math.max(bounds.width / grid.cellWidth, bounds.height / grid.cellHeight),
+  );
+  const colorful = colorfulMinimapEnabled();
   const key = [
     map.path,
     state.minimapMode,
-    size,
-    state.minimapMode === "full" ? 0 : tileLeft,
-    state.minimapMode === "full" ? 0 : tileTop,
-    tileSpan,
-    map.collisionTiles?.length || 0,
+    state.altFeaturesEnabled ? "difficulty" : "terrain",
+    colorful ? "color" : "mono",
+    grid.subdivisions,
+    state.minimapMode === "full" ? 0 : cellLeft,
+    state.minimapMode === "full" ? 0 : cellTop,
+    cellSpan,
+    map.minimapTileMasks?.size || 0,
+    map.minimapCollisionCells?.length || 0,
+    map.spawnDifficultyCells?.length || 0,
   ].join(":");
   if (minimapCache?.key === key) return minimapCache;
 
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const target = canvas.getContext("2d");
-  if (!target) return null;
-  target.fillStyle = "#fff";
-  target.fillRect(0, 0, size, size);
-
   const right = bounds.left + bounds.width;
   const bottom = bounds.top + bounds.height;
-  const minTileX = Math.floor(bounds.left / map.tileWidth) - 1;
-  const minTileY = Math.floor(bounds.top / map.tileHeight) - 1;
-  const maxTileX = Math.ceil(right / map.tileWidth) + 1;
-  const maxTileY = Math.ceil(bottom / map.tileHeight) + 1;
-  const tileW = Math.max(1, Math.ceil(map.tileWidth * scale));
-  const tileH = Math.max(1, Math.ceil(map.tileHeight * scale));
+  const visibleCells = {
+    ...grid,
+    minCellX: Math.floor(bounds.left / grid.cellWidth) - 1,
+    minCellY: Math.floor(bounds.top / grid.cellHeight) - 1,
+    maxCellX: Math.ceil(right / grid.cellWidth) + 1,
+    maxCellY: Math.ceil(bottom / grid.cellHeight) + 1,
+  };
+  // Rasterize one pixel per logical subcell before scaling to avoid gaps and overlap.
+  const canvas = document.createElement("canvas");
+  canvas.width = visibleCells.maxCellX - visibleCells.minCellX + 1;
+  canvas.height = visibleCells.maxCellY - visibleCells.minCellY + 1;
+  const target = canvas.getContext("2d");
+  if (!target) return null;
+  const backgroundColor = colorful
+    ? minimapBackgroundColor
+    : minimapMonochromeBackgroundColor;
+  target.fillStyle = backgroundColor;
+  target.fillRect(0, 0, canvas.width, canvas.height);
+  visibleCells.renderOriginX = visibleCells.minCellX;
+  visibleCells.renderOriginY = visibleCells.minCellY;
+  if (colorful)
+    drawMinimapTerrainLayers(target, map, visibleCells);
+  else drawMinimapMonochromeTerrain(target, map, visibleCells);
+  if (state.altFeaturesEnabled)
+    drawMinimapDifficultyOverlay(target, map, visibleCells);
 
-  target.fillStyle = "#000";
-  for (const tile of map.collisionTiles || []) {
-    if (tile.x < minTileX || tile.x > maxTileX || tile.y < minTileY || tile.y > maxTileY) continue;
-    const x = Math.floor((tile.x * map.tileWidth - bounds.left) * scale);
-    const y = Math.floor((tile.y * map.tileHeight - bounds.top) * scale);
-    target.fillRect(x, y, tileW, tileH);
-  }
-
-  minimapCache = { key, canvas };
+  minimapCache = {
+    key,
+    canvas,
+    cellWidth: grid.cellWidth,
+    cellHeight: grid.cellHeight,
+    renderOriginX: visibleCells.renderOriginX,
+    renderOriginY: visibleCells.renderOriginY,
+  };
   return minimapCache;
+}
+
+function minimapTileColor(map, gid) {
+  const material = map.minimapTileDefinitions?.get(gid)?.material || "";
+  return minimapMaterialColors[material] || minimapUnknownMaterialColor;
+}
+
+function minimapCanonicalTileGid(raw) {
+  return (raw >>> 0) & 0x1fffffff;
+}
+
+function transformedMinimapTileMask(map, raw, subdivisions) {
+  const fullMask = 2 ** (subdivisions * subdivisions) - 1;
+  const sourceMask =
+    map.minimapTileMasks?.get(minimapCanonicalTileGid(raw)) ?? fullMask;
+  const transform = minimapTileTransformMatrix(raw, subdivisions);
+  if (!transform) return sourceMask;
+
+  let transformed = 0;
+  for (let sourceY = 0; sourceY < subdivisions; sourceY += 1) {
+    for (let sourceX = 0; sourceX < subdivisions; sourceX += 1) {
+      const sourceBit = 1 << (sourceY * subdivisions + sourceX);
+      if ((sourceMask & sourceBit) === 0) continue;
+      const targetX =
+        transform.xx * sourceX +
+        transform.xy * sourceY +
+        transform.offsetX;
+      const targetY =
+        transform.yx * sourceX +
+        transform.yy * sourceY +
+        transform.offsetY;
+      transformed |= 1 << (targetY * subdivisions + targetX);
+    }
+  }
+  return transformed;
+}
+
+function composeMinimapTransform(outer, inner) {
+  return {
+    xx: outer.xx * inner.xx + outer.xy * inner.yx,
+    xy: outer.xx * inner.xy + outer.xy * inner.yy,
+    yx: outer.yx * inner.xx + outer.yy * inner.yx,
+    yy: outer.yx * inner.xy + outer.yy * inner.yy,
+    offsetX:
+      outer.xx * inner.offsetX +
+      outer.xy * inner.offsetY +
+      outer.offsetX,
+    offsetY:
+      outer.yx * inner.offsetX +
+      outer.yy * inner.offsetY +
+      outer.offsetY,
+  };
+}
+
+function minimapTileTransformMatrix(raw, subdivisions) {
+  const unsigned = raw >>> 0;
+  const flipH = (unsigned & 0x80000000) !== 0;
+  const flipV = (unsigned & 0x40000000) !== 0;
+  const flipD = (unsigned & 0x20000000) !== 0;
+  if (!flipH && !flipV && !flipD) return null;
+
+  const edge = subdivisions - 1;
+  let transform = {
+    xx: 1,
+    xy: 0,
+    yx: 0,
+    yy: 1,
+    offsetX: 0,
+    offsetY: 0,
+  };
+  if (flipD)
+    transform = composeMinimapTransform(
+      { xx: 0, xy: 1, yx: 1, yy: 0, offsetX: 0, offsetY: 0 },
+      transform,
+    );
+  if (flipH)
+    transform = composeMinimapTransform(
+      { xx: -1, xy: 0, yx: 0, yy: 1, offsetX: edge, offsetY: 0 },
+      transform,
+    );
+  if (flipV)
+    transform = composeMinimapTransform(
+      { xx: 1, xy: 0, yx: 0, yy: -1, offsetX: 0, offsetY: edge },
+      transform,
+    );
+  return transform;
+}
+
+function drawMinimapCell(target, cells, cellX, cellY) {
+  target.fillRect(
+    cellX - cells.renderOriginX,
+    cellY - cells.renderOriginY,
+    1,
+    1,
+  );
+}
+
+function minimapCellIsVisible(cell, cells) {
+  return (
+    cell.x >= cells.minCellX &&
+    cell.x <= cells.maxCellX &&
+    cell.y >= cells.minCellY &&
+    cell.y <= cells.maxCellY
+  );
+}
+
+function drawMinimapTerrainLayers(target, map, cells) {
+  let currentColor = "";
+  // Tiled stores visual layers bottom-to-top, so later TMJ layers must win.
+  for (const layer of map.layers || []) {
+    if (layer.visible === false || !layer.width || !layer.height) continue;
+    const minX = clamp(
+      Math.floor(cells.minCellX / cells.subdivisions),
+      0,
+      layer.width - 1,
+    );
+    const minY = clamp(
+      Math.floor(cells.minCellY / cells.subdivisions),
+      0,
+      layer.height - 1,
+    );
+    const maxX = clamp(
+      Math.floor(cells.maxCellX / cells.subdivisions),
+      0,
+      layer.width - 1,
+    );
+    const maxY = clamp(
+      Math.floor(cells.maxCellY / cells.subdivisions),
+      0,
+      layer.height - 1,
+    );
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const raw = layer.tiles[y * layer.width + x] || 0;
+        const gid = minimapCanonicalTileGid(raw);
+        if (!gid) continue;
+        const color = minimapTileColor(map, gid);
+        if (color !== currentColor) {
+          target.fillStyle = color;
+          currentColor = color;
+        }
+        const mask = transformedMinimapTileMask(
+          map,
+          raw,
+          cells.subdivisions,
+        );
+        for (let cellY = 0; cellY < cells.subdivisions; cellY += 1) {
+          for (let cellX = 0; cellX < cells.subdivisions; cellX += 1) {
+            const bit = 1 << (cellY * cells.subdivisions + cellX);
+            if ((mask & bit) === 0) continue;
+            const globalCellX = x * cells.subdivisions + cellX;
+            const globalCellY = y * cells.subdivisions + cellY;
+            if (
+              globalCellX < cells.minCellX ||
+              globalCellX > cells.maxCellX ||
+              globalCellY < cells.minCellY ||
+              globalCellY > cells.maxCellY
+            )
+              continue;
+            drawMinimapCell(
+              target,
+              cells,
+              globalCellX,
+              globalCellY,
+            );
+          }
+        }
+      }
+    }
+  }
+}
+
+function drawMinimapMonochromeTerrain(target, map, cells) {
+  target.fillStyle = minimapMonochromeWallColor;
+  for (const cell of map.minimapCollisionCells || []) {
+    if (!minimapCellIsVisible(cell, cells)) continue;
+    drawMinimapCell(target, cells, cell.x, cell.y);
+  }
+}
+
+function minimapDifficultyRarity(difficulty) {
+  const value = Number(difficulty);
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  return clamp(Math.round(value / 10), 1, rarityPrimordial);
+}
+
+function drawMinimapDifficultyOverlay(target, map, cells) {
+  let currentRarity = 0;
+  for (const cell of map.spawnDifficultyCells || []) {
+    if (!minimapCellIsVisible(cell, cells)) continue;
+    const rarity = minimapDifficultyRarity(cell.difficulty);
+    if (rarity !== currentRarity) {
+      target.fillStyle = rarityColor(rarity, 1);
+      currentRarity = rarity;
+    }
+    drawMinimapCell(target, cells, cell.x, cell.y);
+  }
 }
 
 function toggleMinimapMode() {
@@ -5810,8 +8200,13 @@ function eventCanvasPoint(event) {
 
 function isMinimapPoint(point) {
   const rect = minimapHitRect;
-  return !!rect && point.x >= rect.x && point.x <= rect.x + rect.size &&
-         point.y >= rect.y && point.y <= rect.y + rect.size;
+  return (
+    !!rect &&
+    point.x >= rect.x &&
+    point.x <= rect.x + rect.size &&
+    point.y >= rect.y &&
+    point.y <= rect.y + rect.size
+  );
 }
 
 function isEntityInRenderView(entity, scale) {
@@ -5820,33 +8215,89 @@ function isEntityInRenderView(entity, scale) {
   if (!snap || !pos || scale <= 0) return false;
   if (snap.entityId === state.ownerEntityId) return true;
 
-  const deathProgress = entity.dying ? clamp((entity.deathAge || 0) / deathFadeDuration, 0, 1) : 0;
+  const deathProgress = entity.dying
+    ? clamp((entity.deathAge || 0) / deathFadeDuration, 0, 1)
+    : 0;
   const deathEase = deathProgress * deathProgress * (3 - deathProgress * 2);
-  const radius = Math.max(0, snap.radius || 0) * (entity.dying ? 1 + deathEase * deathScaleBoost : 1);
+  const radius =
+    Math.max(0, snap.radius || 0) *
+    (entity.dying ? 1 + deathEase * deathScaleBoost : 1);
   const padding = renderCullPaddingPx / scale;
-  const halfW = state.canvasWidth * 0.5 / scale + radius + padding;
-  const halfH = state.canvasHeight * 0.5 / scale + radius + padding;
-  return pos.x >= state.camera.x - halfW && pos.x <= state.camera.x + halfW &&
-         pos.y >= state.camera.y - halfH && pos.y <= state.camera.y + halfH;
+  const halfW = (state.canvasWidth * 0.5) / scale + radius + padding;
+  const halfH = (state.canvasHeight * 0.5) / scale + radius + padding;
+  return (
+    pos.x >= state.camera.x - halfW &&
+    pos.x <= state.camera.x + halfW &&
+    pos.y >= state.camera.y - halfH &&
+    pos.y <= state.camera.y + halfH
+  );
 }
 
 function drawEntityPass(entities) {
   for (const entity of entities) drawEntity(entity);
 }
 
+function drawCheckpointZoneOutlines() {
+  if (!state.altFeaturesEnabled) return;
+  const zones = state.map?.checkpointZones;
+  const scale = worldScale();
+  if (!zones?.length || scale <= 0) return;
+
+  const halfWidth = state.canvasWidth / (2 * scale);
+  const halfHeight = state.canvasHeight / (2 * scale);
+  const left = state.camera.x - halfWidth;
+  const right = state.camera.x + halfWidth;
+  const top = state.camera.y - halfHeight;
+  const bottom = state.camera.y + halfHeight;
+
+  ctx.save();
+  ctx.filter = "none";
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
+  ctx.strokeStyle = checkpointZoneOutlineColor;
+  ctx.lineWidth = checkpointZoneOutlineWidthPx;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const zone of zones) {
+    if (
+      zone.maxX < left ||
+      zone.minX > right ||
+      zone.maxY < top ||
+      zone.minY > bottom ||
+      !zone.vertices?.length
+    )
+      continue;
+
+    const first = worldToScreen(zone.vertices[0]);
+    ctx.beginPath();
+    ctx.moveTo(first.x, first.y);
+    for (let i = 1; i < zone.vertices.length; i += 1) {
+      const point = worldToScreen(zone.vertices[i]);
+      ctx.lineTo(point.x, point.y);
+    }
+    if (zone.closed) ctx.closePath();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawHitboxPass(entities) {
-  if (!state.debugHitbox) return;
+  if (!state.debugHitbox && !state.altFeaturesEnabled) return;
   for (const entity of entities || []) {
     const snap = entity?.snapshot;
     if (!snap || !entity.renderPos) continue;
     const radius = Math.max(0, worldLengthToScreen(snap.radius));
     if (radius < 0.5) continue;
-    drawCollisionHitbox(worldToScreen(entity.renderPos), radius, hitboxStyleForSnap(snap));
+    drawCollisionHitbox(
+      worldToScreen(entity.renderPos),
+      radius,
+      hitboxStyleForSnap(snap),
+    );
   }
 }
 
 function drawSceneHitboxes(passes) {
-  if (!state.debugHitbox) return;
+  if (!state.debugHitbox && !state.altFeaturesEnabled) return;
   drawHitboxPass(passes.ground);
   drawHitboxPass(passes.underlay);
   drawHitboxPass(passes.world);
@@ -5856,8 +8307,14 @@ function drawSceneHitboxes(passes) {
 }
 
 function countScenePassEntities(passes) {
-  return (passes.ground?.length || 0) + (passes.underlay?.length || 0) + (passes.world?.length || 0) +
-    (passes.petals?.length || 0) + (passes.overlays?.length || 0) + (passes.owner ? 1 : 0);
+  return (
+    (passes.ground?.length || 0) +
+    (passes.underlay?.length || 0) +
+    (passes.world?.length || 0) +
+    (passes.petals?.length || 0) +
+    (passes.overlays?.length || 0) +
+    (passes.owner ? 1 : 0)
+  );
 }
 
 function renderLoadForVisibleCount(count) {
@@ -5870,7 +8327,10 @@ function prepareFrameRenderCaches(passes) {
   currentHornetSkill2WindupOwners = [];
   for (const entity of passes.world || []) {
     const snap = entity?.snapshot;
-    if (snap?.entityType === hornetType && skillWindupIdFromFlags(snap.flags) === 3)
+    if (
+      snap?.entityType === hornetType &&
+      skillWindupIdFromFlags(snap.flags) === 3
+    )
       currentHornetSkill2WindupOwners.push(entity);
   }
 }
@@ -5894,8 +8354,52 @@ function updateBloodSacrificeScreenShake(now) {
   const amplitude = bloodSacrificeShakeAmplitudePx * strongest;
   state.screenShake = {
     x: (Math.sin(time * 73.1) + Math.sin(time * 41.7 + 1.9)) * amplitude * 0.5,
-    y: (Math.cos(time * 67.3 + 0.7) + Math.sin(time * 53.9 + 2.4)) * amplitude * 0.5,
+    y:
+      (Math.cos(time * 67.3 + 0.7) + Math.sin(time * 53.9 + 2.4)) *
+      amplitude *
+      0.5,
   };
+}
+
+function drawBloodSacrificeVisionDarkness() {
+  const owner = state.entities.get(state.ownerEntityId);
+  const ownerPos = owner?.renderPos || owner?.snapshot?.pos;
+  if (!ownerPos) return;
+
+  let strongest = 0;
+  for (const entity of state.entities.values()) {
+    const snap = entity?.snapshot;
+    if (!isBloodSacrificeEffectSnap(snap)) continue;
+    const ritualPos = entity.renderPos || snap.pos;
+    const radius = Math.max(0, Number(snap.radius) || 0);
+    if (!ritualPos || radius <= 0) continue;
+
+    const distance = Math.hypot(
+      ownerPos.x - ritualPos.x,
+      ownerPos.y - ritualPos.y,
+    );
+    const proximity = clamp(1 - distance / (radius * 2), 0, 1);
+    if (proximity <= 0) continue;
+    const phase = bloodSacrificePhase(snap.hpPercent);
+    const ritualStrength =
+      phase.drawProgress < 1 ? phase.drawProgress : phase.alpha;
+    strongest = Math.max(strongest, proximity * ritualStrength);
+  }
+
+  const alpha = clamp(
+    strongest * bloodSacrificeVisionMaxAlpha,
+    0,
+    bloodSacrificeVisionMaxAlpha,
+  );
+  if (alpha <= 0) return;
+
+  ctx.save();
+  ctx.filter = "none";
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
+  ctx.fillRect(0, 0, state.canvasWidth, state.canvasHeight);
+  ctx.restore();
 }
 
 function drawScene(now = performance.now()) {
@@ -5919,9 +8423,12 @@ function drawScene(now = performance.now()) {
   if (passes.owner) drawEntity(passes.owner);
   drawEntityPass(passes.overlays);
   drawParticlePass();
+  drawBloodSacrificeVisionDarkness();
+  drawCheckpointZoneOutlines();
   drawSceneHitboxes(passes);
   drawBossBars(passes.bosses);
   drawSelfHud();
+  drawSquadHud();
   drawMinimap();
   updateDeathOverlay();
 }
@@ -5931,7 +8438,8 @@ function tick(now) {
   state.lastFrameTime = now;
   if (dt > 0) {
     const instantFps = 1 / dt;
-    state.fps = state.fps <= 0 ? instantFps : state.fps + (instantFps - state.fps) * 0.08;
+    state.fps =
+      state.fps <= 0 ? instantFps : state.fps + (instantFps - state.fps) * 0.08;
   }
   flushPendingSnapshot();
   flushInput(dt);
@@ -5946,12 +8454,27 @@ function isUiTarget(target) {
   return target && target.closest && target.closest(".ui");
 }
 
+function inputKeyFromEvent(event) {
+  if (event.code === "Space") return "space";
+  return String(event.key || "").toLowerCase();
+}
+
 function setupEvents() {
   window.addEventListener("resize", resizeCanvas);
   connectBtn.addEventListener("click", connectAndAuth);
   reviveBtn.addEventListener("click", requestRevive);
   deathCloseBtn?.addEventListener("click", closeDeathOverlay);
   backpackCloseBtn.addEventListener("click", () => toggleBackpack(false));
+  if (inventoryStacking)
+    inventoryStacking.checked = state.inventoryStacked;
+  inventoryStacking?.addEventListener("change", () => {
+    state.inventoryStacked = inventoryStacking.checked;
+    renderInventoryPanel({ forceInventory: true });
+  });
+  inventorySearch?.addEventListener("input", () => {
+    state.inventorySearchQuery = inventorySearch.value;
+    renderInventoryPanel({ forceInventory: true });
+  });
   craftCloseBtn.addEventListener("click", () => toggleCraft(false));
   talentCloseBtn.addEventListener("click", () => toggleTalent(false));
   craftOnceBtn.addEventListener("click", () => submitCraft());
@@ -5976,14 +8499,21 @@ function setupEvents() {
     }
   });
 
-  window.addEventListener("pointerdown", (event) => {
-    if (!state.chatOpen) return;
-    if (chatUi.contains(event.target)) return;
-    closeChat();
-    state.suppressClickUntil = Math.max(state.suppressClickUntil, performance.now() + 120);
-    event.preventDefault();
-    event.stopImmediatePropagation();
-  }, { capture: true, passive: false });
+  window.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (!state.chatOpen) return;
+      if (chatUi.contains(event.target)) return;
+      closeChat();
+      state.suppressClickUntil = Math.max(
+        state.suppressClickUntil,
+        performance.now() + 120,
+      );
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    },
+    { capture: true, passive: false },
+  );
 
   mobileControls = createMobileControls({
     isUiTarget,
@@ -6004,15 +8534,33 @@ function setupEvents() {
       toggleConsole(false);
     }
   });
-  sliderInput?.addEventListener("input", () => applySliderValue(sliderInput.value));
-  sliderInput?.addEventListener("change", () => applySliderValue(sliderInput.value));
+  sliderInput?.addEventListener("input", () =>
+    applySliderValue(sliderInput.value),
+  );
+  sliderInput?.addEventListener("change", () =>
+    applySliderValue(sliderInput.value),
+  );
   sliderInput?.addEventListener("keydown", (event) => event.stopPropagation());
   sliderCloseBtn?.addEventListener("click", () => closeSliderPanel());
-  for (const eventName of ["pointerdown", "pointermove", "pointerup", "pointercancel", "mousedown", "mousemove", "mouseup", "wheel"]) {
-    sliderPanel?.addEventListener(eventName, stopSliderEvent, { capture: true });
+  for (const eventName of [
+    "pointerdown",
+    "pointermove",
+    "pointerup",
+    "pointercancel",
+    "mousedown",
+    "mousemove",
+    "mouseup",
+    "wheel",
+  ]) {
+    sliderPanel?.addEventListener(eventName, stopSliderEvent, {
+      capture: true,
+    });
   }
   for (const eventName of ["touchstart", "touchmove", "touchend"]) {
-    sliderPanel?.addEventListener(eventName, stopSliderEvent, { capture: true, passive: false });
+    sliderPanel?.addEventListener(eventName, stopSliderEvent, {
+      capture: true,
+      passive: false,
+    });
   }
 
   window.addEventListener("keydown", (event) => {
@@ -6021,14 +8569,8 @@ function setupEvents() {
       toggleConsole();
       return;
     }
-    if (event.key === "Alt" && !event.repeat) {
-      event.preventDefault();
-      state.debugHitbox = !state.debugHitbox;
-      addConsoleLine(`Hitbox debug ${state.debugHitbox ? "on" : "off"}`);
-      return;
-    }
     if (isTyping()) return;
-    const key = event.key.toLowerCase();
+    const key = inputKeyFromEvent(event);
     if (key === "z") {
       event.preventDefault();
       toggleBackpack();
@@ -6063,6 +8605,16 @@ function setupEvents() {
       closeChat();
       return;
     }
+    if (key === "alt") {
+      event.preventDefault();
+      if (!event.repeat) {
+        state.altFeaturesEnabled = !state.altFeaturesEnabled;
+        state.keys.delete("alt");
+        minimapCache = null;
+      }
+      return;
+    }
+    if (key === "space" || key === "shift") event.preventDefault();
     const slotIndex = slotIndexFromKey(key);
     const ownerSlots = displayOwnerSlots();
     if (slotIndex !== null && slotIndex < ownerSlots.length) {
@@ -6074,14 +8626,20 @@ function setupEvents() {
   });
 
   window.addEventListener("keyup", (event) => {
-    state.keys.delete(event.key.toLowerCase());
+    const key = inputKeyFromEvent(event);
+    if (key === "alt") event.preventDefault();
+    state.keys.delete(key);
   });
 
-  window.addEventListener("pointermove", (event) => {
-    updateMousePointer(event);
-    syncPetalInfoTooltipHover();
-    updateDrag(event);
-  }, { passive: false });
+  window.addEventListener(
+    "pointermove",
+    (event) => {
+      updateMousePointer(event);
+      syncPetalInfoTooltipHover();
+      updateDrag(event);
+    },
+    { passive: false },
+  );
   window.addEventListener("pointerup", finishDrag);
   window.addEventListener("pointercancel", clearDrag);
 
@@ -6131,5 +8689,5 @@ setupEvents();
 resizeCanvas();
 renderInventoryPanel();
 addConsoleLine("Web client ready");
-loadMap(defaultMapName);
+loadLoginMap();
 requestAnimationFrame(tick);

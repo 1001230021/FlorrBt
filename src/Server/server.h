@@ -24,7 +24,7 @@ class CServer
     struct SChatEntry
     {
         CGameWorld* world = nullptr;
-        sf::Vector2f pos = {0.f, 0.f};
+        sf::Vector2f pos = { 0.f, 0.f };
         EChatFlag flag = EChatFlag::Global;
         uint32_t player_id = 0;
         int target_player_id = -1;
@@ -44,19 +44,21 @@ class CServer
     bool IsRunning() const { return m_running; }
     CConsole& GetConsole() { return m_console; }
     CGameWorld* GetMainWorld() const { return m_p_main_world; }
+    CGameWorld* FindWorldById(std::uint32_t world_id) const;
     std::vector<CGameWorld*> FindWorldsByMapName(const std::string& map_name) const;
     CGameWorld* FindRandomWorldByMapName(const std::string& map_name) const;
     INetworkModule* GetNetworkModule() const { return m_p_network_module; }
     CGameContext* GameContext() const { return m_p_game_context.get(); }
     const std::vector<SChatEntry>& GetChats() const { return m_chats; }
     const SChatEntry* SubmitChat(CGameWorld* world, sf::Vector2f pos, EChatFlag flag, uint32_t player_id,
-                                 const std::string& player_name, const std::string& message,
-                                 int target_player_id = -1);
+                                 const std::string& player_name, const std::string& message, int target_player_id = -1);
     const SChatEntry* SubmitServerChat(const std::string& message);
     static bool MeetsPetalReportRarity(ERarity rarity, int min_rarity);
     bool BroadcastPetalReport(std::string_view done, ERarity rarity, std::string_view petal_name,
                               std::string_view doer);
     bool BroadcastMobReport(std::string_view action, ERarity rarity, std::string_view mob_name);
+    bool BroadcastMobSpawnReport(CGameWorld& source_world, std::string_view action, ERarity rarity,
+                                 std::string_view mob_name);
 
   private:
     void ExecuteStartupCommands();

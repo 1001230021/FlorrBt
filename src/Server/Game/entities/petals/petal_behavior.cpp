@@ -4,8 +4,7 @@
 std::once_flag g_air_registered;
 void RegisterAir()
 {
-    std::call_once(g_air_registered, []()
-    {
+    std::call_once(g_air_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Air;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -18,8 +17,7 @@ void RegisterAir()
 std::once_flag g_ant_egg_registered;
 void RegisterAntEgg()
 {
-    std::call_once(g_ant_egg_registered, []()
-    {
+    std::call_once(g_ant_egg_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::AntEgg;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -32,8 +30,7 @@ void RegisterAntEgg()
 std::once_flag g_antennae_registered;
 void RegisterAntennae()
 {
-    std::call_once(g_antennae_registered, []()
-    {
+    std::call_once(g_antennae_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Antennae;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -46,8 +43,7 @@ void RegisterAntennae()
 std::once_flag g_third_eye_registered;
 void RegisterThirdEye()
 {
-    std::call_once(g_third_eye_registered, []()
-    {
+    std::call_once(g_third_eye_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::ThirdEye;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -60,8 +56,7 @@ void RegisterThirdEye()
 std::once_flag g_blood_sacrifice_registered;
 void RegisterBloodSacrifice()
 {
-    std::call_once(g_blood_sacrifice_registered, []()
-    {
+    std::call_once(g_blood_sacrifice_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::BloodSacrifice;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -74,8 +69,7 @@ void RegisterBloodSacrifice()
 std::once_flag g_basic_registered;
 void RegisterBasic()
 {
-    std::call_once(g_basic_registered, []()
-    {
+    std::call_once(g_basic_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Basic;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -88,8 +82,7 @@ void RegisterBasic()
 std::once_flag g_bandage_registered;
 void RegisterBandage()
 {
-    std::call_once(g_bandage_registered, []()
-    {
+    std::call_once(g_bandage_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Bandage;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -102,8 +95,7 @@ void RegisterBandage()
 std::once_flag g_beetle_egg_registered;
 void RegisterBeetleEgg()
 {
-    std::call_once(g_beetle_egg_registered, []()
-    {
+    std::call_once(g_beetle_egg_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::BeetleEgg;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -116,8 +108,7 @@ void RegisterBeetleEgg()
 std::once_flag g_broken_egg_registered;
 void RegisterBrokenEgg()
 {
-    std::call_once(g_broken_egg_registered, []()
-    {
+    std::call_once(g_broken_egg_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::BrokenEgg;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -130,8 +121,7 @@ void RegisterBrokenEgg()
 std::once_flag g_bubble_registered;
 void RegisterBubble()
 {
-    std::call_once(g_bubble_registered, []()
-    {
+    std::call_once(g_bubble_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Bubble;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -144,12 +134,11 @@ void RegisterBubble()
 std::once_flag g_bone_registered;
 void RegisterBone()
 {
-    std::call_once(g_bone_registered, []()
-    {
+    std::call_once(g_bone_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Bone;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
-        proto.m_base_radius = game_config::default_basic_base_radius;
+        proto.m_base_radius = game_config::default_bone_base_radius;
         proto.m_p_behavior = std::make_unique<CBoneBehavior>();
         REGISTER_PETAL(EPetalType::Bone, CPetal, proto);
     });
@@ -159,8 +148,7 @@ std::once_flag g_coin_registered;
 void RegisterCarrot()
 {
     static std::once_flag g_carrot_registered;
-    std::call_once(g_carrot_registered, []()
-    {
+    std::call_once(g_carrot_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Carrot;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -172,8 +160,7 @@ void RegisterCarrot()
 
 void RegisterCoin()
 {
-    std::call_once(g_coin_registered, []()
-    {
+    std::call_once(g_coin_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Coin;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -186,8 +173,7 @@ void RegisterCoin()
 std::once_flag g_compass_registered;
 void RegisterCompass()
 {
-    std::call_once(g_compass_registered, []()
-    {
+    std::call_once(g_compass_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Compass;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -200,8 +186,7 @@ void RegisterCompass()
 std::once_flag g_cogwheel_registered;
 void RegisterCogwheel()
 {
-    std::call_once(g_cogwheel_registered, []()
-    {
+    std::call_once(g_cogwheel_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Cogwheel;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -214,8 +199,7 @@ void RegisterCogwheel()
 std::once_flag g_corruption_registered;
 void RegisterCorruption()
 {
-    std::call_once(g_corruption_registered, []()
-    {
+    std::call_once(g_corruption_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Corruption;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -228,12 +212,11 @@ void RegisterCorruption()
 std::once_flag g_dahlia_registered;
 void RegisterDahlia()
 {
-    std::call_once(g_dahlia_registered, []()
-    {
+    std::call_once(g_dahlia_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Dahlia;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
-        proto.m_base_radius = game_config::default_rose_base_radius * 0.75f;
+        proto.m_base_radius = game_config::default_dahlia_base_radius;
         proto.m_p_behavior = std::make_unique<CDahliaBehavior>();
         REGISTER_PETAL(EPetalType::Dahlia, CPetal, proto);
     });
@@ -242,8 +225,7 @@ void RegisterDahlia()
 std::once_flag g_dandelion_registered;
 void RegisterDandelionPetal()
 {
-    std::call_once(g_dandelion_registered, []()
-    {
+    std::call_once(g_dandelion_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Dandelion;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -256,8 +238,7 @@ void RegisterDandelionPetal()
 std::once_flag g_dust_registered;
 void RegisterDust()
 {
-    std::call_once(g_dust_registered, []()
-    {
+    std::call_once(g_dust_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Dust;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -270,8 +251,7 @@ void RegisterDust()
 std::once_flag g_fragment_registered;
 void RegisterFragment()
 {
-    std::call_once(g_fragment_registered, []()
-    {
+    std::call_once(g_fragment_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Fragment;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -284,8 +264,7 @@ void RegisterFragment()
 std::once_flag g_golden_leaf_registered;
 void RegisterGoldenLeaf()
 {
-    std::call_once(g_golden_leaf_registered, []()
-    {
+    std::call_once(g_golden_leaf_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::GoldenLeaf;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -298,8 +277,7 @@ void RegisterGoldenLeaf()
 std::once_flag g_glass_registered;
 void RegisterGlass()
 {
-    std::call_once(g_glass_registered, []()
-    {
+    std::call_once(g_glass_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Glass;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -312,8 +290,7 @@ void RegisterGlass()
 std::once_flag g_stinger_registered;
 void RegisterStinger()
 {
-    std::call_once(g_stinger_registered, []()
-    {
+    std::call_once(g_stinger_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Stinger;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -326,8 +303,7 @@ void RegisterStinger()
 std::once_flag g_heavy_registered;
 void RegisterHeavy()
 {
-    std::call_once(g_heavy_registered, []()
-    {
+    std::call_once(g_heavy_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Heavy;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -340,8 +316,7 @@ void RegisterHeavy()
 std::once_flag g_iris_registered;
 void RegisterIris()
 {
-    std::call_once(g_iris_registered, []()
-    {
+    std::call_once(g_iris_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Iris;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -354,8 +329,7 @@ void RegisterIris()
 std::once_flag g_faster_registered;
 void RegisterFaster()
 {
-    std::call_once(g_faster_registered, []()
-    {
+    std::call_once(g_faster_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Faster;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -368,8 +342,7 @@ void RegisterFaster()
 std::once_flag g_leaf_registered;
 void RegisterLeaf()
 {
-    std::call_once(g_leaf_registered, []()
-    {
+    std::call_once(g_leaf_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Leaf;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -379,11 +352,23 @@ void RegisterLeaf()
     });
 }
 
+std::once_flag g_yucca_registered;
+void RegisterYucca()
+{
+    std::call_once(g_yucca_registered, []() {
+        CPetalPrototype proto;
+        proto.m_type = EPetalType::Yucca;
+        proto.m_name = std::string(GetPetalTypeName(proto.m_type));
+        proto.m_base_radius = game_config::default_yucca_base_radius;
+        proto.m_p_behavior = std::make_unique<CYuccaBehavior>();
+        REGISTER_PETAL(EPetalType::Yucca, CPetal, proto);
+    });
+}
+
 std::once_flag g_lentil_registered;
 void RegisterLentil()
 {
-    std::call_once(g_lentil_registered, []()
-    {
+    std::call_once(g_lentil_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Lentil;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -396,8 +381,7 @@ void RegisterLentil()
 std::once_flag g_light_registered;
 void RegisterLight()
 {
-    std::call_once(g_light_registered, []()
-    {
+    std::call_once(g_light_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Light;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -410,8 +394,7 @@ void RegisterLight()
 std::once_flag g_corn_registered;
 void RegisterCorn()
 {
-    std::call_once(g_corn_registered, []()
-    {
+    std::call_once(g_corn_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Corn;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -424,8 +407,7 @@ void RegisterCorn()
 std::once_flag g_rice_registered;
 void RegisterRice()
 {
-    std::call_once(g_rice_registered, []()
-    {
+    std::call_once(g_rice_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Rice;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -438,8 +420,7 @@ void RegisterRice()
 std::once_flag g_pollen_registered;
 void RegisterPollen()
 {
-    std::call_once(g_pollen_registered, []()
-    {
+    std::call_once(g_pollen_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Pollen;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -452,8 +433,7 @@ void RegisterPollen()
 std::once_flag g_honey_registered;
 void RegisterHoney()
 {
-    std::call_once(g_honey_registered, []()
-    {
+    std::call_once(g_honey_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Honey;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -466,8 +446,7 @@ void RegisterHoney()
 std::once_flag g_mimic_registered;
 void RegisterMimic()
 {
-    std::call_once(g_mimic_registered, []()
-    {
+    std::call_once(g_mimic_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Mimic;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -480,8 +459,7 @@ void RegisterMimic()
 std::once_flag g_moon_registered;
 void RegisterMoon()
 {
-    std::call_once(g_moon_registered, []()
-    {
+    std::call_once(g_moon_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Moon;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -494,8 +472,7 @@ void RegisterMoon()
 std::once_flag g_nullification_registered;
 void RegisterNullification()
 {
-    std::call_once(g_nullification_registered, []()
-    {
+    std::call_once(g_nullification_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Nullification;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -508,8 +485,7 @@ void RegisterNullification()
 std::once_flag g_pincer_registered;
 void RegisterPincer()
 {
-    std::call_once(g_pincer_registered, []()
-    {
+    std::call_once(g_pincer_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Pincer;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -522,8 +498,7 @@ void RegisterPincer()
 std::once_flag g_relic_registered;
 void RegisterRelic()
 {
-    std::call_once(g_relic_registered, []()
-    {
+    std::call_once(g_relic_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Relic;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -536,8 +511,7 @@ void RegisterRelic()
 std::once_flag g_basil_registered;
 void RegisterBasil()
 {
-    std::call_once(g_basil_registered, []()
-    {
+    std::call_once(g_basil_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Basil;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -550,8 +524,7 @@ void RegisterBasil()
 std::once_flag g_rock_petal_registered;
 void RegisterRockPetal()
 {
-    std::call_once(g_rock_petal_registered, []()
-    {
+    std::call_once(g_rock_petal_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Rock;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -564,8 +537,7 @@ void RegisterRockPetal()
 std::once_flag g_rose_registered;
 void RegisterRose()
 {
-    std::call_once(g_rose_registered, []()
-    {
+    std::call_once(g_rose_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Rose;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -578,8 +550,7 @@ void RegisterRose()
 std::once_flag g_cactus_registered;
 void RegisterCactus()
 {
-    std::call_once(g_cactus_registered, []()
-    {
+    std::call_once(g_cactus_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Cactus;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -592,8 +563,7 @@ void RegisterCactus()
 std::once_flag g_soil_registered;
 void RegisterSoil()
 {
-    std::call_once(g_soil_registered, []()
-    {
+    std::call_once(g_soil_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Soil;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -606,8 +576,7 @@ void RegisterSoil()
 std::once_flag g_web_registered;
 void RegisterWeb()
 {
-    std::call_once(g_web_registered, []()
-    {
+    std::call_once(g_web_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Web;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -620,8 +589,7 @@ void RegisterWeb()
 std::once_flag g_wax_registered;
 void RegisterWax()
 {
-    std::call_once(g_wax_registered, []()
-    {
+    std::call_once(g_wax_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Wax;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -634,8 +602,7 @@ void RegisterWax()
 std::once_flag g_orange_registered;
 void RegisterOrange()
 {
-    std::call_once(g_orange_registered, []()
-    {
+    std::call_once(g_orange_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Orange;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -648,8 +615,7 @@ void RegisterOrange()
 std::once_flag g_shovel_registered;
 void RegisterShovel()
 {
-    std::call_once(g_shovel_registered, []()
-    {
+    std::call_once(g_shovel_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Shovel;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -662,8 +628,7 @@ void RegisterShovel()
 std::once_flag g_yin_yang_registered;
 void RegisterYinYang()
 {
-    std::call_once(g_yin_yang_registered, []()
-    {
+    std::call_once(g_yin_yang_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::YinYang;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -676,8 +641,7 @@ void RegisterYinYang()
 std::once_flag g_yggdrasil_registered;
 void RegisterYggdrasil()
 {
-    std::call_once(g_yggdrasil_registered, []()
-    {
+    std::call_once(g_yggdrasil_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Yggdrasil;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -690,8 +654,7 @@ void RegisterYggdrasil()
 std::once_flag g_missile_registered;
 void RegisterMissile()
 {
-    std::call_once(g_missile_registered, []()
-    {
+    std::call_once(g_missile_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Missile;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -704,8 +667,7 @@ void RegisterMissile()
 std::once_flag g_sawblade_registered;
 void RegisterSawblade()
 {
-    std::call_once(g_sawblade_registered, []()
-    {
+    std::call_once(g_sawblade_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Sawblade;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -718,12 +680,11 @@ void RegisterSawblade()
 std::once_flag g_triangle_registered;
 void RegisterTriangle()
 {
-    std::call_once(g_triangle_registered, []()
-    {
+    std::call_once(g_triangle_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Triangle;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
-        proto.m_base_radius = game_config::default_basic_base_radius;
+        proto.m_base_radius = game_config::default_triangle_base_radius;
         proto.m_p_behavior = std::make_unique<CTriangleBehavior>();
         REGISTER_PETAL(EPetalType::Triangle, CPetal, proto);
     });
@@ -732,8 +693,7 @@ void RegisterTriangle()
 std::once_flag g_wing_registered;
 void RegisterWing()
 {
-    std::call_once(g_wing_registered, []()
-    {
+    std::call_once(g_wing_registered, []() {
         CPetalPrototype proto;
         proto.m_type = EPetalType::Wing;
         proto.m_name = std::string(GetPetalTypeName(proto.m_type));
@@ -797,5 +757,6 @@ void RegisterPetals()
     RegisterWing();
     RegisterYinYang();
     RegisterYggdrasil();
+    RegisterYucca();
     RegisterMissile();
 }

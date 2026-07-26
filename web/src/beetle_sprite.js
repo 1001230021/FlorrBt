@@ -26,10 +26,28 @@ const forelimbParts = [
 
 let forelimbPaths = null;
 
-export function drawBeetle(ctx, src, pos, radius, entityId, angle, motion, time, options = {}) {
+export function drawBeetle(
+  ctx,
+  src,
+  pos,
+  radius,
+  entityId,
+  angle,
+  motion,
+  time,
+  options = {},
+) {
   const summoned = Boolean(options.summoned);
-  const forwardOffset = Number.isFinite(options.forwardOffset) ? options.forwardOffset : 0;
-  const spriteSize = Math.max(1, radius * 2 * (BEETLE_VIEWBOX_SIZE / BEETLE_EFFECTIVE_BOX) * BEETLE_SPRITE_SCALE);
+  const forwardOffset = Number.isFinite(options.forwardOffset)
+    ? options.forwardOffset
+    : 0;
+  const spriteSize = Math.max(
+    1,
+    radius *
+      2 *
+      (BEETLE_VIEWBOX_SIZE / BEETLE_EFFECTIVE_BOX) *
+      BEETLE_SPRITE_SCALE,
+  );
   const spriteHalf = spriteSize * 0.5;
   const base = beetleBaseImage(src, summoned);
   const animation = beetleAnimation(entityId, motion || 0, time || 0);
@@ -38,8 +56,10 @@ export function drawBeetle(ctx, src, pos, radius, entityId, angle, motion, time,
   ctx.translate(pos.x, pos.y);
   if (Number.isFinite(angle)) ctx.rotate(angle - BEETLE_BASE_FACE_ANGLE);
   if (forwardOffset !== 0) {
-    ctx.translate(Math.cos(BEETLE_BASE_FACE_ANGLE) * forwardOffset,
-                  Math.sin(BEETLE_BASE_FACE_ANGLE) * forwardOffset);
+    ctx.translate(
+      Math.cos(BEETLE_BASE_FACE_ANGLE) * forwardOffset,
+      Math.sin(BEETLE_BASE_FACE_ANGLE) * forwardOffset,
+    );
   }
 
   drawForelimbs(ctx, spriteSize, animation);
@@ -53,7 +73,8 @@ export function drawBeetle(ctx, src, pos, radius, entityId, angle, motion, time,
 }
 
 function beetleAnimation(entityId, motion, time) {
-  const activeMotion = clamp01(motion) < BEETLE_MOTION_DEADZONE ? 0 : clamp01(motion);
+  const activeMotion =
+    clamp01(motion) < BEETLE_MOTION_DEADZONE ? 0 : clamp01(motion);
   if (activeMotion <= 0) return { swing: 0 };
   const phase = time * (4.8 + activeMotion * 16.5) + entityId * 0.81;
   return {
@@ -117,7 +138,8 @@ function beetleBaseImage(src, summoned) {
 }
 
 function stripStaticForelimbs(svgText) {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgText;
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
+    return svgText;
 
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
   const root = doc.documentElement;
@@ -129,7 +151,10 @@ function stripStaticForelimbs(svgText) {
 }
 
 function recolorSummonedBodySvg(svgText) {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") {
+  if (
+    typeof DOMParser === "undefined" ||
+    typeof XMLSerializer === "undefined"
+  ) {
     return svgText
       .replace(/#905db0/gi, SUMMONED_BODY_FILL)
       .replace(/#754b8f/gi, SUMMONED_BODY_DARK_FILL)
