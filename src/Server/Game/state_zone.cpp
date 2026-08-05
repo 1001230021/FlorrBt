@@ -24,8 +24,9 @@ float WebReferenceMass(const CEntity* owner)
 }
 } // namespace
 
-CStateZone::CStateZone(CGameWorld* world, sf::Vector2f pos, float radius, state_factory state, zone_filter filter)
-    : CEntity(world, pos.x, pos.y, radius), m_state(std::move(state)), m_filter(std::move(filter))
+CStateZone::CStateZone(CGameWorld* world, sf::Vector2f pos, float radius, state_factory state, zone_filter filter,
+                       SEntityTypeInfo entity_type)
+    : CEntity(world, pos.x, pos.y, radius, entity_type), m_state(std::move(state)), m_filter(std::move(filter))
 {
 }
 
@@ -36,7 +37,7 @@ void CStateZone::Tick(float dt)
         m_timer -= dt;
         if (m_timer <= 0.f)
         {
-            MarkForDestroy();
+            MarkForDestroy(EEntityRemovalReason::Expired);
             return;
         }
     }
@@ -84,7 +85,8 @@ CSpiderWebZone::CSpiderWebZone(CGameWorld* world, sf::Vector2f pos, float radius
               if (dynamic_cast<CProjectile*>(entity)) return false;
               if (owner_team != 0 && CheckTeam(owner_team, entity->m_team)) return false;
               return true;
-          })
+          },
+          MakeEntityType(EEntityType::StateZone, server_spider_web_entity_type))
 {
     m_team = owner ? owner->m_team : 0;
     m_mass = 0.f;

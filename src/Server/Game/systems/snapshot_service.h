@@ -14,7 +14,7 @@ class CSnapshotService
     static constexpr size_t packet_budget = static_cast<size_t>(std::numeric_limits<std::uint16_t>::max()) - 1024u;
     static constexpr size_t backlog_skip_bytes = packet_budget * 2u;
     static constexpr size_t entity_budget = 2048u;
-    static constexpr size_t snapshot_header_size = 13u;
+    static constexpr size_t snapshot_header_size = server_snapshot_header_size;
 
     struct SBuildResult
     {

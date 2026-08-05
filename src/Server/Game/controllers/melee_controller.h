@@ -10,6 +10,9 @@ class CMeleeController : public IController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.melee"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
 
   protected:
     void PickRandomTargetPos(CMobBase* mob, const SMobStats& stats);
@@ -37,6 +40,43 @@ class CMeleeController : public IController
     int m_honey_target_scan_cooldown = -1;
 };
 
+class CLeafcutterSoldierController : public CMeleeController
+{
+  public:
+    void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.leafcutter_soldier"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
+    bool IsCarryingLeafPiece(const CMobBase* mob) const;
+    bool IsCarryingLeafPiece(const CMobBase* mob, const CEntity* leaf_piece) const;
+    void SyncCarriedLeafPiece(CMobBase* mob);
+    void ResolveCarriedLeafPieceConstraint(CMobBase* mob);
+
+  private:
+    CEntity* ResolveLeafPieceReference(const CMobBase* mob, std::uint32_t world_id, int entity_id,
+                                       std::uint64_t generation) const;
+    CEntity* ResolveLeafPieceTarget(const CMobBase* mob) const;
+    CEntity* ResolveCarriedLeafPiece(const CMobBase* mob) const;
+    bool IsEligibleLeafPiece(const CMobBase* mob, const CEntity* entity, bool reject_carried = true) const;
+    bool IsLeafPieceCarried(const CMobBase* mob, const CEntity* leaf_piece) const;
+    bool TryAcquireLeafPieceTarget(CMobBase* mob, float search_range);
+    bool TryCarryLeafPiece(CMobBase* mob);
+    void ClearLeafPieceTarget();
+    void SetLeafPieceTarget(CEntity* leaf_piece);
+    void ClearCarriedLeafPiece();
+    void SetCarriedLeafPiece(CEntity* leaf_piece);
+    void ApplyCarryingTurn(CMobBase* mob, float previous_angle, bool had_facing, float dt) const;
+
+    std::uint32_t m_leaf_piece_target_world_id = 0;
+    int m_leaf_piece_target_id = -1;
+    std::uint64_t m_leaf_piece_target_generation = 0;
+    std::uint32_t m_carried_leaf_piece_world_id = 0;
+    int m_carried_leaf_piece_id = -1;
+    std::uint64_t m_carried_leaf_piece_generation = 0;
+    float m_leaf_piece_attack_timer = 0.f;
+    int m_leaf_piece_target_scan_cooldown = -1;
+};
+
 class CSummonedMeleeController : public CMeleeController
 {
   public:
@@ -50,6 +90,9 @@ class CSummonedMeleeController : public CMeleeController
     }
 
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.summoned_melee"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
     int GetOwnerId() const { return m_owner_id; }
     std::uint64_t GetOwnerGeneration() const { return m_owner_generation; }
     CEntity* GetOwner(CGameWorld* world) const;
@@ -61,6 +104,7 @@ class CSummonedMeleeController : public CMeleeController
     int m_owner_id = -1;
     std::uint64_t m_owner_generation = 0;
     bool m_persist_after_owner_death = false;
+    bool m_owner_lost = false;
 };
 
 class CNeutralMeleeController : public CMeleeController
@@ -68,24 +112,30 @@ class CNeutralMeleeController : public CMeleeController
   public:
     void OnTick(CMobBase* mob, float dt) override;
     void OnDamaged(CMobBase* mob, CEntity* attacker) override;
+    std::string_view SnapshotKey() const override { return "controller.neutral_melee"; }
 };
 
 class CRandomWanderController : public CMeleeController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.random_wander"; }
 };
 
 class CQueenAntController : public CMeleeController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.queen_ant"; }
 };
 
 class CSpiderController : public CMeleeController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.spider"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
 
   private:
     float m_web_timer = 0.f;
@@ -95,12 +145,36 @@ class CHornetRangedController : public CMeleeController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.hornet_ranged"; }
+};
+
+class CMechaFlowerRangedController final : public CMeleeController
+{
+  public:
+    void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.mecha_flower_ranged"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
+
+  private:
+    void ClearOrbitTarget();
+    void SyncOrbitTarget(const CEntity* target);
+    void MoveAroundTarget(CMobBase* mob, const CEntity* target, float stop_distance, float dt) const;
+
+    bool m_orbiting = false;
+    float m_orbit_direction = 0.f;
+    std::uint32_t m_orbit_target_world_id = 0;
+    int m_orbit_target_id = -1;
+    std::uint64_t m_orbit_target_generation = 0;
 };
 
 class CSpecialHornetController : public CMeleeController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.hornet_special"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
 
   private:
     enum class EState
@@ -156,6 +230,9 @@ class CBumbleBeeController : public IController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.bumble_bee"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
 
   private:
     void PickTurnTimer();

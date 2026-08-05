@@ -1,5 +1,6 @@
 #include "../Engine/logger.h"
 #include "../Shared/game_config.h"
+#include "../Shared/version.h"
 #include "server.h"
 #include <chrono>
 #include <cstdint>
@@ -182,8 +183,17 @@ LONG WINAPI LogUnhandledSehException(EXCEPTION_POINTERS* pointers)
 #endif
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    for (int i = 1; i < argc; ++i)
+    {
+        if (argv[i] && std::string_view(argv[i]) == "--version")
+        {
+            std::cout << florrbt::version_label << '\n';
+            return 0;
+        }
+    }
+
     NormalizeServerWorkingDirectory();
     std::set_terminate(LogTerminate);
 #ifdef _WIN32
@@ -192,9 +202,25 @@ int main()
     try
     {
         CServer server;
+        for (int i = 1; i < argc; ++i)
+        {
+            const std::string argument = argv[i] ? argv[i] : "";
+            if (argument == "--restore" && i + 1 < argc)
+            {
+                server.SetRestoreSnapshotPath(argv[++i]);
+                continue;
+            }
+            if (argument == "--ready-file" && i + 1 < argc)
+            {
+                server.SetReadyFilePath(argv[++i]);
+                continue;
+            }
+            LOG_WARN("server", "Ignoring unknown startup argument: " + argument);
+        }
         server.Init();
         server.Run();
-        return 0;
+        server.ShutDown();
+        return server.GetExitCode();
     } catch (const std::exception& e)
     {
         LOG_FATAL("server", std::string("Unhandled server exception: ") + e.what());

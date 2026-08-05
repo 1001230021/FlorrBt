@@ -1,5 +1,5 @@
 #include "player.h"
-#include "../../Engine/account_data.h"
+#include "../Persistence/account_store.h"
 #include "../../Shared/game_config.h"
 #include "../../Shared/petal_card_exp.h"
 #include "../server.h"
@@ -19,6 +19,15 @@ namespace
 bool SameTalent(const ITalent* lhs, const ITalent* rhs)
 {
     return lhs && rhs && lhs->m_id == rhs->m_id && lhs->m_rarity == rhs->m_rarity && lhs->m_rank == rhs->m_rank;
+}
+
+CPlayerController* PlayerControllerFor(CPlayer& player)
+{
+    CEntity* entity = player.GetEntity();
+    if (!entity || entity->m_is_marked_for_des) return nullptr;
+
+    auto* mob = dynamic_cast<CMobBase*>(entity);
+    return mob ? dynamic_cast<CPlayerController*>(mob->GetController()) : nullptr;
 }
 
 } // namespace
@@ -44,20 +53,19 @@ void CPlayer::HandleOperate(const ClientOperate& op)
         return;
     }
 
-    CEntity* entity = GetEntity();
-    if (!entity || entity->m_is_marked_for_des) return;
+    if (auto* controller = PlayerControllerFor(*this)) controller->PushOperate(op);
+}
 
-    auto* mob = dynamic_cast<CMobBase*>(entity);
-    if (!mob) return;
-
-    auto* controller = dynamic_cast<CPlayerController*>(mob->GetController());
-    if (!controller) return;
-
-    controller->PushOperate(op);
+bool CPlayer::HandleScheduledOperate(const ClientOperate& op, std::uint32_t delay_ticks, std::uint32_t sequence)
+{
+    if (!m_authenticated) return false;
+    auto* controller = PlayerControllerFor(*this);
+    return controller && controller->PushOperate(op, delay_ticks, sequence);
 }
 
 void CPlayer::AttachSocket(sf::TcpSocket&& socket)
 {
+    if (auto* controller = PlayerControllerFor(*this)) controller->ResetOperate();
     m_socket = std::move(socket);
     m_socket.setBlocking(false);
     m_send_buffer.clear();
@@ -78,6 +86,25 @@ void CPlayer::DetachSocket()
     m_connected = false;
     m_timeout_left = game_config::timeout_protection_seconds;
     ResetControlledMob();
+}
+
+void CPlayer::RestoreDisconnectedSession(const std::string& remote_address, float timeout_left, float mute_timer,
+                                         bool report_disabled, int invalid_report_count,
+                                         float second_chance_cooldown, bool use_new_player_spawn)
+{
+    m_socket.disconnect();
+    m_send_buffer.clear();
+    m_send_offset = 0;
+    m_receive_buffer.clear();
+    m_connected = false;
+    m_timeout_left = std::max(timeout_left, game_config::timeout_protection_seconds);
+    m_remote_address = remote_address;
+    m_mute_timer = std::max(0.f, mute_timer);
+    m_report_disabled = report_disabled;
+    m_invalid_report_count = std::max(0, invalid_report_count);
+    m_second_chance_cooldown = std::max(0.f, second_chance_cooldown);
+    m_use_new_player_spawn = use_new_player_spawn;
+    m_rcon_authorized = false;
 }
 
 void CPlayer::TickTimeout(float dt)
@@ -425,12 +452,19 @@ int CPlayer::CalculateTalentSlotCount() const
 
 void CPlayer::RefreshTalentEffects(bool reload_petals)
 {
-    auto* flower = dynamic_cast<CPlayerFlower*>(GetEntity());
+    auto* flower = dynamic_cast<CFlower*>(GetEntity());
     if (!flower) return;
 
-    flower->RefreshTalentSlotCount();
-    flower->RebuildFinalStats();
-    if (reload_petals) flower->ReloadAllPetals();
+    auto* player_flower = dynamic_cast<CPlayerFlower*>(flower);
+    if (!player_flower)
+    {
+        flower->MarkFinalStatsDirty();
+        return;
+    }
+
+    player_flower->RefreshTalentSlotCount();
+    player_flower->RebuildFinalStats();
+    if (reload_petals) player_flower->ReloadAllPetals();
 }
 
 void CPlayer::SetSecondChanceCooldown(float cooldown) { m_second_chance_cooldown = std::max(0.f, cooldown); }
@@ -444,6 +478,8 @@ bool CPlayer::ConsumeUseNewPlayerSpawn()
 
 void CPlayer::SetOwnedEntity(CEntity* entity)
 {
+    if (auto* old_flower = dynamic_cast<CFlower*>(GetEntity())) old_flower->MarkFinalStatsDirty();
+
     if (!entity)
     {
         m_p_world = nullptr;
@@ -455,6 +491,8 @@ void CPlayer::SetOwnedEntity(CEntity* entity)
     m_p_world = entity->GameWorld();
     m_entity_id = entity->m_id;
     m_entity_generation = entity->m_generation;
+
+    if (auto* new_flower = dynamic_cast<CFlower*>(entity)) new_flower->MarkFinalStatsDirty();
 }
 
 void CPlayer::Authenticate(const std::string& account_name)

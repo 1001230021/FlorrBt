@@ -1,10 +1,12 @@
 import { clamp } from "./protocol.js";
 import { dom, state } from "./app_context.js";
 import { clientRuntimeConfig } from "./client_config.js";
+import { t } from "./i18n.js";
 
 const mapChunkTileSpan = 4;
 const mapChunkCacheLimit = 192;
 const mapPrewarmBudgetMs = 8;
+const mapOverviewMaxDimensionPx = 2048;
 const {
   minimapTileSubdivisions,
   minimapTextureSampleSizePx,
@@ -41,22 +43,41 @@ export function createMapRenderer({
   defaultMapName = "garden.tmj",
   addConsoleLine = () => {},
   requestDraw = () => {},
+  setLoadingVisible = () => {},
   worldScale,
   worldToScreen,
 } = {}) {
   async function loadMap(mapName) {
     const path = normalizeMapPath(mapName);
     if (!path) return null;
-    if (path === state.mapName && state.map) return state.map;
-    if (path === state.mapName && state.mapLoadPromise)
+    if (state.map?.path === path) {
+      if (state.mapLoadPromise && state.mapLoadPath !== path) {
+        state.mapLoadToken += 1;
+        state.mapLoadPromise = null;
+        state.mapLoadPath = "";
+        setLoadingVisible(false);
+      }
+      return state.map;
+    }
+    if (path === state.mapLoadPath && state.mapLoadPromise)
       return state.mapLoadPromise;
 
     const token = ++state.mapLoadToken;
-    state.mapName = path;
+    state.mapLoadPath = path;
     state.mapDisplayName = String(mapName || path);
-    addConsoleLine(`Loading map: ${path}`);
-    state.mapLoadPromise = loadMapData(path, token);
-    return state.mapLoadPromise;
+    addConsoleLine(t("status.mapLoading", { path }));
+    setLoadingVisible(true);
+    const loadPromise = loadMapData(path, token);
+    state.mapLoadPromise = loadPromise;
+    try {
+      return await loadPromise;
+    } finally {
+      if (token === state.mapLoadToken) {
+        state.mapLoadPromise = null;
+        state.mapLoadPath = "";
+        setLoadingVisible(false);
+      }
+    }
   }
 
   async function loadMapData(path, token) {
@@ -91,7 +112,10 @@ export function createMapRenderer({
           tileLoadPromises.push(
             loadMapTileImage(image, tileSrc).then((ok) => {
               if (!ok && token === state.mapLoadToken)
-                addConsoleLine(`Tile image failed: ${tileSrc}`, "error");
+                addConsoleLine(
+                  t("status.tileImageFailed", { path: tileSrc }),
+                  "error",
+                );
             }),
           );
           tileImages.set(gid, image);
@@ -151,8 +175,8 @@ export function createMapRenderer({
         minimapSubdivisions,
       );
 
-      if (token !== state.mapLoadToken) return;
-      state.map = {
+      if (token !== state.mapLoadToken) return null;
+      const map = {
         path,
         width: mapWidth,
         height: mapHeight,
@@ -180,19 +204,28 @@ export function createMapRenderer({
         chunkBuildPumpScheduled: false,
         chunkUseTick: 0,
       };
+      await buildFullMapOverview(map, token);
+      if (token !== state.mapLoadToken) return null;
+
+      state.map = map;
+      state.mapName = path;
       addConsoleLine(
-        `Map loaded: ${path} (${layers.length} layers, ${tileImages.size} tiles)`,
+        t("status.mapLoaded", {
+          path,
+          layers: layers.length,
+          tiles: tileImages.size,
+        }),
       );
-      startMapChunkPrewarm(state.map, token);
-      return state.map;
+      requestDraw();
+      return map;
     } catch (error) {
       if (token === state.mapLoadToken) {
-        state.map = null;
-        addConsoleLine(`Map load failed: ${path} (${error.message})`, "error");
+        addConsoleLine(
+          t("status.mapLoadFailed", { path, error: error.message }),
+          "error",
+        );
       }
       return null;
-    } finally {
-      if (token === state.mapLoadToken) state.mapLoadPromise = null;
     }
   }
 
@@ -241,49 +274,79 @@ export function createMapRenderer({
     return out;
   }
 
-  function startMapChunkPrewarm(map, token) {
-    if (!map?.layers?.length) return;
+  async function buildFullMapOverview(map, token) {
+    const worldWidth = Math.max(1, map.width * map.tileWidth);
+    const worldHeight = Math.max(1, map.height * map.tileHeight);
+    const overviewScale = Math.min(
+      1,
+      mapOverviewMaxDimensionPx / Math.max(worldWidth, worldHeight),
+    );
+    const canvas = createMapRenderCanvas(
+      Math.max(1, Math.ceil(worldWidth * overviewScale)),
+      Math.max(1, Math.ceil(worldHeight * overviewScale)),
+    );
+    const overviewCtx = canvas.getContext("2d");
+    if (!overviewCtx) throw new Error("map overview canvas unavailable");
 
-    const jobs = [];
-    const profile = mapChunkProfile(1);
-    map.activeChunkProfileKey = mapChunkProfileKey(profile);
-    for (let layerIndex = 0; layerIndex < map.layers.length; layerIndex += 1) {
-      const layer = map.layers[layerIndex];
-      if (
-        !layer.width ||
-        !layer.height ||
-        !layer.tiles ||
-        layer.tiles.length <= 0
-      )
-        continue;
+    const tileWidth = map.tileWidth * overviewScale;
+    const tileHeight = map.tileHeight * overviewScale;
+    const overviewTileImages = buildOverviewTileImages(
+      map.tileImages,
+      tileWidth,
+      tileHeight,
+    );
+    overviewCtx.imageSmoothingEnabled = true;
+    let sliceStarted = performance.now();
 
-      const chunkCols = Math.ceil(layer.width / profile.span);
-      const chunkRows = Math.ceil(layer.height / profile.span);
-      for (let chunkY = 0; chunkY < chunkRows; chunkY += 1) {
-        for (let chunkX = 0; chunkX < chunkCols; chunkX += 1) {
-          jobs.push({ layer, layerIndex, chunkX, chunkY, profile });
+    for (const layer of map.layers || []) {
+      if (!layer?.width || !layer?.height || !layer.tiles?.length) continue;
+      for (let tileY = 0; tileY < layer.height; tileY += 1) {
+        for (let tileX = 0; tileX < layer.width; tileX += 1) {
+          const raw = layer.tiles[tileY * layer.width + tileX] >>> 0;
+          const image = overviewTileImages.get(canonicalTileGid(raw));
+          if (image) {
+            drawTileImage(
+              image,
+              { x: tileX * tileWidth, y: tileY * tileHeight },
+              tileWidth,
+              tileHeight,
+              raw,
+              overviewCtx,
+            );
+          }
+
+          if (performance.now() - sliceStarted < mapPrewarmBudgetMs) continue;
+          await yieldMapPreparation();
+          if (token !== state.mapLoadToken) return;
+          sliceStarted = performance.now();
         }
       }
     }
-    if (!jobs.length) return;
-    if (jobs.length > mapChunkCacheLimit) {
-      addConsoleLine(
-        `Map tiles ready: ${map.path} (${jobs.length} chunks on demand)`,
-      );
-      return;
-    }
 
-    for (const job of jobs) {
-      if (token !== state.mapLoadToken || state.map !== map) return;
-      queueMapChunkBuild(
-        map,
-        job.layer,
-        job.layerIndex,
-        job.chunkX,
-        job.chunkY,
-        job.profile,
-      );
+    map.overviewCanvas = canvas;
+    map.overviewWorldWidth = worldWidth;
+    map.overviewWorldHeight = worldHeight;
+    map.overviewScale = overviewScale;
+  }
+
+  function buildOverviewTileImages(tileImages, tileWidth, tileHeight) {
+    const rasterWidth = Math.max(1, Math.ceil(tileWidth));
+    const rasterHeight = Math.max(1, Math.ceil(tileHeight));
+    const result = new Map();
+    for (const [gid, image] of tileImages || []) {
+      if (!imageReady(image)) continue;
+      const canvas = createMapRenderCanvas(rasterWidth, rasterHeight);
+      const rasterCtx = canvas.getContext("2d");
+      if (!rasterCtx) continue;
+      rasterCtx.imageSmoothingEnabled = true;
+      rasterCtx.drawImage(image, 0, 0, rasterWidth, rasterHeight);
+      result.set(gid, canvas);
     }
+    return result;
+  }
+
+  function yieldMapPreparation() {
+    return new Promise((resolve) => window.setTimeout(resolve, 0));
   }
 
   function drawGrid() {
@@ -299,7 +362,9 @@ export function createMapRenderer({
       ctx.textBaseline = "top";
       ctx.fillStyle = "rgba(57, 70, 88, 0.72)";
       ctx.fillText(
-        `Loading map: ${state.mapDisplayName || defaultMapName}`,
+        t("status.mapLoading", {
+          path: state.mapDisplayName || defaultMapName,
+        }),
         14,
         72,
       );
@@ -313,6 +378,7 @@ export function createMapRenderer({
     if (!map || !map.layers || !map.tileImages) return;
 
     const scale = worldScale();
+    drawMapOverview(map, scale);
     const profile = mapChunkProfile(scale);
     resetMapChunkBuildQueueForProfile(map, profile);
     map.chunkProfileLabel = profile.label;
@@ -401,6 +467,38 @@ export function createMapRenderer({
         }
       }
     }
+  }
+
+  function drawMapOverview(map, scale) {
+    if (!map?.overviewCanvas || scale <= 0) return;
+    const halfWidth = state.canvasWidth / (2 * scale);
+    const halfHeight = state.canvasHeight / (2 * scale);
+    const left = clamp(state.camera.x - halfWidth, 0, map.overviewWorldWidth);
+    const top = clamp(state.camera.y - halfHeight, 0, map.overviewWorldHeight);
+    const right = clamp(state.camera.x + halfWidth, 0, map.overviewWorldWidth);
+    const bottom = clamp(
+      state.camera.y + halfHeight,
+      0,
+      map.overviewWorldHeight,
+    );
+    if (right <= left || bottom <= top) return;
+
+    const pos = worldToScreen({ x: left, y: top });
+    const overviewScale = map.overviewScale || 1;
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(
+      map.overviewCanvas,
+      left * overviewScale,
+      top * overviewScale,
+      (right - left) * overviewScale,
+      (bottom - top) * overviewScale,
+      pos.x,
+      pos.y,
+      (right - left) * scale,
+      (bottom - top) * scale,
+    );
+    ctx.restore();
   }
 
   function drawMapDecorations() {

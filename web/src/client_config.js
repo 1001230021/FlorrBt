@@ -106,6 +106,22 @@ registerClientConfig("hornet_sprite_scale", {
   aliases: ["hornet_scale"],
 });
 
+registerClientConfig("dummy_sprite_scale", {
+  prop: "dummySpriteScale",
+  defaultValue: 1.5,
+  min: 0.5,
+  max: 4,
+  aliases: ["dummy_scale"],
+});
+
+registerClientConfig("titan_sprite_scale", {
+  prop: "titanSpriteScale",
+  defaultValue: 2,
+  min: 0.5,
+  max: 4,
+  aliases: ["titan_scale"],
+});
+
 registerClientConfig("hornet_body_offset_x", {
   prop: "hornetBodyOffsetX",
   defaultValue: -7,
@@ -218,6 +234,7 @@ export const clientRuntimeConfig = Object.freeze({
   particleVelocityDampingPerSecond: 7,
   particleSize: 5.5,
   directionalPetalAngleOffset: -Math.PI * 0.25,
+  compassPetalAngleOffset: Math.PI * 0.5,
   renderCullPaddingPx: 120,
   renderLoadMediumEntityCount: 260,
   renderLoadHighEntityCount: 520,
@@ -270,6 +287,7 @@ export const clientRuntimeConfig = Object.freeze({
   loginMapDefaultY: 65008,
   // WorldUnits(256) * the Super Antennae horizon multiplier (4).
   loginMapDefaultHorizon: 2048,
+  titanForgeRange: 2048,
   minimapMarginPx: 12,
   minimapLocalMaxPx: 164,
   minimapFullMaxPx: 272,

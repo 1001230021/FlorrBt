@@ -5,6 +5,7 @@
 #include "../../Shared/shared.h"
 #include "entity.h"
 #include "gamecontroller.h"
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -27,6 +28,33 @@ class CGameWorld
     using entity_spatial_grid = CSpatialHashGrid<CEntity, int>;
     using wall_spatial_grid = CSpatialHashGrid<FlorrBtMap::Wall, int>;
 
+    enum class ETickPhase : std::uint8_t
+    {
+        ActiveCollection,
+        EntityUpdate,
+        ControllerAndSync,
+        WallResolution,
+        EntityCollision,
+        Cleanup,
+        Count,
+    };
+
+    static constexpr std::size_t tick_phase_count = static_cast<std::size_t>(ETickPhase::Count);
+
+    struct STickPhaseTelemetry
+    {
+        std::uint64_t samples = 0;
+        std::array<double, tick_phase_count> last_ms{};
+        std::array<double, tick_phase_count> total_ms{};
+        std::array<double, tick_phase_count> max_ms{};
+
+        double AverageMs(ETickPhase phase) const
+        {
+            const std::size_t index = static_cast<std::size_t>(phase);
+            return samples > 0 && index < tick_phase_count ? total_ms[index] / static_cast<double>(samples) : 0.0;
+        }
+    };
+
     CGameWorld();
     explicit CGameWorld(const std::string& path, std::uint32_t world_id = 0);
     ~CGameWorld();
@@ -39,11 +67,14 @@ class CGameWorld
     void SetGameContext(class CGameContext* context) { m_p_game_context = context; }
 
     IGameController* GetController() const { return m_p_controller.get(); }
-    void SetController(std::unique_ptr<IGameController> controller) { m_p_controller = std::move(controller); }
+    void SetController(std::unique_ptr<IGameController> controller);
 
     CEntity* InsertEntity(std::unique_ptr<CEntity> entity);
     CEntity* InsertEntity(CEntity* entity);
     CEntity* InsertNonOwningEntity(CEntity* entity);
+    CEntity* InsertEntityWithIdentity(std::unique_ptr<CEntity> entity, int id, std::uint64_t generation);
+    void ClearEntitiesForRestore();
+    void FinalizeEntityRestore();
 
     void RemoveEntity(int id);
     void DestroyProjectilesOwnedBy(int owner_id);
@@ -72,6 +103,9 @@ class CGameWorld
 
     void CollectEntities(std::vector<CEntity*>& result) const;
     std::vector<CEntity*> GetAllEntities() const;
+    std::size_t GetEntityCount() const { return m_live_entities.size(); }
+    std::size_t GetLastActiveEntityCount() const { return m_active_entities.size(); }
+    const STickPhaseTelemetry& GetTickPhaseTelemetry() const { return m_tick_phase_telemetry; }
 
     const entity_spatial_grid& GetSpatialGrid() const { return m_spatial_grid; }
     float GetMaxEntityRadius() const { return m_normal_entity_radius_limit; }
@@ -100,6 +134,7 @@ class CGameWorld
     const FlorrBtMap* GetMap() const { return m_map.get(); }
     const std::string& GetMapPath() const { return m_map_path; }
     std::string GetMapName() const;
+    ERarity GetSpawnZoneRarity(const sf::Vector2f& pos) const;
     bool SegmentBlockedByWall(sf::Vector2f start, sf::Vector2f end) const;
     bool CircleBlockedByWall(sf::Vector2f center, float radius) const;
 
@@ -115,9 +150,13 @@ class CGameWorld
     std::optional<sf::Vector2f> FindWarpPoint(const std::string& from) const;
     FlorrBtMap::Wall* GetWall(int id) const;
     void BuildWallGrid();
+    void CollectActiveEntitiesForTick();
+    void TickActiveEntities(float dt);
+    void RemoveTransferredActiveEntities();
     void ResolveWallCollisions(const std::vector<CEntity*>& entities);
     void ResolveCollisions(const std::vector<CEntity*>& entities, float dt);
-    void SyncSpatialGrid(const std::vector<CEntity*>& entities);
+    void SyncSpatialPositions(const std::vector<CEntity*>& entities);
+    void SyncSpatialPositionsAndMemberships(const std::vector<CEntity*>& entities);
     void Cleanup();
 
     std::vector<int> m_free_ids;
@@ -144,9 +183,11 @@ class CGameWorld
     std::vector<CActiveTickView> m_active_tick_views;
     std::vector<CEntity*> m_collision_normal_entities;
     std::vector<std::pair<float, CEntity*>> m_collision_large_entities;
+    std::vector<CEntity*> m_collision_inactive_entities;
     std::vector<std::pair<int, std::uint64_t>> m_clear_owned_owner_keys;
     std::vector<std::pair<int, std::uint64_t>> m_clear_summon_owner_keys;
     std::unordered_set<int> m_wall_query_visited;
     std::uint64_t m_active_tick_marker = 1;
     float m_normal_entity_radius_limit = 1.f;
+    STickPhaseTelemetry m_tick_phase_telemetry;
 };

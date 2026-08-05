@@ -1,7 +1,7 @@
 #include "world_module.h"
 #include "../../Shared/game_config.h"
 #include "../../Shared/tools.h"
-#include "../Game/gamecontrollers/opencontroller.h"
+#include "../Game/gamecontrollers/world_controller_factory.h"
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -15,8 +15,7 @@ constexpr const char* ant_hel_map_path = "data/maps/ant_hel.tmj";
 std::unique_ptr<CGameWorld> CreateOpenWorld(std::uint32_t world_id, const std::string& map_path)
 {
     auto world = std::make_unique<CGameWorld>(map_path, world_id);
-    auto controller = std::make_unique<COpenController>();
-    world->SetController(std::move(controller));
+    world->SetController(CreateWorldController(world_controller_keys::open));
     return world;
 }
 

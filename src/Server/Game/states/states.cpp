@@ -51,7 +51,8 @@ bool MobNullifiesTarget(const CMobBase* nullified, const CMobBase* target)
 } // namespace
 
 CPoisonState::CPoisonState(CMobBase* owner, float timer, float basic_dmg, ERarity rarity, CEntity* applier)
-    : CState(owner, timer, rarity), m_basic_dmg(basic_dmg), m_applier_id(applier ? applier->m_id : -1),
+    : CState(owner, timer, rarity, EStateType::Poison), m_basic_dmg(basic_dmg),
+      m_applier_id(applier ? applier->m_id : -1),
       m_applier_generation(applier ? applier->m_generation : 0)
 {
     CPoisonState* existing = owner ? owner->FindFirstState<CPoisonState>() : nullptr;
@@ -63,10 +64,10 @@ CPoisonState::CPoisonState(CMobBase* owner, float timer, float basic_dmg, ERarit
     }
 
     bool should_replace = false;
-    if (GetRaritySortRank(rarity) > GetRaritySortRank(existing->m_rarity))
+    if (GetRarityValueRank(rarity) > GetRarityValueRank(existing->m_rarity))
     {
         should_replace = true;
-    } else if (GetRaritySortRank(rarity) == GetRaritySortRank(existing->m_rarity))
+    } else if (GetRarityValueRank(rarity) == GetRarityValueRank(existing->m_rarity))
     {
         if (basic_dmg > existing->m_basic_dmg) should_replace = true;
         else if (basic_dmg == existing->m_basic_dmg && timer > existing->m_timer) should_replace = true;
@@ -93,8 +94,20 @@ void CPoisonState::Tick(float dt)
 }
 
 CUndeadState::CUndeadState(CMobBase* owner, float timer, ERarity rarity, int source_slot)
-    : CState(owner, timer, rarity), m_source_slot(source_slot)
+    : CState(owner, timer, rarity, EStateType::Undead), m_source_slot(source_slot)
 {
+}
+
+void CUndeadState::Tick(float dt)
+{
+    m_timer -= dt;
+    if (m_timer > 0.f || !m_kill_on_destroy || !m_p_owner) return;
+
+    if (auto* player_flower = dynamic_cast<CPlayerFlower*>(m_p_owner))
+    {
+        m_kill_on_destroy = false;
+        player_flower->EnterDeathState();
+    }
 }
 
 CUndeadState::~CUndeadState()
@@ -106,7 +119,7 @@ CUndeadState::~CUndeadState()
         return;
     }
     m_p_owner->m_health = 0.f;
-    m_p_owner->MarkForDestroy();
+    m_p_owner->MarkForDestroy(EEntityRemovalReason::Defeated);
 }
 
 CDiggingState::~CDiggingState()
@@ -114,7 +127,8 @@ CDiggingState::~CDiggingState()
     if (auto* flower = dynamic_cast<CFlower*>(m_p_owner)) flower->ReloadAllPetals();
 }
 
-CCorruptionState::CCorruptionState(CMobBase* owner, float timer, ERarity rarity) : CState(owner, timer, rarity)
+CCorruptionState::CCorruptionState(CMobBase* owner, float timer, ERarity rarity)
+    : CState(owner, timer, rarity, EStateType::Corruption)
 {
     if (!owner) return;
 
@@ -132,10 +146,12 @@ CCorruptionState::~CCorruptionState()
     if (m_p_owner) m_p_owner->m_team = m_old_team;
 }
 
-CInvincibleState::CInvincibleState(CMobBase* owner, float timer, ERarity rarity) : CState(owner, timer, rarity)
+CInvincibleState::CInvincibleState(CMobBase* owner, float timer, ERarity rarity)
+    : CState(owner, timer, rarity, EStateType::Invincible)
 {
     if (!owner) return;
     m_marked_for_destroy = owner->m_is_marked_for_des;
+    m_removal_reason = owner->RemovalReason();
     const SMobStats* stats = owner->GetFinalStats();
     float max_health = stats ? stats->max_health : 0.f;
     if (max_health > game_config::entity_collision_epsilon) m_hp = std::max(0.f, owner->m_health / max_health);
@@ -145,7 +161,10 @@ void CInvincibleState::Tick(float dt)
 {
     if (m_p_owner)
     {
-        m_p_owner->m_is_marked_for_des = m_marked_for_destroy;
+        if (m_marked_for_destroy)
+            m_p_owner->MarkForDestroy(m_removal_reason);
+        else
+            m_p_owner->CancelDestroy();
         const SMobStats* stats = m_p_owner->GetFinalStats();
         float max_health = stats ? stats->max_health : 0.f;
         if (max_health > game_config::entity_collision_epsilon)
@@ -159,7 +178,7 @@ void CInvincibleState::Tick(float dt)
 }
 
 CBanSlotState::CBanSlotState(CMobBase* owner, float timer, int slot, ERarity rarity)
-    : CState(owner, timer, rarity), m_slot_index(slot)
+    : CState(owner, timer, rarity, EStateType::BanSlot), m_slot_index(slot)
 {
     if (auto* flower = dynamic_cast<CFlower*>(owner))
     {
@@ -176,7 +195,7 @@ CBanSlotState::~CBanSlotState()
 void CBanSlotState::Tick(float dt) { m_timer -= dt; }
 
 CPincerSpeedReduceState::CPincerSpeedReduceState(CMobBase* owner, float timer, ERarity rarity)
-    : CState(owner, timer, rarity)
+    : CState(owner, timer, rarity, EStateType::PincerSpeedReduce)
 {
     CPincerSpeedReduceState* existing = owner ? owner->FindFirstState<CPincerSpeedReduceState>() : nullptr;
 
@@ -187,10 +206,10 @@ CPincerSpeedReduceState::CPincerSpeedReduceState(CMobBase* owner, float timer, E
     }
 
     bool should_replace = false;
-    if (GetRaritySortRank(rarity) > GetRaritySortRank(existing->m_rarity))
+    if (GetRarityValueRank(rarity) > GetRarityValueRank(existing->m_rarity))
     {
         should_replace = true;
-    } else if (GetRaritySortRank(rarity) == GetRaritySortRank(existing->m_rarity) && timer > existing->m_timer)
+    } else if (GetRarityValueRank(rarity) == GetRarityValueRank(existing->m_rarity) && timer > existing->m_timer)
     {
         should_replace = true;
     }
@@ -216,7 +235,7 @@ float WebSlowMassMultiplier(float desired_multiplier, float target_mass, float r
 } // namespace
 
 CWebSpeedReduceState::CWebSpeedReduceState(CMobBase* owner, float timer, float desired_multiplier, float reference_mass)
-    : CState(owner, timer, ERarity::Common)
+    : CState(owner, timer, ERarity::Common, EStateType::WebSpeedReduce)
 {
     float target_mass = owner ? owner->m_mass : 1.f;
     if (owner)
@@ -227,7 +246,7 @@ CWebSpeedReduceState::CWebSpeedReduceState(CMobBase* owner, float timer, float d
     }
 
     m_multiplier = WebSlowMassMultiplier(desired_multiplier, target_mass, reference_mass);
-    if (owner && owner->m_mob_type == EMobType::Spider)
+    if (owner && owner->GetMobType() == EMobType::Spider)
         m_multiplier =
             std::clamp(1.f - (1.f - m_multiplier) * game_config::web_spider_slow_reduction_multiplier, 0.f, 1.f);
 
@@ -246,7 +265,7 @@ CWebSpeedReduceState::CWebSpeedReduceState(CMobBase* owner, float timer, float d
 }
 
 CAntiHealState::CAntiHealState(CMobBase* owner, float timer, ERarity rarity, float medic_mult)
-    : CState(owner, timer, rarity)
+    : CState(owner, timer, rarity, EStateType::AntiHeal)
 {
     m_medic_mult = std::clamp(medic_mult, 0.f, 1.f);
 }
@@ -254,12 +273,12 @@ CAntiHealState::CAntiHealState(CMobBase* owner, float timer, ERarity rarity, flo
 void CAntiHealState::Refresh(float timer, ERarity rarity, float medic_mult)
 {
     m_timer = timer;
-    if (GetRaritySortRank(rarity) > GetRaritySortRank(m_rarity)) m_rarity = rarity;
+    if (GetRarityValueRank(rarity) > GetRarityValueRank(m_rarity)) m_rarity = rarity;
     m_medic_mult = std::clamp(m_medic_mult * std::clamp(medic_mult, 0.f, 1.f), 0.f, 1.f);
 }
 
 CPsionicConnectionState::CPsionicConnectionState(CMobBase* owner, float timer, ERarity rarity)
-    : CState(owner, timer, rarity)
+    : CState(owner, timer, rarity, EStateType::PsionicConnection)
 {
     CPsionicConnectionState* existing = owner ? owner->FindFirstState<CPsionicConnectionState>() : nullptr;
 
@@ -269,21 +288,41 @@ CPsionicConnectionState::CPsionicConnectionState(CMobBase* owner, float timer, E
         return;
     }
 
-    if (GetRaritySortRank(rarity) > GetRaritySortRank(existing->m_rarity)) existing->m_rarity = rarity;
+    if (GetRarityValueRank(rarity) > GetRarityValueRank(existing->m_rarity)) existing->m_rarity = rarity;
     if (existing->m_timer != endless && timer == endless) existing->m_timer = endless;
     else if (existing->m_timer != endless) existing->m_timer = std::max(existing->m_timer, timer);
 }
 
 bool BlocksNullifiedInteraction(const CEntity* lhs, const CEntity* rhs)
 {
-    const CMobBase* lhs_mob = GetInteractionMob(lhs);
-    const CMobBase* rhs_mob = GetInteractionMob(rhs);
-    return MobNullifiesTarget(lhs_mob, rhs_mob) || MobNullifiesTarget(rhs_mob, lhs_mob);
+    return BlocksNullifiedMobInteraction(GetInteractionMob(lhs), GetInteractionMob(rhs));
+}
+
+const CMobBase* ResolveInteractionMob(const CEntity* entity) { return GetInteractionMob(entity); }
+
+bool BlocksNullifiedMobInteraction(const CMobBase* lhs, const CMobBase* rhs)
+{
+    return MobNullifiesTarget(lhs, rhs) || MobNullifiesTarget(rhs, lhs);
+}
+
+int GetPreCorruptionTeam(const CEntity* entity, const CMobBase* interaction_mob)
+{
+    if (!entity) return 0;
+
+    if (!interaction_mob) return entity->m_team;
+    if (const auto* corruption = interaction_mob->FindFirstState<CCorruptionState>())
+        return corruption->GetOriginalTeam();
+    return interaction_mob->m_team;
+}
+
+int GetPreCorruptionTeam(const CEntity* entity)
+{
+    return GetPreCorruptionTeam(entity, GetInteractionMob(entity));
 }
 
 bool IsDiggingEntity(const CEntity* entity)
 {
-    const auto* mob = dynamic_cast<const CMobBase*>(entity);
+    const CMobBase* mob = GetInteractionMob(entity);
     return mob && mob->HasState<CDiggingState>();
 }
 
@@ -389,8 +428,7 @@ float GetBandageUndeadDuration(ERarity rarity)
     case ERarity::Ultra:
         return game_config::default_bandage_undead_ultra;
     case ERarity::Exotic:
-        return BlendUltraSuper(game_config::default_bandage_undead_ultra, game_config::default_bandage_undead_super,
-                               game_config::rarity_exotic_special_super_weight);
+        return game_config::default_bandage_undead_common;
     case ERarity::Super:
         return game_config::default_bandage_undead_super;
     case ERarity::Eternal:

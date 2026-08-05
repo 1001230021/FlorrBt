@@ -510,6 +510,44 @@ bool HandleServerCommand(CPlayer& reporter, const std::string& command_line)
         return true;
     }
 
+    if (name == "sq" || name == "squad")
+    {
+        if (!squad_controller)
+        {
+            SendPrivateSystem(reporter, "squad is unavailable in this world");
+            return true;
+        }
+        if (args.size() < 2)
+        {
+            SendPrivateSystem(reporter, "Usage: /sq [message]");
+            return true;
+        }
+        if (reporter.IsMuted())
+        {
+            SendPrivateSystem(reporter, "You are muted for " +
+                                            std::to_string(static_cast<int>(std::ceil(reporter.GetMuteTimer()))) +
+                                            "s.");
+            return true;
+        }
+
+        const std::vector<CPlayer*> members = squad_controller->GetSquadPlayerList(*reporter_world, reporter);
+        if (members.size() <= 1)
+        {
+            SendPrivateSystem(reporter, "you are not in a squad");
+            return true;
+        }
+
+        const CServer::SChatEntry* entry =
+            server->SubmitChat(reporter_world, reporter_entity->m_pos, EChatFlag::Squad, reporter.GetId(),
+                               reporter.GetName(), JoinArgs(args, 1));
+        if (!entry) return true;
+        for (CPlayer* member : members)
+        {
+            if (member) network->SendChatToPlayer(*member, *entry);
+        }
+        return true;
+    }
+
     if (name == "report")
     {
         if (reporter.IsReportDisabled())

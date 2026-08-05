@@ -10,13 +10,13 @@ class CGameWorld;
 class CProjectile : public CEntity
 {
   public:
-    CProjectile(float x, float y, float r, CEntity* owner)
-        : CProjectile(owner ? owner->GameWorld() : nullptr, { x, y }, r, owner)
+    CProjectile(float x, float y, float r, CEntity* owner, SEntityTypeInfo entity_type)
+        : CProjectile(owner ? owner->GameWorld() : nullptr, { x, y }, r, owner, entity_type)
     {
     }
 
-    CProjectile(CGameWorld* world, sf::Vector2f pos, float r, CEntity* owner = nullptr)
-        : CEntity(world, pos.x, pos.y, r), m_p_owner(owner), m_owner_id(owner ? owner->m_id : -1),
+    CProjectile(CGameWorld* world, sf::Vector2f pos, float r, CEntity* owner, SEntityTypeInfo entity_type)
+        : CEntity(world, pos.x, pos.y, r, entity_type), m_p_owner(owner), m_owner_id(owner ? owner->m_id : -1),
           m_owner_generation(owner ? owner->m_generation : 0)
     {
         m_allow_skip_tick = owner && owner->m_allow_skip_tick;
@@ -44,7 +44,9 @@ class CMissile : public CProjectile
 {
   public:
     CMissile(CGameWorld* world, sf::Vector2f pos, float radius, sf::Vector2f direction, float speed, float damage,
-             float health, float lifetime, CEntity* owner = nullptr);
+             float health, float lifetime, CEntity* owner = nullptr,
+             SEntityTypeInfo entity_type =
+                 MakeProjectileEntityType(EProjectileType::Missile, server_missile_entity_type));
 
     void Tick(float dt) override;
     bool ApplyHit(CEntity* target);
@@ -52,6 +54,7 @@ class CMissile : public CProjectile
     bool RefreshAttachedTransform();
     bool Fire(sf::Vector2f direction, float speed, float lifetime);
     bool IsAttachedToOwner() const { return m_attached_to_owner; }
+    void RestoreAttachedToOwner(bool attached) { m_attached_to_owner = attached; }
 
     float m_damage = 0.f;
     float m_lifetime = 0.f;
@@ -86,7 +89,9 @@ class CPollenProjectile : public CProjectile
 {
   public:
     CPollenProjectile(CGameWorld* world, sf::Vector2f pos, float radius, float damage, float health, float lifetime,
-                      float mass, CEntity* owner = nullptr);
+                      float mass, CEntity* owner = nullptr,
+                      SEntityTypeInfo entity_type =
+                          MakeProjectileEntityType(EProjectileType::Pollen, server_pollen_entity_type));
 
     void Tick(float dt) override;
     bool ApplyHit(CEntity* target);
@@ -94,4 +99,22 @@ class CPollenProjectile : public CProjectile
     float m_damage = 0.f;
     float m_lifetime = 0.f;
     float m_age = 0.f;
+};
+
+class CTrapProjectile final : public CPollenProjectile
+{
+  public:
+    CTrapProjectile(CGameWorld* world, sf::Vector2f pos, float radius, sf::Vector2f direction, float speed,
+                    float damage, float health, float lifetime, float mass, float deceleration_time, ERarity rarity,
+                    CEntity* owner = nullptr);
+
+    void Tick(float dt) override;
+    ERarity GetRarity() const { return m_rarity; }
+
+    sf::Vector2f m_initial_velocity = { 0.f, 0.f };
+    float m_move_age = 0.f;
+    float m_deceleration_time = 0.f;
+
+  private:
+    ERarity m_rarity = ERarity::Common;
 };

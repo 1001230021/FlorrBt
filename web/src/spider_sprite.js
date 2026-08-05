@@ -37,7 +37,7 @@ export function drawSpiderWeb(ctx, pos, radius, entityId, time, options = {}) {
   const seed = ((entityId || 1) * 2654435761) >>> 0;
   const phase = seededUnit(seed) * Math.PI * 2;
   const shimmer = 0.55 + Math.sin((time || 0) * 2.2 + seed * 0.000001) * 0.08;
-  const color = options.playerOwned ? "255, 214, 70" : "255, 255, 255";
+  const color = options.playerOwned ? "255, 230, 138" : "255, 255, 255";
 
   ctx.save();
   ctx.translate(pos.x, pos.y);

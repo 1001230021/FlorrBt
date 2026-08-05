@@ -22,6 +22,42 @@ const snapshotBacklogDropBytes = Number(
   process.env.WEB_SNAPSHOT_BACKLOG_DROP_BYTES || 128 * 1024,
 );
 
+function normalizeIpAddress(value) {
+  let address = String(value || "").trim();
+  const zoneOffset = address.indexOf("%");
+  if (zoneOffset >= 0) address = address.slice(0, zoneOffset);
+  if (address.toLowerCase().startsWith("::ffff:")) {
+    const mapped = address.slice(7);
+    if (net.isIP(mapped) === 4) return mapped;
+  }
+  return net.isIP(address) ? address : "";
+}
+
+function makeProxyV1Header(socket) {
+  const source = normalizeIpAddress(socket?.remoteAddress);
+  const family = net.isIP(source);
+  const sourcePort = Number(socket?.remotePort || 0);
+  if (
+    !family ||
+    !Number.isInteger(sourcePort) ||
+    sourcePort < 0 ||
+    sourcePort > 65535 ||
+    !Number.isInteger(gamePort) ||
+    gamePort < 1 ||
+    gamePort > 65535
+  )
+    return "";
+
+  const configuredDestination = normalizeIpAddress(gameHost);
+  const destination =
+    net.isIP(configuredDestination) === family
+      ? configuredDestination
+      : family === 4
+        ? "0.0.0.0"
+        : "::";
+  return `PROXY TCP${family} ${source} ${destination} ${sourcePort} ${gamePort}\r\n`;
+}
+
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -35,6 +71,7 @@ const mimeTypes = {
   ".gif": "image/gif",
   ".webp": "image/webp",
   ".svg": "image/svg+xml",
+  ".mp3": "audio/mpeg",
 };
 
 function sendFile(res, requestPath) {
@@ -250,7 +287,8 @@ server.on("upgrade", (req, socket) => {
   }
 
   const key = req.headers["sec-websocket-key"];
-  if (!key) {
+  const proxyHeader = makeProxyV1Header(socket);
+  if (!key || !proxyHeader) {
     socket.destroy();
     return;
   }
@@ -267,6 +305,7 @@ server.on("upgrade", (req, socket) => {
   );
 
   const tcp = net.createConnection({ host: gameHost, port: gamePort });
+  tcp.write(proxyHeader);
   const forwardServerPackets = createServerPacketForwarder(socket);
   tcp.on("data", (data) => forwardServerPackets.push(data));
   tcp.on("close", () => {

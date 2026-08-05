@@ -30,7 +30,7 @@ inline std::string ZoneMobToLower(std::string_view text)
 inline bool TryParseZoneMobType(std::string_view text, EMobType& type)
 {
     std::string lowered = ZoneMobToLower(text);
-    for (const auto& [mob_type, proto] : g_mob_registry)
+    for (const auto& [mob_type, proto] : MobRegistry())
     {
         if (mob_type == EMobType::None || mob_type == EMobType::PlayerFlower) continue;
         if (MatchMobTypeAlias(lowered, mob_type) || ZoneMobToLower(GetMobTypeName(mob_type)) == lowered ||
@@ -101,7 +101,8 @@ inline std::vector<EMobType> ParseZoneMobs(std::string_view mobs)
     return result;
 }
 
-inline EMobType PickZoneMobType(const std::vector<SZoneMobEntry>& mob_entries)
+template <typename TRng>
+EMobType PickZoneMobType(const std::vector<SZoneMobEntry>& mob_entries, TRng& rng)
 {
     float total_weight = 0.f;
     for (const SZoneMobEntry& entry : mob_entries)
@@ -109,7 +110,7 @@ inline EMobType PickZoneMobType(const std::vector<SZoneMobEntry>& mob_entries)
     if (total_weight <= 0.f) return EMobType::None;
 
     std::uniform_real_distribution<float> dist(0.f, total_weight);
-    float roll = dist(ZoneMobRng());
+    float roll = dist(rng);
     for (const SZoneMobEntry& entry : mob_entries)
     {
         if (entry.type == EMobType::None || entry.weight <= 0.f) continue;
@@ -120,11 +121,21 @@ inline EMobType PickZoneMobType(const std::vector<SZoneMobEntry>& mob_entries)
     return mob_entries.back().type;
 }
 
-inline EMobType PickZoneMobType(const std::vector<EMobType>& mob_types)
+inline EMobType PickZoneMobType(const std::vector<SZoneMobEntry>& mob_entries)
+{
+    return PickZoneMobType(mob_entries, ZoneMobRng());
+}
+
+template <typename TRng> EMobType PickZoneMobType(const std::vector<EMobType>& mob_types, TRng& rng)
 {
     if (mob_types.empty()) return EMobType::None;
     std::uniform_int_distribution<size_t> dist(0, mob_types.size() - 1);
-    return mob_types[dist(ZoneMobRng())];
+    return mob_types[dist(rng)];
+}
+
+inline EMobType PickZoneMobType(const std::vector<EMobType>& mob_types)
+{
+    return PickZoneMobType(mob_types, ZoneMobRng());
 }
 
 inline bool IsPointInZone(const FlorrBtMap::Zone& zone, const sf::Vector2f& pos)

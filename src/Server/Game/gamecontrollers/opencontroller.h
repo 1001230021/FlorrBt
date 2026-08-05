@@ -1,7 +1,6 @@
 #pragma once
-#include "../../../Shared/game_config.h"
+#include "open_spawn_director.h"
 #include "../gamecontroller.h"
-#include <cstddef>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -13,9 +12,13 @@ class COpenController : public IGameController
   public:
     COpenController() = default;
     void OnTick(CGameWorld& world, float dt) override;
-    void OnPlayerConnect(CGameWorld& world, CPlayer* player) override;
-    void OnPlayerSpawn(CGameWorld& world, CPlayer* player, CEntity* entity) override;
-    void OnEntityDie(CGameWorld& world, CEntity* entity) override;
+    std::optional<sf::Vector2f> SelectPlayerSpawn(CGameWorld& world, CPlayer& player,
+                                                  EPlayerSpawnReason reason) override;
+    void OnEntityRemoved(CGameWorld& world, CEntity& entity, EEntityRemovalReason reason) override;
+    void OnMobDefeated(CGameWorld& world, CMobBase& mob) override;
+    std::string_view SnapshotKey() const override { return "world_controller.open"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
     void ModifyTalentContext(CGameWorld& world, CPlayer* player, ETalentEvent event, STalentContext& ctx) override;
     void SpawnMobs(CGameWorld& world);
     bool TrySquad(CGameWorld& world, CPlayer& joining_player, CPlayer& target_player);
@@ -24,24 +27,14 @@ class COpenController : public IGameController
     std::uint32_t GetSquadRootId(CGameWorld& world, CPlayer& player);
 
   private:
-    struct single_spawn_zone_mob
-    {
-        int id = -1;
-        std::uint64_t generation = 0;
-    };
-
-    bool SingleSpawnZoneMobAlive(CGameWorld& world, size_t zone_index) const;
-    void RememberSingleSpawnZoneMob(size_t zone_index, const CEntity* entity);
-    void ForgetSingleSpawnZoneMob(const CEntity* entity);
     void PruneSquads(CGameWorld& world);
     bool IsSquadPlayerInWorld(const CGameWorld& world, const CPlayer& player) const;
     void EnsureSquadPlayer(std::uint32_t player_id);
     std::uint32_t FindSquadRoot(std::uint32_t player_id);
     std::vector<std::uint32_t> GetSquadMemberIds(std::uint32_t root_id);
 
-    float m_count = game_config::open_initial_spawn_delay;
-    size_t m_spawn_zone_cursor = 0;
-    size_t m_idle_spawn_zone_cursor = 0;
-    std::vector<single_spawn_zone_mob> m_single_spawn_zone_mobs;
+    COpenSpawnDirector m_spawn_director;
     std::unordered_map<std::uint32_t, std::uint32_t> m_squad_parent;
+    std::vector<std::uint32_t> m_pruned_squad_player_ids;
+    bool m_has_pruned_squads = false;
 };

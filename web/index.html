@@ -1,35 +1,124 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>FlorrBt Web Client</title>
+    <title>FlorrBt v1.0</title>
+    <link
+      rel="preload"
+      href="./assets/florr/Ubuntu-B.ttf"
+      as="font"
+      type="font/ttf"
+      crossorigin
+    />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <canvas id="game" aria-label="FlorrBt game"></canvas>
+    <canvas
+      id="game"
+      aria-label="FlorrBt game"
+      data-i18n-aria-label="ui.canvas.ariaLabel"
+    ></canvas>
+
+    <div
+      id="loadingScreen"
+      class="loading-screen ui"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <div class="loading-screen-label" data-i18n="ui.loading">Loading...</div>
+    </div>
 
     <main id="authPanel" class="auth-panel ui">
-      <h1>FlorrBt</h1>
+      <h1>FlorrBt <small id="appVersion" class="auth-version">v1.0</small></h1>
       <label>
-        <span>Socket</span>
-        <input id="wsUrl" autocomplete="url" spellcheck="false" />
+        <span data-i18n="ui.auth.socket">Socket</span>
+        <input
+          id="wsUrl"
+          class="ui-text-input"
+          autocomplete="url"
+          autocapitalize="none"
+          spellcheck="false"
+        />
       </label>
       <label>
-        <span>Account</span>
-        <input id="account" autocomplete="username" spellcheck="false" />
+        <span data-i18n="ui.auth.account">Account</span>
+        <input
+          id="account"
+          class="ui-text-input"
+          type="text"
+          name="username"
+          autocomplete="username"
+          autocapitalize="none"
+          spellcheck="false"
+          maxlength="32"
+        />
       </label>
-      <label>
-        <span>Password</span>
-        <input id="password" type="password" autocomplete="current-password" />
+      <label id="authPasswordRow">
+        <span data-i18n="ui.auth.password">Password</span>
+        <input
+          id="password"
+          class="ui-text-input"
+          type="password"
+          name="password"
+          autocomplete="current-password"
+          maxlength="64"
+        />
       </label>
-      <label class="checkbox-row">
+      <label id="authEmailRow" class="hidden">
+        <span data-i18n="ui.auth.email">Email</span>
+        <input
+          id="email"
+          class="ui-text-input"
+          type="email"
+          name="email"
+          autocomplete="email"
+          autocapitalize="none"
+          spellcheck="false"
+          maxlength="254"
+        />
+      </label>
+      <div id="authCodeRow" class="auth-code-row hidden">
+        <label>
+          <span data-i18n="ui.auth.code">Verification code</span>
+          <input
+            id="verificationCode"
+            class="ui-text-input"
+            type="text"
+            name="one-time-code"
+            autocomplete="one-time-code"
+            autocapitalize="none"
+            spellcheck="false"
+            inputmode="numeric"
+            maxlength="32"
+          />
+        </label>
+        <button id="sendCodeBtn" type="button" data-i18n="ui.auth.sendCode">
+          Send code
+        </button>
+      </div>
+      <p id="bindingNotice" class="auth-binding-notice hidden" data-i18n="ui.auth.bindingNotice">
+        Bind and verify an email address to finish signing in.
+      </p>
+      <label id="registerModeRow" class="checkbox-row">
         <input id="registerMode" type="checkbox" />
-        <span>Register</span>
+        <span data-i18n="ui.auth.register">Register</span>
       </label>
-      <button id="connectBtn" type="button">Connect</button>
-      <p id="authStatus" class="auth-status">Disconnected</p>
+      <button id="connectBtn" type="button" data-i18n="ui.auth.connect">
+        Connect
+      </button>
+      <p id="authStatus" class="auth-status">
+        Disconnected
+      </p>
     </main>
+
+    <img
+      class="auth-health-notice ui"
+      src="./assets/ui/healthy_game_notice.png"
+      alt="抵制不良遊戲，拒絕盜版遊戲。注意自我保護，謹防受騙上當。適度遊戲益腦，沉迷遊戲傷身。合理安排時間，享受健康生活。《健康遊戲忠告》"
+      draggable="false"
+    />
 
     <section id="hud" class="hud ui" aria-hidden="true"></section>
 
@@ -37,22 +126,46 @@
       id="deathOverlay"
       class="death-overlay ui hidden"
       aria-label="Death screen"
+      data-i18n-aria-label="ui.death.ariaLabel"
     >
       <div class="death-card">
-        <div class="death-title">You were destroyed by:</div>
-        <div id="deathSource" class="death-source">A mysterious entity</div>
-        <div class="death-loot-title">Collected this run</div>
+        <div class="death-title" data-i18n="ui.death.title">
+          You were destroyed by:
+        </div>
+        <div
+          id="deathSource"
+          class="death-source"
+          data-i18n="ui.death.unknownSource"
+        >
+          A mysterious entity
+        </div>
+        <div class="death-loot-title" data-i18n="ui.death.collected">
+          Collected this run
+        </div>
         <div
           id="deathLoot"
           class="death-loot"
           aria-label="Collected petals"
+          data-i18n-aria-label="ui.death.collectedAriaLabel"
         ></div>
-        <div class="death-revive-note">You'll be revived soon.</div>
+        <div class="death-revive-note" data-i18n="ui.death.reviveNote">
+          You'll be revived soon.
+        </div>
         <div class="death-actions">
-          <button id="reviveBtn" class="revive-button" type="button">
+          <button
+            id="reviveBtn"
+            class="revive-button"
+            type="button"
+            data-i18n="ui.death.revive"
+          >
             Revive
           </button>
-          <button id="deathCloseBtn" class="death-close-button" type="button">
+          <button
+            id="deathCloseBtn"
+            class="death-close-button"
+            type="button"
+            data-i18n="ui.death.close"
+          >
             Close
           </button>
         </div>
@@ -63,6 +176,7 @@
       id="quickActions"
       class="quick-actions ui hidden"
       aria-label="Quick actions"
+      data-i18n-aria-label="ui.quick.ariaLabel"
     >
       <button
         id="quickBackpackBtn"
@@ -70,6 +184,8 @@
         type="button"
         title="Inventory [Z]"
         aria-label="Inventory"
+        data-i18n-title="ui.quick.inventoryTitle"
+        data-i18n-aria-label="ui.quick.inventory"
       >
         <span class="quick-action-icon"></span>
         <kbd>Z</kbd>
@@ -80,6 +196,8 @@
         type="button"
         title="Talents [X]"
         aria-label="Talents"
+        data-i18n-title="ui.quick.talentsTitle"
+        data-i18n-aria-label="ui.quick.talents"
       >
         <span class="quick-action-icon"></span>
         <span
@@ -96,47 +214,72 @@
         type="button"
         title="Craft [C]"
         aria-label="Craft"
+        data-i18n-title="ui.quick.craftTitle"
+        data-i18n-aria-label="ui.quick.craft"
       >
         <span class="quick-action-icon"></span>
         <kbd>C</kbd>
       </button>
     </section>
 
-    <section id="chatPanel" class="chat-panel ui hidden" aria-label="Chat">
+    <section
+      id="chatPanel"
+      class="chat-panel ui hidden"
+      aria-label="Chat"
+      data-i18n-aria-label="ui.chat.ariaLabel"
+    >
       <div id="chatChannels" class="chat-channels hidden">
         <label class="chat-channel chat-channel-local"
           ><input type="checkbox" data-chat-filter="local" checked /><span
-            >Local</span
+            data-i18n="ui.chat.channels.local">Local</span
           ></label
         >
         <label class="chat-channel chat-channel-global"
           ><input type="checkbox" data-chat-filter="global" checked /><span
-            >Global</span
+            data-i18n="ui.chat.channels.global">Global</span
           ></label
         >
         <label class="chat-channel chat-channel-whisper"
           ><input type="checkbox" data-chat-filter="whisper" checked /><span
-            >Whisper</span
+            data-i18n="ui.chat.channels.whisper">Whisper</span
+          ></label
+        >
+        <label class="chat-channel chat-channel-squad"
+          ><input type="checkbox" data-chat-filter="squad" checked /><span
+            data-i18n="ui.chat.channels.squad">Squad</span
           ></label
         >
         <label class="chat-channel chat-channel-server"
           ><input type="checkbox" data-chat-filter="server" checked /><span
-            >Server</span
+            data-i18n="ui.chat.channels.server">Server</span
           ></label
         >
       </div>
       <section id="chatLog" class="chat-log"></section>
-      <button id="chatHint" class="chat-hint" type="button">
+      <button
+        id="chatHint"
+        class="chat-hint"
+        type="button"
+        data-i18n="ui.chat.hint"
+      >
         Press [ENTER] or click here to chat
       </button>
-      <input
-        id="chatInput"
-        class="chat-input hidden"
-        autocomplete="off"
-        spellcheck="false"
-        maxlength="180"
-        placeholder="[Local]"
-      />
+      <div
+        id="chatComposer"
+        class="chat-composer hidden"
+        data-channel="local"
+      >
+        <span id="chatComposeChannel" class="chat-compose-channel">[Local]</span>
+        <input
+          id="chatInput"
+          class="chat-input ui-text-input ui-text-input--embedded"
+          autocomplete="off"
+          spellcheck="false"
+          maxlength="180"
+          placeholder="Message"
+          data-i18n-placeholder="ui.chat.messagePlaceholder"
+        />
+      </div>
     </section>
 
     <aside
@@ -147,12 +290,15 @@
 
     <section id="sliderPanel" class="slider-panel ui hidden" aria-hidden="true">
       <div class="slider-panel-header">
-        <span id="sliderTitle" class="slider-title">Slider</span>
+        <span id="sliderTitle" class="slider-title" data-i18n="ui.slider.title"
+          >Slider</span
+        >
         <button
           id="sliderCloseBtn"
           class="slider-close"
           type="button"
           aria-label="Close slider"
+          data-i18n-aria-label="ui.slider.close"
         >
           x
         </button>
@@ -173,6 +319,7 @@
         spellcheck="false"
         maxlength="240"
         placeholder="Console"
+        data-i18n-placeholder="ui.console.placeholder"
       />
     </section>
 
@@ -187,12 +334,13 @@
       data-drop-kind="backpack"
     >
       <div class="panel-title">
-        <span>Inventory</span>
+        <span data-i18n="ui.inventory.title">Inventory</span>
         <button
           id="backpackCloseBtn"
           class="panel-close"
           type="button"
           aria-label="Close inventory"
+          data-i18n-aria-label="ui.inventory.close"
         >
           x
         </button>
@@ -200,7 +348,7 @@
       <div class="inventory-controls">
         <label class="inventory-stacking"
           ><input id="inventoryStacking" type="checkbox" /><span
-            >Stacking</span
+            data-i18n="ui.inventory.stacking">Stacking</span
           ></label
         >
         <input
@@ -210,6 +358,7 @@
           autocomplete="off"
           spellcheck="false"
           placeholder="Search"
+          data-i18n-placeholder="ui.inventory.search"
         />
       </div>
       <div id="inventoryList" class="inventory-list"></div>
@@ -217,17 +366,23 @@
 
     <section id="craftPanel" class="craft-panel ui">
       <div class="panel-title">
-        <span>Craft</span>
+        <span id="craftTitle" data-i18n="ui.craft.title">Craft</span>
         <button
           id="craftCloseBtn"
           class="panel-close"
           type="button"
           aria-label="Close craft"
+          data-i18n-aria-label="ui.craft.close"
         >
           x
         </button>
       </div>
-      <div id="craftStage" class="craft-stage" aria-label="Craft slots">
+      <div
+        id="craftStage"
+        class="craft-stage"
+        aria-label="Craft slots"
+        data-i18n-aria-label="ui.craft.slotsAriaLabel"
+      >
         <button
           class="craft-stage-slot slot-0"
           type="button"
@@ -260,8 +415,14 @@
         ></button>
       </div>
       <div class="craft-action">
-        <button id="craftOnceBtn" type="button">Craft</button>
-        <div id="craftSelection" class="craft-selection">
+        <button id="craftOnceBtn" type="button" data-i18n="ui.craft.once">
+          Craft
+        </button>
+        <div
+          id="craftSelection"
+          class="craft-selection"
+          data-i18n="ui.craft.instruction"
+        >
           Combine 5 of the same petal to craft an upgrade
         </div>
         <div id="craftChance" class="craft-chance"></div>
@@ -271,17 +432,24 @@
 
     <section id="talentPanel" class="talent-panel ui">
       <div class="panel-title">
-        <span>Talents</span>
+        <span data-i18n="ui.talents.title">Talents</span>
         <button
           id="talentCloseBtn"
           class="panel-close"
           type="button"
           aria-label="Close talents"
+          data-i18n-aria-label="ui.talents.close"
         >
           x
         </button>
       </div>
-      <div id="talentPoints" class="talent-points">Talent Points: 0</div>
+      <div
+        id="talentPoints"
+        class="talent-points"
+        data-i18n="ui.talents.points"
+      >
+        Talent Points: 0
+      </div>
       <div id="talentTree" class="talent-tree"></div>
     </section>
 

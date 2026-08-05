@@ -19,6 +19,8 @@ class CPetalSlot
     void SetPetal(const CPetalPrototype* proto, int slot_index, ERarity rarity);
     void ClearPetal();
     void KillCopy(int copy_index);
+    void StartReload(int copy_index, float duration);
+    float GetLoadProgress(int copy_index) const;
     void RefreshPetalState(CFlower* flower);
     void Tick(float dt, CFlower* flower, bool state_refreshed = false);
     void ApplyStatsTo(SFlowerStats& target, const CFlower* flower = nullptr) const;
@@ -29,6 +31,7 @@ class CPetalSlot
     std::vector<CPetal*> m_p_petals;
     std::vector<uint8_t> m_bonus_active;
     std::vector<float> m_reload_timers;
+    std::vector<float> m_reload_durations;
     std::vector<uint8_t> m_reload_ignore_multiplier;
 
     ERarity m_stored_rarity = ERarity::Null;

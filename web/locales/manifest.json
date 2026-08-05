@@ -1,0 +1,46 @@
+{
+  "$schema": "./manifest.schema.json",
+  "schemaVersion": 1,
+  "defaultLocale": "en",
+  "aliases": {
+    "en-US": "en",
+    "en-GB": "en",
+    "english": "en",
+    "zh": "zh-Hans",
+    "zh-CN": "zh-Hans",
+    "zh-SG": "zh-Hans",
+    "zh-Hans-CN": "zh-Hans",
+    "zhs": "zh-Hans",
+    "simplified": "zh-Hans",
+    "简体": "zh-Hans",
+    "简体中文": "zh-Hans",
+    "zh-TW": "zh-Hant",
+    "zh-HK": "zh-Hant",
+    "zh-MO": "zh-Hant",
+    "zh-Hant-TW": "zh-Hant",
+    "zht": "zh-Hant",
+    "traditional": "zh-Hant",
+    "繁體": "zh-Hant",
+    "繁體中文": "zh-Hant"
+  },
+  "locales": [
+    {
+      "id": "en",
+      "label": "English",
+      "direction": "ltr",
+      "file": "en.json"
+    },
+    {
+      "id": "zh-Hant",
+      "label": "繁體中文",
+      "direction": "ltr",
+      "file": "zh-Hant.json"
+    },
+    {
+      "id": "zh-Hans",
+      "label": "简体中文",
+      "direction": "ltr",
+      "file": "zh-Hans.json"
+    }
+  ]
+}

@@ -1,10 +1,55 @@
-// FlorrBt deployment startup commands.
-// Copy to data/server.cfg or let deploy.ps1 create it on first server start.
+// FlorrBt Windows deployment startup configuration.
+// Copy this file to data/server.cfg and replace only documented placeholders.
+// Syntax: set <config_name> <value>
+// Never commit the completed server.cfg file with real credentials.
 
-set port 10012
-gui_console 0
 set account_data_path data/accounts.json
+set unique_petal_data_path data/unique_petals.json
+set port 10012
+set gui_console 0
 
-// Optional report AI config:
-// set report_deepseek_api_key YOUR_KEY
-// set report_deepseek_api_url https://api.deepseek.com/chat/completions
+// RCON grants access to every server console command.
+// If omitted, a password is generated at startup and printed locally.
+set rcon_generated_password_length 16
+// set rcon_password REPLACE_WITH_A_LONG_RANDOM_PASSWORD
+// In game: /rcon <password>, then /rcon <server command>
+// Local console: rcon_keyboard <new password>
+// Local console: rcon_keyboard            (disables RCON until restart)
+
+// Optional DeepSeek-compatible report moderation API.
+// Without a key, the built-in keyword reviewer is used.
+set report_deepseek_api_url https://api.deepseek.com/chat/completions
+set report_deepseek_model deepseek-chat
+// set report_deepseek_api_key REPLACE_WITH_YOUR_API_KEY
+set report_invalid_disable_count 3
+set report_keyword_base_mute_seconds 60
+set report_scan_window_seconds 60
+
+// Verified email is required for registration and login.
+// Leave disabled until the SMTP placeholders are replaced.
+// One normalized email address can belong to only one account.
+set email_enabled 0
+// set email_username YOUR_MAILBOX@example.com
+// set email_password REPLACE_WITH_YOUR_SMTP_AUTHORIZATION_CODE
+// set email_from_address YOUR_MAILBOX@example.com
+set email_from_name FlorrBt
+
+// Feishu defaults. For QQ Mail replace the hosts with smtp.qq.com and imap.qq.com.
+set email_smtp_host smtp.feishu.cn
+set email_smtp_ssl_port 465
+set email_smtp_starttls_port 587
+set email_smtp_security ssl
+set email_imap_host imap.feishu.cn
+set email_imap_ssl_port 993
+set email_curl_path curl.exe
+set email_connect_timeout_seconds 10
+set email_send_timeout_seconds 20
+set email_verification_code_digits 6
+set email_verification_ttl_seconds 600
+set email_verification_resend_cooldown_seconds 60
+set email_verification_ip_cooldown_seconds 10
+set email_verification_queue_limit 64
+set email_verification_max_attempts 5
+
+// After filling the mailbox address and SMTP authorization code:
+// set email_enabled 1

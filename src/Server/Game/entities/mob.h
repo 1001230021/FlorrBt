@@ -3,15 +3,18 @@
 #include "../../../Shared/shared.h"
 #include "../controller.h"
 #include "../entity.h"
+#include "../prototype_registry.h"
 #include "../state.h"
 #include <algorithm>
 #include <functional>
 #include <memory>
 #include <string>
-#include <unordered_map>
+#include <type_traits>
 #include <vector>
 
 class CPlayer;
+class CSnapshotReader;
+class CSnapshotWriter;
 
 struct CDamageData
 {
@@ -29,7 +32,10 @@ bool ShouldBlockDiggingDamage(CMobBase* receiver, CEntity* attacker, EDamageType
 class CMobBase : public CEntity
 {
   public:
-    CMobBase(CGameWorld* pworld, sf::Vector2f pos, float r) : CEntity(pworld, pos.x, pos.y, r) {}
+    CMobBase(CGameWorld* pworld, sf::Vector2f pos, float r, EMobType mob_type)
+        : CEntity(pworld, pos.x, pos.y, r, MakeMobEntityType(static_cast<std::uint8_t>(mob_type)))
+    {
+    }
 
     virtual ~CMobBase();
     CMobBase(const CMobBase&) = delete;
@@ -43,6 +49,7 @@ class CMobBase : public CEntity
 
     virtual const SMobStats* GetBaseStats() const = 0;
     virtual const SMobStats* GetFinalStats() const = 0;
+    EMobType GetMobType() const { return static_cast<EMobType>(GetNetworkType()); }
     const SEntityStats& GetEntityStats() const override
     {
         const SMobStats* stats = GetFinalStats();
@@ -50,9 +57,23 @@ class CMobBase : public CEntity
     }
     virtual ERarity GetRarity() const = 0;
     virtual bool IsFacingLocked() const { return false; }
+    float WallCollisionRadius() const override
+    {
+        return std::max(0.f, m_radius * game_config::mob_wall_collision_radius_multiplier);
+    }
+    virtual std::uint32_t RuntimeSnapshotVersion() const { return 1; }
+    virtual void CaptureRuntimeSnapshot(CSnapshotWriter&) const {}
+    virtual bool RestoreRuntimeSnapshot(const CSnapshotReader&, std::uint32_t version, std::string& error)
+    {
+        if (version <= RuntimeSnapshotVersion()) return true;
+        error = "Unsupported mob runtime snapshot version";
+        return false;
+    }
 
     std::vector<CDamageData>& GetDamageData() { return m_damage_data; }
     const std::vector<CDamageData>& GetDamageData() const { return m_damage_data; }
+    const std::vector<std::unique_ptr<CState>>& GetStates() const { return m_states; }
+    void ClearStatesForRestore();
 
     template <typename TState> std::vector<TState*> FindStates()
     {
@@ -112,7 +133,6 @@ class CMobBase : public CEntity
     const IController* GetController() const { return m_p_controller.get(); }
 
     sf::Vector2f m_vel = { 0.f, 0.f };
-    EMobType m_mob_type = EMobType::None;
 
   protected:
     std::vector<CDamageData> m_damage_data;
@@ -125,8 +145,8 @@ template <typename TStats = SMobStats> class CMob : public CMobBase
   public:
     using stats_type = TStats;
 
-    CMob(CGameWorld* pworld, sf::Vector2f pos, float r, ERarity rarity, const TStats& stats)
-        : CMobBase(pworld, pos, r), m_base_stats(stats), m_final_stats(stats), m_rarity(rarity)
+    CMob(CGameWorld* pworld, sf::Vector2f pos, float r, EMobType mob_type, ERarity rarity, const TStats& stats)
+        : CMobBase(pworld, pos, r, mob_type), m_base_stats(stats), m_final_stats(stats), m_rarity(rarity)
     {
         m_health = stats.max_health;
         m_mass = stats.mass;
@@ -226,7 +246,9 @@ class CMobPrototype
   public:
     using stats_factory = std::function<SMobStats(ERarity)>;
     using flower_stats_factory = std::function<SFlowerStats(ERarity)>;
-    using controller_factory = std::function<std::unique_ptr<IController>()>;
+    using controller_factory = std::function<std::unique_ptr<IController>(ERarity)>;
+    using after_create = std::function<void(CMobBase&, ERarity)>;
+    using rarity_resolver = std::function<ERarity(CGameWorld&, sf::Vector2f, ERarity)>;
     using mob_factory = std::function<std::unique_ptr<CMobBase>(CGameWorld*, sf::Vector2f, ERarity)>;
 
     CMobPrototype() = default;
@@ -240,8 +262,8 @@ class CMobPrototype
     {
         if (m_flower_stats_factory) return m_flower_stats_factory(rarity);
 
-        SFlowerStats stats;
-        static_cast<SMobStats&>(stats) = BuildStats(rarity);
+        SFlowerStats stats = m_base_flower_stats;
+        if (m_stats_factory) static_cast<SMobStats&>(stats) = BuildStats(rarity);
         return stats;
     }
 
@@ -253,7 +275,10 @@ class CMobPrototype
     stats_factory m_stats_factory;
     flower_stats_factory m_flower_stats_factory;
     controller_factory m_controller_factory;
+    after_create m_after_create;
+    rarity_resolver m_rarity_resolver;
     mob_factory m_factory;
+    bool m_allow_skip_tick = true;
 
     template <typename TStats> TStats BuildTypedStats(ERarity rarity) const
     {
@@ -268,63 +293,57 @@ template <> inline SFlowerStats CMobPrototype::BuildTypedStats<SFlowerStats>(ERa
     return BuildFlowerStats(rarity);
 }
 
-inline std::unordered_map<EMobType, std::unique_ptr<CMobPrototype>> g_mob_registry;
-
-template <typename TMob> bool RegisterMobPrototype(EMobType type, CMobPrototype prototype)
+using CMobRegistry = TPrototypeRegistry<EMobType, CMobPrototype, mob_type_names.size()>;
+namespace mob_registry_detail
 {
+inline CMobRegistry& MutableRegistry()
+{
+    static CMobRegistry registry("mob", static_cast<CMobRegistry::name_function>(GetMobTypeName));
+    return registry;
+}
+} // namespace mob_registry_detail
+
+inline const CMobRegistry& MobRegistry() { return mob_registry_detail::MutableRegistry(); }
+
+template <EMobType Type, typename TMob> bool RegisterMobPrototype(CMobPrototype prototype)
+{
+    static_assert(std::is_base_of_v<CMobBase, TMob>, "TMob must derive from CMobBase");
+
+    using stats_type = typename TMob::stats_type;
+    if constexpr (std::is_same_v<stats_type, SFlowerStats>)
+    {
+        if (!prototype.m_flower_stats_factory)
+        {
+            mob_registry_detail::MutableRegistry().ReportError("missing flower stats factory for " +
+                                                                std::string(GetMobTypeName(Type)));
+            return false;
+        }
+    } else if (!prototype.m_stats_factory)
+    {
+        mob_registry_detail::MutableRegistry().ReportError("missing stats factory for " +
+                                                            std::string(GetMobTypeName(Type)));
+        return false;
+    }
+
+    prototype.m_type = Type;
+    prototype.m_name = std::string(GetMobTypeName(Type));
     auto ptr = std::make_unique<CMobPrototype>(std::move(prototype));
     CMobPrototype* raw_ptr = ptr.get();
     raw_ptr->m_factory = [raw_ptr](CGameWorld* world, sf::Vector2f pos, ERarity rarity) -> std::unique_ptr<CMobBase> {
         if (!world) return nullptr;
 
         typename TMob::stats_type stats = raw_ptr->BuildTypedStats<typename TMob::stats_type>(rarity);
-        auto mob = std::make_unique<TMob>(world, pos, stats.radius, rarity, stats);
-        mob->m_mob_type = raw_ptr->m_type;
+        auto mob = std::make_unique<TMob>(world, pos, stats.radius, Type, rarity, stats);
         mob->m_team = raw_ptr->m_team;
-        mob->m_allow_skip_tick = raw_ptr->m_type != EMobType::PlayerFlower;
-        if (raw_ptr->m_controller_factory) mob->SetController(raw_ptr->m_controller_factory());
+        mob->m_allow_skip_tick = raw_ptr->m_allow_skip_tick;
+        if (raw_ptr->m_after_create) raw_ptr->m_after_create(*mob, rarity);
+        if (raw_ptr->m_controller_factory) mob->SetController(raw_ptr->m_controller_factory(rarity));
         return mob;
     };
-    g_mob_registry[type] = std::move(ptr);
-    return true;
+    return mob_registry_detail::MutableRegistry().Add(Type, std::move(ptr));
 }
 
 const CMobPrototype* FindMobPrototype(EMobType type);
-std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, sf::Vector2f pos, ERarity rarity);
-void RegisterBeetle();
-void RegisterBandageBeetle();
-void RegisterNormalLadybug();
-void RegisterNormalFlower();
-void RegisterPlayerFlower();
-void RegisterSoldierAnt();
-void RegisterSoldierFireAnt();
-void RegisterSoldierTermite();
-void RegisterSummonedBeetle();
-void RegisterSummonedSoldierAnt();
-void RegisterBee();
-void RegisterHornet();
-void RegisterBumbleBee();
-void RegisterRock();
-void RegisterBabyAnt();
-void RegisterWorkerAnt();
-void RegisterQueenAnt();
-void RegisterAntEggMob();
-void RegisterFireAntEgg();
-void RegisterTermiteEgg();
-void RegisterQueenAntEgg();
-void RegisterQueenFireAntEgg();
-void RegisterBabyFireAnt();
-void RegisterWorkerFireAnt();
-void RegisterFireQueenAnt();
-void RegisterBabyTermite();
-void RegisterWorkerTermite();
-void RegisterTermiteOvermind();
-void RegisterLeafPiece();
-void RegisterAntHole();
-void RegisterSpider();
-void RegisterSandstorm();
-void RegisterDummy();
-void RegisterDandelion();
-void RegisterMobs();
-
-#define REGISTER_MOB(type, mob_class, proto) RegisterMobPrototype<mob_class>(type, std::move(proto))
+std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, sf::Vector2f pos, ERarity rarity,
+                                    bool resolve_special_rarity = true);
+bool RegisterMobs(std::string& error);

@@ -13,6 +13,7 @@ import argparse
 import json
 import select
 import socket
+import struct
 import sys
 import time
 from dataclasses import dataclass, field
@@ -23,7 +24,18 @@ from typing import Iterable
 AUTH_RESULT_TYPE = 0x02
 AUTH_PACKET_TYPE = 0xF0
 CHAT_PACKET_TYPE = 0xF1
+SNAPSHOT_TYPE = 0x01
+SNAPSHOT_ACK_PACKET_TYPE = 0xF7
+INPUT_FRAME_PACKET_TYPE = 0xF8
 INPUT_PACKET = bytes((0x00, 0x00, 0x00))
+FULL_SNAPSHOT_BASE_ID = 0xFFFFFFFF
+SERVER_SNAPSHOT_HEADER_SIZE = 27
+SERVER_ENTITY_FULL_FORMAT = 0
+SERVER_ENTITY_COMPACT_FORMAT = 1
+SERVER_ENTITY_FULL_FIXED_SIZE = 21
+SERVER_ENTITY_COMPACT_REMAINDER_SIZE = 16
+DEFAULT_TICK_RATE = 60
+INPUT_LEAD_TICKS = 2
 MAX_AUTH_NAME_BYTES = 32
 MAX_AUTH_PASSWORD_BYTES = 64
 MAX_CHAT_MESSAGE_BYTES = 180
@@ -41,6 +53,16 @@ class LoadClient:
     retried_login: bool = False
     received_bytes: int = 0
     received_packets: int = 0
+    received_snapshots: int = 0
+    received_delta_snapshots: int = 0
+    sent_snapshot_acks: int = 0
+    snapshot_id: int | None = None
+    base_snapshot_id: int | None = None
+    server_tick: int | None = None
+    server_tick_received_at: float = 0.0
+    tick_rate: int = DEFAULT_TICK_RATE
+    input_sequence: int = 0
+    supports_input_frames: bool = False
 
     def send(self, payload: bytes) -> None:
         self.socket.sendall(payload)
@@ -59,6 +81,33 @@ class LoadClient:
         if not message or len(message) > MAX_CHAT_MESSAGE_BYTES:
             raise ValueError(f"chat message must be 1-{MAX_CHAT_MESSAGE_BYTES} UTF-8 bytes: {text!r}")
         self.send(bytes((CHAT_PACKET_TYPE, 0, len(message))) + message)
+
+    def send_snapshot_ack(self, snapshot_id: int) -> None:
+        self.send(struct.pack("<BI", SNAPSHOT_ACK_PACKET_TYPE, snapshot_id))
+        self.sent_snapshot_acks += 1
+
+    def estimate_target_tick(self) -> int:
+        if self.server_tick is None:
+            return 0
+        elapsed = max(0.0, time.monotonic() - self.server_tick_received_at)
+        estimated_tick = self.server_tick + int(elapsed * max(1, self.tick_rate)) + INPUT_LEAD_TICKS
+        return min(estimated_tick, 0xFFFFFFFFFFFFFFFF)
+
+    def send_input(self) -> None:
+        if not self.supports_input_frames:
+            self.send(INPUT_PACKET)
+            return
+
+        self.send(struct.pack(
+            "<BIQbbB",
+            INPUT_FRAME_PACKET_TYPE,
+            self.input_sequence,
+            self.estimate_target_tick(),
+            0,
+            0,
+            0,
+        ))
+        self.input_sequence = (self.input_sequence + 1) & 0xFFFFFFFF
 
     def close(self) -> None:
         try:
@@ -171,6 +220,42 @@ def make_client(host: str, port: int, name: str, password: str) -> LoadClient:
     return LoadClient(name=name, password=password, socket=client_socket)
 
 
+def parse_snapshot_header(payload: bytes) -> tuple[int, int, int] | None:
+    if len(payload) < SERVER_SNAPSHOT_HEADER_SIZE or payload[0] != SNAPSHOT_TYPE:
+        return None
+
+    snapshot_id, base_snapshot_id, server_tick = struct.unpack_from("<IIQ", payload, 1)
+    changed_count, removed_count = struct.unpack_from("<HH", payload, 23)
+    offset = SERVER_SNAPSHOT_HEADER_SIZE
+
+    for _ in range(changed_count):
+        if offset >= len(payload):
+            return None
+        entity_format = payload[offset]
+        offset += 1
+        if entity_format == SERVER_ENTITY_COMPACT_FORMAT:
+            offset += SERVER_ENTITY_COMPACT_REMAINDER_SIZE
+            if offset > len(payload):
+                return None
+            continue
+        if entity_format != SERVER_ENTITY_FULL_FORMAT or offset + SERVER_ENTITY_FULL_FIXED_SIZE > len(payload):
+            return None
+
+        name_length = payload[offset + SERVER_ENTITY_FULL_FIXED_SIZE - 1]
+        offset += SERVER_ENTITY_FULL_FIXED_SIZE
+        if offset + name_length + 1 > len(payload):
+            return None
+        offset += name_length
+        slot_count = payload[offset]
+        offset += 1 + slot_count * 2
+        if offset > len(payload):
+            return None
+
+    if offset + removed_count * 2 != len(payload):
+        return None
+    return snapshot_id, base_snapshot_id, server_tick
+
+
 def process_frames(client: LoadClient) -> None:
     while len(client.receive_buffer) >= 2:
         packet_size = client.receive_buffer[0] | (client.receive_buffer[1] << 8)
@@ -180,6 +265,29 @@ def process_frames(client: LoadClient) -> None:
         payload = bytes(client.receive_buffer[2:packet_size + 2])
         del client.receive_buffer[:packet_size + 2]
         client.received_packets += 1
+        if not payload:
+            continue
+
+        if payload[0] == SNAPSHOT_TYPE:
+            header = parse_snapshot_header(payload)
+            if header is None:
+                continue
+            snapshot_id, base_snapshot_id, server_tick = header
+            client.snapshot_id = snapshot_id
+            client.base_snapshot_id = base_snapshot_id
+            client.server_tick = server_tick
+            client.server_tick_received_at = time.monotonic()
+            client.supports_input_frames = True
+            client.received_snapshots += 1
+            if base_snapshot_id != FULL_SNAPSHOT_BASE_ID:
+                client.received_delta_snapshots += 1
+            client.send_snapshot_ack(snapshot_id)
+            continue
+
+        if payload[0] == 0x00 and len(payload) >= 6:
+            client.tick_rate = payload[5] or DEFAULT_TICK_RATE
+            continue
+
         if len(payload) < 3 or payload[0] != AUTH_RESULT_TYPE:
             continue
 
@@ -250,10 +358,11 @@ def send_rcon(leader: LoadClient, command: str, command_interval: float, clients
     wait_while_pumping(clients, command_interval)
 
 
-def set_positions(leader: LoadClient, targets: list[LoadClient], positions: list[tuple[float, float]],
-                  command_interval: float, clients: list[LoadClient]) -> None:
+def set_positions(leader: LoadClient, targets: list[LoadClient], world_id: int,
+                  positions: list[tuple[float, float]], command_interval: float,
+                  clients: list[LoadClient]) -> None:
     for target, (x, y) in zip(targets, positions):
-        send_rcon(leader, f"tele {target.name} {x:.0f},{y:.0f}", command_interval, clients)
+        send_rcon(leader, f"tele {target.name} {world_id} {x:.0f},{y:.0f}", command_interval, clients)
 
 
 def setup_world_distribution(clients: list[LoadClient], root: Path, args: argparse.Namespace) -> None:
@@ -273,7 +382,7 @@ def setup_world_distribution(clients: list[LoadClient], root: Path, args: argpar
     send_rcon(leader, f"add null primordial {leader.name}", args.command_interval, clients)
 
     print(f"Garden: distributing {len(garden_clients)} clients across {len(garden_zones)} spawn zones", flush=True)
-    set_positions(leader, garden_clients, distribute_positions(garden_zones, len(garden_clients)),
+    set_positions(leader, garden_clients, 0, distribute_positions(garden_zones, len(garden_clients)),
                   args.command_interval, clients)
     if not anthell_clients:
         return
@@ -281,10 +390,10 @@ def setup_world_distribution(clients: list[LoadClient], root: Path, args: argpar
     print(f"Waiting {args.portal_wait:g}s for spawn protection before Anthell transfer", flush=True)
     wait_while_pumping(clients, args.portal_wait)
     print(f"Anthell: moving {len(anthell_clients)} clients through Garden portal at {garden_portal[0]:.0f},{garden_portal[1]:.0f}", flush=True)
-    set_positions(leader, anthell_clients, [garden_portal] * len(anthell_clients), args.command_interval, clients)
+    set_positions(leader, anthell_clients, 0, [garden_portal] * len(anthell_clients), args.command_interval, clients)
     wait_while_pumping(clients, args.transfer_wait)
     print(f"Anthell: distributing clients across {len(anthell_zones)} spawn zones", flush=True)
-    set_positions(leader, anthell_clients, distribute_positions(anthell_zones, len(anthell_clients)),
+    set_positions(leader, anthell_clients, 1, distribute_positions(anthell_zones, len(anthell_clients)),
                   args.command_interval, clients)
 
 
@@ -299,7 +408,7 @@ def run_clients(clients: list[LoadClient], duration: float, input_interval: floa
         now = time.monotonic()
         if input_interval > 0.0 and now >= next_input:
             for client in clients:
-                client.send(INPUT_PACKET)
+                client.send_input()
             next_input = now + input_interval
 
         wait_timeout = 0.1
@@ -310,7 +419,15 @@ def run_clients(clients: list[LoadClient], duration: float, input_interval: floa
         if now >= next_status:
             received_bytes = sum(client.received_bytes for client in clients)
             received_packets = sum(client.received_packets for client in clients)
-            print(f"status: clients={len(clients)} packets={received_packets} received={received_bytes / 1024 / 1024:.1f} MiB", flush=True)
+            received_snapshots = sum(client.received_snapshots for client in clients)
+            received_deltas = sum(client.received_delta_snapshots for client in clients)
+            sent_acks = sum(client.sent_snapshot_acks for client in clients)
+            print(
+                f"status: clients={len(clients)} packets={received_packets} "
+                f"snapshots={received_snapshots} deltas={received_deltas} acks={sent_acks} "
+                f"received={received_bytes / 1024 / 1024:.1f} MiB",
+                flush=True,
+            )
             next_status = now + 10.0
 
 

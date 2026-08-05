@@ -10,11 +10,12 @@ CEntity* CProjectile::GetOwner() const
 }
 
 CMissile::CMissile(CGameWorld* world, sf::Vector2f pos, float radius, sf::Vector2f direction, float speed, float damage,
-                   float health, float lifetime, CEntity* owner)
-    : CProjectile(world ? world : (owner ? owner->GameWorld() : nullptr), pos, radius, owner),
+                   float health, float lifetime, CEntity* owner, SEntityTypeInfo entity_type)
+    : CProjectile(world ? world : (owner ? owner->GameWorld() : nullptr), pos, radius, owner, entity_type),
       m_damage(std::max(0.f, damage)), m_lifetime(std::max(0.f, lifetime))
 {
     if (owner) m_team = owner->m_team;
+    m_allow_skip_tick = false;
     m_health = std::max(0.f, health);
     m_mass = std::max(0.f, game_config::default_missile_mass);
 
@@ -28,7 +29,10 @@ CMissile::CMissile(CGameWorld* world, sf::Vector2f pos, float radius, sf::Vector
         m_has_facing = true;
     }
 
-    if (m_health <= 0.f || m_lifetime <= 0.f) MarkForDestroy();
+    if (m_health <= 0.f)
+        MarkForDestroy(EEntityRemovalReason::Defeated);
+    else if (m_lifetime <= 0.f)
+        MarkForDestroy(EEntityRemovalReason::Expired);
 }
 
 void CMissile::Tick(float dt)
@@ -36,7 +40,7 @@ void CMissile::Tick(float dt)
     if (m_health <= 0.f)
     {
         m_health = 0.f;
-        MarkForDestroy();
+        MarkForDestroy(EEntityRemovalReason::Defeated);
         return;
     }
 
@@ -44,7 +48,7 @@ void CMissile::Tick(float dt)
     {
         if (!RefreshAttachedTransform())
         {
-            MarkForDestroy();
+            MarkForDestroy(EEntityRemovalReason::OwnerRemoved);
             return;
         }
 
@@ -54,7 +58,10 @@ void CMissile::Tick(float dt)
 
     CProjectile::Tick(dt);
     m_age += dt;
-    if (m_age >= m_lifetime || m_health <= 0.f) MarkForDestroy();
+    if (m_health <= 0.f)
+        MarkForDestroy(EEntityRemovalReason::Defeated);
+    else if (m_age >= m_lifetime)
+        MarkForDestroy(EEntityRemovalReason::Expired);
 }
 
 bool CMissile::ApplyHit(CEntity* target)
@@ -104,7 +111,7 @@ bool CMissile::Fire(sf::Vector2f direction, float speed, float lifetime)
     m_lifetime = std::max(0.f, lifetime);
     if (m_lifetime <= 0.f)
     {
-        MarkForDestroy();
+        MarkForDestroy(EEntityRemovalReason::Expired);
         return false;
     }
 
@@ -127,7 +134,8 @@ float CMissile::AttachedOffsetMultiplier() const { return game_config::mob_horne
 CDandelionMissile::CDandelionMissile(CGameWorld* world, sf::Vector2f pos, float radius, float attach_angle,
                                      float damage, float health, float lifetime, ERarity rarity, CEntity* owner)
     : CMissile(world, pos, radius, { std::cos(attach_angle), std::sin(attach_angle) }, 0.f, damage, health, lifetime,
-               owner),
+               owner,
+               MakeProjectileEntityType(EProjectileType::Missile, server_dandelion_missile_entity_type)),
       m_attach_angle(attach_angle), m_rarity(rarity)
 {
 }
@@ -144,25 +152,32 @@ sf::Vector2f CDandelionMissile::AttachedDirection(const CEntity& owner) const
 float CDandelionMissile::AttachedOffsetMultiplier() const { return game_config::mob_dandelion_missile_attach_offset; }
 
 CPollenProjectile::CPollenProjectile(CGameWorld* world, sf::Vector2f pos, float radius, float damage, float health,
-                                     float lifetime, float mass, CEntity* owner)
-    : CProjectile(world ? world : (owner ? owner->GameWorld() : nullptr), pos, radius, owner),
+                                     float lifetime, float mass, CEntity* owner, SEntityTypeInfo entity_type)
+    : CProjectile(world ? world : (owner ? owner->GameWorld() : nullptr), pos, radius, owner, entity_type),
       m_damage(std::max(0.f, damage)), m_lifetime(std::max(0.f, lifetime))
 {
     if (owner) m_team = owner->m_team;
+    m_allow_skip_tick = false;
     m_health = std::max(0.f, health);
     m_mass = std::max(0.f, mass);
     m_vel = { 0.f, 0.f };
     m_has_facing = true;
     m_facing_angle = GetLimitedRng(-game_config::pi, game_config::pi);
 
-    if (m_health <= 0.f || m_lifetime <= 0.f) MarkForDestroy();
+    if (m_health <= 0.f)
+        MarkForDestroy(EEntityRemovalReason::Defeated);
+    else if (m_lifetime <= 0.f)
+        MarkForDestroy(EEntityRemovalReason::Expired);
 }
 
 void CPollenProjectile::Tick(float dt)
 {
     CProjectile::Tick(dt);
     m_age += dt;
-    if (m_age >= m_lifetime || m_health <= 0.f) MarkForDestroy();
+    if (m_health <= 0.f)
+        MarkForDestroy(EEntityRemovalReason::Defeated);
+    else if (m_age >= m_lifetime)
+        MarkForDestroy(EEntityRemovalReason::Expired);
 }
 
 bool CPollenProjectile::ApplyHit(CEntity* target)
@@ -173,4 +188,38 @@ bool CPollenProjectile::ApplyHit(CEntity* target)
     if (target == GetOwner()) return false;
     if (m_damage > 0.f) target->TakeDamage(m_damage, GetOwner(), EDamageType::Normal);
     return true;
+}
+
+CTrapProjectile::CTrapProjectile(CGameWorld* world, sf::Vector2f pos, float radius, sf::Vector2f direction,
+                                 float speed, float damage, float health, float lifetime, float mass,
+                                 float deceleration_time, ERarity rarity, CEntity* owner)
+    : CPollenProjectile(world, pos, radius, damage, health, lifetime, mass, owner,
+                        MakeProjectileEntityType(EProjectileType::Trap, server_trap_projectile_entity_type)),
+      m_deceleration_time(std::max(0.f, deceleration_time)), m_rarity(rarity)
+{
+    const float length = Length(direction);
+    if (length > game_config::entity_collision_epsilon)
+        m_initial_velocity = direction / length * std::max(0.f, speed);
+    m_vel = m_initial_velocity;
+    if (LengthSq(direction) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+    {
+        m_facing_angle = std::atan2(direction.y, direction.x);
+        m_has_facing = true;
+    }
+}
+
+void CTrapProjectile::Tick(float dt)
+{
+    if (m_deceleration_time <= game_config::entity_collision_epsilon)
+    {
+        m_vel = { 0.f, 0.f };
+    } else
+    {
+        const float progress = std::clamp(m_move_age / m_deceleration_time, 0.f, 1.f);
+        m_vel = m_initial_velocity * (1.f - progress);
+    }
+
+    CPollenProjectile::Tick(dt);
+    m_move_age += std::max(0.f, dt);
+    if (m_move_age >= m_deceleration_time) m_vel = { 0.f, 0.f };
 }

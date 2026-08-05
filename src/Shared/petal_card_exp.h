@@ -20,7 +20,7 @@ inline int PetalCardExpForRarity(ERarity rarity)
     case ERarity::Ultra:
         return 44568;
     case ERarity::Exotic:
-        return 89136;
+        return 1;
     case ERarity::Super:
         return 178272;
     case ERarity::Eternal:

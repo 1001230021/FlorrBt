@@ -18,6 +18,13 @@ CMobBase::~CMobBase()
         if (state) state->m_p_owner = nullptr;
 }
 
+void CMobBase::ClearStatesForRestore()
+{
+    for (auto& state : m_states)
+        if (state) state->m_p_owner = nullptr;
+    m_states.clear();
+}
+
 template <typename TStats> CMob<TStats>::~CMob() = default;
 
 template class CMob<SMobStats>;
@@ -82,6 +89,7 @@ void CMobBase::TickStates(float dt)
         }
 
         state->Tick(dt);
+        if (IsDead()) return;
         if (index >= m_states.size() || m_states[index].get() != state) continue;
 
         if (state->m_timer != endless && state->m_timer <= 0.0f)
@@ -89,6 +97,7 @@ void CMobBase::TickStates(float dt)
             std::unique_ptr<CState> expired = std::move(m_states[index]);
             m_states.erase(m_states.begin() + static_cast<std::ptrdiff_t>(index));
             expired.reset();
+            if (IsDead()) return;
         } else
         {
             ++index;
@@ -150,7 +159,7 @@ void CMobBase::ApplyDamageDirect(float dmg, CEntity* attacker)
     if (m_health <= 0.f)
     {
         m_health = 0.f;
-        MarkForDestroy();
+        MarkForDestroy(EEntityRemovalReason::Defeated);
     }
 }
 
@@ -249,54 +258,15 @@ bool CMobBase::RemoveState(CState* state)
 
 const CMobPrototype* FindMobPrototype(EMobType type)
 {
-    auto it = g_mob_registry.find(type);
-    if (it == g_mob_registry.end()) return nullptr;
-    return it->second.get();
+    return MobRegistry().Find(type);
 }
 
-std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, sf::Vector2f pos, ERarity rarity)
+std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, sf::Vector2f pos, ERarity rarity,
+                                    bool resolve_special_rarity)
 {
     const CMobPrototype* prototype = FindMobPrototype(type);
     if (!prototype || !prototype->m_factory) return nullptr;
-    auto mob = prototype->m_factory(world, pos, rarity);
-    if (mob) mob->m_allow_skip_tick = type != EMobType::PlayerFlower;
-    return mob;
-}
-
-void RegisterMobs()
-{
-    RegisterBeetle();
-    RegisterBandageBeetle();
-    RegisterNormalLadybug();
-    RegisterNormalFlower();
-    RegisterPlayerFlower();
-    RegisterSoldierAnt();
-    RegisterSoldierFireAnt();
-    RegisterSoldierTermite();
-    RegisterSummonedBeetle();
-    RegisterSummonedSoldierAnt();
-    RegisterBee();
-    RegisterHornet();
-    RegisterBumbleBee();
-    RegisterRock();
-    RegisterBabyAnt();
-    RegisterWorkerAnt();
-    RegisterQueenAnt();
-    RegisterAntEggMob();
-    RegisterFireAntEgg();
-    RegisterTermiteEgg();
-    RegisterQueenAntEgg();
-    RegisterQueenFireAntEgg();
-    RegisterBabyFireAnt();
-    RegisterWorkerFireAnt();
-    RegisterFireQueenAnt();
-    RegisterBabyTermite();
-    RegisterWorkerTermite();
-    RegisterTermiteOvermind();
-    RegisterLeafPiece();
-    RegisterAntHole();
-    RegisterSpider();
-    RegisterSandstorm();
-    RegisterDummy();
-    RegisterDandelion();
+    if (resolve_special_rarity && world && prototype->m_rarity_resolver)
+        rarity = prototype->m_rarity_resolver(*world, pos, rarity);
+    return prototype->m_factory(world, pos, rarity);
 }

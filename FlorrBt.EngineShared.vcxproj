@@ -73,7 +73,6 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="src\Engine\account_data.h" />
     <ClInclude Include="src\Engine\commands_registry.h" />
     <ClInclude Include="src\Engine\console.h" />
     <ClInclude Include="src\Engine\json_value.h" />
@@ -81,6 +80,7 @@
     <ClInclude Include="src\Engine\map_tools.h" />
     <ClInclude Include="src\Engine\spatial_hash_grid.h" />
     <ClInclude Include="src\Shared\damage_type.h" />
+    <ClInclude Include="src\Shared\entity_type.h" />
     <ClInclude Include="src\Shared\drop_rate.h" />
     <ClInclude Include="src\Shared\game_config.h" />
     <ClInclude Include="src\Shared\inventory.h" />
@@ -89,12 +89,13 @@
     <ClInclude Include="src\Shared\petal_type.h" />
     <ClInclude Include="src\Shared\rarity.h" />
     <ClInclude Include="src\Shared\shared.h" />
+    <ClInclude Include="src\Shared\state_type.h" />
     <ClInclude Include="src\Shared\stats.h" />
     <ClInclude Include="src\Shared\talent_type.h" />
     <ClInclude Include="src\Shared\tools.h" />
+    <ClInclude Include="src\Shared\version.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\Engine\account_data.cpp" />
     <ClCompile Include="src\Engine\console.cpp" />
     <ClCompile Include="src\Engine\json_value.cpp" />
     <ClCompile Include="externals\argon2\src\argon2.c" />

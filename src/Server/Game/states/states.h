@@ -13,6 +13,8 @@ class CPoisonState : public CState
 
     bool IsValid() const { return m_is_valid; }
     float GetBasicDmg() const { return m_basic_dmg; }
+    int GetApplierId() const { return m_applier_id; }
+    std::uint64_t GetApplierGeneration() const { return m_applier_generation; }
 
   private:
     float m_basic_dmg = 0.f;
@@ -27,6 +29,7 @@ class CBanSlotState : public CState
     CBanSlotState(CMobBase* owner, float timer, int slot, ERarity rarity);
     ~CBanSlotState() override;
     void Tick(float dt) override;
+    int GetSlotIndex() const { return m_slot_index; }
 
   private:
     int m_slot_index = -1;
@@ -74,7 +77,10 @@ class CAntiHealState : public CState
 class CNullificationState : public CState
 {
   public:
-    CNullificationState(CMobBase* owner, float timer, ERarity rarity) : CState(owner, timer, rarity) {}
+    CNullificationState(CMobBase* owner, float timer, ERarity rarity)
+        : CState(owner, timer, rarity, EStateType::Nullification)
+    {
+    }
 
     void Tick(float dt) override
     {
@@ -88,7 +94,7 @@ class CUndeadState : public CState
     CUndeadState(CMobBase* owner, float timer, ERarity rarity, int source_slot);
     ~CUndeadState() override;
 
-    void Tick(float dt) override { m_timer -= dt; }
+    void Tick(float dt) override;
     int SourceSlot() const { return m_source_slot; }
     void CancelDeathOnDestroy() { m_kill_on_destroy = false; }
 
@@ -103,6 +109,9 @@ class CCorruptionState : public CState
     CCorruptionState(CMobBase* owner, float timer, ERarity rarity);
     ~CCorruptionState() override;
 
+    int GetOriginalTeam() const { return m_old_team; }
+    void RestoreOriginalTeam(int team) { m_old_team = team; }
+
     void Tick(float dt) override
     {
         if (m_timer != endless) m_timer -= dt;
@@ -115,7 +124,10 @@ class CCorruptionState : public CState
 class CNoReviveState : public CState
 {
   public:
-    CNoReviveState(CMobBase* owner, float timer, ERarity rarity) : CState(owner, timer, rarity) {}
+    CNoReviveState(CMobBase* owner, float timer, ERarity rarity)
+        : CState(owner, timer, rarity, EStateType::NoRevive)
+    {
+    }
 
     void Tick(float dt) override { m_timer -= dt; }
 };
@@ -129,13 +141,17 @@ class CInvincibleState : public CState
 
   private:
     bool m_marked_for_destroy = false;
+    EEntityRemovalReason m_removal_reason = EEntityRemovalReason::Despawned;
     float m_hp = 0.f;
 };
 
 class CDiggingState : public CState
 {
   public:
-    CDiggingState(CMobBase* owner, float timer, ERarity rarity) : CState(owner, timer, rarity) {}
+    CDiggingState(CMobBase* owner, float timer, ERarity rarity)
+        : CState(owner, timer, rarity, EStateType::Digging)
+    {
+    }
     ~CDiggingState() override;
 
     void Tick(float dt) override
@@ -160,6 +176,10 @@ class CPsionicConnectionState : public CState
 };
 
 bool BlocksNullifiedInteraction(const CEntity* lhs, const CEntity* rhs);
+const CMobBase* ResolveInteractionMob(const CEntity* entity);
+bool BlocksNullifiedMobInteraction(const CMobBase* lhs, const CMobBase* rhs);
+int GetPreCorruptionTeam(const CEntity* entity);
+int GetPreCorruptionTeam(const CEntity* entity, const CMobBase* interaction_mob);
 bool IsDiggingEntity(const CEntity* entity);
 bool ShouldSkipDiggingCollision(const CEntity* lhs, const CEntity* rhs);
 float GetPincerSpeedMultiplier(const CMobBase* mob);

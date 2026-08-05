@@ -9,7 +9,8 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $ArtifactsDir = Join-Path $RepoRoot "artifacts"
-$PackageName = "FlorrBtDeploy"
+$AppVersion = "1.0.1"
+$PackageName = "FlorrBtHotReload-v$AppVersion"
 $StageRoot = Join-Path $ArtifactsDir $PackageName
 if (-not $OutputZip) {
     $OutputZip = Join-Path $ArtifactsDir "$PackageName.zip"
@@ -31,6 +32,24 @@ function Copy-File([string]$Source, [string]$Destination) {
     Copy-Item -LiteralPath $Source -Destination $Destination -Force
 }
 
+function Find-NodeRuntime {
+    $candidates = @(
+        (Get-Command node -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
+        "C:\Program Files\nodejs\node.exe",
+        "C:\Program Files (x86)\nodejs\node.exe",
+        "$env:LOCALAPPDATA\Programs\nodejs\node.exe",
+        "C:\Program Files\Microsoft Visual Studio\18\Insiders\MSBuild\Microsoft\VisualStudio\NodeJs\node.exe",
+        "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VisualStudio\NodeJs\node.exe",
+        "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Microsoft\VisualStudio\NodeJs\node.exe"
+    )
+
+    foreach ($candidate in $candidates | Where-Object { $_ } | Select-Object -Unique) {
+        if (Test-Path $candidate) { return $candidate }
+    }
+
+    throw "node.exe was not found; a self-contained START_ALL package cannot be created."
+}
+
 function Write-TextFile([string]$Path, [string]$Text) {
     New-Item -ItemType Directory -Force -Path (Split-Path $Path -Parent) | Out-Null
     Set-Content -Path $Path -Value $Text -Encoding ASCII
@@ -45,7 +64,11 @@ New-Item -ItemType Directory -Force -Path $StageRoot | Out-Null
 $BuildDir = Join-Path $RepoRoot "x64\$Configuration"
 $RuntimeDir = Join-Path $StageRoot "x64\$Configuration"
 $ServerExe = Join-Path $BuildDir "FlorrBt.Server.exe"
+$LauncherExe = Join-Path $BuildDir "FlorrBt.Launcher.exe"
 Copy-File $ServerExe (Join-Path $RuntimeDir "FlorrBt.Server.exe")
+Copy-File $LauncherExe (Join-Path $RuntimeDir "FlorrBt.Launcher.exe")
+$NodeExe = Find-NodeRuntime
+Copy-File $NodeExe (Join-Path $StageRoot "runtime\node.exe")
 
 Get-ChildItem $BuildDir -Filter "sfml*.dll" -File -ErrorAction SilentlyContinue | ForEach-Object {
     Copy-File $_.FullName (Join-Path $RuntimeDir $_.Name)
@@ -62,6 +85,11 @@ Copy-Dir (Join-Path $RepoRoot "data") (Join-Path $StageRoot "data")
 Copy-Dir (Join-Path $RepoRoot "tools") (Join-Path $StageRoot "tools")
 Copy-Dir (Join-Path $RepoRoot "deploy\windows") (Join-Path $StageRoot "deploy\windows")
 Copy-Dir (Join-Path $RepoRoot "deploy\windows-web") (Join-Path $StageRoot "deploy\windows-web")
+$HotReloadData = Join-Path $StageRoot "data\hot_reload"
+if (Test-Path $HotReloadData) {
+    Remove-Item -LiteralPath $HotReloadData -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path $HotReloadData | Out-Null
 Get-ChildItem -LiteralPath $StageRoot -Directory -Recurse -Force -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -eq "__pycache__" } |
     Remove-Item -Recurse -Force
@@ -125,17 +153,16 @@ pause
 Write-TextFile (Join-Path $StageRoot "STOP_AUTOSTART.cmd") $Stop
 
 $Readme = @"
-FlorrBt one-click deployment package
+FlorrBt v$AppVersion one-click deployment package
 
 1. Extract this zip on the Windows server.
-2. Install Node.js LTS if node is not already available.
-3. Install Microsoft Visual C++ Redistributable 2022+ if FlorrBt.Server.exe cannot start.
-4. Double-click START_ALL.cmd.
-5. Open http://SERVER_IP:8080 from another computer.
+2. Install Microsoft Visual C++ Redistributable 2022+ if FlorrBt.Server.exe cannot start.
+3. Double-click START_ALL.cmd. The package uses its bundled Node.js runtime.
+4. Open http://SERVER_IP:8080 from another computer.
 
 Useful files:
-- START_ALL.cmd: starts game server and web bridge.
-- START_SERVER_ONLY.cmd: starts only FlorrBt.Server.exe.
+- START_ALL.cmd: starts the hot-reload launcher, game server, and web bridge.
+- START_SERVER_ONLY.cmd: starts the server through FlorrBt.Launcher.exe.
 - START_WEB_ONLY.cmd: starts only the web client bridge.
 - deploy/windows-web/start_web.cmd: standalone web bridge launcher.
 - OPEN_FIREWALL_ADMIN.cmd: opens TCP 8080 and 10012 as Administrator.
@@ -143,7 +170,14 @@ Useful files:
 - STATUS.cmd: checks task and port status.
 - data/server.cfg: created on first start if missing. Edit this for port/API/config commands.
 
+Hot reload:
+1. Build the replacement FlorrBt.Server.exe.
+2. Put it at FlorrBt.Server.next.exe in this package root, or pass its path to the command.
+3. Enter hot_reload in the server console, or hot_reload <candidate-path>.
+4. The launcher snapshots the completed tick, starts the candidate, restores the snapshot, and rolls back if startup fails.
+
 Packaged configuration: $Configuration
+Version: $AppVersion
 Packaged at: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
 "@
 Write-TextFile (Join-Path $StageRoot "README_DEPLOY.txt") $Readme

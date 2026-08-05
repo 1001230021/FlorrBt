@@ -18,7 +18,6 @@ class CDrop : public CEntity
     ~CDrop() = default;
 
     void Tick(float dt) override;
-    void OnCollision(CEntity* other) override {}
     bool CanCollide() const override { return false; }
     bool CanBePickedUpBy(uint32_t player_id) const;
     bool PickUpTo(CPlayer& player);
@@ -27,6 +26,15 @@ class CDrop : public CEntity
     ERarity GetRarity() const { return m_rarity; }
     int GetOwnerId() const { return m_owner_id; }
     uint16_t GetStackNum() const { return m_stack_num; }
+    float GetPickupDelay() const { return m_unable_picked_timer; }
+    float GetMergeTimer() const { return m_merge_timer; }
+    float GetLifetime() const { return m_timer; }
+    void RestoreRuntime(float pickup_delay, float merge_timer, float lifetime)
+    {
+        m_unable_picked_timer = pickup_delay;
+        m_merge_timer = merge_timer;
+        m_timer = lifetime;
+    }
 
   private:
     void MergeNearbyDrops();

@@ -1,5 +1,7 @@
 #include "network_module.h"
-#include "../../Engine/account_data.h"
+#include "../Auth/email_verification_service.h"
+#include "../Persistence/account_store.h"
+#include "../Persistence/unique_petal_registry.h"
 #include "../../Engine/logger.h"
 #include "../../Shared/network_msg.h"
 #include "../Game/controllers/player_controller.h"
@@ -12,19 +14,214 @@
 #include "../report.h"
 #include <SFML/Network.hpp>
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <condition_variable>
 #include <exception>
 #include <limits>
+#include <mutex>
+#include <sstream>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
+class CAccountAuthWorker
+{
+  public:
+    struct SJob
+    {
+        std::uint64_t request_id = 0;
+        std::uint32_t player_id = 0;
+        SAccountAuthWork work;
+    };
+
+    struct SCompletion
+    {
+        std::uint64_t request_id = 0;
+        std::uint32_t player_id = 0;
+        std::string account_name;
+        bool register_mode = false;
+        SAccountAuthResult result;
+    };
+
+    ~CAccountAuthWorker() { ShutDown(); }
+
+    bool Start(std::string& error)
+    {
+        error.clear();
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (m_running || m_thread.joinable())
+            {
+                error = "Authentication worker is already running";
+                return false;
+            }
+            m_jobs.clear();
+            m_completions.clear();
+            m_stop = false;
+            m_accepting = true;
+            m_running = true;
+        }
+
+        try
+        {
+            m_thread = std::thread(&CAccountAuthWorker::WorkerMain, this);
+        } catch (const std::exception& exception)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_accepting = false;
+            m_running = false;
+            error = "Failed to start authentication worker: " + std::string(exception.what());
+            return false;
+        }
+        return true;
+    }
+
+    bool Submit(SJob job)
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (!m_accepting || !m_running) return false;
+            m_jobs.push_back(std::move(job));
+        }
+        m_condition.notify_one();
+        return true;
+    }
+
+    std::vector<SCompletion> TakeCompletions()
+    {
+        std::vector<SCompletion> completions;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        completions.reserve(m_completions.size());
+        while (!m_completions.empty())
+        {
+            completions.push_back(std::move(m_completions.front()));
+            m_completions.pop_front();
+        }
+        return completions;
+    }
+
+    void ShutDown()
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_accepting = false;
+            m_stop = true;
+            m_jobs.clear();
+        }
+        m_condition.notify_all();
+        if (m_thread.joinable()) m_thread.join();
+
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_completions.clear();
+        m_running = false;
+    }
+
+  private:
+    void WorkerMain()
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        while (true)
+        {
+            m_condition.wait(lock, [this]() { return m_stop || !m_jobs.empty(); });
+            if (m_stop) break;
+
+            SJob job = std::move(m_jobs.front());
+            m_jobs.pop_front();
+            lock.unlock();
+
+            SCompletion completion;
+            completion.request_id = job.request_id;
+            completion.player_id = job.player_id;
+            completion.account_name = job.work.account_name;
+            completion.register_mode = job.work.register_mode;
+            try
+            {
+                completion.result = CAccountDataStore::ExecuteAuthentication(std::move(job.work));
+            } catch (const std::exception& exception)
+            {
+                completion.result.error = "Authentication worker failed: " + std::string(exception.what());
+            } catch (...)
+            {
+                completion.result.error = "Authentication worker failed";
+            }
+
+            lock.lock();
+            if (!m_stop) m_completions.push_back(std::move(completion));
+        }
+
+        m_running = false;
+    }
+
+    std::mutex m_mutex;
+    std::condition_variable m_condition;
+    std::thread m_thread;
+    std::deque<SJob> m_jobs;
+    std::deque<SCompletion> m_completions;
+    bool m_accepting = false;
+    bool m_running = false;
+    bool m_stop = false;
+};
+
 namespace
 {
+constexpr std::string_view proxy_v1_prefix = "PROXY ";
+constexpr size_t proxy_v1_max_header_size = 108;
+
+bool IsLoopbackAddress(std::string_view address)
+{
+    const auto parsed = sf::IpAddress::fromString(address);
+    if (!parsed) return false;
+    if (*parsed == sf::IpAddress::LocalHostV4 || *parsed == sf::IpAddress::LocalHostV6) return true;
+
+    if (!parsed->isV6()) return false;
+    const auto bytes = parsed->toBytes();
+    return std::all_of(bytes.begin(), bytes.begin() + 10, [](std::uint8_t value) { return value == 0; }) &&
+           bytes[10] == 0xff && bytes[11] == 0xff && bytes[12] == 127;
+}
+
+bool IsProxyPort(std::string_view text)
+{
+    if (text.empty()) return false;
+    unsigned int value = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    return error == std::errc{} && end == text.data() + text.size() && value <= 65535;
+}
+
+bool ParseProxyV1Header(std::string_view line, std::string& source_address)
+{
+    std::istringstream stream{ std::string(line) };
+    std::string signature;
+    std::string family;
+    std::string source;
+    std::string destination;
+    std::string source_port;
+    std::string destination_port;
+    std::string extra;
+    if (!(stream >> signature >> family >> source >> destination >> source_port >> destination_port) ||
+        stream >> extra || signature != "PROXY" || (family != "TCP4" && family != "TCP6") ||
+        !IsProxyPort(source_port) || !IsProxyPort(destination_port))
+        return false;
+
+    const auto parsed_source = sf::IpAddress::fromString(source);
+    const auto parsed_destination = sf::IpAddress::fromString(destination);
+    if (!parsed_source || !parsed_destination) return false;
+
+    const bool ipv4 = family == "TCP4";
+    if (parsed_source->isV4() != ipv4 || parsed_destination->isV4() != ipv4 ||
+        *parsed_source == sf::IpAddress::AnyV4 || *parsed_source == sf::IpAddress::AnyV6)
+        return false;
+
+    source_address = parsed_source->toString();
+    return true;
+}
+
 uint16_t EncodeExpProgressBps(const CPlayerFlower& flower)
 {
     const std::int64_t required = flower.ExpRequired();
@@ -82,6 +279,36 @@ size_t SnapshotBacklogSkipBytes()
     if (configured == 0)
         configured = std::max(min_backlog, game_config::network_snapshot_packet_budget * packet_multiplier);
     return std::clamp(configured, min_backlog, max_backlog);
+}
+
+bool SameSnapshotEntity(const ServerEntitySnap& lhs, const ServerEntitySnap& rhs)
+{
+    if (lhs.entity_id != rhs.entity_id || lhs.entity_type != rhs.entity_type || lhs.team != rhs.team ||
+        PackCoord(lhs.pos.x) != PackCoord(rhs.pos.x) || PackCoord(lhs.pos.y) != PackCoord(rhs.pos.y) ||
+        PackRadius(lhs.radius) != PackRadius(rhs.radius) || PackPercent(lhs.hp_percent) != PackPercent(rhs.hp_percent) ||
+        PackPercent(lhs.shield_percent) != PackPercent(rhs.shield_percent) || lhs.flags != rhs.flags ||
+        lhs.angle != rhs.angle || lhs.rarity != rhs.rarity || lhs.name != rhs.name ||
+        lhs.primary_slots.size() != rhs.primary_slots.size() || lhs.states.size() != rhs.states.size())
+        return false;
+
+    for (size_t i = 0; i < lhs.primary_slots.size(); ++i)
+    {
+        if (lhs.primary_slots[i].petal_type != rhs.primary_slots[i].petal_type ||
+            lhs.primary_slots[i].rarity != rhs.primary_slots[i].rarity ||
+            lhs.primary_slots[i].copies.size() != rhs.primary_slots[i].copies.size())
+            return false;
+        for (size_t copy = 0; copy < lhs.primary_slots[i].copies.size(); ++copy)
+        {
+            const auto& lhs_copy = lhs.primary_slots[i].copies[copy];
+            const auto& rhs_copy = rhs.primary_slots[i].copies[copy];
+            if (lhs_copy.state != rhs_copy.state || lhs_copy.progress != rhs_copy.progress) return false;
+        }
+    }
+    for (size_t i = 0; i < lhs.states.size(); ++i)
+    {
+        if (lhs.states[i].type != rhs.states[i].type || lhs.states[i].rarity != rhs.states[i].rarity) return false;
+    }
+    return true;
 }
 
 bool IsSlotOperate(const ClientOperate& op)
@@ -142,26 +369,23 @@ bool ExtractRconPayload(const std::string& message, std::string& payload)
     return true;
 }
 
-void SendPrivateServerMessage(INetworkModule& network, CPlayer& player, const std::string& message)
+void SendPrivateServerMessage(CServer& server, INetworkModule& network, CPlayer& player, const std::string& message)
 {
-    auto* server = CServer::GetInstance();
-    if (!server) return;
-
     std::string text = message.empty() ? "(empty)" : message;
     size_t offset = 0;
     while (offset < text.size())
     {
         std::string part = text.substr(offset, max_chat_message_size);
         offset += part.size();
-        if (const CServer::SChatEntry* chat = server->SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "RCON",
-                                                                 part, static_cast<int>(player.GetId())))
+        if (const CServer::SChatEntry* chat = server.SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "RCON",
+                                                               part, static_cast<int>(player.GetId())))
         {
             network.SendChatToPlayer(player, *chat);
         }
     }
 }
 
-bool HandleRconCommand(INetworkModule& network, CPlayer& player, const std::string& message)
+bool HandleRconCommand(CServer& server, INetworkModule& network, CPlayer& player, const std::string& message)
 {
     std::string payload;
     if (!ExtractRconPayload(message, payload)) return false;
@@ -170,8 +394,9 @@ bool HandleRconCommand(INetworkModule& network, CPlayer& player, const std::stri
 
     if (payload.empty())
     {
-        SendPrivateServerMessage(
-            network, player, player.IsRconAuthorized() ? "Usage: /rcon [server command]" : "Usage: /rcon [password]");
+        SendPrivateServerMessage(server, network, player,
+                                 player.IsRconAuthorized() ? "Usage: /rcon [server command]"
+                                                           : "Usage: /rcon [password]");
         return true;
     }
 
@@ -179,7 +404,7 @@ bool HandleRconCommand(INetworkModule& network, CPlayer& player, const std::stri
     {
         if (game_config::rcon_password.empty())
         {
-            SendPrivateServerMessage(network, player, "RCON is disabled.");
+            SendPrivateServerMessage(server, network, player, "RCON is disabled.");
             return true;
         }
 
@@ -187,19 +412,12 @@ bool HandleRconCommand(INetworkModule& network, CPlayer& player, const std::stri
         {
             player.SetRconAuthorized(true);
             LOG_INFO("rcon", "Player " + player.GetName() + " authorized from " + player.GetRemoteAddress());
-            SendPrivateServerMessage(network, player, "RCON authorized.");
+            SendPrivateServerMessage(server, network, player, "RCON authorized.");
         } else
         {
             LOG_WARN("rcon", "Failed RCON login for player " + player.GetName() + " from " + player.GetRemoteAddress());
-            SendPrivateServerMessage(network, player, "RCON authorization failed.");
+            SendPrivateServerMessage(server, network, player, "RCON authorization failed.");
         }
-        return true;
-    }
-
-    auto* server = CServer::GetInstance();
-    if (!server)
-    {
-        SendPrivateServerMessage(network, player, "RCON failed: server is unavailable.");
         return true;
     }
 
@@ -213,7 +431,7 @@ bool HandleRconCommand(INetworkModule& network, CPlayer& player, const std::stri
 
     try
     {
-        server->GetConsole().ExecuteLine(payload);
+        server.GetConsole().ExecuteLine(payload);
     } catch (const std::exception& e)
     {
         captured_lines.push_back(std::string("[rcon][ERROR] ") + e.what());
@@ -225,19 +443,23 @@ bool HandleRconCommand(INetworkModule& network, CPlayer& player, const std::stri
 
     if (captured_lines.empty())
     {
-        SendPrivateServerMessage(network, player, "Executed: " + payload);
+        SendPrivateServerMessage(server, network, player, "Executed: " + payload);
     } else
     {
         size_t count = std::min(captured_lines.size(), game_config::network_rcon_max_reply_lines);
         for (size_t i = 0; i < count; ++i)
-            SendPrivateServerMessage(network, player, captured_lines[i]);
+            SendPrivateServerMessage(server, network, player, captured_lines[i]);
         if (captured_lines.size() > count)
-            SendPrivateServerMessage(network, player,
+            SendPrivateServerMessage(server, network, player,
                                      "... " + std::to_string(captured_lines.size() - count) + " more lines");
     }
     return true;
 }
 } // namespace
+
+INetworkModule::INetworkModule(CServer& server, CGameWorld& lobby) : m_server(server), m_lobby_world(lobby) {}
+
+INetworkModule::~INetworkModule() = default;
 
 bool INetworkModule::Init()
 {
@@ -267,13 +489,43 @@ bool INetworkModule::Init()
         LOG_FATAL("network", "Failed to listen on port " + std::to_string(port));
         return false;
     }
+
+    m_auth_worker = std::make_unique<CAccountAuthWorker>();
+    std::string auth_error;
+    if (!m_auth_worker->Start(auth_error))
+    {
+        m_listener_v6.close();
+        m_listener_v4.close();
+        m_listening_v4 = false;
+        m_listening_v6 = false;
+        LOG_FATAL("network", auth_error);
+        return false;
+    }
+    LOG_INFO("network", "Authentication worker started");
+
+    m_email_verification_service = std::make_unique<CEmailVerificationService>();
+    std::string email_error;
+    if (!m_email_verification_service->Start(email_error))
+    {
+        m_auth_worker->ShutDown();
+        m_listener_v6.close();
+        m_listener_v4.close();
+        m_listening_v4 = false;
+        m_listening_v6 = false;
+        LOG_FATAL("email", email_error.empty() ? "Failed to start email verification service" : email_error);
+        return false;
+    }
+    LOG_INFO("email", "Email verification worker started");
     return true;
 }
 
 void INetworkModule::Tick(float dt)
 {
+    ProcessEmailDeliveryResults();
+    ProcessAuthenticationResults();
     AcceptConnections();
     ProcessMessages();
+    DispatchAuthenticationRequests();
     m_player_lifecycle_service.RespawnDeadControlledEntities(m_players, m_lobby_world, *this);
     m_player_lifecycle_service.ProcessDropPickups(m_players, *this);
     TickBans(dt);
@@ -327,15 +579,28 @@ void INetworkModule::SendSnapshots()
             continue;
         }
 
+        const auto build_started = std::chrono::steady_clock::now();
         CSnapshotService::SBuildResult snapshot;
         if (!m_snapshot_service.BuildSnapshot(*player, m_snapshot_id, snapshot)) continue;
+        snapshot.message.server_tick = m_server.GetTick();
+        const size_t full_snapshot_size = snapshot.packed_size;
+        size_t actual_snapshot_size = full_snapshot_size;
+        SSnapshotHistoryEntry history_entry =
+            PrepareSnapshotForSend(*player, snapshot.message, full_snapshot_size, actual_snapshot_size);
+        const double build_elapsed_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - build_started).count();
+        RecordSnapshotBuildTime(build_elapsed_ms);
 
-        if (!QueueMessage(*player, snapshot.message))
+        if (!QueueMessage(*player, snapshot.message, actual_snapshot_size))
         {
             LOG_WARN("network", "Failed to queue snapshot for player " + std::to_string(player->GetId()) + " (" +
                                     std::to_string(snapshot.message.entities.size()) + " entities, " +
-                                    std::to_string(ServerMessage::GetPackedSize(snapshot.message)) +
+                                    std::to_string(actual_snapshot_size) +
                                     " bytes, backlog " + std::to_string(PendingSendBytes(*player)) + " bytes)");
+        } else
+        {
+            RecordQueuedSnapshot(snapshot.message, full_snapshot_size, actual_snapshot_size);
+            RecordSentSnapshot(*player, std::move(history_entry));
         }
         if (!FlushSendBuffer(*player))
         {
@@ -352,7 +617,18 @@ void INetworkModule::ShutDown()
     m_listener_v4.close();
     m_listening_v4 = false;
     m_listening_v6 = false;
+    m_pending_auth_requests.clear();
+    m_player_auth_requests.clear();
+    m_active_auth_accounts.clear();
+    m_pending_verified_logins.clear();
+    m_email_delivery_requests.clear();
+    m_proxy_header_pending.clear();
+    m_auth_deadlines.clear();
+    m_auth_failures.clear();
+    if (m_email_verification_service) m_email_verification_service->ShutDown();
+    if (m_auth_worker) m_auth_worker->ShutDown();
     m_players.clear();
+    m_client_snapshot_states.clear();
     LOG_INFO("network", "Shut down");
 }
 
@@ -370,12 +646,22 @@ void INetworkModule::AcceptConnections()
             new_socket.disconnect();
             return;
         }
+        if (m_auth_deadlines.size() >= unauthenticated_connection_limit)
+        {
+            LOG_WARN("network", "Rejected connection: unauthenticated connection limit reached");
+            new_socket.disconnect();
+            return;
+        }
 
         new_socket.setBlocking(false);
 
         int id = GetNewPlayerId();
         auto player = std::make_unique<CPlayer>(std::move(new_socket), id, "Pending" + std::to_string(id));
         player->SetRemoteAddress(remote_address);
+        if (IsLoopbackAddress(remote_address)) m_proxy_header_pending.insert(static_cast<std::uint32_t>(id));
+        m_auth_deadlines.insert_or_assign(
+            static_cast<std::uint32_t>(id),
+            std::chrono::steady_clock::now() + std::chrono::seconds(initial_auth_timeout_seconds));
         m_players.push_back(std::move(player));
         LOG_INFO("network", "New connection accepted, pending auth ID: " + std::to_string(id));
     };
@@ -401,6 +687,11 @@ void INetworkModule::ProcessMessages()
         if (disconnected)
         {
             LOG_INFO("network", "Player " + std::to_string(player->GetId()) + " disconnected while sending");
+            if (!player->IsAuthenticated())
+            {
+                DropPlayer(i, "unauthenticated connection lost while sending");
+                continue;
+            }
             player->DetachSocket();
             ++i;
             continue;
@@ -434,6 +725,11 @@ void INetworkModule::ProcessMessages()
         } else if (status == sf::Socket::Status::Disconnected)
         {
             LOG_INFO("network", "Player " + std::to_string(player->GetId()) + " disconnected");
+            if (!player->IsAuthenticated())
+            {
+                DropPlayer(i, "unauthenticated connection closed");
+                continue;
+            }
             player->DetachSocket();
             ++i;
         } else
@@ -441,6 +737,271 @@ void INetworkModule::ProcessMessages()
             ++i;
         }
     }
+}
+
+void INetworkModule::ProcessEmailDeliveryResults()
+{
+    if (!m_email_verification_service) return;
+
+    for (CEmailVerificationService::SDeliveryResult& result :
+         m_email_verification_service->TakeDeliveryResults())
+    {
+        const auto pending = m_email_delivery_requests.find(result.player_id);
+        if (pending == m_email_delivery_requests.end() || pending->second != result.request_id) continue;
+        m_email_delivery_requests.erase(pending);
+
+        CPlayer* player = FindPlayerById(result.player_id);
+        if (!player || !player->IsConnected() || player->IsAuthenticated()) continue;
+        if (result.success)
+            QueueAuthResult(*player, EAuthResultCode::VerificationCodeSent, "Verification code sent");
+        else
+            QueueAuthResult(*player, EAuthResultCode::Failed,
+                            result.error.empty() ? "Verification email could not be delivered" : result.error);
+    }
+}
+
+bool INetworkModule::RequestVerificationCode(CPlayer& player, const std::string& account_name,
+                                              const std::string& email, bool registration)
+{
+    if (!m_email_verification_service)
+    {
+        QueueAuthResult(player, EAuthResultCode::Failed, "Email verification service is unavailable");
+        return false;
+    }
+
+    std::uint64_t request_id = 0;
+    std::string error;
+    const CEmailVerificationService::EPurpose purpose = registration
+                                                            ? CEmailVerificationService::EPurpose::Registration
+                                                            : CEmailVerificationService::EPurpose::Binding;
+    if (!m_email_verification_service->RequestCode(player.GetId(), account_name, email, player.GetRemoteAddress(),
+                                                   purpose, request_id, error))
+    {
+        QueueAuthResult(player, EAuthResultCode::Failed,
+                        error.empty() ? "Unable to request verification code" : error);
+        return false;
+    }
+
+    m_email_delivery_requests.insert_or_assign(player.GetId(), request_id);
+    m_auth_deadlines.insert_or_assign(
+        player.GetId(), std::chrono::steady_clock::now() +
+                            std::chrono::seconds(std::max(1, game_config::email_send_timeout_seconds) +
+                                                 std::max(1, game_config::email_verification_ttl_seconds) +
+                                                 auth_verification_grace_seconds));
+    QueueAuthResult(player, EAuthResultCode::VerificationCodeSending, "Sending verification code");
+    return true;
+}
+
+void INetworkModule::ClearPendingEmailAuthentication(std::uint32_t player_id)
+{
+    m_pending_verified_logins.erase(player_id);
+    m_email_delivery_requests.erase(player_id);
+}
+
+void INetworkModule::ProcessAuthenticationResults()
+{
+    if (!m_auth_worker) return;
+
+    for (CAccountAuthWorker::SCompletion& completion : m_auth_worker->TakeCompletions())
+    {
+        m_active_auth_accounts.erase(completion.account_name);
+
+        auto pending = m_player_auth_requests.find(completion.player_id);
+        if (pending == m_player_auth_requests.end() || pending->second != completion.request_id) continue;
+        m_player_auth_requests.erase(pending);
+
+        CPlayer* player = FindPlayerById(completion.player_id);
+        if (!player || !player->IsConnected() || player->IsAuthenticated()) continue;
+        if (IsNameBanned(completion.account_name))
+        {
+            QueueAuthResult(*player, EAuthResultCode::Failed, "Name is banned");
+            continue;
+        }
+
+        if (!completion.result.success)
+        {
+            if (!completion.register_mode) RecordLoginFailure(*player, completion.account_name);
+            QueueAuthResult(*player, EAuthResultCode::Failed,
+                            completion.result.error.empty() ? "Auth failed" : completion.result.error);
+            continue;
+        }
+
+        std::string commit_error;
+        if (completion.register_mode)
+        {
+            if (!CAccountDataStore::CommitVerifiedRegistration(completion.result, &commit_error))
+            {
+                QueueAuthResult(*player, EAuthResultCode::Failed,
+                                commit_error.empty() ? "Auth failed" : commit_error);
+                continue;
+            }
+            if (m_email_verification_service)
+                m_email_verification_service->ForgetChallenge(
+                    completion.result.account_name, completion.result.email,
+                    CEmailVerificationService::EPurpose::Registration);
+        } else
+        {
+            if (!CAccountDataStore::CommitLogin(completion.result, &commit_error))
+            {
+                RecordLoginFailure(*player, completion.account_name);
+                QueueAuthResult(*player, EAuthResultCode::Failed,
+                                commit_error.empty() ? "Auth failed" : commit_error);
+                continue;
+            }
+            ClearLoginFailures(*player, completion.account_name);
+            if (completion.result.email_verification_required)
+            {
+                ClearPendingEmailAuthentication(player->GetId());
+                const auto expires_at = std::chrono::steady_clock::now() +
+                                        std::chrono::seconds(
+                                            std::max(1, game_config::email_verification_ttl_seconds));
+                m_pending_verified_logins.insert_or_assign(
+                    player->GetId(),
+                    SPendingVerifiedLogin{ completion.account_name,
+                                           completion.result.password_verified ? completion.result.client_ip
+                                                                               : std::string{},
+                                           expires_at });
+                m_auth_deadlines.insert_or_assign(
+                    player->GetId(), expires_at + std::chrono::seconds(auth_verification_grace_seconds));
+                QueueAuthResult(*player, EAuthResultCode::EmailBindingRequired,
+                                completion.result.email.empty() ? "Bind and verify an email address"
+                                                                : "Verify the bound email address");
+                continue;
+            }
+        }
+        if (!commit_error.empty()) LOG_WARN("account", commit_error);
+
+        ClearPendingEmailAuthentication(player->GetId());
+        EPlayerBufferResult result = ApplyAuthentication(
+            *player, completion.account_name, completion.register_mode, EAuthResultCode::Authenticated, {},
+            !completion.register_mode && completion.result.password_verified ? completion.result.client_ip
+                                                                              : std::string{});
+        if (result == EPlayerBufferResult::Continue) continue;
+
+        for (size_t i = 0; i < m_players.size(); ++i)
+        {
+            if (!m_players[i] || m_players[i].get() != player) continue;
+            DropPlayer(i, result == EPlayerBufferResult::RemovePendingPlayer ? "reconnected through account"
+                                                                            : "disconnected after authentication");
+            break;
+        }
+    }
+}
+
+void INetworkModule::DispatchAuthenticationRequests()
+{
+    for (auto request = m_pending_auth_requests.begin(); request != m_pending_auth_requests.end();)
+    {
+        auto pending = m_player_auth_requests.find(request->player_id);
+        CPlayer* player = FindPlayerById(request->player_id);
+        if (pending == m_player_auth_requests.end() || pending->second != request->request_id || !player ||
+            !player->IsConnected() || player->IsAuthenticated())
+        {
+            if (pending != m_player_auth_requests.end() && pending->second == request->request_id)
+                m_player_auth_requests.erase(pending);
+            request = m_pending_auth_requests.erase(request);
+            continue;
+        }
+
+        if (m_active_auth_accounts.contains(request->account_name))
+        {
+            ++request;
+            continue;
+        }
+        if (IsNameBanned(request->account_name))
+        {
+            QueueAuthResult(*player, EAuthResultCode::Failed, "Name is banned");
+            m_player_auth_requests.erase(pending);
+            request = m_pending_auth_requests.erase(request);
+            continue;
+        }
+
+        SAccountAuthWork work;
+        std::string error;
+        if (!CAccountDataStore::PrepareAuthentication(request->account_name, request->password, request->email,
+                                                       player->GetRemoteAddress(), request->register_mode, work,
+                                                       &error))
+        {
+            if (!request->register_mode) RecordLoginFailure(*player, request->account_name);
+            QueueAuthResult(*player, EAuthResultCode::Failed, error.empty() ? "Auth failed" : error);
+            m_player_auth_requests.erase(pending);
+            request = m_pending_auth_requests.erase(request);
+            continue;
+        }
+
+        const std::string account_name = request->account_name;
+        m_active_auth_accounts.insert(account_name);
+        CAccountAuthWorker::SJob job;
+        job.request_id = request->request_id;
+        job.player_id = request->player_id;
+        job.work = std::move(work);
+        if (!m_auth_worker || !m_auth_worker->Submit(std::move(job)))
+        {
+            m_active_auth_accounts.erase(account_name);
+            QueueAuthResult(*player, EAuthResultCode::Failed, "Authentication service is unavailable");
+            m_player_auth_requests.erase(pending);
+        }
+        request = m_pending_auth_requests.erase(request);
+    }
+}
+
+void INetworkModule::CancelAuthenticationRequest(std::uint32_t player_id)
+{
+    auto pending = m_player_auth_requests.find(player_id);
+    if (pending == m_player_auth_requests.end()) return;
+
+    const std::uint64_t request_id = pending->second;
+    m_player_auth_requests.erase(pending);
+    m_pending_auth_requests.erase(
+        std::remove_if(m_pending_auth_requests.begin(), m_pending_auth_requests.end(),
+                       [request_id](const SPendingAuthRequest& request) { return request.request_id == request_id; }),
+        m_pending_auth_requests.end());
+}
+
+bool INetworkModule::IsLoginRateLimited(const CPlayer& player, const std::string& account_name)
+{
+    const auto now = std::chrono::steady_clock::now();
+    const auto window = std::chrono::seconds(auth_failure_window_seconds);
+    for (auto entry = m_auth_failures.begin(); entry != m_auth_failures.end();)
+    {
+        if (now >= entry->second.blocked_until && now - entry->second.last_failure >= window)
+            entry = m_auth_failures.erase(entry);
+        else
+            ++entry;
+    }
+
+    std::string key = player.GetRemoteAddress();
+    key.push_back('\n');
+    key += account_name;
+    const auto found = m_auth_failures.find(key);
+    if (found != m_auth_failures.end()) return now < found->second.blocked_until;
+    return m_auth_failures.size() >= auth_failure_state_limit;
+}
+
+void INetworkModule::RecordLoginFailure(const CPlayer& player, const std::string& account_name)
+{
+    std::string key = player.GetRemoteAddress();
+    key.push_back('\n');
+    key += account_name;
+
+    const auto now = std::chrono::steady_clock::now();
+    SAuthFailureState& state = m_auth_failures[key];
+    if (state.failures == 0 || now - state.last_failure >= std::chrono::seconds(auth_failure_window_seconds))
+        state = {};
+    state.last_failure = now;
+    ++state.failures;
+    if (state.failures < auth_failure_limit) return;
+
+    const int exponent = std::clamp(state.failures - auth_failure_limit, 0, 3);
+    state.blocked_until = now + std::chrono::seconds(auth_failure_lock_seconds * (1 << exponent));
+}
+
+void INetworkModule::ClearLoginFailures(const CPlayer& player, const std::string& account_name)
+{
+    std::string key = player.GetRemoteAddress();
+    key.push_back('\n');
+    key += account_name;
+    m_auth_failures.erase(key);
 }
 
 bool INetworkModule::FlushSendBuffer(CPlayer& player)
@@ -522,10 +1083,10 @@ void INetworkModule::DropQueuedSnapshots(CPlayer& player)
     player.m_send_buffer.swap(kept);
 }
 
-bool INetworkModule::QueueMessage(CPlayer& player, const ServerMessage& msg)
+bool INetworkModule::QueueMessage(CPlayer& player, const ServerMessage& msg, size_t packed_size)
 {
     CompactSentPackets(player);
-    size_t len = ServerMessage::GetPackedSize(msg);
+    const size_t len = packed_size > 0 ? packed_size : ServerMessage::GetPackedSize(msg);
     if (len == 0 || len > UINT16_MAX)
     {
         if (msg.type == ServerMessage::Type::Snapshot)
@@ -543,7 +1104,7 @@ bool INetworkModule::QueueMessage(CPlayer& player, const ServerMessage& msg)
     thread_local std::vector<uint8_t> payload(UINT16_MAX);
     if (payload.size() < UINT16_MAX) payload.resize(UINT16_MAX);
     size_t packed_len = ServerMessage::pack(msg, payload.data());
-    if (packed_len == 0 || packed_len > UINT16_MAX) return false;
+    if (packed_len == 0 || packed_len > UINT16_MAX || packed_len != len) return false;
     if (PendingSendBytes(player) + packed_len + packet_length_prefix_size > game_config::network_max_send_buffer_size)
     {
         LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " output buffer overflow");
@@ -559,17 +1120,153 @@ bool INetworkModule::QueueMessage(CPlayer& player, const ServerMessage& msg)
     return true;
 }
 
-bool INetworkModule::QueueAuthResult(CPlayer& player, bool success, const std::string& message)
+void INetworkModule::HandleSnapshotAck(CPlayer& player, const ClientSnapshotAck& ack)
+{
+    if (ack.snapshot_id == full_snapshot_base_id)
+    {
+        ResetSnapshotState(player);
+        return;
+    }
+
+    auto state_it = m_client_snapshot_states.find(player.GetId());
+    if (state_it == m_client_snapshot_states.end()) return;
+    SClientSnapshotState& state = state_it->second;
+    if (state.acked_snapshot_id && ack.snapshot_id < *state.acked_snapshot_id) return;
+
+    auto history_it = std::find_if(state.history.begin(), state.history.end(), [&](const auto& entry) {
+        return entry.snapshot_id == ack.snapshot_id;
+    });
+    if (history_it == state.history.end())
+    {
+        state.acked_snapshot_id.reset();
+        return;
+    }
+
+    state.acked_snapshot_id = ack.snapshot_id;
+    while (!state.history.empty() && state.history.front().snapshot_id < ack.snapshot_id)
+        state.history.pop_front();
+}
+
+void INetworkModule::HandleInputFrame(CPlayer& player, const ClientInputFrame& frame)
+{
+    const std::uint64_t current_tick = m_server.GetTick();
+    std::uint32_t delay_ticks = CPlayerController::MIN_INPUT_DELAY_TICKS;
+    if (frame.target_server_tick > current_tick)
+    {
+        const std::uint64_t requested_delay = frame.target_server_tick - current_tick;
+        delay_ticks = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(requested_delay, CPlayerController::MAX_INPUT_DELAY_TICKS));
+    }
+    player.HandleScheduledOperate(frame.ToOperate(), delay_ticks, frame.sequence);
+}
+
+INetworkModule::SSnapshotHistoryEntry INetworkModule::PrepareSnapshotForSend(CPlayer& player, ServerMessage& msg,
+                                                                              size_t full_size,
+                                                                              size_t& actual_size)
+{
+    msg.base_snapshot_id = full_snapshot_base_id;
+    msg.removed_entity_ids.clear();
+    actual_size = full_size;
+
+    SSnapshotHistoryEntry full_entry;
+    full_entry.snapshot_id = msg.snapshot_id.value_or(0);
+    full_entry.server_tick = msg.server_tick.value_or(0);
+    full_entry.entities.reserve(msg.entities.size());
+    for (const ServerEntitySnap& snap : msg.entities) full_entry.entities.insert_or_assign(snap.entity_id, snap);
+
+    auto state_it = m_client_snapshot_states.find(player.GetId());
+    if (state_it == m_client_snapshot_states.end() || !state_it->second.acked_snapshot_id) return full_entry;
+
+    const std::uint32_t base_id = *state_it->second.acked_snapshot_id;
+    auto base_it = std::find_if(state_it->second.history.begin(), state_it->second.history.end(),
+                                [base_id](const auto& entry) { return entry.snapshot_id == base_id; });
+    if (base_it == state_it->second.history.end())
+    {
+        state_it->second.acked_snapshot_id.reset();
+        return full_entry;
+    }
+
+    ServerMessage delta;
+    delta.type = ServerMessage::Type::Snapshot;
+    delta.snapshot_id = msg.snapshot_id;
+    delta.base_snapshot_id = base_id;
+    delta.server_tick = msg.server_tick;
+    delta.owner_entity_id = msg.owner_entity_id;
+    delta.view_radius = msg.view_radius;
+
+    for (const ServerEntitySnap& snap : msg.entities)
+    {
+        auto old_it = base_it->entities.find(snap.entity_id);
+        if (old_it == base_it->entities.end() || !SameSnapshotEntity(snap, old_it->second))
+            delta.entities.push_back(snap);
+    }
+
+    for (const auto& [entity_id, old_snap] : base_it->entities)
+    {
+        (void)old_snap;
+        if (full_entry.entities.find(entity_id) == full_entry.entities.end())
+            delta.removed_entity_ids.push_back(entity_id);
+    }
+    std::sort(delta.removed_entity_ids.begin(), delta.removed_entity_ids.end());
+
+    const size_t delta_size = ServerMessage::GetPackedSize(delta);
+    if (delta_size < full_size)
+    {
+        msg = std::move(delta);
+        actual_size = delta_size;
+    }
+    return full_entry;
+}
+
+void INetworkModule::RecordSentSnapshot(CPlayer& player, SSnapshotHistoryEntry entry)
+{
+    SClientSnapshotState& state = m_client_snapshot_states[player.GetId()];
+    state.history.push_back(std::move(entry));
+    while (state.history.size() > snapshot_history_limit) state.history.pop_front();
+    if (state.acked_snapshot_id &&
+        std::none_of(state.history.begin(), state.history.end(), [&](const auto& history_entry) {
+            return history_entry.snapshot_id == *state.acked_snapshot_id;
+        }))
+        state.acked_snapshot_id.reset();
+}
+
+void INetworkModule::RecordSnapshotBuildTime(double elapsed_ms)
+{
+    SSnapshotTelemetry& telemetry = m_snapshot_telemetry;
+    telemetry.build_count++;
+    telemetry.last_build_ms = elapsed_ms;
+    m_snapshot_build_total_ms += elapsed_ms;
+    telemetry.average_build_ms = m_snapshot_build_total_ms / static_cast<double>(telemetry.build_count);
+    telemetry.max_build_ms = std::max(telemetry.max_build_ms, elapsed_ms);
+}
+
+void INetworkModule::RecordQueuedSnapshot(const ServerMessage& msg, size_t full_size, size_t actual_size)
+{
+    SSnapshotTelemetry& telemetry = m_snapshot_telemetry;
+    if (msg.base_snapshot_id.value_or(full_snapshot_base_id) == full_snapshot_base_id)
+        telemetry.full_snapshots_queued++;
+    else
+        telemetry.delta_snapshots_queued++;
+    telemetry.full_snapshot_bytes += full_size;
+    telemetry.actual_snapshot_bytes += actual_size;
+    telemetry.changed_entities += msg.entities.size();
+    telemetry.removed_entities += msg.removed_entity_ids.size();
+}
+
+void INetworkModule::ResetSnapshotState(CPlayer& player) { m_client_snapshot_states.erase(player.GetId()); }
+
+bool INetworkModule::QueueAuthResult(CPlayer& player, EAuthResultCode code, const std::string& message)
 {
     ServerMessage msg;
     msg.type = ServerMessage::Type::AuthResult;
-    msg.auth_success = success;
+    msg.auth_result_code = code;
     msg.auth_message = message;
     return QueueMessage(player, msg);
 }
 
 bool INetworkModule::QueueWelcome(CPlayer& player)
 {
+    ResetSnapshotState(player);
     ServerMessage msg;
     msg.type = ServerMessage::Type::Welcome;
     msg.player_id = static_cast<uint16_t>(player.GetId());
@@ -716,6 +1413,9 @@ void INetworkModule::BroadcastChat(const CServer::SChatEntry& chat)
             continue;
         }
 
+        // Squad recipients are selected explicitly by the squad controller.
+        if (chat.flag == EChatFlag::Squad) continue;
+
         if (chat.flag == EChatFlag::Global)
         {
             QueueChat(*player, chat);
@@ -732,8 +1432,58 @@ void INetworkModule::BroadcastChat(const CServer::SChatEntry& chat)
     }
 }
 
+INetworkModule::EProxyHeaderResult INetworkModule::ResolveTrustedProxyHeader(CPlayer& player)
+{
+    const auto pending = m_proxy_header_pending.find(player.GetId());
+    if (pending == m_proxy_header_pending.end()) return EProxyHeaderResult::Resolved;
+
+    auto& buffer = player.m_receive_buffer;
+    const size_t compared = std::min(buffer.size(), proxy_v1_prefix.size());
+    if (!std::equal(buffer.begin(), buffer.begin() + compared, proxy_v1_prefix.begin()))
+    {
+        m_proxy_header_pending.erase(pending);
+        return EProxyHeaderResult::Resolved;
+    }
+    if (buffer.size() < proxy_v1_prefix.size()) return EProxyHeaderResult::NeedMoreData;
+
+    static constexpr std::array<std::uint8_t, 2> terminator{ '\r', '\n' };
+    const auto line_end = std::search(buffer.begin() + proxy_v1_prefix.size(), buffer.end(), terminator.begin(),
+                                      terminator.end());
+    if (line_end == buffer.end())
+    {
+        if (buffer.size() <= proxy_v1_max_header_size) return EProxyHeaderResult::NeedMoreData;
+        m_proxy_header_pending.erase(pending);
+        return EProxyHeaderResult::Rejected;
+    }
+
+    const size_t header_size = static_cast<size_t>(std::distance(buffer.begin(), line_end)) + terminator.size();
+    if (header_size > proxy_v1_max_header_size)
+    {
+        m_proxy_header_pending.erase(pending);
+        return EProxyHeaderResult::Rejected;
+    }
+
+    const std::string_view line(reinterpret_cast<const char*>(buffer.data()), header_size - terminator.size());
+    std::string source_address;
+    m_proxy_header_pending.erase(pending);
+    if (!ParseProxyV1Header(line, source_address)) return EProxyHeaderResult::Rejected;
+    if (IsIpBanned(source_address))
+    {
+        LOG_INFO("network", "Rejected banned proxied IP: " + source_address);
+        return EProxyHeaderResult::Rejected;
+    }
+
+    player.SetRemoteAddress(source_address);
+    buffer.erase(buffer.begin(), buffer.begin() + header_size);
+    return EProxyHeaderResult::Resolved;
+}
+
 INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer& player)
 {
+    const EProxyHeaderResult proxy_result = ResolveTrustedProxyHeader(player);
+    if (proxy_result == EProxyHeaderResult::NeedMoreData) return EPlayerBufferResult::Continue;
+    if (proxy_result == EProxyHeaderResult::Rejected) return EPlayerBufferResult::RequestedDisconnect;
+
     CAccountDataStore::CSaveBatch account_save_batch;
     bool queue_slot_state = false;
     auto flush_slot_state = [&]() -> EPlayerBufferResult {
@@ -759,7 +1509,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                                           player.m_receive_buffer.begin() + packet_size);
             if (!ok)
             {
-                QueueAuthResult(player, false, "Bad auth packet");
+                QueueAuthResult(player, EAuthResultCode::Failed, "Bad auth packet");
                 continue;
             }
 
@@ -780,7 +1530,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                                           player.m_receive_buffer.begin() + packet_size);
             if (!player.IsAuthenticated())
             {
-                QueueAuthResult(player, false, "Please login first");
+                QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
                 return EPlayerBufferResult::RequestedDisconnect;
             }
             if (ok) HandleChatRequest(player, request);
@@ -800,7 +1550,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                                           player.m_receive_buffer.begin() + packet_size);
             if (!player.IsAuthenticated())
             {
-                QueueAuthResult(player, false, "Please login first");
+                QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
                 return EPlayerBufferResult::RequestedDisconnect;
             }
             if (ok)
@@ -823,10 +1573,29 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                                           player.m_receive_buffer.begin() + packet_size);
             if (!player.IsAuthenticated())
             {
-                QueueAuthResult(player, false, "Please login first");
+                QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
                 return EPlayerBufferResult::RequestedDisconnect;
             }
             if (ok) HandleCraftRequest(player, request);
+            continue;
+        }
+
+        if (ClientForgeRequest::IsPacketStart(player.m_receive_buffer[0]))
+        {
+            size_t packet_size =
+                ClientForgeRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
+            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
+
+            bool ok = false;
+            ClientForgeRequest request = ClientForgeRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
+            player.m_receive_buffer.erase(player.m_receive_buffer.begin(),
+                                          player.m_receive_buffer.begin() + packet_size);
+            if (!player.IsAuthenticated())
+            {
+                QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
+                return EPlayerBufferResult::RequestedDisconnect;
+            }
+            if (ok) HandleForgeRequest(player, request);
             continue;
         }
 
@@ -842,10 +1611,48 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                                           player.m_receive_buffer.begin() + packet_size);
             if (!player.IsAuthenticated())
             {
-                QueueAuthResult(player, false, "Please login first");
+                QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
                 return EPlayerBufferResult::RequestedDisconnect;
             }
             if (ok) HandleTalentRequest(player, request);
+            continue;
+        }
+
+        if (ClientInputFrame::IsPacketStart(player.m_receive_buffer[0]))
+        {
+            size_t packet_size =
+                ClientInputFrame::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
+            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
+
+            bool ok = false;
+            ClientInputFrame frame = ClientInputFrame::parse(player.m_receive_buffer.data(), packet_size, &ok);
+            player.m_receive_buffer.erase(player.m_receive_buffer.begin(),
+                                          player.m_receive_buffer.begin() + packet_size);
+            if (!player.IsAuthenticated())
+            {
+                QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
+                return EPlayerBufferResult::RequestedDisconnect;
+            }
+            if (ok) HandleInputFrame(player, frame);
+            continue;
+        }
+
+        if (ClientSnapshotAck::IsPacketStart(player.m_receive_buffer[0]))
+        {
+            size_t packet_size =
+                ClientSnapshotAck::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
+            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
+
+            bool ok = false;
+            ClientSnapshotAck ack = ClientSnapshotAck::parse(player.m_receive_buffer.data(), packet_size, &ok);
+            player.m_receive_buffer.erase(player.m_receive_buffer.begin(),
+                                          player.m_receive_buffer.begin() + packet_size);
+            if (!player.IsAuthenticated())
+            {
+                QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
+                return EPlayerBufferResult::RequestedDisconnect;
+            }
+            if (ok) HandleSnapshotAck(player, ack);
             continue;
         }
 
@@ -854,7 +1661,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
             player.m_receive_buffer.erase(player.m_receive_buffer.begin());
             if (!player.IsAuthenticated())
             {
-                QueueAuthResult(player, false, "Please login first");
+                QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
                 return EPlayerBufferResult::RequestedDisconnect;
             }
             QueueInventory(player);
@@ -866,7 +1673,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
 
         if (!player.IsAuthenticated())
         {
-            QueueAuthResult(player, false, "Please login first");
+            QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
             return EPlayerBufferResult::RequestedDisconnect;
         }
 
@@ -889,7 +1696,8 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                 {
                     CGameWorld* respawn_world = player.GetEntity() ? player.GetEntity()->GameWorld() : nullptr;
                     if (!respawn_world) respawn_world = &m_lobby_world;
-                    if (m_player_lifecycle_service.Respawn(player, *respawn_world))
+                    if (m_player_lifecycle_service.SpawnPlayer(player, *respawn_world,
+                                                               EPlayerSpawnReason::Respawn))
                         m_player_lifecycle_service.NotifyPlayerWorldChanged(player, *this);
                 } else player.HandleOperate(op);
             } else
@@ -906,7 +1714,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
 
 void INetworkModule::HandleChatRequest(CPlayer& player, const ClientChatRequest& request)
 {
-    if (HandleRconCommand(*this, player, request.message)) return;
+    if (HandleRconCommand(m_server, *this, player, request.message)) return;
 
     CEntity* entity = player.GetEntity();
     if (!entity || entity->m_is_marked_for_des) return;
@@ -933,7 +1741,7 @@ void INetworkModule::HandleChatRequest(CPlayer& player, const ClientChatRequest&
     }
 
     EChatFlag flag = request.flag == EChatFlag::Local ? EChatFlag::Local : EChatFlag::Global;
-    if (const CServer::SChatEntry* chat = CServer::GetInstance()->SubmitChat(
+    if (const CServer::SChatEntry* chat = m_server.SubmitChat(
             entity->GameWorld(), entity->m_pos, flag, player.GetId(), player.GetName(), request.message))
     {
         BroadcastChat(*chat);
@@ -962,6 +1770,66 @@ void INetworkModule::HandleCraftRequest(CPlayer& player, const ClientCraftReques
     }
 }
 
+void INetworkModule::HandleForgeRequest(CPlayer& player, const ClientForgeRequest& request)
+{
+    constexpr uint32_t forge_cost = 5;
+    constexpr uint8_t super_rarity = static_cast<uint8_t>(ERarity::Super);
+
+    SCraftResult result;
+    result.petal_type = request.petal_type;
+    result.rarity = request.rarity;
+    result.consumed = forge_cost;
+
+    const bool valid_request = request.petal_type > static_cast<uint8_t>(EPetalType::None) &&
+                               request.petal_type < petal_type_names.size() && request.rarity == super_rarity &&
+                               request.count == forge_cost;
+    if (valid_request) result.items.push_back({ request.petal_type, super_rarity, forge_cost });
+
+    auto reject = [&]() { QueueCraftResult(player, result); };
+    if (!valid_request)
+    {
+        reject();
+        return;
+    }
+
+    CEntity* player_entity = player.GetEntity();
+    CGameWorld* world = player_entity ? player_entity->GameWorld() : nullptr;
+    if (!player_entity || !world || player_entity->m_is_marked_for_des || player_entity->IsDead())
+    {
+        reject();
+        return;
+    }
+
+    auto* forge_titan = dynamic_cast<CTitanFlower*>(world->FindClosestEntityByEdge(
+        player_entity->m_pos, game_config::titan_forge_range, [](const CEntity* candidate) {
+            const auto* titan = dynamic_cast<const CTitanFlower*>(candidate);
+            return titan && !titan->m_is_marked_for_des && !titan->IsDead();
+        }));
+    const EPetalType petal_type = static_cast<EPetalType>(request.petal_type);
+    if (!forge_titan || !m_server.CanTitanForgePetal(petal_type) ||
+        !CAccountDataStore::HasItem(player.GetAccountName(), request.petal_type, super_rarity, forge_cost))
+    {
+        reject();
+        return;
+    }
+
+    IUniquePetalRegistry* registry = m_server.GetUniquePetalRegistry();
+    if (!registry || !registry->GetUnique(petal_type, forge_cost, player.GetAccountName()))
+    {
+        reject();
+        return;
+    }
+
+    forge_titan->ReplaceForgedUniquePetal(petal_type);
+    m_server.StartTitanForgeCooldown(petal_type);
+
+    result.changed = true;
+    result.successes = 1;
+    result.result_rarity = static_cast<uint8_t>(ERarity::Unique);
+    result.items = { { request.petal_type, result.result_rarity, 1 } };
+    QueueCraftResult(player, result);
+}
+
 void INetworkModule::HandleTalentRequest(CPlayer& player, const ClientTalentRequest& request)
 {
     bool changed = false;
@@ -982,45 +1850,218 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
 {
     if (player.IsAuthenticated())
     {
-        QueueAuthResult(player, false, "Already authenticated");
+        QueueAuthResult(player, EAuthResultCode::Failed, "Already authenticated");
         return EPlayerBufferResult::Continue;
     }
 
-    std::string error;
-    bool register_mode = request.mode == ClientAuthRequest::Mode::Register;
+    if (m_player_auth_requests.contains(player.GetId()))
+    {
+        QueueAuthResult(player, EAuthResultCode::Failed, "Authentication already in progress");
+        return EPlayerBufferResult::Continue;
+    }
+
     if (IsNameBanned(request.name))
     {
-        QueueAuthResult(player, false, "Name is banned");
+        QueueAuthResult(player, EAuthResultCode::Failed, "Name is banned");
         return EPlayerBufferResult::Continue;
     }
-
-    if (!CAccountDataStore::LoginOrRegister(request.name, request.password, register_mode, &error))
+    if (request.mode == ClientAuthRequest::Mode::Login && IsLoginRateLimited(player, request.name))
     {
-        QueueAuthResult(player, false, error.empty() ? "Auth failed" : error);
+        QueueAuthResult(player, EAuthResultCode::Failed, "Too many login attempts; try again later");
         return EPlayerBufferResult::Continue;
     }
 
+    const bool queues_authentication = request.mode == ClientAuthRequest::Mode::Login ||
+                                       request.mode == ClientAuthRequest::Mode::Register;
+    if (queues_authentication && m_player_auth_requests.size() >= auth_queue_limit)
+    {
+        QueueAuthResult(player, EAuthResultCode::Failed, "Authentication service is busy");
+        return EPlayerBufferResult::Continue;
+    }
+
+    if (request.mode == ClientAuthRequest::Mode::RequestRegistrationCode)
+    {
+        if (m_active_auth_accounts.contains(request.name))
+        {
+            QueueAuthResult(player, EAuthResultCode::Failed, "Authentication already in progress");
+            return EPlayerBufferResult::Continue;
+        }
+
+        SAccountAuthWork validation;
+        std::string error;
+        if (!CAccountDataStore::PrepareAuthentication(request.name, request.password, request.email,
+                                                       player.GetRemoteAddress(), true, validation, &error))
+        {
+            QueueAuthResult(player, EAuthResultCode::Failed,
+                            error.empty() ? "Invalid registration request" : error);
+            return EPlayerBufferResult::Continue;
+        }
+        RequestVerificationCode(player, request.name, request.email, true);
+        return EPlayerBufferResult::Continue;
+    }
+
+    auto pending_login = m_pending_verified_logins.find(player.GetId());
+    if (pending_login != m_pending_verified_logins.end() &&
+        std::chrono::steady_clock::now() >= pending_login->second.expires_at)
+    {
+        ClearPendingEmailAuthentication(player.GetId());
+        pending_login = m_pending_verified_logins.end();
+    }
+    if (request.mode == ClientAuthRequest::Mode::RequestBindingCode)
+    {
+        if (pending_login == m_pending_verified_logins.end() || pending_login->second.account_name != request.name)
+        {
+            QueueAuthResult(player, EAuthResultCode::Failed, "Login again before binding an email address");
+            return EPlayerBufferResult::Continue;
+        }
+
+        std::string error;
+        if (!CAccountDataStore::ValidateEmailForBinding(request.name, request.email, &error))
+        {
+            QueueAuthResult(player, EAuthResultCode::Failed,
+                            error.empty() ? "Unable to bind email address" : error);
+            return EPlayerBufferResult::Continue;
+        }
+        RequestVerificationCode(player, request.name, request.email, false);
+        return EPlayerBufferResult::Continue;
+    }
+
+    if (request.mode == ClientAuthRequest::Mode::ConfirmBinding)
+    {
+        if (pending_login == m_pending_verified_logins.end() || pending_login->second.account_name != request.name)
+        {
+            QueueAuthResult(player, EAuthResultCode::Failed, "Login again before binding an email address");
+            return EPlayerBufferResult::Continue;
+        }
+        if (!m_email_verification_service)
+        {
+            QueueAuthResult(player, EAuthResultCode::Failed, "Email verification service is unavailable");
+            return EPlayerBufferResult::Continue;
+        }
+
+        std::string error;
+        if (!m_email_verification_service->VerifyCode(request.name, request.email,
+                                                       CEmailVerificationService::EPurpose::Binding,
+                                                       request.code, error))
+        {
+            QueueAuthResult(player, EAuthResultCode::Failed,
+                            error.empty() ? "Email verification failed" : error);
+            return EPlayerBufferResult::Continue;
+        }
+        if (!CAccountDataStore::ConfirmEmail(request.name, request.email, &error))
+        {
+            QueueAuthResult(player, EAuthResultCode::Failed,
+                            error.empty() ? "Unable to confirm email address" : error);
+            return EPlayerBufferResult::Continue;
+        }
+        m_email_verification_service->ForgetChallenge(request.name, request.email,
+                                                      CEmailVerificationService::EPurpose::Binding);
+
+        const std::string account_name = pending_login->second.account_name;
+        const std::string trusted_ip_to_commit = pending_login->second.trusted_ip_to_commit;
+        ClearPendingEmailAuthentication(player.GetId());
+        return ApplyAuthentication(player, account_name, false, EAuthResultCode::EmailBound, "Email bound",
+                                   trusted_ip_to_commit);
+    }
+
+    const bool register_mode = request.mode == ClientAuthRequest::Mode::Register;
+    if (register_mode)
+    {
+        if (m_active_auth_accounts.contains(request.name))
+        {
+            QueueAuthResult(player, EAuthResultCode::Failed, "Authentication already in progress");
+            return EPlayerBufferResult::Continue;
+        }
+
+        SAccountAuthWork validation;
+        std::string error;
+        if (!CAccountDataStore::PrepareAuthentication(request.name, request.password, request.email,
+                                                       player.GetRemoteAddress(), true, validation, &error))
+        {
+            QueueAuthResult(player, EAuthResultCode::Failed,
+                            error.empty() ? "Invalid registration request" : error);
+            return EPlayerBufferResult::Continue;
+        }
+        if (!m_email_verification_service ||
+            !m_email_verification_service->VerifyCode(request.name, request.email,
+                                                       CEmailVerificationService::EPurpose::Registration,
+                                                       request.code, error))
+        {
+            QueueAuthResult(player, EAuthResultCode::Failed,
+                            error.empty() ? "Registration email verification failed" : error);
+            return EPlayerBufferResult::Continue;
+        }
+    } else if (request.mode != ClientAuthRequest::Mode::Login)
+    {
+        QueueAuthResult(player, EAuthResultCode::Failed, "Unsupported authentication mode");
+        return EPlayerBufferResult::Continue;
+    }
+
+    if (m_next_auth_request_id == 0) m_next_auth_request_id = 1;
+    SPendingAuthRequest pending;
+    pending.request_id = m_next_auth_request_id++;
+    pending.player_id = player.GetId();
+    pending.account_name = request.name;
+    pending.password = request.password;
+    pending.email = request.email;
+    pending.register_mode = register_mode;
+    m_player_auth_requests.emplace(pending.player_id, pending.request_id);
+    m_pending_auth_requests.push_back(std::move(pending));
+    return EPlayerBufferResult::Continue;
+}
+
+INetworkModule::EPlayerBufferResult INetworkModule::ApplyAuthentication(CPlayer& player,
+                                                                        const std::string& account_name,
+                                                                        bool register_mode,
+                                                                        EAuthResultCode result_code,
+                                                                        const std::string& result_message,
+                                                                        const std::string& trusted_ip_to_commit)
+{
     for (const auto& existing_player : m_players)
     {
         if (!existing_player || existing_player.get() == &player) continue;
         if (!existing_player->IsAuthenticated()) continue;
-        if (existing_player->GetAccountName() != request.name) continue;
+        if (existing_player->GetAccountName() != account_name) continue;
         if (existing_player->IsConnected())
         {
-            QueueAuthResult(player, false, "Account is already online");
+            QueueAuthResult(player, EAuthResultCode::Failed, "Account is already online");
             return EPlayerBufferResult::Continue;
         }
     }
 
-    if (CPlayer* reconnect_player = FindReconnectablePlayer(request.name, &player))
+    auto commit_trusted_ip = [&](CPlayer& response_player) {
+        if (trusted_ip_to_commit.empty()) return true;
+        std::string error;
+        if (CAccountDataStore::CommitTrustedIp(account_name, trusted_ip_to_commit, &error)) return true;
+
+        QueueAuthResult(response_player, EAuthResultCode::Failed, "Failed to update trusted IP");
+        FlushSendBuffer(response_player);
+        LOG_ERROR("account", "Failed to update trusted IP for " + account_name +
+                                 (error.empty() ? std::string{} : ": " + error));
+        return false;
+    };
+
+    if (CPlayer* reconnect_player = FindReconnectablePlayer(account_name, &player))
     {
+        reconnect_player->SetRemoteAddress(player.GetRemoteAddress());
         reconnect_player->AttachSocket(std::move(player.GetSocket()));
-        if (!reconnect_player->GetEntity())
+        if (!reconnect_player->GetEntity() &&
+            !m_player_lifecycle_service.SpawnPlayer(*reconnect_player, m_lobby_world, EPlayerSpawnReason::Login))
         {
-            if (auto* controller = m_lobby_world.GetController())
-                controller->OnPlayerConnect(m_lobby_world, reconnect_player);
+            QueueAuthResult(*reconnect_player, EAuthResultCode::Failed, "Failed to enter world");
+            FlushSendBuffer(*reconnect_player);
+            reconnect_player->DetachSocket();
+            LOG_ERROR("network", "Failed to restore an entity for account " + account_name);
+            return EPlayerBufferResult::RemovePendingPlayer;
         }
-        QueueAuthResult(*reconnect_player, true, "Reconnected");
+        if (!commit_trusted_ip(*reconnect_player))
+        {
+            reconnect_player->DetachSocket();
+            return EPlayerBufferResult::RemovePendingPlayer;
+        }
+        m_auth_deadlines.erase(player.GetId());
+        QueueAuthResult(*reconnect_player, result_code,
+                        result_message.empty() ? "Reconnected" : result_message);
         m_player_lifecycle_service.NotifyPlayerLogin(*reconnect_player, *this);
         if (!FlushSendBuffer(*reconnect_player))
         {
@@ -1028,22 +2069,31 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
             return EPlayerBufferResult::RemovePendingPlayer;
         }
         LOG_INFO("network",
-                 "Account " + request.name + " reconnected as player " + std::to_string(reconnect_player->GetId()));
+                 "Account " + account_name + " reconnected as player " + std::to_string(reconnect_player->GetId()));
         return EPlayerBufferResult::RemovePendingPlayer;
     }
 
-    player.Authenticate(request.name);
+    player.Authenticate(account_name);
     player.SetUseNewPlayerSpawn(register_mode);
-    if (auto* controller = m_lobby_world.GetController()) controller->OnPlayerConnect(m_lobby_world, &player);
+    if (!m_player_lifecycle_service.SpawnPlayer(player, m_lobby_world, EPlayerSpawnReason::Login))
+    {
+        QueueAuthResult(player, EAuthResultCode::Failed, "Failed to enter world");
+        FlushSendBuffer(player);
+        LOG_ERROR("network", "Failed to create an entity for account " + account_name);
+        return EPlayerBufferResult::RequestedDisconnect;
+    }
+    if (!commit_trusted_ip(player)) return EPlayerBufferResult::RequestedDisconnect;
 
-    QueueAuthResult(player, true, register_mode ? "Registered" : "Logged in");
+    m_auth_deadlines.erase(player.GetId());
+    QueueAuthResult(player, result_code,
+                    result_message.empty() ? (register_mode ? "Registered" : "Logged in") : result_message);
     m_player_lifecycle_service.NotifyPlayerLogin(player, *this);
     if (!FlushSendBuffer(player))
     {
         player.DetachSocket();
         return EPlayerBufferResult::RequestedDisconnect;
     }
-    LOG_INFO("network", "Account " + request.name + " authenticated as player " + std::to_string(player.GetId()));
+    LOG_INFO("network", "Account " + account_name + " authenticated as player " + std::to_string(player.GetId()));
     return EPlayerBufferResult::Continue;
 }
 
@@ -1054,6 +2104,41 @@ CPlayer* INetworkModule::FindPlayerById(uint32_t player_id) const
         if (player && player->GetId() == player_id) return player.get();
     }
     return nullptr;
+}
+
+void INetworkModule::ClearPlayersForRestore()
+{
+    for (const auto& player : m_players)
+        if (player) ClearPendingEmailAuthentication(player->GetId());
+    m_pending_auth_requests.clear();
+    m_player_auth_requests.clear();
+    m_active_auth_accounts.clear();
+    m_pending_verified_logins.clear();
+    m_email_delivery_requests.clear();
+    m_proxy_header_pending.clear();
+    m_auth_deadlines.clear();
+    m_auth_failures.clear();
+    m_players.clear();
+    m_client_snapshot_states.clear();
+    m_free_player_ids.clear();
+    m_next_player_id = 1;
+}
+
+bool INetworkModule::InsertRestoredPlayer(std::unique_ptr<CPlayer> player)
+{
+    if (!player || player->GetId() == 0 || FindPlayerById(player->GetId())) return false;
+    m_next_player_id = std::max(m_next_player_id, static_cast<int>(player->GetId()) + 1);
+    m_players.push_back(std::move(player));
+    return true;
+}
+
+void INetworkModule::FinalizePlayerRestore()
+{
+    m_free_player_ids.clear();
+    for (int id = 1; id < m_next_player_id; ++id)
+    {
+        if (!FindPlayerById(static_cast<std::uint32_t>(id))) m_free_player_ids.insert(id);
+    }
 }
 
 bool INetworkModule::KickPlayer(uint32_t player_id, const std::string& reason)
@@ -1120,9 +2205,17 @@ bool INetworkModule::AssignPlayerEntity(uint32_t player_id, CGameWorld& world, i
     auto* mob = dynamic_cast<CMobBase*>(entity);
     if (!mob || mob->IsDead()) return false;
 
+    CEntity* source_entity = player->GetEntity();
+    CGameWorld* source_world = source_entity ? source_entity->GameWorld() : nullptr;
+    const bool entity_changed = source_entity != mob;
     player->ResetControlledMob();
     mob->SetController(std::make_unique<CPlayerController>());
+    if (entity_changed && source_world)
+        if (IGameController* controller = source_world->GetController())
+            controller->OnPlayerLeftWorld(*source_world, *player);
     player->SetOwnedEntity(mob);
+    if (entity_changed)
+        if (IGameController* controller = world.GetController()) controller->OnPlayerEnteredWorld(world, *player);
     player->m_logged_missing_entity = false;
     m_player_lifecycle_service.NotifyPlayerWorldChanged(*player, *this);
     LOG_INFO("network", "Player " + std::to_string(player_id) + " now controls entity " +
@@ -1151,6 +2244,7 @@ CPlayer* INetworkModule::FindReconnectablePlayer(const std::string& account_name
 
 void INetworkModule::TickTimeouts(float dt)
 {
+    const auto now = std::chrono::steady_clock::now();
     for (size_t i = 0; i < m_players.size();)
     {
         CPlayer* player = m_players[i].get();
@@ -1158,6 +2252,16 @@ void INetworkModule::TickTimeouts(float dt)
         {
             m_players.erase(m_players.begin() + i);
             continue;
+        }
+
+        if (player->IsConnected() && !player->IsAuthenticated())
+        {
+            const auto deadline = m_auth_deadlines.find(player->GetId());
+            if (deadline != m_auth_deadlines.end() && now >= deadline->second)
+            {
+                DropPlayer(i, "authentication timed out");
+                continue;
+            }
         }
 
         player->TickTimeout(dt);
@@ -1194,8 +2298,19 @@ void INetworkModule::DropPlayer(size_t index, const std::string& reason)
 
     CPlayer& player = *m_players[index];
     LOG_INFO("network", "Player " + std::to_string(player.GetId()) + " dropped: " + reason);
-    if (auto* flower = dynamic_cast<CPlayerFlower*>(player.GetEntity())) flower->PrepareRespawnDestroy();
-    else if (CEntity* entity = player.GetEntity()) entity->MarkForDestroy();
+    CancelAuthenticationRequest(player.GetId());
+    ClearPendingEmailAuthentication(player.GetId());
+    ResetSnapshotState(player);
+    m_proxy_header_pending.erase(player.GetId());
+    m_auth_deadlines.erase(player.GetId());
+    CEntity* entity = player.GetEntity();
+    CGameWorld* player_world = entity ? entity->GameWorld() : nullptr;
+    if (player.IsAuthenticated() && player_world)
+        if (IGameController* controller = player_world->GetController())
+            controller->OnPlayerLeftWorld(*player_world, player);
+    if (auto* flower = dynamic_cast<CPlayerFlower*>(entity))
+        flower->PrepareRespawnDestroy(EEntityRemovalReason::Despawned);
+    else if (entity) entity->MarkForDestroy(EEntityRemovalReason::Despawned);
     FreePlayerId(player.GetId());
     m_players.erase(m_players.begin() + index);
 }

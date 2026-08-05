@@ -19,17 +19,17 @@ std::optional<sf::Vector2f> CalculateSpawnGlobal(CPetal* petal, CFlower* flower)
     if (start_index < 0 || total_copies <= 0) return std::nullopt;
 
     sf::Vector2f orbit_center = flower->m_pos;
-    if (petal->m_type != EPetalType::Moon)
+    if (petal->GetPetalType() != EPetalType::Moon)
     {
         if (CPetal* moon = flower->GetMoonPetal()) orbit_center = moon->m_pos;
     }
 
-    float base_radius = petal->m_type == EPetalType::Moon ? flower->GetFinalStats()->radius
+    float base_radius = petal->GetPetalType() == EPetalType::Moon ? flower->GetFinalStats()->radius
                                                           : (flower->GetMoonPetal() && flower->GetMoonPetal() != petal
                                                                  ? flower->GetMoonPetal()->m_radius
                                                                  : flower->GetFinalStats()->radius);
     float reach = game_config::default_petal_neutral_reach;
-    if (!PetalIgnoresReachBonus(petal->m_type))
+    if (!PetalIgnoresReachBonus(petal->GetPetalType()))
     {
         if (flower->m_attacking)
         {
@@ -69,7 +69,7 @@ const CPetalPrototype* ActivePrototypeForPetal(const CPetalSlot* slot, const CPe
 {
     if (petal)
     {
-        const CPetalPrototype* active = FindPetalPrototype(petal->m_type);
+        const CPetalPrototype* active = FindPetalPrototype(petal->GetPetalType());
         if (active && active->m_p_behavior) return active;
     }
     return RuntimePrototypeForSlot(slot, flower);
@@ -81,7 +81,7 @@ SPetalStats PetalStatsForSlot(const CPetalSlot* slot, const CFlower* flower)
 
     SPetalStats stats = slot->m_p_proto->m_p_behavior->GetPetalStatsForSlot(slot->m_stored_rarity, slot, flower);
     const CPetalPrototype* runtime_proto = RuntimePrototypeForSlot(slot, flower);
-    if (runtime_proto && runtime_proto->m_extra_hit_num) stats.extra_hit_num = *runtime_proto->m_extra_hit_num;
+    NormalizePetalStatsPerCopy(stats);
 
     CFlower* mutable_flower = const_cast<CFlower*>(flower);
     CGameContext* context = mutable_flower ? mutable_flower->GameContext() : nullptr;
@@ -108,7 +108,6 @@ void ApplyPetalStatsForSlot(CPetal* petal, SPetalStats stats, CFlower* flower, b
 
     const float old_max_health = petal->m_final_petal_stats.health;
     const float health_fraction = old_max_health > 0.f ? petal->m_health / old_max_health : 1.f;
-    NormalizePetalStatsPerCopy(stats, petal->m_max_slot_num);
     stats.radius *= game_config::default_petal_collision_radius_multiplier;
 
     petal->m_base_petal_stats = stats;
@@ -116,8 +115,9 @@ void ApplyPetalStatsForSlot(CPetal* petal, SPetalStats stats, CFlower* flower, b
     if (flower && flower->GetFinalStats())
     {
         const SFlowerStats& flower_stats = *flower->GetFinalStats();
-        const float damage_bonus = petal->m_type == EPetalType::Triangle ? flower_stats.tridmgbonus : 0.f;
+        const float damage_bonus = petal->GetPetalType() == EPetalType::Triangle ? flower_stats.tridmgbonus : 0.f;
         petal->m_final_petal_stats.ActedOn(flower_stats, damage_bonus);
+        petal->m_applied_flower_stats_revision = flower->GetFinalStatsRevision();
     }
     petal->m_radius = stats.radius;
     petal->m_mass = stats.mass;
@@ -142,13 +142,15 @@ void ClearLivePetalFromSlot(const CPetalSlot* slot, CPetal* petal, CFlower* flow
     else if (slot && slot->m_p_proto && slot->m_p_proto->m_p_behavior)
         slot->m_p_proto->m_p_behavior->OnPetalCleared(petal, slot->m_stored_rarity, flower);
 
-    petal->MarkForDestroy();
+    petal->MarkForDestroy(EEntityRemovalReason::Replaced);
 }
 } // namespace
 
-CPetal::CPetal(float r, CFlower* owner, int slot, SPetalStats petal_stats)
-    : CProjectile(owner->m_pos.x, owner->m_pos.y, r, owner), m_base_petal_stats(petal_stats),
-      m_final_petal_stats(petal_stats), m_max_slot_num(petal_stats.copy), m_slot_index(slot)
+CPetal::CPetal(float r, CFlower* owner, int slot, SPetalStats petal_stats, EPetalType type)
+    : CProjectile(owner->m_pos.x, owner->m_pos.y, r, owner,
+                  MakePetalEntityType(static_cast<std::uint8_t>(type))),
+      m_base_petal_stats(petal_stats), m_final_petal_stats(petal_stats), m_max_slot_num(petal_stats.copy),
+      m_slot_index(slot)
 {
     m_skip_world_tick = true;
     m_mass = petal_stats.mass;
@@ -161,18 +163,23 @@ void CPetal::Tick(float dt)
     if (flower)
     {
         m_team = flower->m_team;
-        float old_max_health = m_final_petal_stats.health;
-        m_final_petal_stats = m_base_petal_stats;
-        const SFlowerStats& flower_stats = *flower->GetFinalStats();
-        const float damage_bonus = m_type == EPetalType::Triangle ? flower_stats.tridmgbonus : 0.f;
-        m_final_petal_stats.ActedOn(flower_stats, damage_bonus);
-        float new_max_health = m_final_petal_stats.health;
-        if (old_max_health > 0.f && new_max_health > 0.f && new_max_health != old_max_health)
-            m_health = m_health * new_max_health / old_max_health;
-        if (new_max_health > 0.f) m_health = std::clamp(m_health, 0.f, new_max_health);
+        const std::uint64_t flower_stats_revision = flower->GetFinalStatsRevision();
+        if (m_applied_flower_stats_revision != flower_stats_revision)
+        {
+            float old_max_health = m_final_petal_stats.health;
+            m_final_petal_stats = m_base_petal_stats;
+            const SFlowerStats& flower_stats = *flower->GetFinalStats();
+            const float damage_bonus = GetPetalType() == EPetalType::Triangle ? flower_stats.tridmgbonus : 0.f;
+            m_final_petal_stats.ActedOn(flower_stats, damage_bonus);
+            m_applied_flower_stats_revision = flower_stats_revision;
+            float new_max_health = m_final_petal_stats.health;
+            if (old_max_health > 0.f && new_max_health > 0.f && new_max_health != old_max_health)
+                m_health = m_health * new_max_health / old_max_health;
+            if (new_max_health > 0.f) m_health = std::clamp(m_health, 0.f, new_max_health);
+        }
     } else
     {
-        MarkForDestroy();
+        MarkForDestroy(EEntityRemovalReason::OwnerRemoved);
         return;
     }
     CProjectile::Tick(dt);
@@ -184,7 +191,7 @@ void CPetal::Tick(float dt)
         {
             m_timer = 0.f;
             m_health = 0.f;
-            MarkForDestroy();
+            MarkForDestroy(EEntityRemovalReason::Expired);
         }
     }
 
@@ -210,12 +217,13 @@ void CPetal::TakeDamage(float dmg, CEntity*, EDamageType damage_type)
 
 bool CPetal::CollidesWithWalls() const
 {
-    switch (m_type)
+    switch (GetPetalType())
     {
     case EPetalType::AntEgg:
     case EPetalType::BeetleEgg:
     case EPetalType::BrokenEgg:
     case EPetalType::Carrot:
+    case EPetalType::Moon:
     case EPetalType::Web:
     case EPetalType::Pollen:
     case EPetalType::Honey:
@@ -247,7 +255,7 @@ void CGlassPetal::TakeDamage(float, CEntity*, EDamageType)
 
 void CMissilePetal::Tick(float dt)
 {
-    bool restore_fired_angle = m_fired && m_type == EPetalType::Missile && m_has_fired_angle;
+    bool restore_fired_angle = m_fired && GetPetalType() == EPetalType::Missile && m_has_fired_angle;
     float fired_angle = m_fired_angle;
 
     CThrownPetal::Tick(dt);
@@ -260,8 +268,11 @@ void CMissilePetal::Tick(float dt)
 
     m_fired_lifetime += dt;
     float lifetime = game_config::default_missile_lifetime;
-    if (m_type == EPetalType::Carrot) lifetime *= game_config::default_carrot_lifetime_multiplier;
-    if (m_fired_lifetime >= lifetime || m_health <= 0.f) MarkForDestroy();
+    if (GetPetalType() == EPetalType::Carrot) lifetime *= game_config::default_carrot_lifetime_multiplier;
+    if (m_health <= 0.f)
+        MarkForDestroy(EEntityRemovalReason::Defeated);
+    else if (m_fired_lifetime >= lifetime)
+        MarkForDestroy(EEntityRemovalReason::Expired);
 }
 
 void CThrownPetal::BeginThrow(sf::Vector2f direction, float speed, float deceleration_time, bool destroy_when_stopped,
@@ -348,6 +359,7 @@ void CPetalSlot::SpawnCopy(int copy_index, CFlower* flower)
 
     m_p_petals[copy_index] = p_petal;
     m_bonus_active[copy_index] = true;
+    if (copy_index < static_cast<int>(m_reload_durations.size())) m_reload_durations[copy_index] = 0.f;
     flower->MarkFinalStatsDirty();
     runtime_proto->m_p_behavior->OnPetalSpawned(p_petal, m_stored_rarity, flower);
 }
@@ -368,7 +380,9 @@ void CPetalSlot::SetPetal(const CPetalPrototype* proto, int slot_index, ERarity 
 
     m_p_petals.assign(copies, nullptr);
     m_bonus_active.assign(copies, false);
-    m_reload_timers.assign(copies, std::max(0.f, petal_stats.preload));
+    const float preload = std::max(0.f, petal_stats.preload);
+    m_reload_timers.assign(copies, preload);
+    m_reload_durations.assign(copies, preload);
     m_reload_ignore_multiplier.assign(copies, false);
 }
 
@@ -383,6 +397,7 @@ void CPetalSlot::ClearPetal()
     m_p_petals.clear();
     m_bonus_active.clear();
     m_reload_timers.clear();
+    m_reload_durations.clear();
     m_reload_ignore_multiplier.clear();
     m_runtime_type = EPetalType::None;
 }
@@ -393,6 +408,27 @@ void CPetalSlot::KillCopy(int copy_index)
 
     CPetal* petal = m_p_petals[copy_index];
     if (petal) petal->m_health = 0.f;
+}
+
+void CPetalSlot::StartReload(int copy_index, float duration)
+{
+    if (copy_index < 0 || copy_index >= static_cast<int>(m_reload_timers.size())) return;
+
+    const float safe_duration = std::max(0.f, duration);
+    m_reload_timers[copy_index] = safe_duration;
+    if (copy_index >= static_cast<int>(m_reload_durations.size()))
+        m_reload_durations.resize(m_reload_timers.size(), 0.f);
+    m_reload_durations[copy_index] = safe_duration;
+}
+
+float CPetalSlot::GetLoadProgress(int copy_index) const
+{
+    if (copy_index < 0 || copy_index >= static_cast<int>(m_reload_timers.size())) return 1.f;
+    if (copy_index >= static_cast<int>(m_reload_durations.size())) return m_reload_timers[copy_index] <= 0.f ? 1.f : 0.f;
+
+    const float duration = m_reload_durations[copy_index];
+    if (duration <= 0.f) return m_reload_timers[copy_index] <= 0.f ? 1.f : 0.f;
+    return std::clamp(1.f - m_reload_timers[copy_index] / duration, 0.f, 1.f);
 }
 
 void CPetalSlot::RefreshPetalState(CFlower* flower)
@@ -411,7 +447,9 @@ void CPetalSlot::RefreshPetalState(CFlower* flower)
 
         m_p_petals.assign(copies, nullptr);
         m_bonus_active.assign(copies, false);
-        m_reload_timers.assign(copies, std::max(0.f, petal_stats.preload));
+        const float preload = std::max(0.f, petal_stats.preload);
+        m_reload_timers.assign(copies, preload);
+        m_reload_durations.assign(copies, preload);
         m_reload_ignore_multiplier.assign(copies, false);
         m_runtime_type = runtime_type;
         if (flower) flower->MarkFinalStatsDirty();
@@ -419,7 +457,7 @@ void CPetalSlot::RefreshPetalState(CFlower* flower)
     }
 
     int old_copies = static_cast<int>(m_p_petals.size());
-    if (copies == old_copies) return;
+    const bool copy_count_changed = copies != old_copies;
 
     if (copies < old_copies)
     {
@@ -427,10 +465,15 @@ void CPetalSlot::RefreshPetalState(CFlower* flower)
             ClearLivePetalFromSlot(this, m_p_petals[i], flower);
     }
 
-    m_p_petals.resize(copies, nullptr);
-    m_bonus_active.resize(copies, false);
-    m_reload_timers.resize(copies, std::max(0.f, petal_stats.preload));
-    m_reload_ignore_multiplier.resize(copies, false);
+    if (copy_count_changed)
+    {
+        m_p_petals.resize(copies, nullptr);
+        m_bonus_active.resize(copies, false);
+        const float preload = std::max(0.f, petal_stats.preload);
+        m_reload_timers.resize(copies, preload);
+        m_reload_durations.resize(copies, preload);
+        m_reload_ignore_multiplier.resize(copies, false);
+    }
 
     for (CPetal* petal : m_p_petals)
     {
@@ -438,7 +481,7 @@ void CPetalSlot::RefreshPetalState(CFlower* flower)
         petal->m_max_slot_num = copies;
         ApplyPetalStatsForSlot(petal, petal_stats, flower, false);
     }
-    if (flower) flower->MarkFinalStatsDirty();
+    if (copy_count_changed && flower) flower->MarkFinalStatsDirty();
 }
 
 void CPetalSlot::Tick(float dt, CFlower* flower, bool state_refreshed)
@@ -481,9 +524,11 @@ void CPetalSlot::Tick(float dt, CFlower* flower, bool state_refreshed)
             {
                 float reload =
                     petal->m_reload_override >= 0.f ? petal->m_reload_override : petal->m_final_petal_stats.reload;
-                petal->MarkForDestroy();
+                if (!petal->m_is_marked_for_des)
+                    petal->MarkForDestroy(petal->m_health <= 0.f ? EEntityRemovalReason::Defeated
+                                                                 : EEntityRemovalReason::Despawned);
                 m_p_petals[i] = nullptr;
-                m_reload_timers[i] = reload;
+                StartReload(static_cast<int>(i), reload);
                 if (i < m_reload_ignore_multiplier.size())
                     m_reload_ignore_multiplier[i] = petal->m_reload_ignore_multiplier;
                 flower->MarkFinalStatsDirty();
@@ -500,7 +545,7 @@ void CPetalSlot::Tick(float dt, CFlower* flower, bool state_refreshed)
                 if (petal->m_health <= 0.f)
                 {
                     m_p_petals[i] = nullptr;
-                    m_reload_timers[i] = petal->m_final_petal_stats.reload;
+                    StartReload(static_cast<int>(i), petal->m_final_petal_stats.reload);
                     if (i < m_reload_ignore_multiplier.size()) m_reload_ignore_multiplier[i] = false;
                     flower->MarkFinalStatsDirty();
                 }
@@ -521,7 +566,7 @@ void CPetalSlot::Tick(float dt, CFlower* flower, bool state_refreshed)
                 petal->m_reload_override >= 0.f ? petal->m_reload_override : petal->m_final_petal_stats.reload;
             petal->m_detach_from_slot = false;
             m_p_petals[i] = nullptr;
-            m_reload_timers[i] = reload;
+            StartReload(static_cast<int>(i), reload);
             if (i < m_reload_ignore_multiplier.size())
                 m_reload_ignore_multiplier[i] = petal->m_reload_ignore_multiplier;
             flower->MarkFinalStatsDirty();
@@ -537,9 +582,11 @@ void CPetalSlot::Tick(float dt, CFlower* flower, bool state_refreshed)
             bool should_reload = active_behavior->ShouldReloadAfterPetalDestroyed(petal);
             if (should_reload)
             {
-                petal->MarkForDestroy();
+                if (!petal->m_is_marked_for_des)
+                    petal->MarkForDestroy(petal->m_health <= 0.f ? EEntityRemovalReason::Defeated
+                                                                 : EEntityRemovalReason::Despawned);
                 m_p_petals[i] = nullptr;
-                m_reload_timers[i] = reload;
+                StartReload(static_cast<int>(i), reload);
                 if (i < m_reload_ignore_multiplier.size())
                     m_reload_ignore_multiplier[i] = petal->m_reload_ignore_multiplier;
                 flower->MarkFinalStatsDirty();
@@ -547,7 +594,7 @@ void CPetalSlot::Tick(float dt, CFlower* flower, bool state_refreshed)
             {
                 petal->m_hidden = true;
                 petal->m_vel = { 0.f, 0.f };
-                petal->m_is_marked_for_des = false;
+                petal->CancelDestroy();
                 petal->m_health = std::max(1.f, petal->m_health);
                 flower->MarkFinalStatsDirty();
             }
@@ -610,7 +657,5 @@ void CPetalSlot::ApplyStatsTo(SFlowerStats& target, const CFlower* flower) const
 
 const CPetalPrototype* FindPetalPrototype(EPetalType type)
 {
-    auto it = g_petal_registry.find(type);
-    if (it == g_petal_registry.end()) return nullptr;
-    return it->second.get();
+    return PetalRegistry().Find(type);
 }

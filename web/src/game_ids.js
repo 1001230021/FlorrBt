@@ -5,22 +5,43 @@ import {
   NETWORK_POLLEN_ENTITY_TYPE,
   NETWORK_PORTAL_ENTITY_TYPE,
   NETWORK_SPIDER_WEB_ENTITY_TYPE,
+  NETWORK_TRAP_PROJECTILE_ENTITY_TYPE,
 } from "./protocol.js";
 
 export const flagAttacking = 1 << 0;
 export const flagDefending = 1 << 1;
 export const flagDead = 1 << 2;
 export const flagOwner = 1 << 3;
-export const flagUndead = 1 << 4;
-export const flagCorrupted = 1 << 5;
-export const flagRelic = 1 << 6;
 export const flagAntennae = 1 << 7;
 export const flagSummoned = 1 << 8;
-export const flagPoisoned = 1 << 9;
 export const flagAttached = 1 << 10;
-export const flagDigging = 1 << 11;
+export const flagCarryingLeafPiece = flagAttached;
 export const flagSkillWindupShift = 12;
 export const flagSkillWindupMask = 0xf000;
+
+export const statePoison = 1;
+export const stateBanSlot = 2;
+export const statePincerSpeedReduce = 3;
+export const stateWebSpeedReduce = 4;
+export const stateAntiHeal = 5;
+export const stateNullification = 6;
+export const stateUndead = 7;
+export const stateCorruption = 8;
+export const stateNoRevive = 9;
+export const stateInvincible = 10;
+export const stateDigging = 11;
+export const statePsionicConnection = 12;
+
+export function entityState(snap, stateType) {
+  if (!Array.isArray(snap?.states)) return null;
+  return (
+    snap.states.find((entry) => (entry?.type ?? entry) === stateType) || null
+  );
+}
+
+export function entityHasState(snap, stateType) {
+  return entityState(snap, stateType) !== null;
+}
 
 export function skillWindupIdFromFlags(flags) {
   return ((flags || 0) & flagSkillWindupMask) >>> flagSkillWindupShift;
@@ -28,6 +49,7 @@ export function skillWindupIdFromFlags(flags) {
 
 export const beetleType = 1;
 export const normalLadybugType = 3;
+export const mechaFlowerType = 4;
 export const soldierAntType = 7;
 export const soldierFireAntType = 8;
 export const soldierTermiteType = 9;
@@ -58,6 +80,9 @@ export const babyTermiteType = 33;
 export const workerTermiteType = 34;
 export const termiteOvermindType = 35;
 export const leafPieceType = 36;
+export const leafcutterSoldierType = 37;
+export const titanType = 38;
+export const trapProjectileType = NETWORK_TRAP_PROJECTILE_ENTITY_TYPE;
 export const bloodSacrificeEffectType = NETWORK_BLOOD_SACRIFICE_ENTITY_TYPE;
 export const dandelionMissileType = NETWORK_DANDELION_MISSILE_ENTITY_TYPE;
 export const pollenProjectileType = NETWORK_POLLEN_ENTITY_TYPE;
@@ -123,72 +148,91 @@ export const petalDandelionType = 52;
 export const petalOrangeType = 53;
 export const petalShovelType = 54;
 export const petalYuccaType = 55;
+export const petalWhiteFungusType = 56;
+export const petalBlackFungusType = 57;
+export const petalBroccoliType = 58;
+export const petalDouliType = 59;
+export const petalTrapperType = 60;
+export const petalAmuletType = 61;
+export const petalPlankType = 62;
+export const petalTomatoType = 63;
 
 export const stingerSplitIconMinRarity = 6;
 export const compassUltraIconMinRarity = 7;
-export const flowerTextureVersion = "20260717a";
+export const flowerTextureVersion = "20260802a";
 
 export const PetalIconIds = [
   0,
-  48,
-  51,
-  17,
-  1,
-  16,
-  58,
-  13,
-  57,
-  74,
-  71,
-  98,
-  72,
-  111,
-  97,
-  7,
-  113,
-  77,
+  "air",
+  "ant_egg",
+  "antennae",
+  "basic",
+  "beetle_egg",
+  "bone",
+  "bubble",
+  "carrot",
+  "coin",
+  "compass",
+  "cogwheel",
+  "disc",
+  "dust",
+  "golden_leaf",
+  "iris",
+  "lentil",
+  "moon",
   "nullification",
-  27,
-  53,
-  5,
-  19,
-  9,
-  108,
-  80,
-  103,
-  18,
-  12,
-  30,
-  38,
-  8,
-  106,
-  109,
-  94,
-  93,
+  "pincer",
+  "relic",
+  "rose",
+  "yin_yang",
+  "missile",
+  "blood_sacrifice",
+  "corruption",
+  "bandage",
+  "heavy",
+  "faster",
+  "yggdrasil",
+  "dahlia",
+  "wing",
+  "triangle",
+  "sawblade",
+  "fragment",
+  "mimic",
   "glass",
-  6,
+  "stinger",
   "broken_egg",
-  2,
-  22,
-  3,
-  20,
-  11,
-  14,
-  25,
-  24,
-  49,
-  41,
-  21,
-  96,
-  43,
-  15,
-  50,
-  73,
-  28,
+  "light",
+  "leaf",
+  "rock",
+  "web",
+  "cactus",
+  "pollen",
+  "corn",
+  "rice",
+  "basil",
+  "soil",
+  "honey",
+  "wax",
+  "third_eye",
+  "dandelion",
+  "orange",
+  "shovel",
+  "yucca",
+  "white_fungus",
+  "black_fungus",
+  "broccoli",
+  "douli",
+  "trapper",
+  "amulet",
+  "plank",
+  "tomato",
 ];
 
 export const worldPetalSizeScale = 6;
 export const worldDropSizeScale = 3.25;
+export const trapperLivePetalViewBox = "2.32 -14.95 110 110";
+export const waxLivePetalViewBox = "29 22 52 52";
+export const waxLivePetalVisualScale = 0.52;
 export const petalCardIconScale = 0.92;
 export const mobSpriteEffectiveBox = 91.667;
 export const mobSpriteViewBox = 110;
@@ -208,9 +252,11 @@ export const nonStackPetalTypes = new Set([
   petalWaxType,
   petalThirdEyeType,
   petalShovelType,
+  petalDouliType,
 ]);
 
 export const rarityExotic = 12;
+export const raritySuper = 8;
 export const rarityEternal = 9;
 export const rarityUnique = 10;
 export const rarityPrimordial = 11;

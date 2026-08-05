@@ -30,6 +30,7 @@ class CPlayer
     ~CPlayer() = default;
 
     void HandleOperate(const ClientOperate& op);
+    bool HandleScheduledOperate(const ClientOperate& op, std::uint32_t delay_ticks, std::uint32_t sequence);
     void AttachSocket(sf::TcpSocket&& socket);
     void SetRemoteAddress(const std::string& address) { m_remote_address = address; }
     void DetachSocket();
@@ -76,12 +77,17 @@ class CPlayer
     const std::string& GetName() const { return m_name; }
     const std::string& GetAccountName() const { return m_account_name; }
     const std::string& GetRemoteAddress() const { return m_remote_address; }
-    bool HasOwnedEntity() const { return GetEntity() != nullptr; }
+    bool HasOwnedEntity() const { return m_p_world != nullptr && m_entity_id >= 0; }
     bool IsConnected() const { return m_connected; }
     bool IsAuthenticated() const { return m_authenticated; }
     bool IsRconAuthorized() const { return m_rcon_authorized; }
     void SetRconAuthorized(bool authorized) { m_rcon_authorized = authorized; }
     bool IsTimedOut() const { return !m_connected && m_timeout_left <= 0.f; }
+    float GetTimeoutLeft() const { return m_timeout_left; }
+    bool GetUseNewPlayerSpawn() const { return m_use_new_player_spawn; }
+    void RestoreDisconnectedSession(const std::string& remote_address, float timeout_left, float mute_timer,
+                                    bool report_disabled, int invalid_report_count, float second_chance_cooldown,
+                                    bool use_new_player_spawn);
 
     std::vector<uint8_t> m_send_buffer;
     size_t m_send_offset = 0;

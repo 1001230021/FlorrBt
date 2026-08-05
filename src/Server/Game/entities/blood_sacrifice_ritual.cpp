@@ -10,9 +10,9 @@ namespace
 {
 float BloodSacrificeRarityProgress(ERarity rarity)
 {
-    const float min_rank = GetRaritySortRank(ERarity::Common);
-    const float max_rank = GetRaritySortRank(ERarity::Primordial);
-    const float rank = std::clamp(GetRaritySortRank(rarity), min_rank, max_rank);
+    const float min_rank = static_cast<float>(GetRarityValueRank(ERarity::Common));
+    const float max_rank = static_cast<float>(GetRarityValueRank(ERarity::Primordial));
+    const float rank = std::clamp(static_cast<float>(GetRarityValueRank(rarity)), min_rank, max_rank);
     return max_rank > min_rank ? (rank - min_rank) / (max_rank - min_rank) : 0.f;
 }
 
@@ -40,7 +40,8 @@ float BloodSacrificeFadeDuration(ERarity rarity)
 
 CBloodSacrificeRitual::CBloodSacrificeRitual(CGameWorld* world, sf::Vector2f pos, EMobType mob_type, ERarity rarity,
                                              float timer)
-    : CEntity(world, pos.x, pos.y, BloodSacrificeRadius(rarity)),
+    : CEntity(world, pos.x, pos.y, BloodSacrificeRadius(rarity),
+              MakeEntityType(EEntityType::Effect, server_blood_sacrifice_entity_type)),
       m_mob_type(mob_type), m_rarity(rarity),
       m_draw_duration(std::max(game_config::blood_sacrifice_min_phase_duration, timer)),
       m_fade_duration(BloodSacrificeFadeDuration(rarity))
@@ -75,7 +76,7 @@ void CBloodSacrificeRitual::Tick(float dt)
 
     if (m_spawned)
     {
-        if (m_age >= m_draw_duration + m_fade_duration) MarkForDestroy();
+        if (m_age >= m_draw_duration + m_fade_duration) MarkForDestroy(EEntityRemovalReason::Expired);
         return;
     }
 
@@ -96,10 +97,10 @@ void CBloodSacrificeRitual::Tick(float dt)
                 spawned_id = raw_mob->m_id;
                 if (CServer::MeetsPetalReportRarity(raw_mob->GetRarity(), game_config::min_mob_spawn_report_rarity))
                 {
-                    const CMobPrototype* proto = FindMobPrototype(raw_mob->m_mob_type);
+                    const CMobPrototype* proto = FindMobPrototype(raw_mob->GetMobType());
                     const std::string mob_name = proto && !proto->m_name.empty()
                                                      ? proto->m_name
-                                                     : std::string(GetMobTypeName(raw_mob->m_mob_type));
+                                                     : std::string(GetMobTypeName(raw_mob->GetMobType()));
                     if (CServer* server = CServer::GetInstance())
                         server->BroadcastMobReport("has been summoned", raw_mob->GetRarity(), mob_name);
                 }

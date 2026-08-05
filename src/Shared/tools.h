@@ -64,6 +64,7 @@ inline int GetLevel(ERarity rarity)
     switch (rarity)
     {
     case ERarity::Common:
+    case ERarity::Exotic:
         return 1;
     case ERarity::Unusual:
         return 2;
@@ -77,7 +78,6 @@ inline int GetLevel(ERarity rarity)
         return 6;
     case ERarity::Ultra:
         return 7;
-    case ERarity::Exotic:
     case ERarity::Super:
         return 8;
     case ERarity::Eternal:
@@ -90,21 +90,14 @@ inline int GetLevel(ERarity rarity)
     }
 }
 
+inline int GetRarityValueRank(ERarity rarity)
+{
+    return rarity == ERarity::Null ? 0 : GetLevel(rarity);
+}
+
 inline float GetRarityValueLevel(ERarity rarity)
 {
-    if (rarity == ERarity::Exotic) return 7.5f;
-    return static_cast<float>(GetLevel(rarity));
-}
-
-inline float BlendUltraSuper(float ultra_value, float super_value, float super_weight = 0.5f)
-{
-    return ultra_value + (super_value - ultra_value) * std::clamp(super_weight, 0.f, 1.f);
-}
-
-inline float BlendRarityUltraSuper(ERarity rarity, float ultra_value, float super_value, float super_weight = 0.5f)
-{
-    return rarity == ERarity::Exotic ? BlendUltraSuper(ultra_value, super_value, super_weight)
-                                     : (rarity == ERarity::Super ? super_value : ultra_value);
+    return static_cast<float>(GetRarityValueRank(rarity));
 }
 
 inline bool IsAtLeastRarity(ERarity rarity, ERarity threshold)

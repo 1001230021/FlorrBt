@@ -13,29 +13,125 @@
 #include "player.h"
 #include "state_zone.h"
 #include "states/states.h"
+#include "zone_mob_tools.h"
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <iomanip>
 #include <limits>
-#include <mutex>
 #include <random>
 #include <sstream>
+#include <typeinfo>
 #include <utility>
 
 namespace
 {
-std::mutex g_server_crash_context_mutex;
-std::string g_last_server_crash_context = "startup";
+struct crash_entity_snapshot
+{
+    const std::type_info* concrete_type = nullptr;
+    int id = -1;
+    std::uint64_t generation = 0;
+    int team = 0;
+    float health = 0.f;
+    float radius = 0.f;
+    sf::Vector2f pos = { 0.f, 0.f };
+    bool marked_for_destroy = false;
+    bool valid = false;
+};
+
+struct collision_crash_context
+{
+    crash_entity_snapshot entity;
+    crash_entity_snapshot other;
+    bool valid = false;
+};
+
+thread_local collision_crash_context g_last_collision_crash_context;
 
 struct summon_owner_link
 {
     int direct_owner_id = -1;
     int root_owner_id = -1;
 };
+
+struct collision_entity_view
+{
+    CEntity* entity = nullptr;
+    CProjectile* projectile = nullptr;
+    CPetal* petal = nullptr;
+    CMissile* missile = nullptr;
+    CPollenProjectile* pollen = nullptr;
+    CTrapProjectile* trap = nullptr;
+    CMobBase* mob = nullptr;
+    CFlower* flower = nullptr;
+    CDrop* drop = nullptr;
+    mutable const CMobBase* interaction_mob = nullptr;
+    mutable bool interaction_mob_resolved = false;
+
+    bool IsWax() const { return petal && petal->GetPetalType() == EPetalType::Wax; }
+    bool IsGlass() const { return petal && petal->GetPetalType() == EPetalType::Glass; }
+    bool IsTrapperPetal() const { return petal && petal->GetPetalType() == EPetalType::Trapper; }
+    float ProjectileDamage() const
+    {
+        if (missile) return missile->m_damage;
+        return pollen ? pollen->m_damage : 0.f;
+    }
+    const CMobBase* InteractionMob() const
+    {
+        if (!interaction_mob_resolved)
+        {
+            interaction_mob = ResolveInteractionMob(entity);
+            interaction_mob_resolved = true;
+        }
+        return interaction_mob;
+    }
+};
+
+collision_entity_view BuildCollisionEntityView(CEntity* entity)
+{
+    collision_entity_view view;
+    view.entity = entity;
+    if (!entity) return view;
+
+    switch (entity->GetEntityType())
+    {
+    case EEntityType::Projectile:
+        view.projectile = static_cast<CProjectile*>(entity);
+        switch (entity->GetProjectileType())
+        {
+        case EProjectileType::Petal:
+            view.petal = static_cast<CPetal*>(entity);
+            break;
+        case EProjectileType::Missile:
+            view.missile = static_cast<CMissile*>(entity);
+            break;
+        case EProjectileType::Pollen:
+            view.pollen = static_cast<CPollenProjectile*>(entity);
+            break;
+        case EProjectileType::Trap:
+            view.pollen = static_cast<CPollenProjectile*>(entity);
+            view.trap = static_cast<CTrapProjectile*>(entity);
+            break;
+        default:
+            break;
+        }
+        return view;
+    case EEntityType::Mob:
+        view.mob = static_cast<CMobBase*>(entity);
+        view.flower = dynamic_cast<CFlower*>(view.mob);
+        break;
+    case EEntityType::Drop:
+        view.drop = static_cast<CDrop*>(entity);
+        break;
+    default:
+        break;
+    }
+    return view;
+}
 
 using active_tick_view = CActiveTickView;
 
@@ -147,12 +243,10 @@ sf::Vector2f PickDefaultTransferSpawnPosition(const CGameWorld& world)
     return { game_config::player_respawn_x, game_config::player_respawn_y };
 }
 
-summon_owner_link GetSummonOwnerLink(const CEntity* entity)
+summon_owner_link GetSummonOwnerLink(const collision_entity_view& entity)
 {
     summon_owner_link link;
-    if (!entity) return link;
-
-    auto* mob = dynamic_cast<const CMobBase*>(entity);
+    const CMobBase* mob = entity.mob;
     if (!mob) return link;
 
     auto* controller = dynamic_cast<CSummonedMeleeController*>(const_cast<CMobBase*>(mob)->GetController());
@@ -181,10 +275,9 @@ summon_owner_link GetSummonOwnerLink(const CEntity* entity)
 
 bool HasSummonOwnerLink(const summon_owner_link& link) { return link.direct_owner_id >= 0; }
 
-bool IsPetalOwnedBy(const CEntity* entity, int owner_id)
+bool IsPetalOwnedBy(const collision_entity_view& entity, int owner_id)
 {
-    auto* projectile = dynamic_cast<const CProjectile*>(entity);
-    CEntity* owner = projectile ? projectile->GetOwner() : nullptr;
+    CEntity* owner = entity.projectile ? entity.projectile->GetOwner() : nullptr;
     return owner && owner->m_id == owner_id;
 }
 
@@ -196,35 +289,35 @@ bool IsProjectileOwnerCollision(const CProjectile* projectile, const CEntity* ta
            projectile->GetOwner() == target;
 }
 
-bool IsSummonOwnerLink(const summon_owner_link& link, const CEntity* other)
+bool IsSummonOwnerLink(const summon_owner_link& link, const collision_entity_view& other)
 {
-    if (!HasSummonOwnerLink(link) || !other) return false;
-    if (other->m_id == link.direct_owner_id || other->m_id == link.root_owner_id) return true;
+    if (!HasSummonOwnerLink(link) || !other.entity) return false;
+    if (other.entity->m_id == link.direct_owner_id || other.entity->m_id == link.root_owner_id) return true;
     return IsPetalOwnedBy(other, link.root_owner_id);
 }
 
-bool ShouldSkipSummonCollision(const CEntity* lhs, const CEntity* rhs)
+bool ShouldSkipSummonCollision(const collision_entity_view& lhs, const collision_entity_view& rhs,
+                               const summon_owner_link& lhs_link, const summon_owner_link& rhs_link)
 {
-    return IsSummonOwnerLink(GetSummonOwnerLink(lhs), rhs) || IsSummonOwnerLink(GetSummonOwnerLink(rhs), lhs);
+    return IsSummonOwnerLink(lhs_link, rhs) || IsSummonOwnerLink(rhs_link, lhs);
 }
 
-bool IsSameTeamSummonCollision(const CEntity* lhs, const CEntity* rhs)
+bool AreBothSummons(const summon_owner_link& lhs_link, const summon_owner_link& rhs_link)
 {
-    summon_owner_link lhs_link = GetSummonOwnerLink(lhs);
-    summon_owner_link rhs_link = GetSummonOwnerLink(rhs);
-    return HasSummonOwnerLink(lhs_link) && HasSummonOwnerLink(rhs_link) && CheckTeam(lhs->m_team, rhs->m_team);
+    return HasSummonOwnerLink(lhs_link) && HasSummonOwnerLink(rhs_link);
 }
 
-bool IsSameRootOwnerSummonCollision(const CEntity* lhs, const CEntity* rhs)
+bool IsSameRootOwnerSummonCollision(const summon_owner_link& lhs_link, const summon_owner_link& rhs_link)
 {
-    summon_owner_link lhs_link = GetSummonOwnerLink(lhs);
-    summon_owner_link rhs_link = GetSummonOwnerLink(rhs);
     return HasSummonOwnerLink(lhs_link) && HasSummonOwnerLink(rhs_link) && lhs_link.root_owner_id >= 0 &&
            lhs_link.root_owner_id == rhs_link.root_owner_id;
 }
 
-bool ApplyWeakSummonCollision(CEntity* lhs, CEntity* rhs)
+bool ApplyWeakOverlapCollision(const collision_entity_view& lhs_view, const collision_entity_view& rhs_view,
+                               float push_multiplier)
 {
+    CEntity* lhs = lhs_view.entity;
+    CEntity* rhs = rhs_view.entity;
     if (!lhs || !rhs || !lhs->IsCollision(*rhs)) return false;
 
     sf::Vector2f delta = rhs->m_pos - lhs->m_pos;
@@ -248,15 +341,16 @@ bool ApplyWeakSummonCollision(CEntity* lhs, CEntity* rhs)
     float lhs_inv_mass = lhs->m_mass > game_config::entity_collision_epsilon ? 1.f / lhs->m_mass : 1.f;
     float rhs_inv_mass = rhs->m_mass > game_config::entity_collision_epsilon ? 1.f / rhs->m_mass : 1.f;
     float inv_total = std::max(game_config::entity_collision_epsilon, lhs_inv_mass + rhs_inv_mass);
-    lhs->m_pos -= normal * (overlap * game_config::world_mob_overlap_weak_push * (lhs_inv_mass / inv_total));
-    rhs->m_pos += normal * (overlap * game_config::world_mob_overlap_weak_push * (rhs_inv_mass / inv_total));
+    const float push = std::max(0.f, push_multiplier);
+    lhs->m_pos -= normal * (overlap * push * (lhs_inv_mass / inv_total));
+    rhs->m_pos += normal * (overlap * push * (rhs_inv_mass / inv_total));
 
-    if (auto* mob = dynamic_cast<CMobBase*>(lhs))
+    if (CMobBase* mob = lhs_view.mob)
     {
         float into_other = Dot(mob->m_vel, normal);
         if (into_other > 0.f) mob->m_vel -= normal * (into_other * game_config::world_mob_overlap_velocity_retention);
     }
-    if (auto* mob = dynamic_cast<CMobBase*>(rhs))
+    if (CMobBase* mob = rhs_view.mob)
     {
         float into_other = Dot(mob->m_vel, -normal);
         if (into_other > 0.f) mob->m_vel += normal * (into_other * game_config::world_mob_overlap_velocity_retention);
@@ -264,54 +358,84 @@ bool ApplyWeakSummonCollision(CEntity* lhs, CEntity* rhs)
     return true;
 }
 
-std::string EntityDebugName(const CEntity* entity)
+crash_entity_snapshot CaptureEntityForCrash(const CEntity* entity)
 {
-    if (!entity) return "null";
-    if (const auto* mob = dynamic_cast<const CMobBase*>(entity)) return std::string(GetMobTypeName(mob->m_mob_type));
-    if (const auto* petal = dynamic_cast<const CPetal*>(entity)) return std::string(GetPetalTypeName(petal->m_type));
-    if (dynamic_cast<const CPollenProjectile*>(entity)) return "PollenProjectile";
-    if (dynamic_cast<const CDandelionMissile*>(entity)) return "DandelionMissile";
-    if (dynamic_cast<const CMissile*>(entity)) return "Missile";
-    if (const auto* drop = dynamic_cast<const CDrop*>(entity))
-        return "Drop(" + std::string(GetPetalTypeName(drop->GetType())) + ")";
-    if (dynamic_cast<const CStateZone*>(entity)) return "StateZone";
-    if (dynamic_cast<const CPortal*>(entity)) return "Portal";
-    return "Entity";
+    crash_entity_snapshot snapshot;
+    if (!entity) return snapshot;
+
+    snapshot.concrete_type = &typeid(*entity);
+    snapshot.id = entity->m_id;
+    snapshot.generation = entity->m_generation;
+    snapshot.team = entity->m_team;
+    snapshot.health = entity->m_health;
+    snapshot.radius = entity->m_radius;
+    snapshot.pos = entity->m_pos;
+    snapshot.marked_for_destroy = entity->m_is_marked_for_des;
+    snapshot.valid = true;
+    return snapshot;
 }
 
-std::string DescribeEntityForCrash(const CEntity* entity)
+void WriteEntityForCrash(std::ostream& output, const crash_entity_snapshot& entity)
 {
-    if (!entity) return "null";
+    if (!entity.valid)
+    {
+        output << "null";
+        return;
+    }
 
-    std::ostringstream oss;
-    oss << EntityDebugName(entity) << "#" << entity->m_id << " gen=" << entity->m_generation
-        << " team=" << entity->m_team << " hp=" << std::fixed << std::setprecision(2) << entity->m_health
-        << " r=" << entity->m_radius << " pos=(" << entity->m_pos.x << "," << entity->m_pos.y << ")"
-        << " marked=" << (entity->m_is_marked_for_des ? "true" : "false");
-
-    if (const auto* mob = dynamic_cast<const CMobBase*>(entity)) oss << " rarity=" << GetRarityName(mob->GetRarity());
-    if (const auto* petal = dynamic_cast<const CPetal*>(entity)) oss << " rarity=" << GetRarityName(petal->m_rarity);
-    if (const auto* projectile = dynamic_cast<const CProjectile*>(entity))
-        oss << " owner=" << projectile->m_owner_id << " owner_gen=" << projectile->m_owner_generation;
-    return oss.str();
-}
-
-void SetLastServerCrashContext(std::string context)
-{
-    std::lock_guard<std::mutex> lock(g_server_crash_context_mutex);
-    g_last_server_crash_context = std::move(context);
+    output << entity.concrete_type->name() << "#" << entity.id << " gen=" << entity.generation
+           << " team=" << entity.team << " hp=" << std::fixed << std::setprecision(2) << entity.health
+           << " r=" << entity.radius << " pos=(" << entity.pos.x << "," << entity.pos.y << ")"
+           << " marked=" << (entity.marked_for_destroy ? "true" : "false");
 }
 
 void SetLastCollisionCrashContext(const CEntity* entity, const CEntity* other)
 {
-    SetLastServerCrashContext("collision " + DescribeEntityForCrash(entity) + " <-> " + DescribeEntityForCrash(other));
+    collision_crash_context context;
+    context.entity = CaptureEntityForCrash(entity);
+    context.other = CaptureEntityForCrash(other);
+    context.valid = true;
+    g_last_collision_crash_context = context;
 }
 
-bool IsSameTeamSandstormMobCollision(const CMobBase* lhs, const CMobBase* rhs)
+bool HasSandstormMob(const CMobBase* lhs, const CMobBase* rhs)
 {
     if (!lhs || !rhs) return false;
-    if (lhs->m_mob_type != EMobType::Sandstorm && rhs->m_mob_type != EMobType::Sandstorm) return false;
-    return CheckTeam(lhs->m_team, rhs->m_team);
+    return lhs->GetMobType() == EMobType::Sandstorm || rhs->GetMobType() == EMobType::Sandstorm;
+}
+
+bool HasFriendlyPhaseMob(const CMobBase* lhs, const CMobBase* rhs)
+{
+    if (!lhs || !rhs) return false;
+    auto ignores_same_team_collision = [](const CMobBase* mob) {
+        return mob->GetMobType() == EMobType::AntHole || mob->GetMobType() == EMobType::Dandelion;
+    };
+    return ignores_same_team_collision(lhs) || ignores_same_team_collision(rhs);
+}
+
+bool IsCarriedLeafPiecePair(const collision_entity_view& lhs, const collision_entity_view& rhs)
+{
+    auto is_carried_pair = [](const collision_entity_view& soldier_entity, const collision_entity_view& leaf_piece) {
+        const CMobBase* soldier = soldier_entity.mob;
+        if (!soldier || soldier->GetMobType() != EMobType::LeafcutterSoldier) return false;
+        const auto* controller = dynamic_cast<const CLeafcutterSoldierController*>(soldier->GetController());
+        return controller && controller->IsCarryingLeafPiece(soldier, leaf_piece.entity);
+    };
+    return is_carried_pair(lhs, rhs) || is_carried_pair(rhs, lhs);
+}
+
+void ResolveLeafcutterCarryConstraints(const std::vector<CEntity*>& entities)
+{
+    for (CEntity* entity : entities)
+    {
+        auto* soldier = dynamic_cast<CMobBase*>(entity);
+        if (!soldier || soldier->GetMobType() != EMobType::LeafcutterSoldier || soldier->m_is_marked_for_des ||
+            soldier->IsDead())
+            continue;
+
+        auto* controller = dynamic_cast<CLeafcutterSoldierController*>(soldier->GetController());
+        if (controller) controller->ResolveCarriedLeafPieceConstraint(soldier);
+    }
 }
 
 void BuildActiveTickViews(CGameWorld& world, std::vector<active_tick_view>& views)
@@ -333,73 +457,65 @@ void BuildActiveTickViews(CGameWorld& world, std::vector<active_tick_view>& view
         if (!owner || owner->m_is_marked_for_des || !stats) continue;
 
         float radius = std::max(0.f, game_config::simulation_active_view_padding) + std::max(0.f, stats->horizon);
+        const float radius_cap = game_config::simulation_active_view_radius_cap;
+        if (std::isfinite(radius_cap) && radius_cap > 0.f) radius = std::min(radius, radius_cap);
         AddActiveTickView(views, { owner->m_pos, radius });
     }
 }
 
-bool IsSameTeamPetalFlowerCollision(const CEntity* lhs, const CEntity* rhs)
+bool IsPetalFlowerPair(const collision_entity_view& lhs, const collision_entity_view& rhs)
 {
-    const auto* lhs_petal = dynamic_cast<const CPetal*>(lhs);
-    const auto* rhs_petal = dynamic_cast<const CPetal*>(rhs);
-    const auto* lhs_flower = dynamic_cast<const CFlower*>(lhs);
-    const auto* rhs_flower = dynamic_cast<const CFlower*>(rhs);
-    if (lhs_petal && rhs_flower && lhs_petal->GetOwner() != rhs && CheckTeam(lhs_petal->m_team, rhs_flower->m_team))
-        return true;
-    if (rhs_petal && lhs_flower && rhs_petal->GetOwner() != lhs && CheckTeam(rhs_petal->m_team, lhs_flower->m_team))
-        return true;
+    if (lhs.petal && rhs.flower) return lhs.petal->GetOwner() != rhs.entity;
+    if (rhs.petal && lhs.flower) return rhs.petal->GetOwner() != lhs.entity;
     return false;
 }
 
-bool IsWaxPetal(const CEntity* entity)
+bool IsOwnedTrapTrapperPair(const collision_entity_view& lhs, const collision_entity_view& rhs)
 {
-    const auto* petal = dynamic_cast<const CPetal*>(entity);
-    return petal && petal->m_type == EPetalType::Wax;
-}
+    const auto matches = [](const collision_entity_view& trap_candidate,
+                            const collision_entity_view& trapper_candidate) {
+        const CTrapProjectile* trap = trap_candidate.trap;
+        const CPetal* trapper = trapper_candidate.IsTrapperPetal() ? trapper_candidate.petal : nullptr;
+        if (!trap || !trapper || trap->m_owner_id < 0 || trap->m_owner_id != trapper->m_owner_id) return false;
 
-bool IsWaxPair(const CEntity* lhs, const CEntity* rhs) { return IsWaxPetal(lhs) || IsWaxPetal(rhs); }
+        return trap->m_owner_generation == 0 || trapper->m_owner_generation == 0 ||
+               trap->m_owner_generation == trapper->m_owner_generation;
+    };
 
-bool CollidesWithWalls(const CEntity* entity)
-{
-    const auto* petal = dynamic_cast<const CPetal*>(entity);
-    return !petal || petal->CollidesWithWalls();
+    return matches(lhs, rhs) || matches(rhs, lhs);
 }
 
 bool IsFiredCarrotPetal(const CEntity* entity)
 {
     const auto* missile = dynamic_cast<const CMissilePetal*>(entity);
-    return missile && missile->m_type == EPetalType::Carrot && missile->m_fired;
+    return missile && missile->GetPetalType() == EPetalType::Carrot && missile->m_fired;
 }
 
-bool IsSameTeamPetalWaxPair(const CEntity* lhs, const CEntity* rhs)
+bool IsSummonWaxPair(const collision_entity_view& lhs, const collision_entity_view& rhs,
+                     const summon_owner_link& lhs_link, const summon_owner_link& rhs_link)
 {
-    if (!IsWaxPair(lhs, rhs)) return false;
-    const auto* lhs_petal = dynamic_cast<const CPetal*>(lhs);
-    const auto* rhs_petal = dynamic_cast<const CPetal*>(rhs);
-    return lhs_petal && rhs_petal && CheckTeam(lhs->m_team, rhs->m_team);
+    if (!lhs.IsWax() && !rhs.IsWax()) return false;
+
+    return HasSummonOwnerLink(lhs.IsWax() ? rhs_link : lhs_link);
 }
 
-bool IsSameTeamSummonWaxPair(const CEntity* lhs, const CEntity* rhs)
+int CollisionDamageHitCount(const CPetal* source_petal, int base_hit_count)
 {
-    if (!IsWaxPair(lhs, rhs) || !CheckTeam(lhs->m_team, rhs->m_team)) return false;
-
-    const CEntity* other = IsWaxPetal(lhs) ? rhs : lhs;
-    return HasSummonOwnerLink(GetSummonOwnerLink(other));
-}
-
-int CollisionDamageHitCount(const CEntity* source, const CEntity* target, int base_hit_count)
-{
-    if (!source || !target) return std::max(1, base_hit_count);
-
-    const std::int64_t source_extra_hits = source->GetEntityStats().extra_hit_num;
-    const std::int64_t target_extra_hits = target->GetEntityStats().extra_hit_num;
-    const std::int64_t repeat_count = std::max<std::int64_t>(0, source_extra_hits + target_extra_hits) + 1;
-    const std::int64_t total_hits = static_cast<std::int64_t>(std::max(1, base_hit_count)) * repeat_count;
+    const std::int64_t physical_hits = std::max(1, base_hit_count);
+    const std::int64_t extra_hits =
+        source_petal ? std::max<std::int64_t>(0, source_petal->GetEntityStats().extra_hit_num) : 0;
+    const std::int64_t total_hits = physical_hits + extra_hits;
     return static_cast<int>(std::min(total_hits, static_cast<std::int64_t>(std::numeric_limits<int>::max())));
+}
+
+int CollisionDamageHitCount(const CEntity* source, int base_hit_count)
+{
+    return CollisionDamageHitCount(dynamic_cast<const CPetal*>(source), base_hit_count);
 }
 
 void DamageYggdrasilOnEnemyContact(CPetal* petal, CMobBase* mob)
 {
-    if (!petal || !mob || petal->m_type != EPetalType::Yggdrasil) return;
+    if (!petal || !mob || petal->GetPetalType() != EPetalType::Yggdrasil) return;
     const SMobStats* stats = mob->GetFinalStats();
     if (!stats) return;
     ApplyPhysicalDamageHits(petal, stats->damage, mob, 1);
@@ -414,25 +530,126 @@ bool EntityNeedsHealing(const CMobBase* mob)
            mob->m_health < stats->max_health - game_config::entity_collision_epsilon;
 }
 
-bool IsRoseTeamHealCollision(const CEntity* lhs, const CEntity* rhs)
+bool IsRoseTeamHealCollision(const collision_entity_view& lhs, const collision_entity_view& rhs)
 {
-    if (!lhs || !rhs || !CheckTeam(lhs->m_team, rhs->m_team)) return false;
+    if (!lhs.entity || !rhs.entity) return false;
 
-    const auto* lhs_petal = dynamic_cast<const CPetal*>(lhs);
-    const auto* rhs_petal = dynamic_cast<const CPetal*>(rhs);
-    const auto* lhs_mob = dynamic_cast<const CMobBase*>(lhs);
-    const auto* rhs_mob = dynamic_cast<const CMobBase*>(rhs);
-
-    if (lhs_petal && IsHealPetalType(lhs_petal->m_type) && rhs_mob && lhs_petal->m_target_entity_id == rhs->m_id &&
-        (lhs_petal->m_target_entity_generation == 0 || lhs_petal->m_target_entity_generation == rhs->m_generation) &&
-        EntityNeedsHealing(rhs_mob))
+    if (lhs.petal && IsHealPetalType(lhs.petal->GetPetalType()) && rhs.mob &&
+        lhs.petal->m_target_entity_id == rhs.entity->m_id &&
+        (lhs.petal->m_target_entity_generation == 0 ||
+         lhs.petal->m_target_entity_generation == rhs.entity->m_generation) &&
+        EntityNeedsHealing(rhs.mob) &&
+        CheckTeam(GetPreCorruptionTeam(lhs.entity, lhs.InteractionMob()),
+                  GetPreCorruptionTeam(rhs.entity, rhs.InteractionMob())))
         return true;
-    if (rhs_petal && IsHealPetalType(rhs_petal->m_type) && lhs_mob && rhs_petal->m_target_entity_id == lhs->m_id &&
-        (rhs_petal->m_target_entity_generation == 0 || rhs_petal->m_target_entity_generation == lhs->m_generation) &&
-        EntityNeedsHealing(lhs_mob))
+    if (rhs.petal && IsHealPetalType(rhs.petal->GetPetalType()) && lhs.mob &&
+        rhs.petal->m_target_entity_id == lhs.entity->m_id &&
+        (rhs.petal->m_target_entity_generation == 0 ||
+         rhs.petal->m_target_entity_generation == lhs.entity->m_generation) &&
+        EntityNeedsHealing(lhs.mob) &&
+        CheckTeam(GetPreCorruptionTeam(lhs.entity, lhs.InteractionMob()),
+                  GetPreCorruptionTeam(rhs.entity, rhs.InteractionMob())))
         return true;
     return false;
 }
+
+struct collision_pair_context
+{
+    collision_entity_view lhs;
+    collision_entity_view rhs;
+    summon_owner_link lhs_summon;
+    summon_owner_link rhs_summon;
+    bool same_team = false;
+    bool team_heal = false;
+
+    bool HasWax() const { return lhs.IsWax() || rhs.IsWax(); }
+    bool HasGlass() const { return lhs.IsGlass() || rhs.IsGlass(); }
+    bool HasTrap() const { return lhs.trap || rhs.trap; }
+    bool IsTrapPair() const { return lhs.trap && rhs.trap; }
+    bool HasNonPetalProjectile() const { return lhs.missile || lhs.pollen || rhs.missile || rhs.pollen; }
+};
+
+collision_pair_context BuildCollisionPairContext(CEntity* lhs, CEntity* rhs)
+{
+    collision_pair_context pair;
+    pair.lhs = BuildCollisionEntityView(lhs);
+    pair.rhs = BuildCollisionEntityView(rhs);
+    pair.lhs_summon = GetSummonOwnerLink(pair.lhs);
+    pair.rhs_summon = GetSummonOwnerLink(pair.rhs);
+    pair.same_team = CheckTeam(lhs->m_team, rhs->m_team);
+    pair.team_heal = IsRoseTeamHealCollision(pair.lhs, pair.rhs);
+    return pair;
+}
+
+bool ShouldIgnorePhaseCollision(const collision_pair_context& pair)
+{
+    if (ShouldSkipDiggingCollision(pair.lhs.entity, pair.rhs.entity)) return true;
+    if (pair.team_heal) return false;
+    return BlocksNullifiedMobInteraction(pair.lhs.InteractionMob(), pair.rhs.InteractionMob());
+}
+
+bool ShouldIgnoreConstraintCollision(const collision_pair_context& pair)
+{
+    return IsCarriedLeafPiecePair(pair.lhs, pair.rhs) || IsOwnedTrapTrapperPair(pair.lhs, pair.rhs);
+}
+
+bool ShouldIgnoreOwnershipCollision(const collision_pair_context& pair)
+{
+    if (pair.team_heal) return false;
+
+    if (IsProjectileOwnerCollision(pair.lhs.projectile, pair.rhs.entity) && !pair.lhs.IsWax()) return true;
+    if (IsProjectileOwnerCollision(pair.rhs.projectile, pair.lhs.entity) && !pair.rhs.IsWax()) return true;
+
+    return !pair.HasWax() && ShouldSkipSummonCollision(pair.lhs, pair.rhs, pair.lhs_summon, pair.rhs_summon);
+}
+
+bool ShouldIgnoreFriendlyCollision(const collision_pair_context& pair)
+{
+    if (!pair.same_team || pair.team_heal) return false;
+
+    // Traps and non-petal projectiles never interact with friendlies, including their own type.
+    if (pair.HasTrap() || pair.HasNonPetalProjectile()) return true;
+    if (pair.lhs.petal && pair.rhs.petal) return true;
+    if (IsPetalFlowerPair(pair.lhs, pair.rhs)) return true;
+    if (HasFriendlyPhaseMob(pair.lhs.mob, pair.rhs.mob)) return true;
+    if (HasSandstormMob(pair.lhs.mob, pair.rhs.mob)) return true;
+
+    return pair.HasWax() && IsSummonWaxPair(pair.lhs, pair.rhs, pair.lhs_summon, pair.rhs_summon);
+}
+
+bool ShouldResolveWeakSummonCollision(const collision_pair_context& pair)
+{
+    if (pair.team_heal || pair.HasWax()) return false;
+    return (pair.same_team && AreBothSummons(pair.lhs_summon, pair.rhs_summon)) ||
+           IsSameRootOwnerSummonCollision(pair.lhs_summon, pair.rhs_summon);
+}
+
+bool ResolveWaxMobHardCollision(const collision_entity_view& lhs, const collision_entity_view& rhs);
+
+bool CanResolvePhysicalCollision(const collision_pair_context& pair)
+{
+    if (pair.team_heal || pair.HasGlass() || pair.IsTrapPair()) return false;
+    return pair.lhs.entity->CanPhysicallyCollideWith(pair.rhs.entity) &&
+           pair.rhs.entity->CanPhysicallyCollideWith(pair.lhs.entity);
+}
+
+void ResolvePhysicalCollision(const collision_pair_context& pair)
+{
+    if (pair.IsTrapPair())
+    {
+        ApplyWeakOverlapCollision(pair.lhs, pair.rhs, game_config::default_trapper_trap_collision_push);
+        return;
+    }
+    if (!CanResolvePhysicalCollision(pair)) return;
+
+    // Wax-to-mob separation has its own immovable-wall response.
+    if (ResolveWaxMobHardCollision(pair.lhs, pair.rhs)) return;
+
+    if (pair.lhs.missile && pair.lhs.missile->IsAttachedToOwner()) pair.rhs.entity->OnCollision(pair.lhs.entity);
+    else pair.lhs.entity->OnCollision(pair.rhs.entity);
+}
+
+bool CanResolveCollisionDamage(const collision_pair_context& pair) { return !pair.same_team || pair.team_heal; }
 
 sf::Vector2f WallPoint(const FlorrBtMap::Point& point) { return { point.x, point.y }; }
 
@@ -464,46 +681,49 @@ void SetEntityVelocity(CEntity& entity, sf::Vector2f velocity)
     if (auto* projectile = dynamic_cast<CProjectile*>(&entity)) projectile->m_vel = velocity;
 }
 
-float CollisionKnockbackSpeedFor(const CEntity* entity)
+bool ResolveWaxMobHardCollision(const collision_entity_view& lhs, const collision_entity_view& rhs)
 {
-    if (!dynamic_cast<const CFlower*>(entity)) return 0.f;
-
-    // Keep the config knobs registered, but disable flower body-contact bounce for now.
-    (void)game_config::entity_collision_knockback_speed;
-    (void)game_config::player_collision_knockback_multiplier;
-    return 0.f;
-}
-
-void PushEntityVelocityOutward(CEntity* entity, sf::Vector2f outward, float speed)
-{
-    if (!entity || speed <= 0.f) return;
-
-    sf::Vector2f velocity = GetEntityVelocity(*entity);
-    float outward_speed = Dot(velocity, outward);
-    if (outward_speed < speed) SetEntityVelocity(*entity, velocity + outward * (speed - outward_speed));
-}
-
-void ApplyCollisionKnockback(CEntity* lhs, CEntity* rhs)
-{
-    if (!lhs || !rhs) return;
-
-    sf::Vector2f delta = rhs->m_pos - lhs->m_pos;
-    sf::Vector2f normal = NormalizeOrZero(delta);
-    if (LengthSq(normal) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+    CEntity* wax = nullptr;
+    CMobBase* mob = nullptr;
+    CFlower* flower = nullptr;
+    if (lhs.IsWax())
     {
-        uint32_t seed = static_cast<uint32_t>(lhs->m_id) * 1103515245u + static_cast<uint32_t>(rhs->m_id) * 2654435761u;
-        float angle = static_cast<float>(seed % 6283u) / 1000.f;
-        normal = { std::cos(angle), std::sin(angle) };
+        wax = lhs.entity;
+        mob = rhs.mob;
+        flower = rhs.flower;
+    } else if (rhs.IsWax())
+    {
+        wax = rhs.entity;
+        mob = lhs.mob;
+        flower = lhs.flower;
     }
 
-    PushEntityVelocityOutward(lhs, -normal, CollisionKnockbackSpeedFor(lhs));
-    PushEntityVelocityOutward(rhs, normal, CollisionKnockbackSpeedFor(rhs));
+    if (!wax || !mob || flower) return false;
+
+    sf::Vector2f delta = mob->m_pos - wax->m_pos;
+    float distance = Length(delta);
+    float overlap = mob->m_radius + wax->m_radius - distance;
+    if (overlap <= 0.f) return true;
+
+    sf::Vector2f normal = NormalizeOrZero(delta);
+    if (LengthSq(normal) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+        normal = NormalizeOrZero(mob->m_prev_pos - wax->m_pos);
+    if (LengthSq(normal) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+        normal = NormalizeOrZero(-mob->m_vel);
+    if (LengthSq(normal) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+        normal = { 1.f, 0.f };
+
+    mob->m_pos += normal * (overlap + game_config::entity_collision_epsilon);
+    float inward_speed = Dot(mob->m_vel, normal);
+    if (inward_speed < 0.f) mob->m_vel -= normal * inward_speed;
+    return true;
 }
 
 bool BounceFiredCarrotFromEntity(CPetal* petal, const CEntity* target)
 {
+    if (!petal || petal->GetPetalType() != EPetalType::Carrot) return false;
     auto* missile = dynamic_cast<CMissilePetal*>(petal);
-    if (!missile || !target || missile->m_type != EPetalType::Carrot || !missile->m_fired) return false;
+    if (!missile || !target || !missile->m_fired) return false;
 
     sf::Vector2f normal = NormalizeOrZero(missile->m_pos - target->m_pos);
     if (LengthSq(normal) <= game_config::entity_collision_epsilon) normal = NormalizeOrZero(-missile->m_vel);
@@ -546,7 +766,10 @@ float EffectivePetalReload(const CPetal* petal)
 int PetalHitCountForTick(CPetal* petal, const CEntity* target, float dt)
 {
     if (!petal || !target || dt <= 0.f) return 1;
-    if (const auto* missile = dynamic_cast<const CMissilePetal*>(petal); missile && missile->m_fired) return 1;
+    if (petal->GetPetalType() == EPetalType::Carrot || petal->GetPetalType() == EPetalType::Missile)
+    {
+        if (const auto* missile = dynamic_cast<const CMissilePetal*>(petal); missile && missile->m_fired) return 1;
+    }
 
     float reload = EffectivePetalReload(petal);
     if (reload <= game_config::entity_collision_epsilon || reload >= dt) return 1;
@@ -562,7 +785,7 @@ bool PetalUsesPhysicalHitCompensation(const CPetal* petal)
 {
     if (!petal) return false;
 
-    switch (petal->m_type)
+    switch (petal->GetPetalType())
     {
     case EPetalType::Basic:
     case EPetalType::Bone:
@@ -618,12 +841,22 @@ void ApplyPhysicalDamageHits(CEntity* target, float damage, CEntity* attacker, i
     if (!target || damage <= 0.f) return;
 
     const CEntity* source = collision_source ? collision_source : attacker;
-    const int total_hit_count = CollisionDamageHitCount(source, target, hit_count);
+    const int total_hit_count = CollisionDamageHitCount(source, hit_count);
     for (int hit = 0; hit < total_hit_count; ++hit)
     {
         if (target->IsDead() || target->m_health <= 0.f) break;
         target->TakeDamage(damage, attacker, EDamageType::Normal);
     }
+}
+
+float PetalContactDamage(CPetal* petal, CEntity* target)
+{
+    if (!petal || !target) return 0.f;
+
+    float damage = petal->m_final_petal_stats.damage;
+    const CPetalPrototype* proto = FindPetalPrototype(petal->GetPetalType());
+    if (proto && proto->m_p_behavior) proto->m_p_behavior->OnPetalHit(petal, petal->m_rarity, target, damage);
+    return damage;
 }
 
 void RefreshAttachedMissileTransforms(const std::vector<CEntity*>& entities)
@@ -632,50 +865,92 @@ void RefreshAttachedMissileTransforms(const std::vector<CEntity*>& entities)
     {
         auto* missile = dynamic_cast<CMissile*>(entity);
         if (!missile || !missile->IsAttachedToOwner() || missile->m_is_marked_for_des) continue;
-        if (!missile->RefreshAttachedTransform()) missile->MarkForDestroy();
+        if (!missile->RefreshAttachedTransform()) missile->MarkForDestroy(EEntityRemovalReason::OwnerRemoved);
     }
 }
 
-void ApplyPetalHits(CPetal* petal, CMobBase* target, float dt)
+void ApplyPetalMobContact(CPetal* petal, CMobBase* mob, float dt)
 {
-    if (!petal || !target) return;
+    if (!petal || !mob) return;
 
-    int hit_count = CollisionDamageHitCount(petal, target, PetalPhysicalHitCountForTick(petal, target, dt));
-    const CPetalPrototype* proto = FindPetalPrototype(petal->m_type);
-    for (int hit = 0; hit < hit_count; ++hit)
+    const int petal_hit_count =
+        CollisionDamageHitCount(petal, PetalPhysicalHitCountForTick(petal, mob, dt));
+    const int mob_hit_count = PhysicalHitCountForTick(mob, petal);
+    const int exchange_count = std::max(petal_hit_count, mob_hit_count);
+    const SMobStats* mob_stats = mob->GetFinalStats();
+    bool petal_can_deal_damage = true;
+
+    for (int hit = 0; hit < exchange_count; ++hit)
     {
-        if (hit > 0 && petal->m_health <= 0.f) break;
-        if (target->IsDead()) break;
+        if (!CollisionPairAlive(petal, mob)) break;
 
-        float damage = petal->m_final_petal_stats.damage;
-        if (proto && proto->m_p_behavior) proto->m_p_behavior->OnPetalHit(petal, petal->m_rarity, target, damage);
-        if (damage <= 0.f) break;
-        if (damage > 0.f) target->TakeDamage(damage, petal->GetOwner(), EDamageType::Normal);
+        if (petal_can_deal_damage && hit < petal_hit_count)
+        {
+            const float damage = PetalContactDamage(petal, mob);
+            if (damage > 0.f) mob->TakeDamage(damage, petal->GetOwner(), EDamageType::Normal);
+            else petal_can_deal_damage = false;
+        }
+        if (!CollisionPairAlive(petal, mob)) break;
+
+        if (mob_stats && mob_stats->damage > 0.f && hit < mob_hit_count)
+            petal->TakeDamage(mob_stats->damage, mob, EDamageType::Normal);
+        if (!CollisionPairAlive(petal, mob)) break;
     }
 }
 
-void ApplyMobHitToPetal(CMobBase* mob, CPetal* petal)
+void ApplyPetalPetalContact(CPetal* lhs, CPetal* rhs, float dt)
 {
-    if (!mob || !petal) return;
+    if (!lhs || !rhs) return;
 
-    const SMobStats* stats = mob->GetFinalStats();
-    if (!stats || stats->damage <= 0.f) return;
+    const int lhs_hit_count = CollisionDamageHitCount(lhs, PetalPhysicalHitCountForTick(lhs, rhs, dt));
+    const int rhs_hit_count = CollisionDamageHitCount(rhs, PetalPhysicalHitCountForTick(rhs, lhs, dt));
+    const int exchange_count = std::max(lhs_hit_count, rhs_hit_count);
+    bool lhs_can_deal_damage = true;
+    bool rhs_can_deal_damage = true;
 
-    ApplyPhysicalDamageHits(petal, stats->damage, mob, PhysicalHitCountForTick(mob, petal));
+    for (int hit = 0; hit < exchange_count; ++hit)
+    {
+        if (!CollisionPairAlive(lhs, rhs)) break;
+
+        float lhs_damage = 0.f;
+        if (lhs_can_deal_damage && hit < lhs_hit_count)
+        {
+            lhs_damage = PetalContactDamage(lhs, rhs);
+            if (lhs_damage <= 0.f) lhs_can_deal_damage = false;
+        }
+
+        float rhs_damage = 0.f;
+        if (rhs_can_deal_damage && hit < rhs_hit_count)
+        {
+            rhs_damage = PetalContactDamage(rhs, lhs);
+            if (rhs_damage <= 0.f) rhs_can_deal_damage = false;
+        }
+
+        // Both attacks are decided before either side takes damage, so lethal contacts remain symmetric.
+        if (lhs_damage > 0.f) rhs->TakeDamage(lhs_damage, lhs->GetOwner(), EDamageType::Normal);
+        if (rhs_damage > 0.f) lhs->TakeDamage(rhs_damage, rhs->GetOwner(), EDamageType::Normal);
+    }
 }
 
-void ApplyContactDamageToMissile(CMissile* missile, CEntity* target, float dt)
+void ApplyContactDamageToMissile(CMissile* missile, const collision_entity_view& target, float dt)
 {
-    if (!missile || !target) return;
+    if (!missile || !target.entity) return;
 
-    if (auto* petal = dynamic_cast<CPetal*>(target))
+    if (CPetal* petal = target.petal)
     {
         const int hit_count = PetalPhysicalHitCountForTick(petal, missile, dt);
-        ApplyPhysicalDamageHits(missile, petal->m_final_petal_stats.damage, petal->GetOwner(), hit_count, petal);
+        ApplyPhysicalDamageHits(missile, PetalContactDamage(petal, missile), petal->GetOwner(), hit_count, petal);
         return;
     }
 
-    if (auto* mob = dynamic_cast<CMobBase*>(target))
+    if (CProjectile* projectile = target.projectile)
+    {
+        const float damage = target.ProjectileDamage();
+        if (damage > 0.f) ApplyPhysicalDamageHits(missile, damage, projectile->GetOwner(), 1, projectile);
+        return;
+    }
+
+    if (CMobBase* mob = target.mob)
     {
         if (const SMobStats* stats = mob->GetFinalStats())
         {
@@ -686,116 +961,253 @@ void ApplyContactDamageToMissile(CMissile* missile, CEntity* target, float dt)
     }
 }
 
-bool ApplyAttachedMissileContact(CMissile* missile, CEntity* target, float dt)
+bool ApplyAttachedMissileContact(CMissile* missile, const collision_entity_view& target, float dt)
 {
-    if (!missile || !target || !missile->IsAttachedToOwner() || IsProjectileOwnerCollision(missile, target))
+    if (!missile || !target.entity || !missile->IsAttachedToOwner() ||
+        IsProjectileOwnerCollision(missile, target.entity))
         return false;
 
-    const int missile_hit_count = PhysicalHitCountForTick(missile, target);
+    const int missile_hit_count = PhysicalHitCountForTick(missile, target.entity);
     if (missile->m_damage > 0.f)
-        ApplyPhysicalDamageHits(target, missile->m_damage, missile->GetOwner(), missile_hit_count, missile);
+        ApplyPhysicalDamageHits(target.entity, missile->m_damage, missile->GetOwner(), missile_hit_count, missile);
 
-    if (!CollisionPairAlive(missile, target)) return true;
+    if (!CollisionPairAlive(missile, target.entity)) return true;
 
     ApplyContactDamageToMissile(missile, target, dt);
     return true;
 }
 
-bool ApplyFiredMissileContact(CMissile* missile, CEntity* target, float dt)
+bool ApplyFiredMissileContact(CMissile* missile, const collision_entity_view& target, float dt)
 {
-    if (!missile || !target || missile->IsAttachedToOwner()) return false;
+    if (!missile || !target.entity || missile->IsAttachedToOwner()) return false;
     bool hit_applied = false;
-    const int hit_count = CollisionDamageHitCount(missile, target, 1);
+    const int hit_count = CollisionDamageHitCount(missile, 1);
     for (int hit = 0; hit < hit_count; ++hit)
     {
-        if (target->IsDead() || target->m_is_marked_for_des) break;
-        if (!missile->ApplyHit(target)) break;
+        if (target.entity->IsDead() || target.entity->m_is_marked_for_des) break;
+        if (!missile->ApplyHit(target.entity)) break;
         hit_applied = true;
     }
     if (!hit_applied) return false;
-    if (!CollisionPairAlive(missile, target)) return true;
+    if (!CollisionPairAlive(missile, target.entity)) return true;
     ApplyContactDamageToMissile(missile, target, dt);
     return true;
 }
 
-bool ApplyMissileHit(CMissile* missile, CEntity* target, float dt)
+bool ApplyMissileHit(CMissile* missile, const collision_entity_view& target, float dt)
 {
-    if (!missile || !target || dynamic_cast<CDrop*>(target)) return false;
-    if (IsProjectileOwnerCollision(missile, target)) return false;
-    if (!dynamic_cast<CMobBase*>(target) && !dynamic_cast<CPetal*>(target)) return false;
+    if (!missile || !target.entity || target.drop) return false;
+    if (IsProjectileOwnerCollision(missile, target.entity)) return false;
+    if (!target.mob && !target.petal && !target.projectile)
+        return false;
     if (auto* dandelion = dynamic_cast<CDandelionMissile*>(missile))
     {
-        if (auto* mob = dynamic_cast<CMobBase*>(target)) ApplyDandelionAntiHeal(mob, dandelion->GetRarity());
+        if (target.mob) ApplyDandelionAntiHeal(target.mob, dandelion->GetRarity());
     }
     if (missile->IsAttachedToOwner()) return ApplyAttachedMissileContact(missile, target, dt);
     return ApplyFiredMissileContact(missile, target, dt);
 }
 
-bool ApplyPollenHit(CPollenProjectile* pollen, CEntity* target)
+bool ApplyPollenHit(CPollenProjectile* pollen, const collision_entity_view& target)
 {
-    if (!pollen || !target || dynamic_cast<CDrop*>(target)) return false;
-    auto* mob = dynamic_cast<CMobBase*>(target);
-    auto* petal = dynamic_cast<CPetal*>(target);
-    if (!mob && !petal) return false;
+    if (!pollen || !target.entity || target.drop) return false;
+    CMobBase* mob = target.mob;
+    CPetal* petal = target.petal;
+    CProjectile* projectile = target.projectile;
+    if (!mob && !petal && !projectile) return false;
 
     bool hit_applied = false;
-    const int hit_count = CollisionDamageHitCount(pollen, target, 1);
+    const int hit_count = CollisionDamageHitCount(pollen, 1);
     for (int hit = 0; hit < hit_count; ++hit)
     {
-        if (target->IsDead() || target->m_is_marked_for_des) break;
-        if (!pollen->ApplyHit(target)) break;
+        if (target.entity->IsDead() || target.entity->m_is_marked_for_des) break;
+        if (!pollen->ApplyHit(target.entity)) break;
         hit_applied = true;
     }
     if (!hit_applied) return false;
 
     float retaliation = 0.f;
-    CEntity* retaliation_owner = target;
+    CEntity* retaliation_owner = target.entity;
     if (mob)
     {
         if (const SMobStats* stats = mob->GetFinalStats()) retaliation = stats->damage;
     } else if (petal)
     {
-        retaliation = petal->m_final_petal_stats.damage;
+        retaliation = PetalContactDamage(petal, pollen);
         retaliation_owner = petal->GetOwner();
+    } else if (projectile)
+    {
+        retaliation = target.ProjectileDamage();
+        retaliation_owner = projectile->GetOwner();
     }
-    if (retaliation > 0.f) ApplyPhysicalDamageHits(pollen, retaliation, retaliation_owner, 1, target);
+    if (!CollisionPairAlive(pollen, target.entity)) return true;
+    if (retaliation > 0.f) ApplyPhysicalDamageHits(pollen, retaliation, retaliation_owner, 1, target.entity);
     return true;
 }
 
 bool CollisionPairAlive(const CEntity* lhs, const CEntity* rhs)
 {
-    return lhs && rhs && lhs->GameWorld() && lhs->GameWorld() == rhs->GameWorld();
+    return lhs && rhs && !lhs->m_is_marked_for_des && !rhs->m_is_marked_for_des && lhs->CanCollide() &&
+           rhs->CanCollide() && lhs->GameWorld() && lhs->GameWorld() == rhs->GameWorld();
 }
 
-void ApplyBodyPoison(CMobBase* attacker, CEntity* target)
+void ApplyBodyPoison(CMobBase* attacker, CFlower* attacker_flower, CMobBase* target)
 {
-    auto* target_mob = dynamic_cast<CMobBase*>(target);
-    if (!attacker || !target_mob || target_mob == attacker) return;
+    if (!attacker || !target || target == attacker) return;
 
-    if (attacker->m_mob_type == EMobType::Spider)
+    if (attacker->GetMobType() == EMobType::Spider)
     {
         const int level = GetLevel(attacker->GetRarity());
         const float duration = game_config::mob_spider_poison_duration;
         const float total_poison = game_config::mob_spider_poison_total * std::pow(3.f, static_cast<float>(level - 1));
         if (duration > 0.f && total_poison > 0.f)
         {
-            auto poison = std::make_unique<CPoisonState>(target_mob, duration, total_poison / duration,
+            auto poison = std::make_unique<CPoisonState>(target, duration, total_poison / duration,
                                                          attacker->GetRarity(), attacker);
-            if (poison->IsValid()) target_mob->AddState(std::move(poison));
+            if (poison->IsValid()) target->AddState(std::move(poison));
         }
     }
 
-    auto* flower = dynamic_cast<CFlower*>(attacker);
-    if (!flower) return;
+    if (!attacker_flower) return;
 
-    const SFlowerStats* stats = flower->GetFinalStats();
+    const SFlowerStats* stats = attacker_flower->GetFinalStats();
     if (!stats || stats->body_poison_damage_multiplier <= 0.f || stats->body_poison_duration <= 0.f) return;
 
     float total_poison = stats->damage * stats->body_poison_damage_multiplier;
     float poison_per_second = total_poison / stats->body_poison_duration;
-    auto poison = std::make_unique<CPoisonState>(target_mob, stats->body_poison_duration, poison_per_second,
-                                                 flower->GetRarity(), flower);
-    if (poison->IsValid()) target_mob->AddState(std::move(poison));
+    auto poison = std::make_unique<CPoisonState>(target, stats->body_poison_duration, poison_per_second,
+                                                 attacker_flower->GetRarity(), attacker_flower);
+    if (poison->IsValid()) target->AddState(std::move(poison));
+}
+
+void ResolveOverlappingEntityPair(CEntity* entity, CEntity* other, float dt)
+{
+    if (!CollisionPairAlive(entity, other) || entity == other || !entity->IsCollision(*other)) return;
+
+    const collision_pair_context pair = BuildCollisionPairContext(entity, other);
+
+    // 1. World-state filters run before every physical or damage response.
+    if (ShouldIgnorePhaseCollision(pair)) return;
+
+    // 2. Constraint and ownership filters: bound entities cannot collide with their anchors or owners.
+    if (ShouldIgnoreConstraintCollision(pair) || ShouldIgnoreOwnershipCollision(pair)) return;
+
+    // 3. Team filters: selected friendly pairs phase, while ordinary friendly mobs still separate.
+    if (ShouldIgnoreFriendlyCollision(pair)) return;
+
+    SetLastCollisionCrashContext(entity, other);
+    if (ShouldResolveWeakSummonCollision(pair))
+    {
+        ApplyWeakOverlapCollision(pair.lhs, pair.rhs, game_config::world_mob_overlap_weak_push);
+        return;
+    }
+
+    // 4. Physical response is independent from damage eligibility.
+    ResolvePhysicalCollision(pair);
+
+    // 5. Damage dispatch only runs for hostile pairs or an explicitly targeted team heal.
+    if (!CanResolveCollisionDamage(pair)) return;
+
+    CPetal* entity_petal = pair.lhs.petal;
+    CPetal* other_petal = pair.rhs.petal;
+    CMissile* entity_missile = pair.lhs.missile;
+    CMissile* other_missile = pair.rhs.missile;
+    CPollenProjectile* entity_pollen = pair.lhs.pollen;
+    CPollenProjectile* other_pollen = pair.rhs.pollen;
+    CMobBase* entity_mob = pair.lhs.mob;
+    CMobBase* other_mob = pair.rhs.mob;
+
+    if (entity_missile)
+    {
+        ApplyMissileHit(entity_missile, pair.rhs, dt);
+        return;
+    }
+    if (other_missile)
+    {
+        ApplyMissileHit(other_missile, pair.lhs, dt);
+        return;
+    }
+    if (entity_pollen)
+    {
+        ApplyPollenHit(entity_pollen, pair.rhs);
+        return;
+    }
+    if (other_pollen)
+    {
+        ApplyPollenHit(other_pollen, pair.lhs);
+        return;
+    }
+
+    if (entity_petal && other_petal)
+    {
+        BounceFiredCarrotFromEntity(entity_petal, other);
+        BounceFiredCarrotFromEntity(other_petal, entity);
+        ApplyPetalPetalContact(entity_petal, other_petal, dt);
+        return;
+    }
+
+    if (entity_petal && other_mob)
+    {
+        BounceFiredCarrotFromEntity(entity_petal, other);
+        if (entity_petal->GetPetalType() == EPetalType::Yggdrasil)
+        {
+            DamageYggdrasilOnEnemyContact(entity_petal, other_mob);
+            return;
+        }
+
+        ApplyPetalMobContact(entity_petal, other_mob, dt);
+        return;
+    }
+
+    if (other_petal && entity_mob)
+    {
+        BounceFiredCarrotFromEntity(other_petal, entity);
+        if (other_petal->GetPetalType() == EPetalType::Yggdrasil)
+        {
+            DamageYggdrasilOnEnemyContact(other_petal, entity_mob);
+            return;
+        }
+
+        ApplyPetalMobContact(other_petal, entity_mob, dt);
+        return;
+    }
+
+    if (entity_mob && other_mob)
+    {
+        const SMobStats* entity_stats = entity_mob->GetFinalStats();
+        const SMobStats* other_stats = other_mob->GetFinalStats();
+        const int entity_hit_count = PhysicalHitCountForTick(entity, other);
+        const int other_hit_count = PhysicalHitCountForTick(other, entity);
+
+        // Snapshot both attacks first so ID/order cannot suppress a lethal counter-hit.
+        if (entity_stats && entity_stats->damage > 0.f)
+            ApplyPhysicalDamageHits(other, entity_stats->damage, entity, entity_hit_count);
+        if (other_stats && other_stats->damage > 0.f)
+            ApplyPhysicalDamageHits(entity, other_stats->damage, other, other_hit_count);
+
+        if (!other->IsDead() && !other->m_is_marked_for_des) ApplyBodyPoison(entity_mob, pair.lhs.flower, other_mob);
+        if (!entity->IsDead() && !entity->m_is_marked_for_des) ApplyBodyPoison(other_mob, pair.rhs.flower, entity_mob);
+        return;
+    }
+
+    if (entity_mob && !other_petal)
+    {
+        if (const SMobStats* stats = entity_mob->GetFinalStats())
+        {
+            ApplyPhysicalDamageHits(other, stats->damage, entity, PhysicalHitCountForTick(entity, other));
+            if (!CollisionPairAlive(entity, other)) return;
+            ApplyBodyPoison(entity_mob, pair.lhs.flower, other_mob);
+        }
+    }
+    if (other_mob && !entity_petal)
+    {
+        if (const SMobStats* stats = other_mob->GetFinalStats())
+        {
+            ApplyPhysicalDamageHits(entity, stats->damage, other, PhysicalHitCountForTick(other, entity));
+            if (!CollisionPairAlive(entity, other)) return;
+            ApplyBodyPoison(other_mob, pair.rhs.flower, entity_mob);
+        }
+    }
 }
 
 sf::Vector2f ClosestPointOnSegment(sf::Vector2f point, sf::Vector2f a, sf::Vector2f b)
@@ -982,17 +1394,20 @@ bool HandleFiredMissileWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, in
     if (auto* raw_missile = dynamic_cast<CMissile*>(&entity))
     {
         if (raw_missile->IsAttachedToOwner()) return true;
-        return false;
+        raw_missile->MarkForDestroy();
+        return true;
     }
 
     if (auto* missile = dynamic_cast<CMissilePetal*>(&entity); missile && missile->m_fired)
     {
-        if (missile->m_type != EPetalType::Carrot)
+        if (missile->GetPetalType() != EPetalType::Carrot)
         {
-            return false;
+            missile->MarkForDestroy();
+            return true;
         }
 
-        if (segment_index < 0) segment_index = FindBlockingWallSegment(start, end, entity.m_radius, wall);
+        if (segment_index < 0)
+            segment_index = FindBlockingWallSegment(start, end, std::max(0.f, entity.WallCollisionRadius()), wall);
         if (segment_index < 0) segment_index = FindClosestWallSegment(start, wall);
 
         sf::Vector2f motion = end - start;
@@ -1034,9 +1449,10 @@ bool HandleBumbleBeeWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, int s
                             sf::Vector2f end)
 {
     auto* mob = dynamic_cast<CMobBase*>(&entity);
-    if (!mob || mob->m_mob_type != EMobType::BumbleBee) return false;
+    if (!mob || mob->GetMobType() != EMobType::BumbleBee) return false;
 
-    if (segment_index < 0) segment_index = FindBlockingWallSegment(start, end, entity.m_radius, wall);
+    const float wall_radius = std::max(0.f, entity.WallCollisionRadius());
+    if (segment_index < 0) segment_index = FindBlockingWallSegment(start, end, wall_radius, wall);
 
     sf::Vector2f motion = end - start;
     if (LengthSq(motion) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
@@ -1058,7 +1474,7 @@ bool HandleBumbleBeeWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, int s
     }
 
     float into_wall = Dot(old_vel, normal);
-    mob->m_pos = start + normal * (entity.m_radius * game_config::gameworld_wall_contact_radius_multiplier +
+    mob->m_pos = start + normal * (wall_radius * game_config::gameworld_wall_contact_radius_multiplier +
                                    game_config::gameworld_wall_contact_skin);
     mob->m_vel = old_vel - normal * (2.f * into_wall);
     if (LengthSq(mob->m_vel) <= game_config::entity_collision_epsilon) mob->m_vel = normal * speed;
@@ -1070,7 +1486,8 @@ bool HandleBumbleBeeWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, int s
 
 bool PushEntityOutOfWall(CEntity& entity, const FlorrBtMap::Wall& wall)
 {
-    if (!ExpandedWallBoundsMayTouch(wall, entity.m_pos, entity.m_pos, entity.m_radius)) return false;
+    const float wall_radius = std::max(0.f, entity.WallCollisionRadius());
+    if (!ExpandedWallBoundsMayTouch(wall, entity.m_pos, entity.m_pos, wall_radius)) return false;
 
     float best_dist_sq = std::numeric_limits<float>::max();
     sf::Vector2f best_point = entity.m_pos;
@@ -1093,7 +1510,7 @@ bool PushEntityOutOfWall(CEntity& entity, const FlorrBtMap::Wall& wall)
 
     bool inside = PointInWallPolygon(entity.m_pos, wall);
     float dist = std::sqrt(std::max(0.f, best_dist_sq));
-    if (!inside && dist >= entity.m_radius) return false;
+    if (!inside && dist >= wall_radius) return false;
 
     sf::Vector2f motion = entity.m_pos - entity.m_prev_pos;
     if (LengthSq(motion) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
@@ -1103,7 +1520,7 @@ bool PushEntityOutOfWall(CEntity& entity, const FlorrBtMap::Wall& wall)
     if (LengthSq(normal) <= game_config::entity_collision_epsilon)
         normal = ChooseWallNormal(wall, best_segment, entity.m_pos, motion);
 
-    float penetration = inside ? entity.m_radius + dist : entity.m_radius - dist;
+    float penetration = inside ? wall_radius + dist : wall_radius - dist;
     entity.m_pos += normal * (penetration + game_config::gameworld_wall_contact_skin);
 
     sf::Vector2f velocity = GetEntityVelocity(entity);
@@ -1129,8 +1546,15 @@ bool PushEntityOutOfWall(CEntity& entity, const FlorrBtMap::Wall& wall)
 
 std::string GetLastServerCrashContext()
 {
-    std::lock_guard<std::mutex> lock(g_server_crash_context_mutex);
-    return g_last_server_crash_context;
+    const collision_crash_context context = g_last_collision_crash_context;
+    if (!context.valid) return "startup";
+
+    std::ostringstream output;
+    output << "collision ";
+    WriteEntityForCrash(output, context.entity);
+    output << " <-> ";
+    WriteEntityForCrash(output, context.other);
+    return output.str();
 }
 
 CGameWorld::CGameWorld() : CGameWorld(game_config::lobby_map_path, 0) {}
@@ -1163,6 +1587,13 @@ CGameWorld::~CGameWorld()
     m_live_entities.clear();
     m_p_entities.clear();
     m_p_entity_refs.clear();
+}
+
+void CGameWorld::SetController(std::unique_ptr<IGameController> controller)
+{
+    if (m_p_controller) m_p_controller->OnDeactivate(*this);
+    m_p_controller = std::move(controller);
+    if (m_p_controller) m_p_controller->OnActivate(*this);
 }
 
 int CGameWorld::GetNewID()
@@ -1358,6 +1789,74 @@ CEntity* CGameWorld::InsertEntity(std::unique_ptr<CEntity> entity)
     return raw_entity;
 }
 
+CEntity* CGameWorld::InsertEntityWithIdentity(std::unique_ptr<CEntity> entity, int id, std::uint64_t generation)
+{
+    if (!entity || id < 0 || generation == 0) return nullptr;
+    if (entity->m_id != -1)
+    {
+        LOG_ERROR("gameworld", "Restored entity already has an ID");
+        return nullptr;
+    }
+
+    if (id >= static_cast<int>(m_p_entities.size())) m_p_entities.resize(static_cast<size_t>(id) + 1);
+    if (m_p_entities[id])
+    {
+        LOG_ERROR("gameworld", "Restored entity ID " + std::to_string(id) + " is already occupied");
+        return nullptr;
+    }
+    if (id >= static_cast<int>(m_id_in_use.size())) m_id_in_use.resize(static_cast<size_t>(id) + 1, 0);
+    if (m_id_in_use[id])
+    {
+        LOG_ERROR("gameworld", "Restored entity ID " + std::to_string(id) + " is already marked in use");
+        return nullptr;
+    }
+
+    CEntity* raw_entity = entity.get();
+    entity->SetGameWorld(this);
+    entity->m_id = id;
+    entity->m_generation = generation;
+    m_p_entities[id] = std::move(entity);
+    m_id_in_use[id] = 1;
+    m_next_id = std::max(m_next_id, id + 1);
+    if (generation >= m_next_generation)
+    {
+        m_next_generation = generation + 1;
+        if (m_next_generation == 0) m_next_generation = 1;
+    }
+    RegisterLiveEntity(raw_entity);
+    return raw_entity;
+}
+
+void CGameWorld::ClearEntitiesForRestore()
+{
+    m_cleanup_entities.clear();
+    m_always_tick_entities.clear();
+    m_large_entities.clear();
+    m_active_entities.clear();
+    m_collision_normal_entities.clear();
+    m_collision_large_entities.clear();
+    m_collision_inactive_entities.clear();
+    m_live_entities.clear();
+    m_spatial_grid.Clear();
+    m_p_entity_refs.clear();
+    m_p_entities.clear();
+    m_free_ids.clear();
+    m_id_in_use.clear();
+    m_next_id = 0;
+    m_next_generation = 1;
+    m_active_tick_marker = 1;
+}
+
+void CGameWorld::FinalizeEntityRestore()
+{
+    m_free_ids.clear();
+    if (m_next_id > static_cast<int>(m_id_in_use.size())) m_id_in_use.resize(m_next_id, 0);
+    for (int id = 0; id < m_next_id; ++id)
+    {
+        if (!m_id_in_use[id]) m_free_ids.push_back(id);
+    }
+}
+
 CEntity* CGameWorld::InsertEntity(CEntity* entity)
 {
     if (!entity) return nullptr;
@@ -1410,7 +1909,8 @@ void CGameWorld::DestroyProjectilesOwnedBy(int owner_id)
 
     auto destroy_if_owned = [owner_id](CEntity* entity) {
         auto* projectile = dynamic_cast<CProjectile*>(entity);
-        if (projectile && projectile->m_owner_id == owner_id) projectile->MarkForDestroy();
+        if (projectile && projectile->m_owner_id == owner_id)
+            projectile->MarkForDestroy(EEntityRemovalReason::OwnerRemoved);
     };
 
     ForEachEntity(destroy_if_owned);
@@ -1431,7 +1931,7 @@ void CGameWorld::DestroySummonedMobsOwnedBy(int owner_id, std::uint64_t owner_ge
         if (owner_generation != 0 && summon_owner_generation != 0 && summon_owner_generation != owner_generation)
             return;
 
-        mob->MarkForDestroy();
+        mob->MarkForDestroy(EEntityRemovalReason::OwnerRemoved);
     };
 
     ForEachEntity(destroy_if_owned);
@@ -1499,27 +1999,22 @@ CEntity* CGameWorld::TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& ta
         return nullptr;
     }
 
+    const int new_id = target_world.GetNewID();
+    if (new_id >= static_cast<int>(target_world.m_p_entities.size())) target_world.m_p_entities.resize(new_id + 1);
+    if (target_world.m_p_entities[new_id] != nullptr)
+    {
+        target_world.FreeID(new_id);
+        LOG_ERROR("gameworld", "Transfer failed: target ID " + std::to_string(new_id) + " is occupied");
+        return nullptr;
+    }
+
+    if (m_p_controller) m_p_controller->OnPlayerLeftWorld(*this, player);
     if (auto* flower = dynamic_cast<CFlower*>(entity)) flower->DestroyPetalEntities();
     DestroyProjectilesOwnedBy(old_id);
     DestroySummonedMobsOwnedBy(old_id, old_generation);
 
     std::unique_ptr<CEntity> moved_entity = std::move(m_p_entities[old_id]);
     UnregisterLiveEntity(moved_entity.get());
-
-    const int new_id = target_world.GetNewID();
-    if (new_id >= static_cast<int>(target_world.m_p_entities.size())) target_world.m_p_entities.resize(new_id + 1);
-    if (target_world.m_p_entities[new_id] != nullptr)
-    {
-        target_world.FreeID(new_id);
-        moved_entity->m_id = old_id;
-        moved_entity->m_generation = old_generation;
-        moved_entity->SetGameWorld(this);
-        m_p_entities[old_id] = std::move(moved_entity);
-        RegisterLiveEntity(m_p_entities[old_id].get());
-        player.SetOwnedEntity(m_p_entities[old_id].get());
-        LOG_ERROR("gameworld", "Transfer failed: target ID " + std::to_string(new_id) + " is occupied");
-        return nullptr;
-    }
 
     moved_entity->m_id = new_id;
     moved_entity->m_generation = target_world.m_next_generation++;
@@ -1536,6 +2031,7 @@ CEntity* CGameWorld::TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& ta
     player.m_cp_stack.clear();
     player.m_cp_check_phase = static_cast<uint8_t>(player.GetId() & 0x07);
     player.m_logged_missing_entity = false;
+    if (target_world.m_p_controller) target_world.m_p_controller->OnPlayerEnteredWorld(target_world, player);
     if (CGameContext* context = target_world.GameContext()) context->Network().NotifyPlayerWorldChanged(player);
     LOG_INFO("gameworld", "Transferred player " + std::to_string(player.GetId()) + " entity " + std::to_string(old_id) +
                               " -> " + std::to_string(transferred->m_id));
@@ -1549,11 +2045,63 @@ CEntity* CGameWorld::TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& ta
 
 void CGameWorld::Tick(float dt)
 {
+    auto run_tick_phases = [this, dt](auto&& phase_done) {
+        CollectActiveEntitiesForTick();
+        phase_done(ETickPhase::ActiveCollection);
+
+        TickActiveEntities(dt);
+        phase_done(ETickPhase::EntityUpdate);
+
+        SyncSpatialPositionsAndMemberships(m_active_entities);
+        if (m_p_controller) m_p_controller->OnTick(*this, dt);
+        RemoveTransferredActiveEntities();
+        phase_done(ETickPhase::ControllerAndSync);
+
+        ResolveWallCollisions(m_active_entities);
+        ResolveLeafcutterCarryConstraints(m_active_entities);
+        SyncSpatialPositions(m_active_entities);
+        phase_done(ETickPhase::WallResolution);
+
+        ResolveCollisions(m_active_entities, dt);
+        ResolveLeafcutterCarryConstraints(m_active_entities);
+        RefreshAttachedMissileTransforms(m_active_entities);
+        SyncSpatialPositionsAndMemberships(m_active_entities);
+        phase_done(ETickPhase::EntityCollision);
+
+        Cleanup();
+        phase_done(ETickPhase::Cleanup);
+    };
+
+    if (!game_config::world_tick_phase_profile_enabled)
+    {
+        run_tick_phases([](ETickPhase) {});
+        return;
+    }
+
+    using tick_clock = std::chrono::steady_clock;
+    std::array<double, tick_phase_count> sample_ms{};
+    auto phase_started = tick_clock::now();
+    run_tick_phases([&](ETickPhase phase) {
+        const auto now = tick_clock::now();
+        sample_ms[static_cast<std::size_t>(phase)] =
+            std::chrono::duration<double, std::milli>(now - phase_started).count();
+        phase_started = now;
+    });
+
+    ++m_tick_phase_telemetry.samples;
+    m_tick_phase_telemetry.last_ms = sample_ms;
+    for (std::size_t i = 0; i < tick_phase_count; ++i)
+    {
+        m_tick_phase_telemetry.total_ms[i] += sample_ms[i];
+        m_tick_phase_telemetry.max_ms[i] = std::max(m_tick_phase_telemetry.max_ms[i], sample_ms[i]);
+    }
+}
+
+void CGameWorld::CollectActiveEntitiesForTick()
+{
     BuildActiveTickViews(*this, m_active_tick_views);
-    const std::vector<active_tick_view>& active_tick_views = m_active_tick_views;
     m_active_entities.clear();
-    std::vector<CEntity*>& active_entities = m_active_entities;
-    active_entities.reserve(m_always_tick_entities.size());
+    m_active_entities.reserve(m_always_tick_entities.size());
 
     ++m_active_tick_marker;
     if (m_active_tick_marker == 0)
@@ -1563,48 +2111,41 @@ void CGameWorld::Tick(float dt)
             if (entity) entity->m_active_tick_marker = 0;
     }
 
-    auto add_active_entity = [this, &active_entities](CEntity* entity) {
+    auto add_active_entity = [this](CEntity* entity) {
         if (!entity) return;
         if (entity->m_active_tick_marker == m_active_tick_marker) return;
         entity->m_active_tick_marker = m_active_tick_marker;
         entity->m_prev_pos = entity->m_pos;
-        active_entities.push_back(entity);
+        m_active_entities.push_back(entity);
     };
 
     for (CEntity* entity : m_always_tick_entities)
         add_active_entity(entity);
 
-    for (const active_tick_view& view : active_tick_views)
+    for (const active_tick_view& view : m_active_tick_views)
     {
         ForEachEntityInEdgeRange(view.center, view.radius, [&](CEntity* entity) {
             if (!entity || !entity->m_allow_skip_tick) return;
             add_active_entity(entity);
         });
     }
+}
 
-    for (CEntity* entity : active_entities)
+void CGameWorld::TickActiveEntities(float dt)
+{
+    for (CEntity* entity : m_active_entities)
     {
         if (!entity || entity->m_is_marked_for_des) continue;
         if (entity->GameWorld() != this) continue;
         if (!entity->m_skip_world_tick) entity->Tick(dt);
     }
-    SyncSpatialGrid(active_entities);
+}
 
-    if (m_p_controller) m_p_controller->OnTick(*this, dt);
-
+void CGameWorld::RemoveTransferredActiveEntities()
+{
     auto remove_transferred = [this](CEntity* entity) { return !entity || entity->GameWorld() != this; };
-    active_entities.erase(std::remove_if(active_entities.begin(), active_entities.end(), remove_transferred),
-                          active_entities.end());
-
-    ResolveWallCollisions(active_entities);
-    SyncSpatialGrid(active_entities);
-
-    ResolveCollisions(active_entities, dt);
-
-    RefreshAttachedMissileTransforms(active_entities);
-    SyncSpatialGrid(active_entities);
-
-    Cleanup();
+    m_active_entities.erase(std::remove_if(m_active_entities.begin(), m_active_entities.end(), remove_transferred),
+                            m_active_entities.end());
 }
 
 CEntity* CGameWorld::GetEntity(int id) const
@@ -1654,7 +2195,16 @@ void CGameWorld::CollectEntities(std::vector<CEntity*>& result) const
     result.assign(m_live_entities.begin(), m_live_entities.end());
 }
 
-void CGameWorld::SyncSpatialGrid(const std::vector<CEntity*>& entities)
+void CGameWorld::SyncSpatialPositions(const std::vector<CEntity*>& entities)
+{
+    for (CEntity* entity : entities)
+    {
+        if (!entity || entity->GameWorld() != this) continue;
+        m_spatial_grid.UpdateTracked(entity);
+    }
+}
+
+void CGameWorld::SyncSpatialPositionsAndMemberships(const std::vector<CEntity*>& entities)
 {
     for (CEntity* entity : entities)
     {
@@ -1673,6 +2223,23 @@ std::vector<CEntity*> CGameWorld::GetAllEntities() const
 }
 
 std::string CGameWorld::GetMapName() const { return std::filesystem::path(m_map_path).stem().generic_string(); }
+
+ERarity CGameWorld::GetSpawnZoneRarity(const sf::Vector2f& pos) const
+{
+    float max_difficulty = 0.f;
+    if (m_map)
+    {
+        for (const FlorrBtMap::Zone& zone : m_map->zones)
+        {
+            if (!IsPointInZone(zone, pos)) continue;
+            max_difficulty = std::max(max_difficulty, zone.difficulty);
+        }
+    }
+
+    const int rarity = std::clamp(static_cast<int>(std::lround(max_difficulty / 10.f)),
+                                  static_cast<int>(ERarity::Common), static_cast<int>(ERarity::Primordial));
+    return static_cast<ERarity>(rarity);
+}
 
 std::size_t CGameWorld::GetPlayerCount() const
 {
@@ -1788,24 +2355,25 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
 
     auto push_out_of_current_walls = [this, max_wall_push_passes, wall_query_slop](CEntity& entity) {
         bool destroyed_by_wall = false;
+        const float wall_radius = std::max(0.f, entity.WallCollisionRadius());
         for (int pass = 0; pass < max_wall_push_passes; ++pass)
         {
             bool pushed_any = false;
             sf::Vector2f center = entity.m_pos;
-            float query_radius = std::max(1.f, entity.m_radius + wall_query_slop);
+            float query_radius = std::max(1.f, wall_radius + wall_query_slop);
 
             m_wall_grid.ForEachInRangeBroadphase(
                 center, query_radius, m_wall_query_visited, [&](FlorrBtMap::Wall* wall) {
                     if (destroyed_by_wall || !wall) return;
                     if (!ExpandedWallBoundsMayTouch(*wall, entity.m_pos, entity.m_pos,
-                                                    entity.m_radius + wall_query_slop))
+                                                    wall_radius + wall_query_slop))
                         return;
 
                     bool pushed = PushEntityOutOfWall(entity, *wall);
                     if (!pushed) return;
 
                     pushed_any = true;
-                    int contact_segment = FindBlockingWallSegment(entity.m_pos, entity.m_pos, entity.m_radius, *wall);
+                    int contact_segment = FindBlockingWallSegment(entity.m_pos, entity.m_pos, wall_radius, *wall);
                     if (HandleFiredMissileWallHit(entity, *wall, contact_segment, entity.m_pos, entity.m_pos) &&
                         entity.m_is_marked_for_des)
                     {
@@ -1823,19 +2391,20 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
     for (CEntity* entity : entities)
     {
         if (!entity || entity->GameWorld() != this || !entity->CanCollide()) continue;
-        if (!CollidesWithWalls(entity)) continue;
+        if (!entity->CollidesWithWalls()) continue;
         if (auto* raw_missile = dynamic_cast<CMissile*>(entity); raw_missile && raw_missile->IsAttachedToOwner())
             continue;
 
         sf::Vector2f start = entity->m_prev_pos;
         sf::Vector2f end = entity->m_pos;
+        const float wall_radius = std::max(0.f, entity->WallCollisionRadius());
         float travel = Distance(start, end);
 
         bool swept_hit = false;
         const FlorrBtMap::Wall* blocking_wall = nullptr;
         int blocking_segment = -1;
         if (travel > game_config::entity_collision_epsilon)
-            swept_hit = find_swept_wall_hit(start, end, entity->m_radius, blocking_wall, blocking_segment);
+            swept_hit = find_swept_wall_hit(start, end, wall_radius, blocking_wall, blocking_segment);
 
         if (swept_hit)
         {
@@ -1845,7 +2414,7 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
             } else if (blocking_wall &&
                        HandleFiredMissileWallHit(*entity, *blocking_wall, blocking_segment, start, end))
             {
-                if (!entity->CanCollide()) continue;
+                if (entity->m_is_marked_for_des || !entity->CanCollide()) continue;
             } else
             {
                 sf::Vector2f motion = end - start;
@@ -1873,7 +2442,7 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
                         sf::Vector2f slide_end = slide_start + slide_vel * game_config::server_fixed_dt;
                         const FlorrBtMap::Wall* slide_wall = nullptr;
                         int slide_segment = -1;
-                        if (!find_swept_wall_hit(slide_start, slide_end, entity->m_radius, slide_wall, slide_segment))
+                        if (!find_swept_wall_hit(slide_start, slide_end, wall_radius, slide_wall, slide_segment))
                         {
                             entity->m_pos = slide_end;
                         } else
@@ -1895,188 +2464,61 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
 
 void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float dt)
 {
-    float normal_max_radius = 0.f;
     float large_max_radius = 0.f;
     const float large_radius_threshold =
         std::max(game_config::spatial_grid_cell_size * game_config::spatial_grid_large_radius_cell_multiplier,
                  game_config::default_horizon * game_config::spatial_grid_large_radius_horizon_multiplier);
     std::vector<CEntity*>& normal_entities = m_collision_normal_entities;
     std::vector<std::pair<float, CEntity*>>& large_entities = m_collision_large_entities;
+    std::vector<CEntity*>& inactive_collision_entities = m_collision_inactive_entities;
     normal_entities.clear();
     large_entities.clear();
+    inactive_collision_entities.clear();
     normal_entities.reserve(entities.size());
-    large_entities.reserve(entities.size());
+    large_entities.reserve(m_large_entities.size());
+    inactive_collision_entities.reserve(entities.size());
 
     for (const CEntity* entity : entities)
     {
         if (!entity || entity->GameWorld() != this || !entity->CanCollide()) continue;
-
-        if (entity->m_radius > large_radius_threshold)
-        {
-            large_max_radius = std::max(large_max_radius, entity->m_radius);
-            large_entities.emplace_back(entity->m_pos.x, const_cast<CEntity*>(entity));
-        } else
-        {
-            normal_max_radius = std::max(normal_max_radius, entity->m_radius);
+        if (entity->m_radius <= large_radius_threshold)
             normal_entities.push_back(const_cast<CEntity*>(entity));
-        }
+    }
+
+    // Large candidates must include inactive entities; only active entities become pair sources below.
+    for (CEntity* entity : m_large_entities)
+    {
+        if (!entity || entity->GameWorld() != this || !entity->CanCollide()) continue;
+        large_max_radius = std::max(large_max_radius, entity->m_radius);
+        large_entities.emplace_back(entity->m_pos.x, entity);
     }
     std::sort(large_entities.begin(), large_entities.end(),
               [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
 
-    auto process_pair = [dt](CEntity* entity, CEntity* other) {
-        if (!other || other->GameWorld() != entity->GameWorld()) return;
-        if (!other->CanCollide() || other == entity) return;
-        if (ShouldSkipDiggingCollision(entity, other)) return;
-        if (!entity->IsCollision(*other)) return;
-        SetLastCollisionCrashContext(entity, other);
-
-        bool rose_team_heal_collision = IsRoseTeamHealCollision(entity, other);
-        if (const auto* projectile = dynamic_cast<const CProjectile*>(entity);
-            IsProjectileOwnerCollision(projectile, other) && !rose_team_heal_collision && !IsWaxPetal(projectile))
-            return;
-        if (const auto* projectile = dynamic_cast<const CProjectile*>(other);
-            IsProjectileOwnerCollision(projectile, entity) && !rose_team_heal_collision && !IsWaxPetal(projectile))
-            return;
-        auto* entity_petal = dynamic_cast<CPetal*>(entity);
-        auto* other_petal = dynamic_cast<CPetal*>(other);
-        const bool wax_pair = IsWaxPair(entity, other);
-
-        if (wax_pair)
-        {
-            if (IsSameTeamPetalWaxPair(entity, other) || IsSameTeamSummonWaxPair(entity, other)) return;
-        } else
-        {
-            if (ShouldSkipSummonCollision(entity, other) && !rose_team_heal_collision) return;
-            if ((IsSameTeamSummonCollision(entity, other) || IsSameRootOwnerSummonCollision(entity, other)) &&
-                !rose_team_heal_collision)
-            {
-                ApplyWeakSummonCollision(entity, other);
-                return;
-            }
-            if (IsSameTeamPetalFlowerCollision(entity, other) && !rose_team_heal_collision) return;
-        }
-
-        if (BlocksNullifiedInteraction(entity, other) && !rose_team_heal_collision) return;
-        auto* entity_missile = dynamic_cast<CMissile*>(entity);
-        auto* other_missile = dynamic_cast<CMissile*>(other);
-        if ((entity_missile || other_missile) && CheckTeam(entity->m_team, other->m_team)) return;
-        if (entity_missile && other_missile) return;
-        auto* entity_pollen = dynamic_cast<CPollenProjectile*>(entity);
-        auto* other_pollen = dynamic_cast<CPollenProjectile*>(other);
-        if (entity_petal && other_petal && !wax_pair) return;
-        auto* entity_mob = dynamic_cast<CMobBase*>(entity);
-        auto* other_mob = dynamic_cast<CMobBase*>(other);
-        if (IsSameTeamSandstormMobCollision(entity_mob, other_mob) && !rose_team_heal_collision) return;
-        const bool attached_missile_collision = (entity_missile && entity_missile->IsAttachedToOwner()) ||
-                                                (other_missile && other_missile->IsAttachedToOwner());
-        const bool fired_missile_collision = (entity_missile && !entity_missile->IsAttachedToOwner()) ||
-                                             (other_missile && !other_missile->IsAttachedToOwner());
-        bool same_team = CheckTeam(entity->m_team, other->m_team);
-        if (same_team && fired_missile_collision && !rose_team_heal_collision) return;
-
-        if (!rose_team_heal_collision &&
-            ((!entity_missile && !other_missile) || attached_missile_collision || fired_missile_collision || wax_pair))
-        {
-            if (entity_missile && entity_missile->IsAttachedToOwner())
-            {
-                other->OnCollision(entity);
-            } else if (other_missile && other_missile->IsAttachedToOwner())
-            {
-                entity->OnCollision(other);
-            } else
-            {
-                entity->OnCollision(other);
-                other->OnCollision(entity);
-            }
-            ApplyCollisionKnockback(entity, other);
-        }
-
-        if (same_team && !rose_team_heal_collision) return;
-
-        if (entity_missile)
-        {
-            ApplyMissileHit(entity_missile, other, dt);
-            return;
-        }
-
-        if (other_missile)
-        {
-            ApplyMissileHit(other_missile, entity, dt);
-            return;
-        }
-
-        if (entity_pollen)
-        {
-            ApplyPollenHit(entity_pollen, other);
-            return;
-        }
-
-        if (other_pollen)
-        {
-            ApplyPollenHit(other_pollen, entity);
-            return;
-        }
-
-        if (entity_petal && other_mob)
-        {
-            BounceFiredCarrotFromEntity(entity_petal, other);
-            if (entity_petal->m_type == EPetalType::Yggdrasil)
-            {
-                DamageYggdrasilOnEnemyContact(entity_petal, other_mob);
-                return;
-            }
-
-            ApplyPetalHits(entity_petal, other_mob, dt);
-            if (!CollisionPairAlive(entity_petal, other_mob)) return;
-            ApplyMobHitToPetal(other_mob, entity_petal);
-            if (!CollisionPairAlive(entity_petal, other_mob)) return;
-            return;
-        }
-
-        if (other_petal && entity_mob)
-        {
-            BounceFiredCarrotFromEntity(other_petal, entity);
-            if (other_petal->m_type == EPetalType::Yggdrasil)
-            {
-                DamageYggdrasilOnEnemyContact(other_petal, entity_mob);
-                return;
-            }
-
-            ApplyPetalHits(other_petal, entity_mob, dt);
-            if (!CollisionPairAlive(other_petal, entity_mob)) return;
-            ApplyMobHitToPetal(entity_mob, other_petal);
-            if (!CollisionPairAlive(other_petal, entity_mob)) return;
-            return;
-        }
-
-        if (auto* mob = entity_mob)
-        {
-            if (!other_petal)
-            {
-                if (const SMobStats* stats = mob->GetFinalStats())
-                {
-                    ApplyPhysicalDamageHits(other, stats->damage, entity, PhysicalHitCountForTick(entity, other));
-                    if (!CollisionPairAlive(entity, other)) return;
-                    ApplyBodyPoison(mob, other);
-                }
-            }
-        }
-        if (auto* mob = other_mob)
-        {
-            if (!entity_petal)
-            {
-                if (const SMobStats* stats = mob->GetFinalStats())
-                {
-                    ApplyPhysicalDamageHits(entity, stats->damage, other, PhysicalHitCountForTick(other, entity));
-                    if (!CollisionPairAlive(entity, other)) return;
-                    ApplyBodyPoison(mob, entity);
-                }
-            }
-        }
+    auto is_active = [this](const CEntity* entity) {
+        return entity && entity->m_active_tick_marker == m_active_tick_marker;
     };
 
-    auto process_large_candidates = [&](CEntity* entity, bool require_id_order) {
+    auto process_candidate = [&](CEntity* entity, CEntity* other) {
+        if (!entity || !other || entity == other) return;
+        if (is_active(other) && entity->m_id >= other->m_id) return;
+        if (!is_active(other)) other->m_prev_pos = other->m_pos;
+
+        const bool overlapping = entity->IsCollision(*other);
+        ResolveOverlappingEntityPair(entity, other, dt);
+        if (overlapping && !is_active(other)) inactive_collision_entities.push_back(other);
+    };
+
+    auto process_normal_candidates = [&](CEntity* entity) {
+        if (!entity) return;
+        const float query_radius = entity->m_radius + large_radius_threshold;
+        m_spatial_grid.ForEachInRange(entity->m_pos, query_radius, [&](CEntity* other) {
+            if (!other || other->m_radius > large_radius_threshold) return;
+            process_candidate(entity, other);
+        });
+    };
+
+    auto process_large_candidates = [&](CEntity* entity) {
         if (!entity || large_entities.empty() || large_max_radius <= 0.f) return;
 
         const float min_x = entity->m_pos.x - entity->m_radius - large_max_radius;
@@ -2087,27 +2529,37 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
         {
             CEntity* large = it->second;
             if (!large || large == entity) continue;
-            if (require_id_order && entity->m_id >= large->m_id) continue;
 
             const float reach = entity->m_radius + large->m_radius;
             if (std::abs(entity->m_pos.y - large->m_pos.y) > reach) continue;
-            process_pair(entity, large);
+            process_candidate(entity, large);
         }
     };
 
     for (CEntity* entity : normal_entities)
     {
-        m_spatial_grid.ForEachInRange(entity->m_pos, entity->m_radius + normal_max_radius, [&](CEntity* other) {
-            if (!other || other->m_radius > large_radius_threshold) return;
-            if (entity->m_id >= other->m_id) return;
-            process_pair(entity, other);
-        });
-        process_large_candidates(entity, false);
+        process_normal_candidates(entity);
+        process_large_candidates(entity);
     }
 
-    for (const auto& entry : large_entities)
+    for (CEntity* entity : entities)
     {
-        process_large_candidates(entry.second, true);
+        if (!entity || entity->GameWorld() != this || !entity->CanCollide() ||
+            entity->m_radius <= large_radius_threshold)
+            continue;
+        process_normal_candidates(entity);
+        process_large_candidates(entity);
+    }
+
+    std::sort(inactive_collision_entities.begin(), inactive_collision_entities.end(),
+              [](const CEntity* lhs, const CEntity* rhs) { return lhs->m_id < rhs->m_id; });
+    inactive_collision_entities.erase(
+        std::unique(inactive_collision_entities.begin(), inactive_collision_entities.end()),
+        inactive_collision_entities.end());
+    for (CEntity* entity : inactive_collision_entities)
+    {
+        if (!entity || entity->GameWorld() != this || entity->m_is_marked_for_des) continue;
+        m_spatial_grid.UpdateTracked(entity);
     }
 }
 
@@ -2132,7 +2584,15 @@ void CGameWorld::Cleanup()
         if (entity) entity->m_cleanup_index = std::numeric_limits<size_t>::max();
         if (!entity || entity->GameWorld() != this || !entity->m_is_marked_for_des) continue;
 
-        if (m_p_controller) m_p_controller->OnEntityDie(*this, entity);
+        const EEntityRemovalReason removal_reason = entity->RemovalReason();
+        if (m_p_controller)
+        {
+            if (removal_reason == EEntityRemovalReason::Defeated)
+            {
+                if (auto* mob = dynamic_cast<CMobBase*>(entity)) m_p_controller->OnMobDefeated(*this, *mob);
+            }
+            m_p_controller->OnEntityRemoved(*this, *entity, removal_reason);
+        }
         if (entity->GameWorld() != this || !entity->m_is_marked_for_des) continue;
         collect_clear_owner(entity);
 
@@ -2170,7 +2630,7 @@ void CGameWorld::Cleanup()
     auto destroy_if_owned = [&clear_owned_owner_keys, &clear_summon_owner_keys, &has_owner_key](CEntity* entity) {
         auto* projectile = dynamic_cast<CProjectile*>(entity);
         if (projectile && has_owner_key(clear_owned_owner_keys, projectile->m_owner_id, projectile->m_owner_generation))
-            projectile->MarkForDestroy();
+            projectile->MarkForDestroy(EEntityRemovalReason::OwnerRemoved);
 
         auto* mob = dynamic_cast<CMobBase*>(entity);
         if (!mob) return;
@@ -2178,7 +2638,7 @@ void CGameWorld::Cleanup()
         auto* controller = dynamic_cast<CSummonedMeleeController*>(mob->GetController());
         if (controller &&
             has_owner_key(clear_summon_owner_keys, controller->GetOwnerId(), controller->GetOwnerGeneration()))
-            mob->MarkForDestroy();
+            mob->MarkForDestroy(EEntityRemovalReason::OwnerRemoved);
     };
 
     ForEachEntity(destroy_if_owned);

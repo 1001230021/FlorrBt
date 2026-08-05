@@ -27,7 +27,7 @@ bool RespawnPointBlockedByMob(const CGameWorld& world, sf::Vector2f pos, float r
         if (blocked) return;
 
         const auto* mob = dynamic_cast<const CMobBase*>(entity);
-        if (!mob || mob->m_mob_type == EMobType::PlayerFlower) return;
+        if (!mob || mob->GetMobType() == EMobType::PlayerFlower) return;
         if (mob->m_is_marked_for_des || mob->IsDead() || !mob->CanCollide()) return;
 
         const float min_distance =
@@ -271,14 +271,11 @@ bool PickStackCheckpointRespawnPosition(CPlayer& player, const CGameWorld& world
     return false;
 }
 
-sf::Vector2f PickRespawnPosition(CPlayer& player, CGameWorld& world)
+sf::Vector2f PickRespawnAreaPosition(const CPlayer& player, CGameWorld& world)
 {
     const FlorrBtMap* map = world.GetMap();
     if (map)
     {
-        sf::Vector2f saved_pos;
-        if (PickStackCheckpointRespawnPosition(player, world, *map, saved_pos)) return saved_pos;
-
         std::vector<size_t> checkpoints;
         for (size_t i = 0; i < map->checkpoints.size(); ++i)
         {
@@ -303,6 +300,16 @@ sf::Vector2f PickRespawnPosition(CPlayer& player, CGameWorld& world)
                               Vec2String({ game_config::player_respawn_x, game_config::player_respawn_y }));
     return { game_config::player_respawn_x, game_config::player_respawn_y };
 }
+
+sf::Vector2f PickRespawnPosition(CPlayer& player, CGameWorld& world)
+{
+    if (const FlorrBtMap* map = world.GetMap())
+    {
+        sf::Vector2f saved_pos;
+        if (PickStackCheckpointRespawnPosition(player, world, *map, saved_pos)) return saved_pos;
+    }
+    return PickRespawnAreaPosition(player, world);
+}
 } // namespace
 
 void CPlayerLifecycleService::ProcessDropPickups(const std::vector<std::unique_ptr<CPlayer>>& players,
@@ -320,33 +327,56 @@ void CPlayerLifecycleService::ProcessDropPickups(const std::vector<std::unique_p
     }
 }
 
-CEntity* CPlayerLifecycleService::Respawn(CPlayer& player, CGameWorld& world) const
+CEntity* CPlayerLifecycleService::SpawnPlayer(CPlayer& player, CGameWorld& world, EPlayerSpawnReason reason) const
 {
-    if (auto* old_flower = dynamic_cast<CPlayerFlower*>(player.GetEntity()))
+    std::vector<SPlayerCheckpointEntry> checkpoint_stack_before;
+    if (reason == EPlayerSpawnReason::Respawn) checkpoint_stack_before = player.m_cp_stack;
+
+    std::optional<sf::Vector2f> spawn_pos;
+    if (auto* controller = world.GetController()) spawn_pos = controller->SelectPlayerSpawn(world, player, reason);
+    if (!spawn_pos)
     {
-        old_flower->PrepareRespawnDestroy();
-        player.SetOwnedEntity(nullptr);
+        spawn_pos = reason == EPlayerSpawnReason::Respawn ? PickRespawnPosition(player, world)
+                                                          : PickRespawnAreaPosition(player, world);
     }
 
-    auto entity = CreateMob(EMobType::PlayerFlower, &world, PickRespawnPosition(player, world), ERarity::Common);
-    auto* raw_flower = dynamic_cast<CPlayerFlower*>(entity.get());
-    if (!raw_flower) return nullptr;
+    auto restore_checkpoint_stack = [&]() {
+        if (reason == EPlayerSpawnReason::Respawn) player.m_cp_stack = checkpoint_stack_before;
+    };
 
+    auto entity = CreateMob(EMobType::PlayerFlower, &world, *spawn_pos, ERarity::Common);
+    auto* raw_flower = dynamic_cast<CPlayerFlower*>(entity.get());
+    if (!raw_flower)
+    {
+        restore_checkpoint_stack();
+        return nullptr;
+    }
+
+    auto* old_flower = dynamic_cast<CPlayerFlower*>(player.GetEntity());
     raw_flower->m_name = player.GetName();
     raw_flower = dynamic_cast<CPlayerFlower*>(world.InsertEntity(std::move(entity)));
-    if (!raw_flower) return nullptr;
-
-    if (auto* controller = world.GetController()) controller->OnPlayerSpawn(world, &player, raw_flower);
-    else
+    if (!raw_flower)
     {
-        player.SetOwnedEntity(raw_flower);
-        player.ApplySavedProgress();
-        player.ApplySavedTalents();
-        player.ApplySavedSlots();
+        restore_checkpoint_stack();
+        return nullptr;
     }
 
+    if (old_flower) old_flower->PrepareRespawnDestroy(EEntityRemovalReason::Replaced);
+    player.SetOwnedEntity(raw_flower);
+    player.ApplySavedProgress();
+    player.ApplySavedTalents();
+    player.ApplySavedSlots();
+
+    if (auto* controller = world.GetController())
+    {
+        controller->OnPlayerEntityReady(world, player, *raw_flower, reason);
+        if (reason == EPlayerSpawnReason::Login) controller->OnPlayerEnteredWorld(world, player);
+    }
+    if (reason == EPlayerSpawnReason::Login) player.ConsumeUseNewPlayerSpawn();
+
     player.m_logged_missing_entity = false;
-    LOG_INFO("network", "Player " + std::to_string(player.GetId()) + " respawned");
+    LOG_INFO("network", "Player " + std::to_string(player.GetId()) +
+                            (reason == EPlayerSpawnReason::Login ? " spawned" : " respawned"));
     return raw_flower;
 }
 
@@ -362,17 +392,17 @@ void CPlayerLifecycleService::RespawnDeadControlledEntities(const std::vector<st
         if (!entity)
         {
             if (!player->HasOwnedEntity()) continue;
-            player->SetOwnedEntity(nullptr);
-            if (Respawn(*player, respawn_world) && player->IsConnected()) NotifyPlayerWorldChanged(*player, notifier);
+            if (SpawnPlayer(*player, respawn_world, EPlayerSpawnReason::Respawn) && player->IsConnected())
+                NotifyPlayerWorldChanged(*player, notifier);
             continue;
         }
         if (dynamic_cast<CPlayerFlower*>(entity)) continue;
         if (!entity->IsDead()) continue;
 
-        player->SetOwnedEntity(nullptr);
         CGameWorld* current_world = entity->GameWorld();
         if (!current_world) current_world = &respawn_world;
-        if (Respawn(*player, *current_world) && player->IsConnected()) NotifyPlayerWorldChanged(*player, notifier);
+        if (SpawnPlayer(*player, *current_world, EPlayerSpawnReason::Respawn) && player->IsConnected())
+            NotifyPlayerWorldChanged(*player, notifier);
     }
 }
 

@@ -21,14 +21,45 @@ inline constexpr float world_unit_scale = 2.0f;
 inline constexpr float WorldUnits(float value) { return value * world_unit_scale; }
 
 inline std::string account_data_path = "data/accounts.json";
+inline std::string unique_petal_data_path = "data/unique_petals.json";
 inline std::string server_log_path = "data/server.log";
 inline std::string startup_commands_path = "data/server.cfg";
-inline int min_craft_report_rarity = 8;
-inline int min_drop_report_rarity = 8;
-inline int min_mob_spawn_report_rarity = 8;
+inline std::string hot_reload_directory = "data/hot_reload";
+inline std::string hot_reload_request_path = "data/hot_reload/reload_request.json";
+inline std::string hot_reload_default_candidate = "FlorrBt.Server.next.exe";
+inline bool email_enabled = true;
+inline std::string email_username = "";
+inline std::string email_password = "";
+inline std::string email_from_address = "";
+inline std::string email_from_name = "FlorrBt";
+inline std::string email_smtp_host = "smtp.feishu.cn";
+inline int email_smtp_ssl_port = 465;
+inline int email_smtp_starttls_port = 587;
+inline std::string email_smtp_security = "ssl";
+inline std::string email_imap_host = "imap.feishu.cn";
+inline int email_imap_ssl_port = 993;
+inline std::string email_curl_path = "curl.exe";
+inline int email_connect_timeout_seconds = 10;
+inline int email_send_timeout_seconds = 20;
+inline int email_verification_code_digits = 6;
+inline int email_verification_ttl_seconds = 600;
+inline int email_verification_resend_cooldown_seconds = 60;
+inline int email_verification_ip_cooldown_seconds = 10;
+inline int email_verification_queue_limit = 64;
+inline int email_verification_max_attempts = 5;
+inline int min_craft_report_rarity = 9;
+inline int min_drop_report_rarity = 9;
+inline int min_mob_spawn_report_rarity = 9;
 inline float default_acceleration = WorldUnits(150.0f);
 inline float default_air_base_mass = 16.0f;
 inline float default_air_base_radius = WorldUnits(8.0f);
+inline float default_amulet_base_damage = 0.0f;
+inline float default_amulet_base_health = 10.0f;
+inline float default_amulet_base_radius = WorldUnits(10.0f);
+inline float default_amulet_copy = 1.0f;
+inline float default_amulet_mass = 2.0f;
+inline float default_amulet_overheal_conversion_per_level = 0.05f;
+inline float default_amulet_reload = 2.0f;
 inline float default_antegg_base_health = 1.0f;
 inline float default_antegg_base_radius = WorldUnits(10.0f);
 inline float default_antegg_copy = 4.0f;
@@ -61,6 +92,23 @@ inline float default_basic_base_radius = WorldUnits(10.0f);
 inline float default_basic_copy = 1.0f;
 inline float default_basic_mass = 2.0f;
 inline float default_basic_reload = 2.5f;
+inline float default_black_fungus_base_damage = 8.0f;
+inline float default_black_fungus_base_health = 10.0f;
+inline float default_black_fungus_base_radius = WorldUnits(10.0f);
+inline float default_black_fungus_compression_damage_bonus_max = 0.5f;
+inline float default_black_fungus_compression_half_power = 8.0f;
+inline float default_black_fungus_copy = 1.0f;
+inline float default_black_fungus_mass = 2.0f;
+inline float default_black_fungus_reload = 1.0f;
+inline float default_broccoli_base_damage = 2.5f;
+inline float default_broccoli_base_health = 20.0f;
+inline float default_broccoli_base_radius = WorldUnits(10.0f);
+inline float default_broccoli_copy = 1.0f;
+inline float default_broccoli_health_rounding_step = 10.0f;
+inline float default_broccoli_mass = 2.0f;
+inline float default_broccoli_petal_health_heal_per_second = 0.2f;
+inline float default_broccoli_reload = 5.0f;
+inline int default_douli_copy = 0;
 inline float default_beetleegg_base_health = 1.0f;
 inline float default_beetleegg_base_radius = WorldUnits(10.0f);
 inline float default_beetleegg_copy = 1.0f;
@@ -93,7 +141,7 @@ inline float default_bandage_undead_unusual = 2.1f;
 inline float default_blood_sacrifice_base_radius = WorldUnits(10.0f);
 inline float default_blood_sacrifice_copy = 0.0f;
 inline float default_blood_sacrifice_delay = 10.0f;
-inline float default_bone_base_armor = 20.0f / 3.0f;
+inline float default_bone_base_armor = 19.0f / 6.0f;
 inline float default_bone_base_damage = 14.0f;
 inline float default_bone_base_health = 10.0f;
 inline float default_bone_base_radius = WorldUnits(10.0f);
@@ -282,6 +330,13 @@ inline float default_pincer_poison_duration = 0.75f;
 inline float default_pincer_poison_total_damage = 15.0f;
 inline float default_pincer_reload = 2.5f;
 inline float default_pincer_slow_duration = 0.8f;
+inline float default_plank_base_damage = 18.0f;
+inline float default_plank_base_health = 15.0f;
+inline float default_plank_base_radius = WorldUnits(10.0f);
+inline float default_plank_copy = 1.0f;
+inline float default_plank_mass = 2.0f;
+inline float default_plank_projectile_damage_multiplier = 20.0f;
+inline float default_plank_reload = 2.5f;
 inline float default_pollen_base_damage = 40.0f;
 inline float default_pollen_base_health = 10.0f;
 inline float default_pollen_base_radius = WorldUnits(10.0f);
@@ -403,6 +458,54 @@ inline float default_shovel_preload_super = 3.6f;
 inline float default_shovel_preload_eternal = 2.0f;
 inline float default_shovel_preload_unique = 2.0f;
 inline float default_shovel_preload_primordial = 1.0f;
+inline float default_trapper_base_damage = 2.5f;
+inline float default_trapper_base_health = 25.0f;
+inline float default_trapper_base_radius = WorldUnits(20.0f);
+inline float default_trapper_copy = 1.0f;
+inline float default_trapper_fire_interval = 2.0f;
+inline float default_trapper_mass = 2.0f;
+inline float default_trapper_mount_radius_multiplier = 1.0f;
+inline float default_trapper_recoil_distance = WorldUnits(4.0f);
+inline float default_trapper_recoil_duration = 0.2f;
+inline float default_trapper_reload = 4.0f;
+inline float default_trapper_stat_growth = 3.0f;
+inline float default_trapper_trap_base_damage = 40.0f;
+inline float default_trapper_trap_base_health = 40.0f;
+inline float default_trapper_trap_collision_push = 0.32f;
+inline float default_trapper_trap_deceleration = 0.75f;
+inline float default_trapper_trap_lifetime = 5.0f;
+inline float default_trapper_trap_mass = 2.0f;
+inline float default_trapper_trap_radius = WorldUnits(10.0f);
+inline float default_trapper_trap_speed = default_max_velocity * 2.0f;
+inline float default_tomato_base_damage = 5.0f;
+inline float default_tomato_base_health = 10.0f;
+inline float default_tomato_base_radius = WorldUnits(10.0f);
+inline float default_tomato_copy = 1.0f;
+inline float default_tomato_growth_delay = 1.0f;
+inline float default_tomato_growth_duration = 3.0f;
+inline float default_tomato_mass = 2.0f;
+inline float default_tomato_max_damage_multiplier = 14.0f;
+inline float default_tomato_max_health_multiplier = 7.0f;
+inline float default_tomato_max_radius_multiplier = 5.0f;
+inline float default_tomato_reload = 2.5f;
+inline float default_white_fungus_base_damage = 8.0f;
+inline float default_white_fungus_base_health = 10.0f;
+inline float default_white_fungus_base_radius = WorldUnits(10.0f);
+inline float default_white_fungus_copy = 1.0f;
+inline float default_white_fungus_mass = 2.0f;
+inline int default_white_fungus_petal_extra_hits_common = 2;
+inline int default_white_fungus_petal_extra_hits_unusual = 4;
+inline int default_white_fungus_petal_extra_hits_rare = 6;
+inline int default_white_fungus_petal_extra_hits_epic = 8;
+inline int default_white_fungus_petal_extra_hits_legendary = 10;
+inline int default_white_fungus_petal_extra_hits_mythic = 12;
+inline int default_white_fungus_petal_extra_hits_ultra = 14;
+inline int default_white_fungus_petal_extra_hits_super = 16;
+inline int default_white_fungus_petal_extra_hits_eternal = 18;
+inline int default_white_fungus_petal_extra_hits_unique = 18;
+inline int default_white_fungus_petal_extra_hits_primordial = 20;
+inline float default_white_fungus_petal_extra_hits_multiplier = 0.5f;
+inline float default_white_fungus_reload = 1.0f;
 inline float default_yucca_base_damage = 16.0f;
 inline float default_yucca_base_health = 12.0f;
 inline float default_yucca_base_radius = WorldUnits(10.0f);
@@ -432,6 +535,7 @@ inline float default_yggdrasil_channel_unique = 0.4f;
 inline float default_yggdrasil_channel_primordial = 0.16f;
 inline float default_yggdrasil_heal_fraction = 1.0f;
 inline float default_yggdrasil_preload = 5.0f;
+inline float default_yggdrasil_target_range_multiplier = 15.0f;
 inline float default_basil_healing_received_common = 0.20f;
 inline float default_basil_healing_received_unusual = 0.25f;
 inline float default_basil_healing_received_rare = 0.30f;
@@ -456,8 +560,8 @@ inline float default_coin_copy = 1.0f;
 inline float default_coin_mass = 2.0f;
 inline float default_coin_reload = 2.5f;
 inline int default_compass_point_min_level = 7;
-inline int default_compass_priority_super = 1;
-inline int default_compass_priority_eternal = 2;
+inline int default_compass_priority_eternal = 1;
+inline int default_compass_priority_unique = 2;
 inline int default_compass_priority_primordial = 3;
 inline float default_dahlia_base_damage = 1.7f;
 inline float default_dahlia_base_health = 1.7f;
@@ -487,6 +591,7 @@ inline float default_glass_hit_cooldown = 1.0f;
 inline float default_glass_mass = 2.0f;
 inline float default_glass_reload = 2.5f;
 inline float default_healing_petal_target_delay = 0.5f;
+inline float default_healing_petal_target_move_time = 0.05f;
 inline float default_healing_petal_target_range_multiplier = 5.0f;
 inline int default_light_copy_common = 1;
 inline int default_light_copy_rare = 2;
@@ -509,6 +614,7 @@ inline float default_petal_follow_k_multiplier = 2.0f;
 inline float default_petal_locked_target_acceleration_scale = 0.8f;
 inline float default_petal_target_acceleration_multiplier = 4.0f;
 inline float default_petal_target_acceleration_scale = 1.25f;
+inline int default_petal_target_max_primordial_lentils = 2;
 inline float default_petal_target_orbit_tether = 0.35f;
 inline float default_petal_throw_initial_deceleration = 0.25f;
 inline float default_petal_throw_min_deceleration = 0.001f;
@@ -564,10 +670,10 @@ inline float default_wing_mass = 2.0f;
 inline float default_wing_reload = 3.0f;
 inline float default_wing_wave_offset = 2.0f;
 inline float default_yggdrasil_stop_distance_multiplier = 0.1f;
-inline float rarity_exotic_special_super_weight = 0.25f;
 inline float entity_collision_epsilon = 0.001f;
 inline float entity_collision_knockback_speed = WorldUnits(180.0f);
-inline int entity_default_extra_hit_num = 4;
+inline int entity_default_extra_hit_num = 0;
+inline int petal_default_extra_hit_num = 2;
 inline float player_collision_knockback_multiplier = 1.0001f;
 inline float melee_random_idle_chance = 0.5f;
 inline float melee_random_idle_time = 2.0f;
@@ -767,7 +873,7 @@ inline int nullification_level_gap = 2;
 inline float psionic_connection_range = WorldUnits(2048.0f);
 inline float mob_player_flower_armor = 0.0f;
 inline float mob_player_flower_damage = 25.0f;
-inline float mob_player_flower_level_damage_growth = 1.0565f;
+inline float mob_player_flower_level_damage_exponent = 0.5f;
 inline float mob_player_flower_level_health_growth = 1.1f;
 inline float mob_player_flower_mass = 5.0f;
 inline float mob_player_flower_max_health = 50.0f;
@@ -795,6 +901,9 @@ inline float mob_slow_to_max_velocity_time = 0.35f;
 inline float mob_digging_speed_multiplier = 0.5f;
 inline float mob_soldier_ant_armor = 1.0f;
 inline float mob_soldier_ant_damage = 10.0f;
+inline float mob_leafcutter_soldier_leaf_piece_attack_interval = 1.5f;
+inline float mob_leafcutter_soldier_leaf_piece_attack_radius_multiplier = 2.0f;
+inline float mob_leafcutter_soldier_leaf_piece_turn_speed = 4.0f;
 inline float mob_soldier_ant_mass = 3.3333333f;
 inline float mob_soldier_ant_max_health = 100.0f;
 inline float mob_soldier_ant_radius = WorldUnits(12.0f);
@@ -806,7 +915,7 @@ inline float mob_leaf_piece_mass_multiplier = 0.5f;
 inline float mob_leaf_piece_radius = mob_soldier_ant_radius;
 inline float mob_leaf_piece_radius_scale_min = 0.8f;
 inline float mob_leaf_piece_radius_scale_max = 1.2f;
-inline float mob_leaf_piece_regen_level_base = 5.0f;
+inline float mob_leaf_piece_regen_per_second = 4.0f;
 inline int mob_leaf_piece_team = 2;
 inline float mob_soldier_fire_ant_armor = 1.0f;
 inline float mob_soldier_fire_ant_damage = 20.0f;
@@ -904,6 +1013,7 @@ inline size_t rcon_generated_password_length = 6;
 inline float server_fixed_dt = 0.016f;
 inline float slow_tick_profile_ms = 24.0f;
 inline float simulation_active_view_radius_cap = WorldUnits(2048.0f);
+inline bool world_tick_phase_profile_enabled = false;
 inline float spatial_grid_cell_size = WorldUnits(200.0f);
 inline float spatial_grid_large_radius_cell_multiplier = 0.5f;
 inline float spatial_grid_large_radius_horizon_multiplier = 0.25f;
@@ -920,6 +1030,12 @@ inline float stats_default_petal_radius = 40.0f;
 inline float stats_default_petal_reload = 2.5f;
 inline int stats_default_petal_copy = 1;
 inline float timeout_protection_seconds = 30.0f;
+inline float titan_forge_cooldown_seconds = 12.0f * 60.0f * 60.0f;
+inline float titan_forge_range = WorldUnits(1024.0f);
+inline int titan_petal_slot_count = 10;
+inline float titan_stats_multiplier = 10.0f;
+inline int titan_team = 1;
+inline float titan_unique_refresh_seconds = 24.0f * 60.0f * 60.0f;
 inline bool gui_console_enabled = false;
 inline float flower_cogwheel_moving_fraction_min = 0.001f;
 inline float flower_revive_min_health = 1.0f;
@@ -950,6 +1066,7 @@ inline float entity_hit_spacing_radius_multiplier = 0.5f;
 inline float entity_projectile_contact_skin = 0.02f;
 inline int entity_wall_push_passes = 4;
 inline float entity_wall_query_slop = 2.0f;
+inline float mob_wall_collision_radius_multiplier = 0.70710678118f;
 inline float drop_merge_distance_radius_multiplier = 0.5f;
 inline int gameworld_transfer_spawn_position_attempts = 32;
 inline float gameworld_wall_contact_skin = 0.5f;
@@ -1094,6 +1211,15 @@ inline size_t server_max_saved_chats = 256;
 inline float simulation_active_view_padding = 4096.0f;
 inline float world_mob_overlap_velocity_retention = 0.35f;
 inline float world_mob_overlap_weak_push = 0.32f;
+inline std::uint64_t config_revision = 1;
+
+inline std::uint64_t GetConfigRevision() { return config_revision; }
+
+inline void AdvanceConfigRevision()
+{
+    ++config_revision;
+    if (config_revision == 0) ++config_revision;
+}
 
 template <typename T> inline void SetConfigValue(T& variable, const std::string& value)
 {
@@ -1123,18 +1249,63 @@ template <typename T> inline std::string GetConfigValue(const T& variable)
 
 template <typename T> inline config_entry MakeConfigEntry(T& variable)
 {
-    return { [&variable](const std::string& value) { SetConfigValue(variable, value); },
+    return { [&variable](const std::string& value) {
+                const T old_value = variable;
+                SetConfigValue(variable, value);
+                if (variable != old_value) AdvanceConfigRevision();
+            },
              [&variable]() -> std::string { return GetConfigValue(variable); } };
 }
 
+inline config_entry MakeSecretConfigEntry(std::string& variable)
+{
+    return { [&variable](const std::string& value) {
+                if (variable == value) return;
+                variable = value;
+                AdvanceConfigRevision();
+            },
+             []() -> std::string { return "<redacted>"; } };
+}
+
+inline bool IsSensitiveConfig(const std::string& name)
+{
+    return name == "email_password" || name == "rcon_password" || name == "report_deepseek_api_key";
+}
+
 #define REGISTER_CONFIG(name, variable) { name, game_config::MakeConfigEntry(variable) }
+#define REGISTER_SECRET_CONFIG(name, variable) { name, game_config::MakeSecretConfigEntry(variable) }
 
 inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
 {
     static std::unordered_map<std::string, config_entry> entries = {
         REGISTER_CONFIG("account_data_path", account_data_path),
+        REGISTER_CONFIG("unique_petal_data_path", unique_petal_data_path),
         REGISTER_CONFIG("startup_commands_path", startup_commands_path),
-        REGISTER_CONFIG("rcon_password", rcon_password),
+        REGISTER_CONFIG("hot_reload_directory", hot_reload_directory),
+        REGISTER_CONFIG("hot_reload_request_path", hot_reload_request_path),
+        REGISTER_CONFIG("hot_reload_default_candidate", hot_reload_default_candidate),
+        REGISTER_CONFIG("email_enabled", email_enabled),
+        REGISTER_CONFIG("email_username", email_username),
+        REGISTER_SECRET_CONFIG("email_password", email_password),
+        REGISTER_CONFIG("email_from_address", email_from_address),
+        REGISTER_CONFIG("email_from_name", email_from_name),
+        REGISTER_CONFIG("email_smtp_host", email_smtp_host),
+        REGISTER_CONFIG("email_smtp_ssl_port", email_smtp_ssl_port),
+        REGISTER_CONFIG("email_smtp_starttls_port", email_smtp_starttls_port),
+        REGISTER_CONFIG("email_smtp_security", email_smtp_security),
+        REGISTER_CONFIG("email_imap_host", email_imap_host),
+        REGISTER_CONFIG("email_imap_ssl_port", email_imap_ssl_port),
+        REGISTER_CONFIG("email_curl_path", email_curl_path),
+        REGISTER_CONFIG("email_connect_timeout_seconds", email_connect_timeout_seconds),
+        REGISTER_CONFIG("email_send_timeout_seconds", email_send_timeout_seconds),
+        REGISTER_CONFIG("email_verification_code_digits", email_verification_code_digits),
+        REGISTER_CONFIG("email_verification_ttl_seconds", email_verification_ttl_seconds),
+        REGISTER_CONFIG("email_verification_resend_cooldown_seconds",
+                        email_verification_resend_cooldown_seconds),
+        REGISTER_CONFIG("email_verification_ip_cooldown_seconds", email_verification_ip_cooldown_seconds),
+        REGISTER_CONFIG("email_verification_queue_limit", email_verification_queue_limit),
+        REGISTER_CONFIG("email_verification_max_attempts", email_verification_max_attempts),
+        REGISTER_SECRET_CONFIG("rcon_password", rcon_password),
         REGISTER_CONFIG("rcon_generated_password_length", rcon_generated_password_length),
         REGISTER_CONFIG("gui_console", gui_console_enabled),
         REGISTER_CONFIG("min_craft_report_rarity", min_craft_report_rarity),
@@ -1143,6 +1314,13 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("acceleration", default_acceleration),
         REGISTER_CONFIG("air_base_mass", default_air_base_mass),
         REGISTER_CONFIG("air_base_radius", default_air_base_radius),
+        REGISTER_CONFIG("amulet_base_damage", default_amulet_base_damage),
+        REGISTER_CONFIG("amulet_base_health", default_amulet_base_health),
+        REGISTER_CONFIG("amulet_base_radius", default_amulet_base_radius),
+        REGISTER_CONFIG("amulet_copy", default_amulet_copy),
+        REGISTER_CONFIG("amulet_mass", default_amulet_mass),
+        REGISTER_CONFIG("amulet_overheal_conversion_per_level", default_amulet_overheal_conversion_per_level),
+        REGISTER_CONFIG("amulet_reload", default_amulet_reload),
         REGISTER_CONFIG("antegg_base_health", default_antegg_base_health),
         REGISTER_CONFIG("antegg_base_radius", default_antegg_base_radius),
         REGISTER_CONFIG("antegg_copy", default_antegg_copy),
@@ -1175,6 +1353,24 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("basic_copy", default_basic_copy),
         REGISTER_CONFIG("basic_mass", default_basic_mass),
         REGISTER_CONFIG("basic_reload", default_basic_reload),
+        REGISTER_CONFIG("black_fungus_base_damage", default_black_fungus_base_damage),
+        REGISTER_CONFIG("black_fungus_base_health", default_black_fungus_base_health),
+        REGISTER_CONFIG("black_fungus_base_radius", default_black_fungus_base_radius),
+        REGISTER_CONFIG("black_fungus_compression_damage_bonus_max",
+                        default_black_fungus_compression_damage_bonus_max),
+        REGISTER_CONFIG("black_fungus_compression_half_power", default_black_fungus_compression_half_power),
+        REGISTER_CONFIG("black_fungus_copy", default_black_fungus_copy),
+        REGISTER_CONFIG("black_fungus_mass", default_black_fungus_mass),
+        REGISTER_CONFIG("black_fungus_reload", default_black_fungus_reload),
+        REGISTER_CONFIG("broccoli_base_damage", default_broccoli_base_damage),
+        REGISTER_CONFIG("broccoli_base_health", default_broccoli_base_health),
+        REGISTER_CONFIG("broccoli_base_radius", default_broccoli_base_radius),
+        REGISTER_CONFIG("broccoli_copy", default_broccoli_copy),
+        REGISTER_CONFIG("broccoli_health_rounding_step", default_broccoli_health_rounding_step),
+        REGISTER_CONFIG("broccoli_mass", default_broccoli_mass),
+        REGISTER_CONFIG("broccoli_petal_health_heal_per_second", default_broccoli_petal_health_heal_per_second),
+        REGISTER_CONFIG("broccoli_reload", default_broccoli_reload),
+        REGISTER_CONFIG("douli_copy", default_douli_copy),
         REGISTER_CONFIG("beetleegg_base_health", default_beetleegg_base_health),
         REGISTER_CONFIG("beetleegg_base_radius", default_beetleegg_base_radius),
         REGISTER_CONFIG("beetleegg_copy", default_beetleegg_copy),
@@ -1289,6 +1485,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("entity_collision_epsilon", entity_collision_epsilon),
         REGISTER_CONFIG("entity_collision_knockback_speed", entity_collision_knockback_speed),
         REGISTER_CONFIG("entity_default_extra_hit_num", entity_default_extra_hit_num),
+        REGISTER_CONFIG("petal_default_extra_hit_num", petal_default_extra_hit_num),
         REGISTER_CONFIG("faster_base_damage", default_faster_base_damage),
         REGISTER_CONFIG("faster_base_health", default_faster_base_health),
         REGISTER_CONFIG("faster_base_radius", default_faster_base_radius),
@@ -1577,7 +1774,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("psionic_connection_range", psionic_connection_range),
         REGISTER_CONFIG("mob_player_flower_armor", mob_player_flower_armor),
         REGISTER_CONFIG("mob_player_flower_damage", mob_player_flower_damage),
-        REGISTER_CONFIG("mob_player_flower_level_damage_growth", mob_player_flower_level_damage_growth),
+        REGISTER_CONFIG("mob_player_flower_level_damage_exponent", mob_player_flower_level_damage_exponent),
         REGISTER_CONFIG("mob_player_flower_level_health_growth", mob_player_flower_level_health_growth),
         REGISTER_CONFIG("mob_player_flower_initial_petal_slots", mob_player_flower_initial_petal_slots),
         REGISTER_CONFIG("mob_player_flower_mass", mob_player_flower_mass),
@@ -1595,6 +1792,11 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_stop_velocity_epsilon", mob_stop_velocity_epsilon),
         REGISTER_CONFIG("mob_soldier_ant_armor", mob_soldier_ant_armor),
         REGISTER_CONFIG("mob_soldier_ant_damage", mob_soldier_ant_damage),
+        REGISTER_CONFIG("mob_leafcutter_soldier_leaf_piece_attack_interval",
+                        mob_leafcutter_soldier_leaf_piece_attack_interval),
+        REGISTER_CONFIG("mob_leafcutter_soldier_leaf_piece_attack_radius_multiplier",
+                        mob_leafcutter_soldier_leaf_piece_attack_radius_multiplier),
+        REGISTER_CONFIG("mob_leafcutter_soldier_leaf_piece_turn_speed", mob_leafcutter_soldier_leaf_piece_turn_speed),
         REGISTER_CONFIG("mob_soldier_ant_mass", mob_soldier_ant_mass),
         REGISTER_CONFIG("mob_soldier_ant_max_health", mob_soldier_ant_max_health),
         REGISTER_CONFIG("mob_soldier_ant_radius", mob_soldier_ant_radius),
@@ -1606,7 +1808,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_leaf_piece_radius", mob_leaf_piece_radius),
         REGISTER_CONFIG("mob_leaf_piece_radius_scale_min", mob_leaf_piece_radius_scale_min),
         REGISTER_CONFIG("mob_leaf_piece_radius_scale_max", mob_leaf_piece_radius_scale_max),
-        REGISTER_CONFIG("mob_leaf_piece_regen_level_base", mob_leaf_piece_regen_level_base),
+        REGISTER_CONFIG("mob_leaf_piece_regen_per_second", mob_leaf_piece_regen_per_second),
         REGISTER_CONFIG("mob_leaf_piece_team", mob_leaf_piece_team),
         REGISTER_CONFIG("mob_soldier_fire_ant_armor", mob_soldier_fire_ant_armor),
         REGISTER_CONFIG("mob_soldier_fire_ant_damage", mob_soldier_fire_ant_damage),
@@ -1700,6 +1902,13 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("pincer_poison_total_damage", default_pincer_poison_total_damage),
         REGISTER_CONFIG("pincer_reload", default_pincer_reload),
         REGISTER_CONFIG("pincer_slow_duration", default_pincer_slow_duration),
+        REGISTER_CONFIG("plank_base_damage", default_plank_base_damage),
+        REGISTER_CONFIG("plank_base_health", default_plank_base_health),
+        REGISTER_CONFIG("plank_base_radius", default_plank_base_radius),
+        REGISTER_CONFIG("plank_copy", default_plank_copy),
+        REGISTER_CONFIG("plank_mass", default_plank_mass),
+        REGISTER_CONFIG("plank_projectile_damage_multiplier", default_plank_projectile_damage_multiplier),
+        REGISTER_CONFIG("plank_reload", default_plank_reload),
         REGISTER_CONFIG("player_collision_knockback_multiplier", player_collision_knockback_multiplier),
         REGISTER_CONFIG("pollen_base_damage", default_pollen_base_damage),
         REGISTER_CONFIG("pollen_base_health", default_pollen_base_health),
@@ -1800,6 +2009,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("server_fixed_dt", server_fixed_dt),
         REGISTER_CONFIG("slow_tick_profile_ms", slow_tick_profile_ms),
         REGISTER_CONFIG("simulation_active_view_radius_cap", simulation_active_view_radius_cap),
+        REGISTER_CONFIG("world_tick_phase_profile_enabled", world_tick_phase_profile_enabled),
         REGISTER_CONFIG("spatial_grid_cell_size", spatial_grid_cell_size),
         REGISTER_CONFIG("spatial_grid_large_radius_cell_multiplier", spatial_grid_large_radius_cell_multiplier),
         REGISTER_CONFIG("spatial_grid_large_radius_horizon_multiplier", spatial_grid_large_radius_horizon_multiplier),
@@ -1838,6 +2048,25 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("web_throw_deceleration", default_web_throw_deceleration),
         REGISTER_CONFIG("web_throw_attack_speed", default_web_throw_attack_speed),
         REGISTER_CONFIG("web_throw_defend_speed", default_web_throw_defend_speed),
+        REGISTER_CONFIG("white_fungus_base_damage", default_white_fungus_base_damage),
+        REGISTER_CONFIG("white_fungus_base_health", default_white_fungus_base_health),
+        REGISTER_CONFIG("white_fungus_base_radius", default_white_fungus_base_radius),
+        REGISTER_CONFIG("white_fungus_copy", default_white_fungus_copy),
+        REGISTER_CONFIG("white_fungus_mass", default_white_fungus_mass),
+        REGISTER_CONFIG("white_fungus_petal_extra_hits_common", default_white_fungus_petal_extra_hits_common),
+        REGISTER_CONFIG("white_fungus_petal_extra_hits_epic", default_white_fungus_petal_extra_hits_epic),
+        REGISTER_CONFIG("white_fungus_petal_extra_hits_eternal", default_white_fungus_petal_extra_hits_eternal),
+        REGISTER_CONFIG("white_fungus_petal_extra_hits_legendary", default_white_fungus_petal_extra_hits_legendary),
+        REGISTER_CONFIG("white_fungus_petal_extra_hits_mythic", default_white_fungus_petal_extra_hits_mythic),
+        REGISTER_CONFIG("white_fungus_petal_extra_hits_primordial", default_white_fungus_petal_extra_hits_primordial),
+        REGISTER_CONFIG("white_fungus_petal_extra_hits_rare", default_white_fungus_petal_extra_hits_rare),
+        REGISTER_CONFIG("white_fungus_petal_extra_hits_super", default_white_fungus_petal_extra_hits_super),
+        REGISTER_CONFIG("white_fungus_petal_extra_hits_ultra", default_white_fungus_petal_extra_hits_ultra),
+        REGISTER_CONFIG("white_fungus_petal_extra_hits_unique", default_white_fungus_petal_extra_hits_unique),
+        REGISTER_CONFIG("white_fungus_petal_extra_hits_unusual", default_white_fungus_petal_extra_hits_unusual),
+        REGISTER_CONFIG("white_fungus_petal_extra_hits_multiplier",
+                        default_white_fungus_petal_extra_hits_multiplier),
+        REGISTER_CONFIG("white_fungus_reload", default_white_fungus_reload),
         REGISTER_CONFIG("wax_base_health", default_wax_base_health),
         REGISTER_CONFIG("wax_copy", default_wax_copy),
         REGISTER_CONFIG("wax_mass", default_wax_mass),
@@ -1862,7 +2091,43 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("shovel_preload_eternal", default_shovel_preload_eternal),
         REGISTER_CONFIG("shovel_preload_unique", default_shovel_preload_unique),
         REGISTER_CONFIG("shovel_preload_primordial", default_shovel_preload_primordial),
+        REGISTER_CONFIG("trapper_base_damage", default_trapper_base_damage),
+        REGISTER_CONFIG("trapper_base_health", default_trapper_base_health),
+        REGISTER_CONFIG("trapper_base_radius", default_trapper_base_radius),
+        REGISTER_CONFIG("trapper_copy", default_trapper_copy),
+        REGISTER_CONFIG("trapper_fire_interval", default_trapper_fire_interval),
+        REGISTER_CONFIG("trapper_mass", default_trapper_mass),
+        REGISTER_CONFIG("trapper_mount_radius_multiplier", default_trapper_mount_radius_multiplier),
+        REGISTER_CONFIG("trapper_recoil_distance", default_trapper_recoil_distance),
+        REGISTER_CONFIG("trapper_recoil_duration", default_trapper_recoil_duration),
+        REGISTER_CONFIG("trapper_reload", default_trapper_reload),
+        REGISTER_CONFIG("trapper_stat_growth", default_trapper_stat_growth),
+        REGISTER_CONFIG("trapper_trap_base_damage", default_trapper_trap_base_damage),
+        REGISTER_CONFIG("trapper_trap_base_health", default_trapper_trap_base_health),
+        REGISTER_CONFIG("trapper_trap_collision_push", default_trapper_trap_collision_push),
+        REGISTER_CONFIG("trapper_trap_deceleration", default_trapper_trap_deceleration),
+        REGISTER_CONFIG("trapper_trap_lifetime", default_trapper_trap_lifetime),
+        REGISTER_CONFIG("trapper_trap_mass", default_trapper_trap_mass),
+        REGISTER_CONFIG("trapper_trap_radius", default_trapper_trap_radius),
+        REGISTER_CONFIG("trapper_trap_speed", default_trapper_trap_speed),
+        REGISTER_CONFIG("tomato_base_damage", default_tomato_base_damage),
+        REGISTER_CONFIG("tomato_base_health", default_tomato_base_health),
+        REGISTER_CONFIG("tomato_base_radius", default_tomato_base_radius),
+        REGISTER_CONFIG("tomato_copy", default_tomato_copy),
+        REGISTER_CONFIG("tomato_growth_delay", default_tomato_growth_delay),
+        REGISTER_CONFIG("tomato_growth_duration", default_tomato_growth_duration),
+        REGISTER_CONFIG("tomato_mass", default_tomato_mass),
+        REGISTER_CONFIG("tomato_max_damage_multiplier", default_tomato_max_damage_multiplier),
+        REGISTER_CONFIG("tomato_max_health_multiplier", default_tomato_max_health_multiplier),
+        REGISTER_CONFIG("tomato_max_radius_multiplier", default_tomato_max_radius_multiplier),
+        REGISTER_CONFIG("tomato_reload", default_tomato_reload),
         REGISTER_CONFIG("timeout_protection_seconds", timeout_protection_seconds),
+        REGISTER_CONFIG("titan_forge_cooldown_seconds", titan_forge_cooldown_seconds),
+        REGISTER_CONFIG("titan_forge_range", titan_forge_range),
+        REGISTER_CONFIG("titan_petal_slot_count", titan_petal_slot_count),
+        REGISTER_CONFIG("titan_stats_multiplier", titan_stats_multiplier),
+        REGISTER_CONFIG("titan_team", titan_team),
+        REGISTER_CONFIG("titan_unique_refresh_seconds", titan_unique_refresh_seconds),
         REGISTER_CONFIG("yucca_base_damage", default_yucca_base_damage),
         REGISTER_CONFIG("yucca_base_health", default_yucca_base_health),
         REGISTER_CONFIG("yucca_base_radius", default_yucca_base_radius),
@@ -1892,6 +2157,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("yggdrasil_channel_primordial", default_yggdrasil_channel_primordial),
         REGISTER_CONFIG("yggdrasil_heal_fraction", default_yggdrasil_heal_fraction),
         REGISTER_CONFIG("yggdrasil_preload", default_yggdrasil_preload),
+        REGISTER_CONFIG("yggdrasil_target_range_multiplier", default_yggdrasil_target_range_multiplier),
         REGISTER_CONFIG("basil_healing_received_common", default_basil_healing_received_common),
         REGISTER_CONFIG("basil_healing_received_unusual", default_basil_healing_received_unusual),
         REGISTER_CONFIG("basil_healing_received_rare", default_basil_healing_received_rare),
@@ -1916,8 +2182,8 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("coin_mass", default_coin_mass),
         REGISTER_CONFIG("coin_reload", default_coin_reload),
         REGISTER_CONFIG("compass_point_min_level", default_compass_point_min_level),
-        REGISTER_CONFIG("compass_priority_super", default_compass_priority_super),
         REGISTER_CONFIG("compass_priority_eternal", default_compass_priority_eternal),
+        REGISTER_CONFIG("compass_priority_unique", default_compass_priority_unique),
         REGISTER_CONFIG("compass_priority_primordial", default_compass_priority_primordial),
         REGISTER_CONFIG("dahlia_base_damage", default_dahlia_base_damage),
         REGISTER_CONFIG("dahlia_base_health", default_dahlia_base_health),
@@ -1947,6 +2213,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("glass_mass", default_glass_mass),
         REGISTER_CONFIG("glass_reload", default_glass_reload),
         REGISTER_CONFIG("healing_petal_target_delay", default_healing_petal_target_delay),
+        REGISTER_CONFIG("healing_petal_target_move_time", default_healing_petal_target_move_time),
         REGISTER_CONFIG("healing_petal_target_range_multiplier", default_healing_petal_target_range_multiplier),
         REGISTER_CONFIG("light_copy_common", default_light_copy_common),
         REGISTER_CONFIG("light_copy_rare", default_light_copy_rare),
@@ -1969,6 +2236,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("petal_locked_target_acceleration_scale", default_petal_locked_target_acceleration_scale),
         REGISTER_CONFIG("petal_target_acceleration_multiplier", default_petal_target_acceleration_multiplier),
         REGISTER_CONFIG("petal_target_acceleration_scale", default_petal_target_acceleration_scale),
+        REGISTER_CONFIG("petal_target_max_primordial_lentils", default_petal_target_max_primordial_lentils),
         REGISTER_CONFIG("petal_target_orbit_tether", default_petal_target_orbit_tether),
         REGISTER_CONFIG("petal_throw_initial_deceleration", default_petal_throw_initial_deceleration),
         REGISTER_CONFIG("petal_throw_min_deceleration", default_petal_throw_min_deceleration),
@@ -2024,7 +2292,6 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("wing_reload", default_wing_reload),
         REGISTER_CONFIG("wing_wave_offset", default_wing_wave_offset),
         REGISTER_CONFIG("yggdrasil_stop_distance_multiplier", default_yggdrasil_stop_distance_multiplier),
-        REGISTER_CONFIG("rarity_exotic_special_super_weight", rarity_exotic_special_super_weight),
         REGISTER_CONFIG("blood_sacrifice_inner_star_radius", blood_sacrifice_inner_star_radius),
         REGISTER_CONFIG("blood_sacrifice_outer_star_radius_multiplier", blood_sacrifice_outer_star_radius_multiplier),
         REGISTER_CONFIG("blood_sacrifice_radius_scale_min", blood_sacrifice_radius_scale_min),
@@ -2049,6 +2316,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("entity_projectile_contact_skin", entity_projectile_contact_skin),
         REGISTER_CONFIG("entity_wall_push_passes", entity_wall_push_passes),
         REGISTER_CONFIG("entity_wall_query_slop", entity_wall_query_slop),
+        REGISTER_CONFIG("mob_wall_collision_radius_multiplier", mob_wall_collision_radius_multiplier),
         REGISTER_CONFIG("drop_merge_distance_radius_multiplier", drop_merge_distance_radius_multiplier),
         REGISTER_CONFIG("gameworld_transfer_spawn_position_attempts", gameworld_transfer_spawn_position_attempts),
         REGISTER_CONFIG("gameworld_wall_contact_skin", gameworld_wall_contact_skin),

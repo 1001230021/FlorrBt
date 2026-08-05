@@ -1,4 +1,5 @@
 #pragma once
+#include "entity_type.h"
 #include <array>
 #include <cstdint>
 #include <string_view>
@@ -60,20 +61,36 @@ enum class EPetalType : int
     Dandelion,
     Orange,
     Shovel,
-    Yucca
+    Yucca,
+    WhiteFungus,
+    BlackFungus,
+    Broccoli,
+    Douli,
+    Trapper,
+    Amulet,
+    Plank,
+    Tomato
 };
 
 using PetalType = EPetalType;
 
-inline constexpr std::array<std::string_view, 56> petal_type_names = {
-    "None",           "Air",        "AntEgg",        "Antennae", "Basic",     "BeetleEgg", "Bone",       "Bubble",
-    "Carrot",         "Coin",       "Compass",       "Cogwheel", "Disc",      "Dust",      "GoldenLeaf", "Iris",
-    "Lentil",         "Moon",       "Nullification", "Pincer",   "Relic",     "Rose",      "YinYang",    "Missile",
-    "BloodSacrifice", "Corruption", "Bandage",       "Heavy",    "Faster",    "Yggdrasil", "Dahlia",     "Wing",
-    "Triangle",       "Sawblade",   "Fragment",      "Mimic",    "Glass",     "Stinger",   "BrokenEgg",  "Light",
-    "Leaf",           "Rock",       "Web",           "Cactus",   "Pollen",    "Corn",      "Rice",       "Basil",
-    "Soil",           "Honey",      "Wax",           "ThirdEye", "Dandelion", "Orange",    "Shovel",     "Yucca",
+inline constexpr std::array<std::string_view, 64> petal_type_names = {
+    "None",           "Air",         "AntEgg",        "Antennae", "Basic",     "BeetleEgg", "Bone",       "Bubble",
+    "Carrot",         "Coin",        "Compass",       "Cogwheel", "Disc",      "Dust",      "GoldenLeaf", "Iris",
+    "Lentil",         "Moon",        "Nullification", "Pincer",   "Relic",     "Rose",      "YinYang",    "Missile",
+    "BloodSacrifice", "Corruption",  "Bandage",       "Heavy",    "Faster",    "Yggdrasil", "Dahlia",     "Wing",
+    "Triangle",       "Sawblade",    "Fragment",      "Mimic",    "Glass",     "Stinger",   "BrokenEgg",  "Light",
+    "Leaf",           "Rock",        "Web",           "Cactus",   "Pollen",    "Corn",      "Rice",       "Basil",
+    "Soil",           "Honey",       "Wax",           "ThirdEye", "Dandelion", "Orange",    "Shovel",     "Yucca",
+    "WhiteFungus",    "BlackFungus", "Broccoli",      "Douli",     "Trapper",   "Amulet", "Plank", "Tomato",
 };
+
+static_assert(static_cast<size_t>(EPetalType::Tomato) + 1 == petal_type_names.size(),
+              "petal type names must stay aligned with EPetalType");
+static_assert(server_petal_entity_type_offset + petal_type_names.size() <= server_drop_entity_type_offset,
+              "petal network IDs overlap the drop network ID range");
+static_assert(server_drop_entity_type_offset + petal_type_names.size() - 1 <= 255,
+              "drop network IDs no longer fit in uint8_t");
 
 inline std::string_view GetPetalTypeName(EPetalType type)
 {
@@ -101,6 +118,8 @@ inline bool PetalIgnoresReachBonus(EPetalType type)
     case EPetalType::Orange:
     case EPetalType::Missile:
     case EPetalType::Shovel:
+    case EPetalType::Trapper:
+    case EPetalType::Plank:
         return true;
     default:
         return false;
@@ -197,6 +216,22 @@ inline bool MatchPetalTypeAlias(std::string_view text, EPetalType type)
         return text == "shovel" || text == "shv";
     case EPetalType::Yucca:
         return text == "yucca" || text == "yuc";
+    case EPetalType::WhiteFungus:
+        return text == "white_fungus" || text == "whitefungus" || text == "wf";
+    case EPetalType::BlackFungus:
+        return text == "black_fungus" || text == "blackfungus" || text == "bf";
+    case EPetalType::Broccoli:
+        return text == "broccoli" || text == "broc";
+    case EPetalType::Douli:
+        return text == "douli" || text == "dl";
+    case EPetalType::Trapper:
+        return text == "trapper" || text == "trap" || text == "trp";
+    case EPetalType::Amulet:
+        return text == "amulet" || text == "amu";
+    case EPetalType::Plank:
+        return text == "plank" || text == "plk";
+    case EPetalType::Tomato:
+        return text == "tomato" || text == "tom";
     default:
         return false;
     }

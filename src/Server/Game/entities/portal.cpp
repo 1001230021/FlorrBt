@@ -15,7 +15,8 @@
 #include <vector>
 
 CPortal::CPortal(CGameWorld* world, sf::Vector2f pos, float radius, std::string target_world)
-    : CEntity(world, pos.x, pos.y, std::max(game_config::portal_min_radius, radius)),
+    : CEntity(world, pos.x, pos.y, std::max(game_config::portal_min_radius, radius),
+              MakeEntityType(EEntityType::Portal, server_portal_entity_type)),
       m_target_world_name(std::move(target_world))
 {
     m_health = std::numeric_limits<float>::infinity();

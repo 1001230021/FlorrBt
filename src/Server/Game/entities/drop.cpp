@@ -1,4 +1,5 @@
 #include "drop.h"
+#include "../../Persistence/unique_petal_registry.h"
 #include "../../server.h"
 #include "../gameworld.h"
 #include "../player.h"
@@ -29,7 +30,9 @@ CDrop::CDrop() : CDrop(nullptr, { 0.f, 0.f }, PetalType::None, ERarity::Null, dr
 
 CDrop::CDrop(CGameWorld* world, sf::Vector2f pos, PetalType type, ERarity rarity, int owner_id, float lifetime,
              uint16_t stack_num)
-    : CEntity(world, pos.x, pos.y, game_config::default_drop_radius), m_type(type), m_rarity(rarity),
+    : CEntity(world, pos.x, pos.y, game_config::default_drop_radius,
+              MakeDropEntityType(static_cast<std::uint8_t>(type))),
+      m_type(type), m_rarity(rarity),
       m_owner_id(owner_id), m_stack_num(stack_num), m_merge_timer(InitialDropMergeTimer(pos, owner_id)),
       m_timer(std::max(0.f, lifetime))
 {
@@ -43,7 +46,7 @@ void CDrop::Tick(float dt)
 
     if (m_type == PetalType::None || m_rarity == ERarity::Null || m_stack_num == 0)
     {
-        MarkForDestroy();
+        MarkForDestroy(EEntityRemovalReason::Despawned);
         return;
     }
 
@@ -51,14 +54,14 @@ void CDrop::Tick(float dt)
 
     if (m_timer <= 0.f)
     {
-        MarkForDestroy();
+        MarkForDestroy(EEntityRemovalReason::Expired);
         return;
     }
 
     m_timer -= dt;
     if (m_timer <= 0.f)
     {
-        MarkForDestroy();
+        MarkForDestroy(EEntityRemovalReason::Expired);
         return;
     }
 
@@ -81,6 +84,17 @@ bool CDrop::PickUpTo(CPlayer& player)
 {
     if (!CanBePickedUpBy(player.GetId())) return false;
 
+    if (m_rarity == ERarity::Unique)
+    {
+        CServer* server = CServer::GetInstance();
+        IUniquePetalRegistry* registry = server ? server->GetUniquePetalRegistry() : nullptr;
+        if (!registry || !registry->GetUnique(m_type, 0, player.GetAccountName())) return false;
+
+        player.ObtainPetalCard(static_cast<uint8_t>(m_type), static_cast<uint8_t>(m_rarity), 1, false);
+        MarkForDestroy(EEntityRemovalReason::Consumed);
+        return true;
+    }
+
     if (!player.ObtainPetalCard(static_cast<uint8_t>(m_type), static_cast<uint8_t>(m_rarity), m_stack_num))
         return false;
     if (CServer::MeetsPetalReportRarity(m_rarity, game_config::min_drop_report_rarity))
@@ -91,7 +105,7 @@ bool CDrop::PickUpTo(CPlayer& player)
                 server->BroadcastPetalReport("found", m_rarity, proto->m_name, player.GetName());
         }
     }
-    MarkForDestroy();
+    MarkForDestroy(EEntityRemovalReason::Consumed);
     return true;
 }
 
@@ -114,6 +128,6 @@ void CDrop::MergeNearbyDrops()
         uint16_t moved_stack = std::min(free_stack, other->m_stack_num);
         m_stack_num = static_cast<uint16_t>(m_stack_num + moved_stack);
         other->m_stack_num = static_cast<uint16_t>(other->m_stack_num - moved_stack);
-        if (other->m_stack_num == 0) other->MarkForDestroy();
+        if (other->m_stack_num == 0) other->MarkForDestroy(EEntityRemovalReason::Consumed);
     });
 }

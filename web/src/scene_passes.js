@@ -1,11 +1,17 @@
-import { isDropEntity, isPetalEntity } from "./protocol.js";
+import {
+  isDropEntity,
+  isPetalEntity,
+  petalTypeFromEntity,
+} from "./protocol.js";
 import { state } from "./app_context.js";
 import {
   bloodSacrificeEffectType,
   dandelionMissileType,
-  flagDigging,
+  entityHasState,
   hornetMissileType,
+  petalTrapperType,
   spiderWebZoneType,
+  stateDigging,
 } from "./game_ids.js";
 
 export function collectSceneRenderPasses({
@@ -28,12 +34,12 @@ export function collectSceneRenderPasses({
     const snap = entity.snapshot;
     if (!snap || !isEntityInRenderView(entity, scale)) continue;
     if (snap.entityId === state.ownerEntityId) {
-      if ((snap.flags & flagDigging) !== 0) passes.ground.push(entity);
+      if (entityHasState(snap, stateDigging)) passes.ground.push(entity);
       else passes.owner = entity;
       continue;
     }
 
-    if ((snap.flags & flagDigging) !== 0) {
+    if (entityHasState(snap, stateDigging)) {
       passes.ground.push(entity);
     } else if (
       snap.entityType === spiderWebZoneType ||
@@ -41,6 +47,8 @@ export function collectSceneRenderPasses({
     ) {
       passes.ground.push(entity);
     } else if (isHornetMissileLayerEntity(snap)) {
+      passes.underlay.push(entity);
+    } else if (isMountedPetalLayerEntity(snap)) {
       passes.underlay.push(entity);
     } else if (isPetalEntity(snap.entityType)) {
       passes.petals.push(entity);
@@ -59,6 +67,14 @@ export function collectSceneRenderPasses({
     passes.owner = owner;
 
   return passes;
+}
+
+function isMountedPetalLayerEntity(snap) {
+  return (
+    snap &&
+    isPetalEntity(snap.entityType) &&
+    petalTypeFromEntity(snap.entityType) === petalTrapperType
+  );
 }
 
 function isHornetMissileLayerEntity(snap) {

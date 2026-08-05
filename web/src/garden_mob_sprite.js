@@ -2,6 +2,7 @@ const SVG_VIEWBOX_SIZE = 110;
 const SVG_CLIP_X = 9.167;
 const SVG_CLIP_SIZE = 91.667;
 const ANT_BASE_FACE_ANGLE = -Math.PI * 0.75;
+const ANT_CARRY_FORELIMB_ANGLE = 0.28;
 const ROCK_FILL = "#777";
 const ROCK_STROKE = "#606060";
 const ROCK_EDGE_WIDTH = 5.2;
@@ -10,6 +11,7 @@ const SANDSTORM_VISUAL_SCALE = 1.2;
 const PORTAL_VISUAL_SCALE = 2.15;
 const ANT_EGG_VISUAL_SCALE = 4.4;
 const FULL_ANT_VISUAL_SCALE = 5.65;
+const SOLDIER_ANT_VISUAL_SCALE = SVG_VIEWBOX_SIZE / 19;
 const BABY_ANT_VISUAL_SCALE = 7.37;
 const OVERMIND_VISUAL_SCALE = 4.1;
 const LEAF_PIECE_VISUAL_SCALE = 3.1;
@@ -104,6 +106,25 @@ export function drawWorkerAnt(ctx, pos, radius, entityId, angle, motion, time) {
   });
 }
 
+export function drawLeafcutterSoldier(
+  ctx,
+  pos,
+  radius,
+  entityId,
+  angle,
+  motion,
+  time,
+  carryingLeafPiece,
+) {
+  drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
+    src: "./assets/soldier_leafcutter_ant.svg",
+    sizeScale: SOLDIER_ANT_VISUAL_SCALE,
+    stripWings: false,
+    forelimbAmplitude: 0.22,
+    carryingLeafPiece: Boolean(carryingLeafPiece),
+  });
+}
+
 export function drawQueenAnt(ctx, pos, radius, entityId, angle, motion, time) {
   drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/queen_ant.svg",
@@ -157,7 +178,7 @@ export function drawBabyFireAnt(
 ) {
   drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/baby_fire_ant.svg",
-    sizeScale: 5.65,
+    sizeScale: BABY_ANT_VISUAL_SCALE,
     stripWings: false,
     forelimbAmplitude: 0.18,
   });
@@ -450,6 +471,9 @@ function drawGardenAnt(
     time || 0,
     options.forelimbAmplitude,
   );
+  const forelimbAmount = options.carryingLeafPiece
+    ? ANT_CARRY_FORELIMB_ANGLE
+    : animation.forelimb;
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
@@ -462,7 +486,7 @@ function drawGardenAnt(
     if (isImageReady(abdomen))
       ctx.drawImage(abdomen, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
     drawAnimatedParts(ctx, wings, spriteSize, animation.wing, "fill");
-    drawAnimatedParts(ctx, forelimbs, spriteSize, animation.forelimb, "stroke");
+    drawAnimatedParts(ctx, forelimbs, spriteSize, forelimbAmount, "stroke");
     if (isImageReady(head))
       ctx.drawImage(head, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
   } else {
@@ -699,12 +723,13 @@ function extractSvgParts(svgText, kind) {
 }
 
 function isForelimbPath(path) {
-  return (path.getAttribute("stroke") || "").trim().toLowerCase() === "#292929";
+  const stroke = (path.getAttribute("stroke") || "").trim().toLowerCase();
+  return stroke === "#292929" || stroke === "#3f2618";
 }
 
 function isWingPath(path) {
   const fill = (path.getAttribute("fill") || "").trim().toLowerCase();
-  return fill === "#eee" || fill === "#eeeeee";
+  return fill === "#eee" || fill === "#eeeeee" || fill === "#f0e4d4";
 }
 
 function parseMovePivot(d) {

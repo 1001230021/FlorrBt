@@ -2,6 +2,8 @@ import { ChatFlag, clamp, rarityColor } from "./protocol.js";
 import { dom, state } from "./app_context.js";
 import { clientRuntimeConfig } from "./client_config.js";
 import { rarityExotic, rarityPrimordial } from "./game_ids.js";
+import { t } from "./i18n.js";
+import { createTextInput } from "./text_input.js";
 
 const {
   chatMaxHistory,
@@ -10,20 +12,44 @@ const {
   chatFadeMs,
   chatClosedRenderIntervalMs,
 } = clientRuntimeConfig;
-const { canvas, chatPanel, chatChannels, chatLog, chatInput } = dom;
-
-export function isTextInputActive() {
-  const active = document.activeElement;
-  return (
-    active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")
-  );
-}
+const {
+  canvas,
+  chatPanel,
+  chatChannels,
+  chatLog,
+  chatComposer,
+  chatComposeChannel,
+  chatInput,
+} = dom;
+const composeKinds = Object.freeze(["local", "squad", "global"]);
 
 export function createChatUi({
   beforeOpen = null,
   executeCommand = null,
   focusTarget = canvas,
 } = {}) {
+  let composeKind = composeKinds[0];
+  let textInput = null;
+
+  const refreshComposer = () => {
+    const channel = chatFlagLabel(composeKind);
+    chatComposer.dataset.channel = composeKind;
+    chatComposeChannel.textContent = `[${channel}]`;
+    textInput.setPlaceholder(t("ui.chat.messagePlaceholder"));
+    textInput.setAriaLabel(t("ui.chat.messageAriaLabel", { channel }));
+  };
+
+  const cycleChannel = (direction = 1) => {
+    const current = composeKinds.indexOf(composeKind);
+    const step = direction < 0 ? -1 : 1;
+    composeKind =
+      composeKinds[
+        (current + step + composeKinds.length) % composeKinds.length
+      ];
+    refreshComposer();
+    return composeKind;
+  };
+
   const render = (now = performance.now()) => {
     chatLog.replaceChildren();
     const rows = [];
@@ -65,8 +91,8 @@ export function createChatUi({
 
   const close = ({ focus = true } = {}) => {
     state.chatOpen = false;
-    chatInput.value = "";
-    chatInput.classList.add("hidden");
+    textInput.clear();
+    chatComposer.classList.add("hidden");
     chatChannels.classList.add("hidden");
     chatPanel.classList.remove("open");
     render();
@@ -79,22 +105,33 @@ export function createChatUi({
     state.chatOpen = true;
     chatPanel.classList.add("open");
     chatChannels.classList.remove("hidden");
-    chatInput.value = prefix;
-    chatInput.placeholder = prefix ? "" : "[Local]";
-    chatInput.classList.remove("hidden");
-    chatInput.focus();
-    chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+    textInput.setValue(prefix);
+    refreshComposer();
+    chatComposer.classList.remove("hidden");
+    textInput.focus({ cursor: "end" });
     render();
   };
 
   const submit = () => {
-    const text = chatInput.value.trim();
+    const text = textInput.getValue({ trim: true });
     close();
     if (!text) return;
     executeCommand?.(
-      text.startsWith("/") ? text.slice(1) : `say local ${text}`,
+      text.startsWith("/") ? text.slice(1) : `say ${composeKind} ${text}`,
     );
   };
+
+  textInput = createTextInput(chatInput, {
+    variant: "embedded",
+    onSubmit: submit,
+    onCancel: () => close(),
+    onKeyDown: (event) => {
+      if (event.key !== "Tab") return false;
+      event.preventDefault();
+      cycleChannel(event.shiftKey ? -1 : 1);
+      return true;
+    },
+  });
 
   const append = (chat, now = performance.now()) => {
     state.chats.push({ ...chat, receivedAt: now });
@@ -122,12 +159,19 @@ export function createChatUi({
     render();
   };
 
+  const refreshTranslations = () => {
+    refreshComposer();
+    render();
+  };
+
   return {
     append,
     close,
     contains: (target) => !!chatPanel?.contains(target),
+    cycleChannel,
     handleFilterChange,
     open,
+    refreshTranslations,
     render,
     setVisible,
     submit,
@@ -139,14 +183,16 @@ function chatKind(chat) {
   if (!chat) return "local";
   if (chat.flag === ChatFlag.Global) return "global";
   if (chat.flag === ChatFlag.Whisper) return "whisper";
+  if (chat.flag === ChatFlag.Squad) return "squad";
   if (chat.flag === ChatFlag.Server) return "server";
   return "local";
 }
 
 function chatFlagLabel(kind) {
-  if (kind === "global") return "Global";
-  if (kind === "whisper") return "Whisper";
-  return "Local";
+  if (kind === "global") return t("ui.chat.channels.global");
+  if (kind === "whisper") return t("ui.chat.channels.whisper");
+  if (kind === "squad") return t("ui.chat.channels.squad");
+  return t("ui.chat.channels.local");
 }
 
 function chatClosedAlpha(chat, now) {

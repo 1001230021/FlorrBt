@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+
 const movementRadius = 62;
 const movementDeadzone = 7;
 
@@ -13,15 +15,23 @@ function setPressed(button, pressed) {
   button.setAttribute("aria-pressed", pressed ? "true" : "false");
 }
 
-function createButton(label, className, title) {
+function createButton(labelKey, className, titleKey) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = `mobile-control-button ${className}`;
-  button.textContent = label;
-  button.title = title || label;
-  button.setAttribute("aria-label", title || label);
+  button.dataset.i18nLabel = labelKey;
+  button.dataset.i18nTitle = titleKey || labelKey;
+  translateButton(button);
   button.setAttribute("aria-pressed", "false");
   return button;
+}
+
+function translateButton(button) {
+  const label = t(button.dataset.i18nLabel);
+  const title = t(button.dataset.i18nTitle);
+  button.textContent = label;
+  button.title = title;
+  button.setAttribute("aria-label", title);
 }
 
 export function createMobileControls({
@@ -33,7 +43,7 @@ export function createMobileControls({
 } = {}) {
   const root = document.createElement("section");
   root.className = "mobile-controls ui hidden";
-  root.setAttribute("aria-label", "Mobile controls");
+  root.setAttribute("aria-label", t("ui.mobile.ariaLabel"));
 
   const joystick = document.createElement("div");
   joystick.className = "mobile-joystick hidden";
@@ -44,17 +54,37 @@ export function createMobileControls({
   const actionGroup = document.createElement("div");
   actionGroup.className = "mobile-panel-actions";
   const backpackButton = createButton(
-    "Bag",
+    "ui.mobile.bagLabel",
     "mobile-panel-button",
-    "Inventory",
+    "ui.mobile.inventory",
   );
-  const talentButton = createButton("Tal", "mobile-panel-button", "Talents");
-  const craftButton = createButton("Craft", "mobile-panel-button", "Craft");
-  const chatButton = createButton("Chat", "mobile-panel-button", "Chat");
+  const talentButton = createButton(
+    "ui.mobile.talentLabel",
+    "mobile-panel-button",
+    "ui.mobile.talents",
+  );
+  const craftButton = createButton(
+    "ui.mobile.craft",
+    "mobile-panel-button",
+    "ui.mobile.craft",
+  );
+  const chatButton = createButton(
+    "ui.mobile.chat",
+    "mobile-panel-button",
+    "ui.mobile.chat",
+  );
   actionGroup.append(backpackButton, talentButton, craftButton, chatButton);
 
-  const attackButton = createButton("A", "mobile-attack-button", "Attack");
-  const defendButton = createButton("B", "mobile-defend-button", "Defend");
+  const attackButton = createButton(
+    "ui.mobile.attackLabel",
+    "mobile-attack-button",
+    "ui.mobile.attack",
+  );
+  const defendButton = createButton(
+    "ui.mobile.defendLabel",
+    "mobile-defend-button",
+    "ui.mobile.defend",
+  );
 
   root.append(joystick, actionGroup, attackButton, defendButton);
   document.body.appendChild(root);
@@ -191,6 +221,11 @@ export function createMobileControls({
   });
 
   return {
+    refreshTranslations() {
+      root.setAttribute("aria-label", t("ui.mobile.ariaLabel"));
+      for (const button of root.querySelectorAll("[data-i18n-label]"))
+        translateButton(button);
+    },
     setEnabled(value) {
       enabled = !!value;
       updateRootVisibility();

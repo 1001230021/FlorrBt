@@ -1,7 +1,12 @@
 import {
+  AuthMode,
+  AuthResultCode,
   ChatFlag,
+  FULL_SNAPSHOT_BASE_ID,
   NETWORK_PETAL_TYPE_OFFSET,
   PetalNames,
+  PetalSlotCopyState,
+  RarityNames,
   ServerType,
   appendBytes,
   clamp,
@@ -12,9 +17,12 @@ import {
   packChat,
   packChores,
   packCraft,
+  packForge,
   packEquip,
   packInput,
+  packInputFrame,
   packSecondarySlot,
+  packSnapshotAck,
   packStateRequest,
   packTalentRequest,
   packUnequip,
@@ -43,6 +51,7 @@ import {
   drawBabyTermite,
   drawDandelion,
   drawFireQueenAnt,
+  drawLeafcutterSoldier,
   drawLeafPiece,
   drawPortal,
   drawQueenAnt,
@@ -56,8 +65,14 @@ import {
   drawWorkerTermite,
 } from "./garden_mob_sprite.js";
 import { drawSpider, drawSpiderWeb } from "./spider_sprite.js";
-import { dom, emptySlot, slotHasItem, state } from "./app_context.js";
-import { createChatUi, isTextInputActive } from "./chat_ui.js";
+import {
+  dom,
+  emptySlot,
+  loadoutPresetCount,
+  slotHasItem,
+  state,
+} from "./app_context.js";
+import { createChatUi } from "./chat_ui.js";
 import {
   loadClientSettings,
   normalizeMobileControlMode,
@@ -75,6 +90,23 @@ import {
 import { createConsoleUi } from "./console_ui.js";
 import { createMapRenderer } from "./map_renderer.js";
 import { createMobileControls } from "./mobile_controls.js";
+import { createMysteryAudio } from "./mystery_audio.js";
+import {
+  drawSolidProgressBar,
+  traceSolidProgressBarPath,
+} from "./render_primitives.js";
+import { createTextInput, isTextInputActive } from "./text_input.js";
+import {
+  applyDocumentTranslations,
+  changeLanguage,
+  compareLocalized,
+  getAvailableLocales,
+  getCurrentLocale,
+  getLocale,
+  initI18n,
+  t,
+} from "./i18n.js";
+import { appDisplayName, appVersion } from "./version.js";
 import {
   PetalIconIds,
   antEggMobType,
@@ -97,21 +129,20 @@ import {
   fireQueenAntType,
   flagAntennae,
   flagAttacking,
-  flagCorrupted,
+  flagCarryingLeafPiece,
   flagDead,
   flagDefending,
-  flagDigging,
   flagAttached,
   flagOwner,
-  flagPoisoned,
-  flagRelic,
   flagSummoned,
-  flagUndead,
+  entityHasState,
   flowerTextureVersion,
   hornetMissileType,
   hornetType,
+  leafcutterSoldierType,
   leafPieceType,
   maxBossBars,
+  mechaFlowerType,
   mobSpriteCoverScale,
   mobSpriteEffectiveBox,
   mobSpriteViewBox,
@@ -123,6 +154,8 @@ import {
   petalBandageType,
   petalBasilType,
   petalBeetleEggType,
+  petalBlackFungusType,
+  petalBroccoliType,
   petalBasicType,
   petalBloodSacrificeType,
   petalBoneType,
@@ -137,6 +170,7 @@ import {
   petalCorruptionType,
   petalDahliaType,
   petalDandelionType,
+  petalDouliType,
   petalDiscType,
   petalDustType,
   petalFasterType,
@@ -166,8 +200,10 @@ import {
   petalStingerType,
   petalThirdEyeType,
   petalTriangleType,
+  petalTrapperType,
   petalWaxType,
   petalWebType,
+  petalWhiteFungusType,
   petalWingType,
   petalYuccaType,
   petalYggdrasilType,
@@ -183,6 +219,7 @@ import {
   rarityPrimordial,
   rarityShortNames,
   raritySortRanks,
+  raritySuper,
   rarityUnique,
   rockType,
   sandstormType,
@@ -192,7 +229,16 @@ import {
   soldierTermiteType,
   spiderWebZoneType,
   spiderType,
+  stateCorruption,
+  stateDigging,
+  stateInvincible,
+  statePoison,
+  statePsionicConnection,
+  stateUndead,
   stingerSplitIconMinRarity,
+  titanType,
+  trapProjectileType,
+  trapperLivePetalViewBox,
   summonedBeetleType,
   summonedSoldierAntType,
   queenAntEggType,
@@ -202,6 +248,8 @@ import {
   workerAntType,
   workerFireAntType,
   workerTermiteType,
+  waxLivePetalViewBox,
+  waxLivePetalVisualScale,
   worldDropSizeScale,
   worldPetalSizeScale,
 } from "./game_ids.js";
@@ -216,12 +264,21 @@ import {
 
 const {
   canvas,
+  loadingScreen,
   ctx,
   authPanel,
   wsUrlInput,
   accountInput,
   passwordInput,
+  emailInput,
+  verificationCodeInput,
+  authPasswordRow,
+  authEmailRow,
+  authCodeRow,
+  bindingNotice,
+  registerModeRow,
   registerModeInput,
+  sendCodeBtn,
   connectBtn,
   deathOverlay,
   deathSource,
@@ -247,6 +304,7 @@ const {
   backpackPanel,
   backpackCloseBtn,
   craftPanel,
+  craftTitle,
   craftCloseBtn,
   craftStage,
   craftResultSlot,
@@ -265,6 +323,22 @@ const {
   inventorySearch,
 } = dom;
 
+const wsUrlField = createTextInput(wsUrlInput, {
+  onSubmit: () => connectAndAuth(),
+});
+const accountField = createTextInput(accountInput, {
+  onSubmit: () => connectAndAuth(),
+});
+const passwordField = createTextInput(passwordInput, {
+  onSubmit: () => connectAndAuth(),
+});
+const emailField = createTextInput(emailInput, {
+  onSubmit: () => connectAndAuth(),
+});
+const verificationCodeField = createTextInput(verificationCodeInput, {
+  onSubmit: () => connectAndAuth(),
+});
+
 let mobileControls = null;
 const chatUi = createChatUi({
   beforeOpen: () => {
@@ -273,7 +347,7 @@ const chatUi = createChatUi({
     state.defending = false;
     state.digging = false;
     mobileControls?.reset();
-    sendBytes(packChores(false, false, false, false, false));
+    sendNeutralGameplayState();
   },
   executeCommand: (line) => executeClientCommand(line),
   focusTarget: canvas,
@@ -284,6 +358,10 @@ const consoleUi = createConsoleUi({
     executeClientCommand(line.startsWith("/") ? line.slice(1) : line),
   focusTarget: canvas,
 });
+const mysteryAudio = createMysteryAudio({
+  playerEntityType: playerFlowerType,
+  douliPetalType: petalDouliType,
+});
 
 const defaultMapName = clientRuntimeConfig.loginMapDefaultName;
 const mapRenderer = createMapRenderer({
@@ -291,10 +369,35 @@ const mapRenderer = createMapRenderer({
   defaultMapName,
   addConsoleLine: (text, kind = "") => addConsoleLine(text, kind),
   requestDraw: () => requestAnimationFrame(drawScene),
+  setLoadingVisible: (visible) => setLoadingScreenVisible(visible),
   worldScale,
   worldToScreen,
 });
+const viewRadiusTransitionDurationMs = 100;
 let pendingSnapshot = null;
+const snapshotHistory = new Map();
+const snapshotHistoryLimit = 90;
+const scheduledInputLeadTicks = 2;
+let snapshotResetRequested = false;
+const reconnectInitialDelayMs = 250;
+const reconnectMaxDelayMs = 5000;
+const douliOverlaySizeScale = 3.4;
+const douliOverlayOffsetYScale = -0.55;
+const douliOverlayAngle = -0.34;
+let reconnectTimer = null;
+let reconnectAttempt = 0;
+let reconnectArmed = false;
+let resumingConnection = false;
+let connectionGeneration = 0;
+let pageUnloading = false;
+const AuthUiMode = Object.freeze({
+  Login: "login",
+  Register: "register",
+  Binding: "binding",
+});
+let authUiMode = AuthUiMode.Login;
+let pendingAuthMode = null;
+let activeAuthMode = null;
 const {
   packetInterval,
   deathFadeDuration,
@@ -336,6 +439,7 @@ const {
   particleVelocityDampingPerSecond,
   particleSize,
   directionalPetalAngleOffset,
+  compassPetalAngleOffset,
   renderCullPaddingPx,
   renderLoadMediumEntityCount,
   renderLoadHighEntityCount,
@@ -385,6 +489,7 @@ const {
   loginMapDefaultX,
   loginMapDefaultY,
   loginMapDefaultHorizon,
+  titanForgeRange,
   minimapMarginPx,
   minimapLocalMaxPx,
   minimapFullMaxPx,
@@ -440,7 +545,14 @@ function setMobileControlMode(value, announce = true) {
   state.mobileControlMode = normalizeMobileControlMode(value);
   mobileControls?.setMode(state.mobileControlMode);
   saveSettings();
-  if (announce) addConsoleLine(`Mobile controls ${state.mobileControlMode}`);
+  if (announce)
+    addConsoleLine(
+      t("commands.toggle.mobile", {
+        value: t(`commands.toggle.${state.mobileControlMode}`, {}, {
+          defaultValue: state.mobileControlMode,
+        }),
+      }),
+    );
 }
 
 function setStatus(text, good = false) {
@@ -451,22 +563,57 @@ function addConsoleLine(text, kind = "") {
   consoleUi.addLine(text, kind);
 }
 
+function formatPetalItem(petalType, rarity, count = null) {
+  const params = {
+    petal: petalTypeName(petalType),
+    rarity: rarityName(rarity),
+    count: count === null ? "" : formatShortCount(count),
+  };
+  return t(count === null ? "formats.item" : "formats.itemCount", params);
+}
+
+function formatRarityPetal(petalType, rarity) {
+  return t("formats.rarityPetal", {
+    petal: petalTypeName(petalType),
+    rarity: rarityName(rarity),
+  });
+}
+
+function localizationSlug(value) {
+  return String(value || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+}
+
+function localizedTalentName(node) {
+  return t("talents.names." + localizationSlug(node?.name), {}, {
+    defaultValue: node?.name || "",
+  });
+}
+
 function toggleConsole(force) {
   consoleUi.toggle(force);
   if (!state.consoleOpen) closeSliderPanel();
 }
 
 function updateQuickActionButtons() {
+  const points = Math.max(0, Math.floor(state.talentPoints || 0));
   quickBackpackBtn?.classList.toggle("active", state.backpackOpen);
   quickCraftBtn?.classList.toggle("active", state.craftOpen);
+  quickCraftBtn?.classList.toggle("forge-mode", state.forgeMode);
   quickTalentBtn?.classList.toggle("active", state.talentOpen);
+  if (talentPointsLabel)
+    talentPointsLabel.textContent = t("ui.talents.points", { count: points });
   if (quickTalentPoints) {
-    const points = Math.max(0, Math.floor(state.talentPoints || 0));
     quickTalentPoints.textContent = formatShortCount(points);
     quickTalentPoints.classList.toggle("hidden", points <= 0);
     quickTalentBtn?.setAttribute(
       "title",
-      points > 0 ? `Talents [X] - ${points} TP` : "Talents [X]",
+      points > 0
+        ? t("ui.quick.talentsWithPointsTitle", { count: points })
+        : t("ui.quick.talentsTitle"),
     );
   }
 }
@@ -477,6 +624,43 @@ function updatePlayUiVisibility() {
   chatUi.setVisible(visible);
   mobileControls?.setMode(state.mobileControlMode);
   mobileControls?.setEnabled(visible);
+}
+
+function setLoadingScreenVisible(visible) {
+  if (!loadingScreen) return;
+  loadingScreen.classList.toggle("hidden", !visible);
+  loadingScreen.setAttribute("aria-busy", visible ? "true" : "false");
+  if (!visible) return;
+
+  state.keys.clear();
+  state.localMoveInput = { x: 0, y: 0 };
+  state.attacking = false;
+  state.defending = false;
+  state.digging = false;
+  mobileControls?.reset();
+  if (state.authenticated) {
+    sendBytes(packInput(0, 0));
+    sendBytes(packChores(false, false, false, false, false));
+  }
+}
+
+function refreshLocalizedUi() {
+  applyDocumentTranslations();
+  setAuthUiMode(authUiMode);
+  chatUi.refreshTranslations();
+  mobileControls?.refreshTranslations();
+  updateQuickActionButtons();
+  hidePetalInfoTooltip();
+  renderInventoryPanel({ forceInventory: true });
+  if (state.craftOpen) renderCraftPanel();
+  if (state.talentOpen) renderTalentPanel();
+  if (isOwnerDead()) renderDeathOverlayContent();
+  if (state.slider) renderSliderPanel();
+  setStatus(
+    t(state.connected ? "status.connected" : "status.disconnected"),
+    state.connected,
+  );
+  requestAnimationFrame(drawScene);
 }
 
 function toggleBackpack(force) {
@@ -518,32 +702,199 @@ function submitConsole() {
   consoleUi.submit();
 }
 
-async function connectAndAuth() {
-  const wsUrl = wsUrlInput.value.trim();
-  if (!wsUrl) {
-    setStatus("Socket is empty");
+function cancelReconnect() {
+  if (reconnectTimer === null) return;
+  window.clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+}
+
+function scheduleReconnect() {
+  if (!reconnectArmed || pageUnloading || reconnectTimer !== null) return;
+  const delay = Math.min(
+    reconnectMaxDelayMs,
+    reconnectInitialDelayMs * 2 ** Math.min(reconnectAttempt, 5),
+  );
+  reconnectAttempt += 1;
+  setStatus(t("status.reconnecting"));
+  reconnectTimer = window.setTimeout(() => {
+    reconnectTimer = null;
+    void startConnection(true);
+  }, delay);
+}
+
+function setAuthUiMode(mode) {
+  authUiMode = mode;
+  const needsEmail = mode !== AuthUiMode.Login;
+  const binding = mode === AuthUiMode.Binding;
+
+  authPasswordRow.classList.toggle("hidden", binding);
+  authEmailRow.classList.toggle("hidden", !needsEmail);
+  authCodeRow.classList.toggle("hidden", !needsEmail);
+  bindingNotice.classList.toggle("hidden", !binding);
+  registerModeRow.classList.toggle("hidden", binding);
+  accountField.setDisabled(binding);
+  registerModeInput.checked = mode === AuthUiMode.Register;
+
+  const buttonKey = binding
+    ? "ui.auth.bindEmail"
+    : mode === AuthUiMode.Register
+      ? "ui.auth.completeRegistration"
+      : "ui.auth.connect";
+  connectBtn.textContent = t(buttonKey);
+}
+
+function setAuthRequestPending(mode) {
+  activeAuthMode = mode;
+  const busy = mode !== null;
+  connectBtn.disabled = busy;
+  sendCodeBtn.disabled = busy;
+}
+
+function clearAuthRequestPending() {
+  pendingAuthMode = null;
+  setAuthRequestPending(null);
+}
+
+function selectedAuthMode() {
+  if (authUiMode === AuthUiMode.Register) return AuthMode.Register;
+  if (authUiMode === AuthUiMode.Binding) return AuthMode.ConfirmBinding;
+  return AuthMode.Login;
+}
+
+function validateAuthFields(mode) {
+  if (!accountField.getValue({ trim: true })) {
+    setStatus(t("status.accountEmpty"));
+    accountField.focus();
+    return false;
+  }
+
+  const registration =
+    mode === AuthMode.Register ||
+    mode === AuthMode.RequestRegistrationCode;
+  const binding =
+    mode === AuthMode.RequestBindingCode || mode === AuthMode.ConfirmBinding;
+  if (registration && !passwordField.getValue()) {
+    setStatus(t("status.passwordEmpty"));
+    passwordField.focus();
+    return false;
+  }
+  if ((registration || binding) && !emailField.getValue({ trim: true })) {
+    setStatus(t("status.emailEmpty"));
+    emailField.focus();
+    return false;
+  }
+  if (
+    (mode === AuthMode.Register || mode === AuthMode.ConfirmBinding) &&
+    !verificationCodeField.getValue({ trim: true })
+  ) {
+    setStatus(t("status.verificationCodeEmpty"));
+    verificationCodeField.focus();
+    return false;
+  }
+  return true;
+}
+
+function queueAuthRequest(mode) {
+  if (activeAuthMode !== null || !validateAuthFields(mode)) return;
+
+  const socketOpen =
+    state.ws && state.ws.readyState === WebSocket.OPEN && state.connected;
+  if (
+    (mode === AuthMode.RequestBindingCode || mode === AuthMode.ConfirmBinding) &&
+    !socketOpen
+  ) {
+    setAuthUiMode(AuthUiMode.Login);
+    setStatus(t("status.bindingSessionExpired"));
     return;
   }
 
-  saveSettings();
-  closeSocket(false);
-  resetNetworkScene();
-  setStatus("Preparing map...");
-  await loadLoginMap();
-  setStatus("Connecting...");
+  pendingAuthMode = mode;
+  setAuthRequestPending(mode);
+  if (socketOpen) {
+    pendingAuthMode = null;
+    sendAuth(mode);
+    return;
+  }
+  return startConnection(false);
+}
 
-  const ws = new WebSocket(wsUrl);
+function connectAndAuth() {
+  return queueAuthRequest(selectedAuthMode());
+}
+
+function requestVerificationCode() {
+  const mode =
+    authUiMode === AuthUiMode.Binding
+      ? AuthMode.RequestBindingCode
+      : AuthMode.RequestRegistrationCode;
+  return queueAuthRequest(mode);
+}
+
+async function startConnection(automatic) {
+  const wsUrl = wsUrlField.getValue({ trim: true });
+  if (!wsUrl) {
+    setStatus(t("status.socketEmpty"));
+    clearAuthRequestPending();
+    return;
+  }
+
+  if (!automatic) {
+    reconnectArmed = false;
+    resumingConnection = false;
+    reconnectAttempt = 0;
+    cancelReconnect();
+    saveSettings();
+    closeSocket(false);
+    const generation = ++connectionGeneration;
+    setStatus(t("status.preparingMap"));
+    await loadLoginMap();
+    if (generation !== connectionGeneration || pageUnloading) return;
+    return openConnection(wsUrl, false, generation);
+  } else if (!reconnectArmed || pageUnloading) {
+    return;
+  } else {
+    resumingConnection = true;
+  }
+
+  const generation = ++connectionGeneration;
+  return openConnection(wsUrl, true, generation);
+}
+
+function openConnection(wsUrl, automatic, generation) {
+  setStatus(
+    t(automatic ? "status.reconnecting" : "status.connecting"),
+  );
+
+  let ws;
+  try {
+    ws = new WebSocket(wsUrl);
+  } catch (error) {
+    clearAuthRequestPending();
+    setStatus(t(automatic ? "status.reconnectFailed" : "status.socketError"));
+    if (!automatic)
+      addConsoleLine(String(error || t("status.socketError")), "error");
+    scheduleReconnect();
+    return;
+  }
   state.ws = ws;
   ws.binaryType = "arraybuffer";
 
   ws.addEventListener("open", () => {
+    if (state.ws !== ws || generation !== connectionGeneration) {
+      ws.close();
+      return;
+    }
     state.connected = true;
-    setStatus("Connected", true);
-    addConsoleLine("Connected to web bridge");
-    sendAuth();
+    setStatus(t(automatic ? "status.reconnected" : "status.connected"), true);
+    if (!automatic) addConsoleLine(t("status.connectedBridge"));
+    const mode = automatic ? AuthMode.Login : pendingAuthMode ?? selectedAuthMode();
+    pendingAuthMode = null;
+    if (activeAuthMode === null) setAuthRequestPending(mode);
+    sendAuth(mode);
   });
 
   ws.addEventListener("message", (event) => {
+    if (state.ws !== ws || generation !== connectionGeneration) return;
     if (typeof event.data === "string") {
       setStatus(event.data);
       addConsoleLine(event.data, "error");
@@ -553,28 +904,47 @@ async function connectAndAuth() {
   });
 
   ws.addEventListener("close", () => {
+    if (state.ws !== ws || generation !== connectionGeneration) return;
+    state.ws = null;
     state.connected = false;
     state.authenticated = false;
-    resetNetworkScene();
+    clearAuthRequestPending();
+    setAuthUiMode(AuthUiMode.Login);
+    resetNetworkScene({ resetRunCollection: !reconnectArmed });
     updatePlayUiVisibility();
-    authPanel.classList.remove("hidden");
-    loadLoginMap();
-    setStatus("Disconnected");
-    addConsoleLine("Disconnected", "error");
+    if (reconnectArmed && !pageUnloading) {
+      if (reconnectAttempt === 0)
+        addConsoleLine(t("status.connectionLost"), "error");
+      scheduleReconnect();
+    } else {
+      resumingConnection = false;
+      authPanel.classList.remove("hidden");
+      loadLoginMap();
+      setStatus(t("status.disconnected"));
+      addConsoleLine(t("status.disconnected"), "error");
+    }
   });
 
   ws.addEventListener("error", () => {
-    setStatus("Socket error");
-    addConsoleLine("Socket error", "error");
+    if (state.ws !== ws || generation !== connectionGeneration) return;
+    clearAuthRequestPending();
+    setStatus(t(automatic ? "status.reconnectFailed" : "status.socketError"));
+    if (!automatic) addConsoleLine(t("status.socketError"), "error");
   });
 }
 
 function closeSocket(sendDisconnect = true) {
+  reconnectArmed = false;
+  resumingConnection = false;
+  reconnectAttempt = 0;
+  cancelReconnect();
+  connectionGeneration += 1;
   if (state.ws && state.ws.readyState === WebSocket.OPEN && sendDisconnect) {
     sendBytes(packChores(false, false, false, true));
   }
-  if (state.ws) state.ws.close();
+  const ws = state.ws;
   state.ws = null;
+  if (ws) ws.close();
   state.connected = false;
   state.authenticated = false;
   resetNetworkScene();
@@ -587,6 +957,12 @@ function sendBytes(bytes) {
     return false;
   state.ws.send(bytes);
   return true;
+}
+
+function sendNeutralGameplayState({ includeInput = false } = {}) {
+  if (!state.connected || !state.authenticated) return false;
+  if (includeInput) sendBytes(packInput(0, 0));
+  return sendBytes(packChores(false, false, false, false, false));
 }
 
 function sendPacketBatch(...packets) {
@@ -604,19 +980,39 @@ function sendPacketBatch(...packets) {
   return sendBytes(out);
 }
 
-function sendAuth() {
-  const packet = packAuth(
-    accountInput.value.trim(),
-    passwordInput.value,
-    registerModeInput.checked,
-  );
-  if (!packet) {
-    setStatus("Account is empty");
+function sendAuth(mode = AuthMode.Login) {
+  if (!validateAuthFields(mode)) {
+    clearAuthRequestPending();
     return;
   }
-  sendBytes(packet);
-  setStatus("Auth sent", true);
-  addConsoleLine("Auth sent");
+  const packet = packAuth({
+    mode,
+    name: accountField.getValue({ trim: true }),
+    password:
+      mode === AuthMode.Login ||
+      mode === AuthMode.Register ||
+      mode === AuthMode.RequestRegistrationCode
+        ? passwordField.getValue()
+        : "",
+    email:
+      mode === AuthMode.Login ? "" : emailField.getValue({ trim: true }),
+    code:
+      mode === AuthMode.Register || mode === AuthMode.ConfirmBinding
+        ? verificationCodeField.getValue({ trim: true })
+        : "",
+  });
+  if (!packet) {
+    setStatus(t("status.accountEmpty"));
+    clearAuthRequestPending();
+    return;
+  }
+  if (!sendBytes(packet)) {
+    setStatus(t("status.socketError"));
+    clearAuthRequestPending();
+    return;
+  }
+  setStatus(t("status.authSent"), true);
+  addConsoleLine(t("status.authSent"));
 }
 
 function receiveBytes(bytes) {
@@ -629,22 +1025,27 @@ function receiveBytes(bytes) {
     if (frame.payload.length === 0) continue;
     const msg = parseServerMessage(frame.payload);
     if (msg?.type === ServerType.Snapshot) {
+      const resolved = resolveSnapshot(msg);
+      if (!resolved) {
+        requestFullSnapshot();
+        continue;
+      }
       if (
         !latestSnapshot ||
-        (msg.snapshotId || 0) >= (latestSnapshot.snapshotId || 0)
+        (resolved.snapshotId || 0) >= (latestSnapshot.snapshotId || 0)
       )
-        latestSnapshot = msg;
+        latestSnapshot = resolved;
       continue;
     }
     if (latestSnapshot) {
-      applySnapshot(latestSnapshot);
+      applySnapshotAndAck(latestSnapshot);
       latestSnapshot = null;
       pendingSnapshot = null;
     }
     handleServerMessage(msg);
   }
   if (latestSnapshot) {
-    applySnapshot(latestSnapshot);
+    applySnapshotAndAck(latestSnapshot);
     pendingSnapshot = null;
   }
 }
@@ -669,39 +1070,81 @@ function handleServerMessage(msg) {
       msg.tickRate > 0 ? 1 / msg.tickRate : serverFixedDt;
     resetOwnerPredictionTiming(state.serverTickInterval);
     if (msg.mapName) loadMap(msg.mapName);
-    setStatus(`Player ${msg.playerId}`, true);
+    setStatus(t("status.player", { id: msg.playerId }), true);
     return;
   }
 
   if (msg.type === ServerType.AuthResult) {
-    state.authenticated = !!msg.success;
+    const resultCode = msg.resultCode ?? AuthResultCode.Failed;
+    const authenticated =
+      resultCode === AuthResultCode.Authenticated ||
+      resultCode === AuthResultCode.EmailBound;
+    const informational =
+      resultCode === AuthResultCode.VerificationCodeSending ||
+      resultCode === AuthResultCode.VerificationCodeSent;
+    if (resultCode !== AuthResultCode.VerificationCodeSending)
+      clearAuthRequestPending();
+
+    state.authenticated = authenticated;
     setStatus(
-      msg.message || (msg.success ? "Authenticated" : "Auth failed"),
-      msg.success,
+      msg.message ||
+        t(authenticated ? "status.authenticated" : "status.authFailed"),
+      authenticated || informational,
     );
-    if (msg.success) {
+    if (authenticated) {
+      passwordField.clear();
+      verificationCodeField.clear();
+      setAuthUiMode(AuthUiMode.Login);
+      const resumed = resumingConnection;
+      reconnectArmed = true;
+      reconnectAttempt = 0;
+      cancelReconnect();
+      resumingConnection = false;
       state.ownerStateLoaded = false;
       state.inventoryLoaded = false;
-      state.runCollectionBaseline = null;
-      state.runCollectionBaselinePending = true;
-      state.squadMemberNames.clear();
+      if (!resumed) {
+        state.runCollectionBaseline = null;
+        state.runCollectionBaselinePending = true;
+        state.squadMemberNames.clear();
+      }
       renderInventoryPanel();
       if (state.craftOpen) renderCraftPanel();
       sendBytes(packStateRequest());
       authPanel.classList.add("hidden");
+    } else if (resultCode === AuthResultCode.EmailBindingRequired) {
+      reconnectArmed = false;
+      resumingConnection = false;
+      passwordField.clear();
+      verificationCodeField.clear();
+      setAuthUiMode(AuthUiMode.Binding);
+      authPanel.classList.remove("hidden");
+      emailField.focus();
+      loadLoginMap();
+    } else if (informational) {
+      reconnectArmed = false;
+      resumingConnection = false;
+      authPanel.classList.remove("hidden");
+      if (resultCode === AuthResultCode.VerificationCodeSent)
+        verificationCodeField.focus();
     } else {
+      reconnectArmed = false;
+      resumingConnection = false;
+      authPanel.classList.remove("hidden");
       loadLoginMap();
     }
     updatePlayUiVisibility();
     addConsoleLine(
-      msg.message || (msg.success ? "Authenticated" : "Auth failed"),
-      msg.success ? "" : "error",
+      msg.message ||
+        t(authenticated ? "status.authenticated" : "status.authFailed"),
+      resultCode === AuthResultCode.Failed ? "error" : "",
     );
     return;
   }
 
   if (msg.type === ServerType.Snapshot) {
-    applySnapshot(msg);
+    const resolved = resolveSnapshot(msg);
+    if (resolved) applySnapshotAndAck(resolved);
+    else requestFullSnapshot();
     pendingSnapshot = null;
     return;
   }
@@ -756,7 +1199,10 @@ function handleServerMessage(msg) {
 
   if (msg.type === ServerType.Chat) {
     const chat = consumeSquadMetadata(msg.chat);
-    if (chat.message) chatUi.append(chat);
+    if (chat.message) {
+      mysteryAudio.handleChat(chat);
+      chatUi.append(chat);
+    }
     addConsoleLine(
       `${msg.chat.playerName || msg.chat.playerId}: ${msg.chat.message || ""}`,
     );
@@ -765,13 +1211,28 @@ function handleServerMessage(msg) {
 
 function resetNetworkScene({ resetRunCollection = true } = {}) {
   pendingSnapshot = null;
+  snapshotHistory.clear();
+  snapshotResetRequested = false;
+  mysteryAudio.reset();
   clearSlotTransactions();
   state.receiveBuffer = new Uint8Array();
   state.entities.clear();
   state.snapshotId = -1;
+  state.serverTick = -1;
+  state.serverTickReceivedAt = 0;
   state.serverTickInterval = serverFixedDt;
+  state.inputSequence = 0;
+  state.lastInput = {
+    x: 99,
+    y: 99,
+    attacking: false,
+    defending: false,
+    digging: false,
+  };
+  state.sendTimer = 1;
   resetOwnerPredictionTiming(state.serverTickInterval);
   state.ownerStateLoaded = false;
+  state.ownerSlotRuntime = [];
   state.inventoryLoaded = false;
   state.localMoveInput = { x: 0, y: 0 };
   state.ownerMovementMultiplier = 1;
@@ -785,6 +1246,8 @@ function resetNetworkScene({ resetRunCollection = true } = {}) {
   };
   state.screenShake = { x: 0, y: 0 };
   state.particles = [];
+  state.forgeMode = false;
+  craftPanel.classList.remove("forge-mode");
   state.deathOverlayClosed = false;
   state.wasOwnerDead = false;
   state.squadMemberNames.clear();
@@ -796,19 +1259,59 @@ function resetNetworkScene({ resetRunCollection = true } = {}) {
 
 function queueSnapshot(msg) {
   if (!msg || msg.type !== ServerType.Snapshot) return;
-  if ((msg.snapshotId || 0) <= (state.snapshotId || 0)) return;
+  const resolved = resolveSnapshot(msg);
+  if (!resolved) {
+    requestFullSnapshot();
+    return;
+  }
+  if ((resolved.snapshotId || 0) <= (state.snapshotId || 0)) return;
   if (
     !pendingSnapshot ||
-    (msg.snapshotId || 0) >= (pendingSnapshot.snapshotId || 0)
+    (resolved.snapshotId || 0) >= (pendingSnapshot.snapshotId || 0)
   )
-    pendingSnapshot = msg;
+    pendingSnapshot = resolved;
 }
 
 function flushPendingSnapshot() {
   if (!pendingSnapshot) return;
   const msg = pendingSnapshot;
   pendingSnapshot = null;
-  applySnapshot(msg);
+  applySnapshotAndAck(msg);
+}
+
+function resolveSnapshot(msg) {
+  if (!msg || msg.type !== ServerType.Snapshot) return null;
+
+  let entities;
+  if (msg.baseSnapshotId === FULL_SNAPSHOT_BASE_ID) {
+    entities = new Map();
+    snapshotResetRequested = false;
+  } else {
+    const base = snapshotHistory.get(msg.baseSnapshotId);
+    if (!base) return null;
+    entities = new Map(base);
+    for (const entityId of msg.removedEntityIds || []) entities.delete(entityId);
+  }
+
+  for (const snap of msg.entities || []) entities.set(snap.entityId, snap);
+  snapshotHistory.set(msg.snapshotId, entities);
+  while (snapshotHistory.size > snapshotHistoryLimit) {
+    const oldest = snapshotHistory.keys().next().value;
+    snapshotHistory.delete(oldest);
+  }
+
+  return { ...msg, entities: Array.from(entities.values()) };
+}
+
+function requestFullSnapshot() {
+  if (snapshotResetRequested) return;
+  if (sendBytes(packSnapshotAck(FULL_SNAPSHOT_BASE_ID))) snapshotResetRequested = true;
+}
+
+function applySnapshotAndAck(msg) {
+  if (!applySnapshot(msg)) return false;
+  sendBytes(packSnapshotAck(msg.snapshotId));
+  return true;
 }
 
 function normalizeSlots(slots, size) {
@@ -1158,15 +1661,66 @@ function applyLoginMapView() {
   if (state.authenticated) return;
   state.camera.x = state.loginMapX;
   state.camera.y = state.loginMapY;
-  state.viewRadius = state.loginMapHorizon;
+  setViewRadiusImmediate(state.loginMapHorizon);
   minimapCache = null;
 }
 
+function setViewRadiusImmediate(viewRadius) {
+  const value = Number(viewRadius);
+  if (!Number.isFinite(value) || value <= 0) return;
+  state.viewRadius = value;
+  state.targetViewRadius = value;
+  state.viewRadiusTransition = null;
+}
+
+function setTargetViewRadius(viewRadius, now = performance.now()) {
+  const target = Number(viewRadius);
+  if (!Number.isFinite(target) || target <= 0) return;
+  if (!Number.isFinite(state.viewRadius) || state.viewRadius <= 0) {
+    setViewRadiusImmediate(target);
+    return;
+  }
+  if (
+    Math.abs(target - state.targetViewRadius) <=
+    Math.max(0.001, target * 0.000001)
+  )
+    return;
+
+  state.targetViewRadius = target;
+  state.viewRadiusTransition = {
+    from: state.viewRadius,
+    target,
+    startedAt: now,
+  };
+}
+
+function updateViewRadius(now) {
+  const transition = state.viewRadiusTransition;
+  if (!transition) return;
+  const progress = clamp(
+    (now - transition.startedAt) / viewRadiusTransitionDurationMs,
+    0,
+    1,
+  );
+  const eased = progress * progress * (3 - 2 * progress);
+  state.viewRadius =
+    transition.from + (transition.target - transition.from) * eased;
+  if (progress >= 1) {
+    state.viewRadius = transition.target;
+    state.viewRadiusTransition = null;
+  }
+}
+
 function applySnapshot(msg) {
-  if ((msg.snapshotId || 0) <= (state.snapshotId || 0)) return;
-  const snapshotNow = performance.now() / 1000;
+  if ((msg.snapshotId || 0) <= (state.snapshotId || 0)) return false;
+  const snapshotNowMs = performance.now();
+  const snapshotNow = snapshotNowMs / 1000;
   updateOwnerPredictionTiming(msg.snapshotId, snapshotNow);
   state.snapshotId = msg.snapshotId;
+  if (Number.isSafeInteger(msg.serverTick)) {
+    state.serverTick = msg.serverTick;
+    state.serverTickReceivedAt = snapshotNowMs;
+  }
   const previousOwnerEntityId = state.ownerEntityId;
   const nextOwnerEntityId = msg.ownerEntityId || previousOwnerEntityId;
   const previousOwner = state.entities.get(previousOwnerEntityId);
@@ -1179,9 +1733,7 @@ function applySnapshot(msg) {
     startRunCollectionBaseline();
   state.ownerEntityId = nextOwnerEntityId;
   const nextViewRadius = msg.viewRadius || state.viewRadius;
-  if (nextViewRadius > 0) {
-    state.viewRadius = nextViewRadius;
-  }
+  if (nextViewRadius > 0) setTargetViewRadius(nextViewRadius, snapshotNowMs);
 
   const live = new Set();
   for (const snap of msg.entities || []) {
@@ -1260,7 +1812,7 @@ function applySnapshot(msg) {
     }
   }
   const owner = state.entities.get(state.ownerEntityId);
-  state.digging = !!(owner?.snapshot && owner.snapshot.flags & flagDigging);
+  state.digging = entityHasState(owner?.snapshot, stateDigging);
   syncOwnerSlotsFromSnapshot(owner?.snapshot);
   maybeCaptureRunCollectionBaseline();
   if (owner?.renderPos && !owner.dying) {
@@ -1283,9 +1835,45 @@ function applySnapshot(msg) {
     if (entity.deathAngle == null)
       entity.deathAngle = Math.random() * Math.PI * 2;
   }
+  updateForgeModeFromSnapshot();
+  return true;
+}
+
+function ownerIsNearTitan() {
+  if (!state.authenticated) return false;
+  const owner = state.entities.get(state.ownerEntityId);
+  const ownerPos = owner?.snapshot?.pos;
+  if (!ownerPos || owner.dying) return false;
+
+  for (const entity of state.entities.values()) {
+    const snap = entity?.snapshot;
+    if (
+      !snap ||
+      entity.dying ||
+      snap.entityType !== titanType ||
+      (snap.flags & flagDead) !== 0
+    )
+      continue;
+    const reach = Math.max(0, snap.radius || 0) + titanForgeRange;
+    if (Math.hypot(snap.pos.x - ownerPos.x, snap.pos.y - ownerPos.y) <= reach)
+      return true;
+  }
+  return false;
+}
+
+function updateForgeModeFromSnapshot() {
+  if (state.craftPhase === "spinning") return;
+  const forgeMode = ownerIsNearTitan();
+  if (forgeMode === state.forgeMode) return;
+
+  clearCraftDisplay();
+  state.forgeMode = forgeMode;
+  updateQuickActionButtons();
+  if (state.craftOpen) renderCraftPanel();
 }
 
 function syncOwnerSlotsFromSnapshot(ownerSnap) {
+  syncOwnerSlotRuntimeFromSnapshot(ownerSnap);
   if (
     state.ownerStateLoaded ||
     !ownerSnap ||
@@ -1304,6 +1892,20 @@ function syncOwnerSlotsFromSnapshot(ownerSnap) {
   );
   renderInventoryPanel();
   renderCraftPanel();
+}
+
+function syncOwnerSlotRuntimeFromSnapshot(ownerSnap) {
+  if (!ownerSnap || !Array.isArray(ownerSnap.primarySlots)) return;
+
+  state.ownerSlotRuntime = ownerSnap.primarySlots.map((slot) => ({
+    petalType: slot?.petalType || 0,
+    rarity: slot?.rarity || 0,
+    copies: (slot?.copies || []).map((copy) => ({
+      loading: copy?.state === PetalSlotCopyState.Loading,
+      progress: clamp(copy?.progress || 0, 0, 1),
+    })),
+  }));
+  updateOwnerSlotRuntimeOverlays();
 }
 
 function syncEntityRenderToSnapshot(entity, snap) {
@@ -1515,7 +2117,7 @@ function stepOwnerPrediction(entity, dt) {
   const simulationScale = timing?.simulationScale || 1;
   const simulationDt = dt * simulationScale;
   const diggingMultiplier =
-    (snap.flags & flagDigging) !== 0 ? ownerDiggingSpeedMultiplier : 1;
+    entityHasState(snap, stateDigging) ? ownerDiggingSpeedMultiplier : 1;
   const speedScale = state.ownerMovementMultiplier || 1;
   const maxVelocity =
     ownerBaseMaxVelocity * diggingMultiplier * speedScale * staleMultiplier;
@@ -1568,7 +2170,7 @@ function stepOwnerPrediction(entity, dt) {
     x: predictedStart.x + vel.x * simulationDt,
     y: predictedStart.y + vel.y * simulationDt,
   };
-  const predictedMotion = mapRenderer.resolvePredictedCircleMotion(
+  const predictedMotion = resolveOwnerPredictedMotion(
     predictedStart,
     predictedEnd,
     radius,
@@ -1602,7 +2204,7 @@ function stepOwnerPrediction(entity, dt) {
       x: correctionStart.x + prediction.correction.x * amount,
       y: correctionStart.y + prediction.correction.y * amount,
     };
-    prediction.pos = mapRenderer.resolvePredictedCircleMotion(
+    prediction.pos = resolveOwnerPredictedMotion(
       correctionStart,
       correctionEnd,
       radius,
@@ -1808,6 +2410,24 @@ function updateMousePointer(event) {
   state.mouse.inUi = !!isUiTarget(event.target);
 }
 
+function estimateInputTargetTick() {
+  if (!Number.isSafeInteger(state.serverTick) || state.serverTick < 0)
+    return 0;
+
+  const tickInterval = Math.max(
+    0.001,
+    state.serverTickInterval || serverFixedDt,
+  );
+  const elapsedSeconds = Math.max(
+    0,
+    (performance.now() - state.serverTickReceivedAt) / 1000,
+  );
+  return (
+    Math.floor(state.serverTick + elapsedSeconds / tickInterval) +
+    scheduledInputLeadTicks
+  );
+}
+
 function flushInput(dt) {
   if (!state.connected || !state.authenticated || isTyping() || isOwnerDead()) {
     state.localMoveInput = { x: 0, y: 0 };
@@ -1822,13 +2442,6 @@ function flushInput(dt) {
   const px = Math.round(clamp(packetMoveX, -1, 1) * 127);
   const py = Math.round(clamp(packetMoveY, -1, 1) * 127);
   const moveChanged = px !== state.lastInput.x || py !== state.lastInput.y;
-  if (moveChanged || state.sendTimer >= packetInterval) {
-    sendBytes(packInput(packetMoveX, packetMoveY));
-    state.lastInput.x = px;
-    state.lastInput.y = py;
-    state.sendTimer = 0;
-  }
-
   const attacking =
     state.attacking ||
     state.keys.has("space") ||
@@ -1840,17 +2453,32 @@ function flushInput(dt) {
   const digging = false;
   const effectiveAttacking = attacking;
   const effectiveDefending = defending;
-  if (
+  const choresChanged =
     effectiveAttacking !== state.lastInput.attacking ||
     effectiveDefending !== state.lastInput.defending ||
-    digging !== state.lastInput.digging
-  ) {
-    sendBytes(
-      packChores(effectiveAttacking, effectiveDefending, false, false, digging),
+    digging !== state.lastInput.digging;
+  if (moveChanged || choresChanged || state.sendTimer >= packetInterval) {
+    const sequence = state.inputSequence >>> 0;
+    const sent = sendBytes(
+      packInputFrame(
+        sequence,
+        estimateInputTargetTick(),
+        packetMoveX,
+        packetMoveY,
+        effectiveAttacking,
+        effectiveDefending,
+        digging,
+      ),
     );
+    if (!sent) return;
+
+    state.inputSequence = (sequence + 1) >>> 0;
+    state.lastInput.x = px;
+    state.lastInput.y = py;
     state.lastInput.attacking = effectiveAttacking;
     state.lastInput.defending = effectiveDefending;
     state.lastInput.digging = digging;
+    state.sendTimer = 0;
   }
 }
 
@@ -1881,7 +2509,7 @@ function updateDeathOverlay() {
 }
 
 function renderDeathOverlayContent() {
-  if (deathSource) deathSource.textContent = "A mysterious entity";
+  if (deathSource) deathSource.textContent = t("ui.death.unknownSource");
   if (!deathLoot) return;
 
   deathLoot.replaceChildren();
@@ -1890,9 +2518,9 @@ function renderDeathOverlayContent() {
       (a, b) =>
         raritySortRank(b.rarity) - raritySortRank(a.rarity) ||
         (b.count || 0) - (a.count || 0) ||
-        petalTypeName(a.petalType).localeCompare(
+        compareLocalized(
+          petalTypeName(a.petalType),
           petalTypeName(b.petalType),
-          "en",
         ),
     )
     .slice(0, 8);
@@ -1901,7 +2529,7 @@ function renderDeathOverlayContent() {
   for (const item of items) {
     const card = document.createElement("div");
     card.className = "death-loot-item";
-    card.title = `${petalTypeName(item.petalType)} ${rarityName(item.rarity)} x${formatShortCount(item.count)}`;
+    card.title = formatPetalItem(item.petalType, item.rarity, item.count);
     card.appendChild(makePetalStack(item.petalType, item.rarity, item.count));
     attachPetalInfoTooltip(card, item.petalType, item.rarity);
     deathLoot.appendChild(card);
@@ -1945,6 +2573,19 @@ function executeClientCommand(line) {
   if (args.length === 0) return;
 
   const name = args.shift().replace(/^\//, "").toLowerCase();
+  if (name === "version" || name === "ver") {
+    addConsoleLine(appDisplayName);
+    return;
+  }
+  if (
+    name === "change_language" ||
+    name === "change-language" ||
+    name === "language" ||
+    name === "lang"
+  ) {
+    void executeLanguageCommand(args);
+    return;
+  }
   if (name === "say") {
     if (args.length < 2) return;
     const flagText = String(args.shift()).toLowerCase();
@@ -1954,6 +2595,8 @@ function executeClientCommand(line) {
       sendChat(ChatFlag.Global, message);
     else if (flagText === "local" || flagText === "l")
       sendChat(ChatFlag.Local, message);
+    else if (flagText === "squad" || flagText === "sq")
+      sendChat(ChatFlag.Local, `/sq ${message}`);
     else if (flagText === "whisper" || flagText === "w")
       sendChat(ChatFlag.Whisper, `/whisper ${message}`);
     return;
@@ -1994,7 +2637,13 @@ function executeClientCommand(line) {
     state.debugHitbox = args.length
       ? args[0] !== "0" && args[0].toLowerCase() !== "off"
       : !state.debugHitbox;
-    addConsoleLine(`Hitbox debug ${state.debugHitbox ? "on" : "off"}`);
+    addConsoleLine(
+      t("commands.toggle.hitbox", {
+        value: t(
+          state.debugHitbox ? "commands.toggle.on" : "commands.toggle.off",
+        ),
+      }),
+    );
     return;
   }
   if (name === "colorful_map") {
@@ -2019,7 +2668,13 @@ function executeClientCommand(line) {
       );
       saveSettings();
     }
-    addConsoleLine(`Keyboard control ${state.keyboardControl ? "on" : "off"}`);
+    addConsoleLine(
+      t("commands.toggle.keyboard", {
+        value: t(
+          state.keyboardControl ? "commands.toggle.on" : "commands.toggle.off",
+        ),
+      }),
+    );
     return;
   }
   if (name === "mobile" || name === "mobile_mode" || name === "touch") {
@@ -2031,7 +2686,9 @@ function executeClientCommand(line) {
         setMobileControlMode(value);
       }
     } else {
-      addConsoleLine(`Mobile controls ${state.mobileControlMode}`);
+      addConsoleLine(
+        t("commands.toggle.mobile", { value: state.mobileControlMode }),
+      );
     }
     return;
   }
@@ -2039,15 +2696,65 @@ function executeClientCommand(line) {
   sendChat(ChatFlag.Local, `/${line}`);
 }
 
+async function executeLanguageCommand(args) {
+  const current = getCurrentLocale();
+  if (!args.length) {
+    addConsoleLine(
+      t("commands.language.current", {
+        locale: current?.id || getLocale(),
+        label: current?.label || getLocale(),
+      }),
+    );
+    addConsoleLine(
+      t("commands.language.available", {
+        languages: getAvailableLocales()
+          .map((entry) => entry.id + " (" + entry.label + ")")
+          .join(", "),
+      }),
+    );
+    addConsoleLine(t("commands.language.usage"));
+    return;
+  }
+
+  const requested = args.join(" ").trim();
+  const result = await changeLanguage(requested);
+  if (!result.ok) {
+    addConsoleLine(
+      t(
+        result.reason === "unknown"
+          ? "commands.language.unknown"
+          : "commands.language.loadFailed",
+        { language: requested },
+      ),
+      "error",
+    );
+    return;
+  }
+
+  state.locale = result.locale;
+  saveSettings();
+  refreshLocalizedUi();
+  addConsoleLine(
+    t("commands.language.changed", {
+      locale: result.entry?.id || result.locale,
+      label: result.entry?.label || result.locale,
+    }),
+  );
+}
+
 async function executeLoginMapCommand(args) {
   if (state.authenticated) {
-    addConsoleLine("Login map can only be changed while logged out", "error");
+    addConsoleLine(t("commands.loginMap.loggedOutOnly"), "error");
     return;
   }
 
   if (!args.length) {
-    addConsoleLine(`Login map = ${state.loginMapName || defaultMapName}`);
-    addConsoleLine("Usage: login_map [map name|reset]");
+    addConsoleLine(
+      t("commands.loginMap.current", {
+        map: state.loginMapName || defaultMapName,
+      }),
+    );
+    addConsoleLine(t("commands.loginMap.usage"));
     return;
   }
 
@@ -2060,14 +2767,17 @@ async function executeLoginMapCommand(args) {
   const loadedMap = await loadMap(requestedMap);
 
   if (!loadedMap) {
-    addConsoleLine(`Login map unchanged: ${previousMap}`, "error");
+    addConsoleLine(
+      t("commands.loginMap.unchanged", { map: previousMap }),
+      "error",
+    );
     if (!state.authenticated) await loadMap(previousMap);
     return;
   }
 
   state.loginMapName = requestedMap;
   saveSettings();
-  addConsoleLine(`Login map = ${requestedMap}`);
+  addConsoleLine(t("commands.loginMap.changed", { map: requestedMap }));
 }
 
 function appendMapExtension(mapName) {
@@ -2078,7 +2788,7 @@ function appendMapExtension(mapName) {
 
 function executeLoginMapViewCommand(name, args) {
   if (state.authenticated) {
-    addConsoleLine("Login map view can only be changed while logged out", "error");
+    addConsoleLine(t("commands.loginMap.viewLoggedOutOnly"), "error");
     return;
   }
 
@@ -2101,7 +2811,12 @@ function executeLoginMapViewCommand(name, args) {
   if (!definition) return;
 
   if (!args.length) {
-    addConsoleLine(`${name} = ${formatClientConfigValue(state[definition.property])}`);
+    addConsoleLine(
+      t("commands.config.value", {
+        name,
+        value: formatClientConfigValue(state[definition.property]),
+      }),
+    );
     return;
   }
 
@@ -2112,26 +2827,34 @@ function executeLoginMapViewCommand(name, args) {
     !Number.isFinite(value) ||
     (Number.isFinite(definition.minimum) && value < definition.minimum)
   ) {
-    addConsoleLine(`Invalid value for ${name}: ${args[0]}`, "error");
+    addConsoleLine(
+      t("commands.config.invalid", { name, value: args[0] }),
+      "error",
+    );
     return;
   }
 
   state[definition.property] = value;
   applyLoginMapView();
   saveSettings();
-  addConsoleLine(`${name} = ${formatClientConfigValue(value)}`);
+  addConsoleLine(
+    t("commands.config.value", {
+      name,
+      value: formatClientConfigValue(value),
+    }),
+  );
 }
 
 function executeClientSliderCommand(args) {
   if (args.length < 3) {
-    addConsoleLine("Usage: slider [config] [start] [end] [step]", "error");
+    addConsoleLine(t("commands.slider.usage"), "error");
     return;
   }
 
   const key = args[0];
   const entry = getClientConfigEntry(key);
   if (!entry) {
-    addConsoleLine(`Unknown client config: ${key}`, "error");
+    addConsoleLine(t("commands.config.unknown", { name: key }), "error");
     return;
   }
 
@@ -2139,7 +2862,10 @@ function executeClientSliderCommand(args) {
   const end = Number(args[2]);
   const explicitStep = args.length >= 4 ? Number(args[3]) : NaN;
   if (!Number.isFinite(start) || !Number.isFinite(end) || start === end) {
-    addConsoleLine(`Invalid slider range for ${entry.name}`, "error");
+    addConsoleLine(
+      t("commands.slider.invalidRange", { name: entry.name }),
+      "error",
+    );
     return;
   }
 
@@ -2156,7 +2882,12 @@ function executeClientSliderCommand(args) {
   };
   renderSliderPanel();
   addConsoleLine(
-    `Slider ${entry.name}: ${formatClientConfigValue(state.slider.min)}..${formatClientConfigValue(state.slider.max)} step ${formatClientConfigValue(step)}`,
+    t("commands.slider.opened", {
+      name: entry.name,
+      start: formatClientConfigValue(state.slider.min),
+      end: formatClientConfigValue(state.slider.max),
+      step: formatClientConfigValue(step),
+    }),
   );
 }
 
@@ -2164,7 +2895,12 @@ function executeClientSetCommand(args) {
   if (!args.length) {
     for (const entry of listClientConfigEntries()) {
       const value = getClientConfigValue(state.clientConfig, entry.name);
-      addConsoleLine(`${entry.name} = ${formatClientConfigValue(value)}`);
+      addConsoleLine(
+        t("commands.config.value", {
+          name: entry.name,
+          value: formatClientConfigValue(value),
+        }),
+      );
     }
     return;
   }
@@ -2173,14 +2909,19 @@ function executeClientSetCommand(args) {
   if (String(key || "").toLowerCase() === "reset") {
     const result = resetClientConfig(state.clientConfig, args[0]);
     if (!result.ok) {
-      addConsoleLine(`Unknown client config: ${result.name}`);
+      addConsoleLine(t("commands.config.unknown", { name: result.name }));
       return;
     }
     state.clientConfig = result.config;
     saveSettings();
     requestAnimationFrame(drawScene);
     addConsoleLine(
-      result.name === "all" ? "Client config reset" : `${result.name} reset`,
+      t(
+        result.name === "all"
+          ? "commands.config.resetAll"
+          : "commands.config.resetOne",
+        { name: result.name },
+      ),
     );
     return;
   }
@@ -2188,11 +2929,16 @@ function executeClientSetCommand(args) {
   if (!args.length) {
     const entry = getClientConfigEntry(key);
     if (!entry) {
-      addConsoleLine(`Unknown client config: ${key}`);
+      addConsoleLine(t("commands.config.unknown", { name: key }));
       return;
     }
     const value = getClientConfigValue(state.clientConfig, entry.name);
-    addConsoleLine(`${entry.name} = ${formatClientConfigValue(value)}`);
+    addConsoleLine(
+      t("commands.config.value", {
+        name: entry.name,
+        value: formatClientConfigValue(value),
+      }),
+    );
     return;
   }
 
@@ -2205,9 +2951,12 @@ function executeClientSetCommand(args) {
       : setClientConfigValue(state.clientConfig, key, rawValue);
   if (!result.ok) {
     addConsoleLine(
-      result.error === "unknown"
-        ? `Unknown client config: ${result.name}`
-        : `Invalid value for ${result.name}: ${args[0]}`,
+      t(
+        result.error === "unknown"
+          ? "commands.config.unknown"
+          : "commands.config.invalid",
+        { name: result.name, value: args[0] },
+      ),
     );
     return;
   }
@@ -2216,7 +2965,12 @@ function executeClientSetCommand(args) {
   saveSettings();
   requestAnimationFrame(drawScene);
   addConsoleLine(
-    `${result.name} = ${formatClientConfigValue(getClientConfigValue(state.clientConfig, result.name))}`,
+    t("commands.config.value", {
+      name: result.name,
+      value: formatClientConfigValue(
+        getClientConfigValue(state.clientConfig, result.name),
+      ),
+    }),
   );
 }
 
@@ -2377,6 +3131,7 @@ function renderSlotRow(container, slots, kind, primaryForVisual) {
       "selected",
       kind === "primary" && index === state.selectedSlot,
     );
+    updateSlotDurabilityOverlay(button, slot, index, kind);
   }
 
   while (container.children.length > rowSlots.length) {
@@ -2384,16 +3139,77 @@ function renderSlotRow(container, slots, kind, primaryForVisual) {
   }
 }
 
+function updateOwnerSlotRuntimeOverlays() {
+  for (let index = 0; index < primarySlots.children.length; index += 1) {
+    updateSlotDurabilityOverlay(
+      primarySlots.children[index],
+      displayOwnerSlots()[index],
+      index,
+      "primary",
+    );
+  }
+}
+
+function updateSlotDurabilityOverlay(button, slot, index, kind) {
+  if (!button) return;
+
+  const runtime = kind === "primary" ? state.ownerSlotRuntime[index] : null;
+  const copies =
+    runtime &&
+    runtime.petalType === (slot?.petalType || 0) &&
+    runtime.rarity === (slot?.rarity || 0)
+      ? runtime.copies || []
+      : [];
+  let overlays = button.querySelector(":scope > .slot-durability-overlays");
+  if (!slotHasItem(slot) || copies.length === 0) {
+    overlays?.remove();
+    return;
+  }
+
+  if (!overlays) {
+    overlays = document.createElement("span");
+    overlays.className = "slot-durability-overlays";
+    button.appendChild(overlays);
+  }
+  while (overlays.children.length < copies.length) {
+    const layer = document.createElement("span");
+    layer.className = "slot-durability-layer";
+    overlays.appendChild(layer);
+  }
+  while (overlays.children.length > copies.length)
+    overlays.lastElementChild?.remove();
+
+  const layerOpacity = 0.1 / copies.length;
+  copies.forEach((copy, copyIndex) => {
+    const layer = overlays.children[copyIndex];
+    layer.classList.toggle("loading", !!copy.loading);
+    layer.style.height = `${(1 - clamp(copy.progress || 0, 0, 1)) * 100}%`;
+    layer.style.opacity = String(layerOpacity);
+  });
+}
+
 function renderCraftPanel() {
+  renderCraftMode();
   hidePetalInfoTooltip();
   craftList.replaceChildren();
   renderCraftStage();
   renderCraftMatrix();
 }
 
+function renderCraftMode() {
+  const keyRoot = state.forgeMode ? "ui.forge" : "ui.craft";
+  craftPanel.classList.toggle("forge-mode", state.forgeMode);
+  if (craftTitle) craftTitle.textContent = t(`${keyRoot}.title`);
+  craftOnceBtn.textContent = t(`${keyRoot}.once`);
+  craftCloseBtn.setAttribute("aria-label", t(`${keyRoot}.close`));
+  craftStage.setAttribute("aria-label", t(`${keyRoot}.slotsAriaLabel`));
+}
+
 function renderTalentPanel() {
   if (!talentTree) return;
-  talentPointsLabel.textContent = `Talent Points: ${state.talentPoints}`;
+  talentPointsLabel.textContent = t("ui.talents.points", {
+    count: state.talentPoints,
+  });
   talentTree.replaceChildren();
 
   const groups = new Map();
@@ -2409,7 +3225,11 @@ function renderTalentPanel() {
 
     const header = document.createElement("div");
     header.className = "talent-group-title";
-    header.textContent = groupName;
+    header.textContent = t(
+      "talents.groups." + localizationSlug(groupName),
+      {},
+      { defaultValue: groupName },
+    );
     section.appendChild(header);
 
     const roots = document.createElement("div");
@@ -2474,8 +3294,11 @@ function makeTalentButton(node, ownedKeys = ownedTalentKeys()) {
   button.className = `talent-node rarity-${node.rarity}${owned ? " owned" : ""}${ready ? "" : " blocked"}`;
   button.style.setProperty("--talent-color", rarityColor(node.rarity, 1));
   button.title = owned
-    ? `Hold to remove ${node.name}`
-    : `Hold to learn ${addChain.map((talent) => talent.name).join(" -> ")} (${chainCost} TP)`;
+    ? t("ui.talents.holdRemove", { name: localizedTalentName(node) })
+    : t("ui.talents.holdLearn", {
+        names: addChain.map(localizedTalentName).join(" -> "),
+        cost: chainCost,
+      });
 
   const rarity = document.createElement("span");
   rarity.className = "talent-rarity";
@@ -2490,7 +3313,7 @@ function makeTalentButton(node, ownedKeys = ownedTalentKeys()) {
 
   const cost = document.createElement("span");
   cost.className = "talent-cost";
-  cost.textContent = `${node.cost} TP`;
+  cost.textContent = t("ui.talents.cost", { cost: node.cost });
   button.appendChild(cost);
 
   attachTalentLongPress(button, node);
@@ -2498,9 +3321,10 @@ function makeTalentButton(node, ownedKeys = ownedTalentKeys()) {
 }
 
 function talentDisplayName(node) {
+  const name = localizedTalentName(node);
   if (node.id === TalentId.PoisonDamage && node.rarity === 3)
-    return `${node.name} ${node.rank + 1}`;
-  return node.name;
+    return name + " " + (node.rank + 1);
+  return name;
 }
 
 function ownedTalentKeys() {
@@ -2555,7 +3379,7 @@ function attachTalentLongPress(button, node) {
   button.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    if (!fired) addConsoleLine("Hold a talent to learn/remove it.");
+    if (!fired) addConsoleLine(t("ui.talents.holdHint"));
   });
 }
 
@@ -2571,12 +3395,26 @@ function submitTalentNode(node) {
   if (!packet) return;
   sendBytes(packet);
   addConsoleLine(
-    `${owned ? "Removing" : "Learning"} ${talentDisplayName(node)}`,
+    t(owned ? "commands.talent.removing" : "commands.talent.learning", {
+      name: talentDisplayName(node),
+    }),
   );
 }
 
 function selectCraftPetal(petalType, rarity, options = {}) {
   if (state.craftPhase === "spinning") return;
+  if (state.forgeMode) {
+    if (rarity !== raritySuper || getInventoryCount(petalType, raritySuper) < 5)
+      return;
+    if (state.craftPhase === "success" || state.craftPhase === "returned")
+      clearCraftDisplay();
+    state.craftPhase = "staged";
+    state.craftSource = { petalType, rarity: raritySuper };
+    state.craftResult = null;
+    state.craftSlots = distributeCraftCount(petalType, raritySuper, 5);
+    renderCraftPanel();
+    return;
+  }
   if (!canCraftRarity(rarity)) return;
   if (state.craftPhase === "success" || state.craftPhase === "returned")
     clearCraftDisplay();
@@ -2655,7 +3493,11 @@ function renderInventoryGroups(container, items) {
       button.title = variants
         .map(
           (variant) =>
-            `${petalTypeName(variant.petalType)} ${rarityName(variant.rarity)} x${formatShortCount(variant.count)}`,
+            formatPetalItem(
+              variant.petalType,
+              variant.rarity,
+              variant.count,
+            ),
         )
         .join("\n");
       button.appendChild(makeInventoryTypeStack(item));
@@ -2675,6 +3517,11 @@ function renderInventoryGroups(container, items) {
 }
 
 function renderCraftMatrix() {
+  if (state.forgeMode) {
+    renderForgeMatrix();
+    return;
+  }
+
   const rows = buildCraftRows();
   craftList.classList.toggle("hidden", rows.length === 0);
   if (rows.length === 0) return;
@@ -2701,7 +3548,11 @@ function renderCraftMatrix() {
       cell.className = `craft-matrix-cell${baseCount > 0 ? "" : " empty"}${lit ? " lit" : " locked"}${selected ? " selected" : ""}`;
       if (baseCount > 0) {
         cell.type = "button";
-        cell.title = `${petalTypeName(row.petalType)} ${rarityName(rarity)} x${formatShortCount(displayCount)}`;
+        cell.title = formatPetalItem(
+          row.petalType,
+          rarity,
+          displayCount,
+        );
         cell.appendChild(
           makePetalStack(row.petalType, rarity, displayCount),
         );
@@ -2721,6 +3572,72 @@ function renderCraftMatrix() {
   craftList.appendChild(matrix);
 }
 
+function renderForgeMatrix() {
+  const counts = new Map();
+  for (const item of displayInventory()) {
+    if (!slotHasItem(item) || item.rarity !== raritySuper || item.count <= 0)
+      continue;
+    counts.set(
+      item.petalType,
+      (counts.get(item.petalType) || 0) + Math.max(0, item.count || 0),
+    );
+  }
+  const items = Array.from(counts, ([petalType, count]) => ({
+    petalType,
+    count,
+  })).sort(
+    (a, b) =>
+      compareLocalized(
+        petalTypeName(a.petalType),
+        petalTypeName(b.petalType),
+      ) || a.petalType - b.petalType,
+  );
+
+  craftList.classList.toggle("hidden", items.length === 0);
+  if (items.length === 0) return;
+
+  const matrix = document.createElement("div");
+  matrix.className = "craft-matrix forge-matrix";
+  for (const item of items) {
+    const displayCount = item.count;
+    const lit = state.craftPhase !== "spinning" && displayCount >= 5;
+    const selected =
+      state.craftSource?.petalType === item.petalType &&
+      state.craftSource?.rarity === raritySuper;
+
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = `craft-matrix-cell${lit ? " lit" : " locked"}${selected ? " selected" : ""}`;
+    cell.title = formatPetalItem(
+      item.petalType,
+      raritySuper,
+      displayCount,
+    );
+    cell.appendChild(makeForgePetalStack(item.petalType, displayCount));
+    attachPetalInfoTooltip(cell, item.petalType, raritySuper);
+    cell.addEventListener("pointerdown", (event) => {
+      if (event.button !== undefined && event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (lit) selectCraftPetal(item.petalType, raritySuper);
+    });
+    matrix.appendChild(cell);
+  }
+  craftList.appendChild(matrix);
+}
+
+function makeForgePetalStack(petalType, count) {
+  const stack = makePetalStack(petalType, raritySuper, count);
+  let badge = stack.querySelector(".petal-count");
+  if (!badge) {
+    badge = document.createElement("span");
+    badge.className = "petal-count";
+    stack.appendChild(badge);
+  }
+  badge.textContent = `${formatShortCount(count)}/5`;
+  return stack;
+}
+
 function buildCraftRows() {
   const rows = new Map();
   for (const item of displayInventory()) {
@@ -2731,9 +3648,9 @@ function buildCraftRows() {
   }
   return Array.from(rows, ([petalType, counts]) => ({ petalType, counts })).sort(
     (a, b) =>
-      petalTypeName(a.petalType).localeCompare(
+      compareLocalized(
+        petalTypeName(a.petalType),
         petalTypeName(b.petalType),
-        "en",
       ) || a.petalType - b.petalType,
   );
 }
@@ -2743,9 +3660,13 @@ function inventoryPanelItems(items) {
   const filtered = (items || []).filter((item) => {
     if (!slotHasItem(item) || item.count <= 0) return false;
     if (!query) return true;
-    return normalizePetalName(
-      `${petalTypeName(item.petalType)} ${rarityName(item.rarity)}`,
-    ).includes(query);
+    const searchable = [
+      petalTypeName(item.petalType),
+      rarityName(item.rarity),
+      PetalNames[item.petalType] || "",
+      RarityNames[item.rarity] || "",
+    ].join(" ");
+    return normalizePetalName(searchable).includes(query);
   });
   const itemsByTypeAndRarity = new Map();
   for (const item of filtered) {
@@ -2783,9 +3704,9 @@ function inventoryPanelItems(items) {
 
 function compareInventoryItemsByName(a, b) {
   return (
-    petalTypeName(a.petalType).localeCompare(
+    compareLocalized(
+      petalTypeName(a.petalType),
       petalTypeName(b.petalType),
-      "en",
     ) ||
     a.petalType - b.petalType ||
     raritySortRank(b.rarity) - raritySortRank(a.rarity) ||
@@ -2877,6 +3798,7 @@ function canCraftRarity(rarity) {
 }
 
 function renderCraftStage() {
+  const keyRoot = state.forgeMode ? "ui.forge" : "ui.craft";
   craftStage.classList.toggle("spinning", state.craftPhase === "spinning");
   craftStage.classList.toggle("success", state.craftPhase === "success");
   craftStage.classList.toggle(
@@ -2895,8 +3817,12 @@ function renderCraftStage() {
     button.classList.toggle("filled", slotHasItem(slot));
     button.disabled = state.craftPhase === "spinning";
     button.title = slotHasItem(slot)
-      ? `${petalTypeName(slot.petalType)} ${rarityName(slot.rarity)} x${formatShortCount(slot.count || 1)}`
-      : "Craft slot";
+      ? formatPetalItem(
+          slot.petalType,
+          slot.rarity,
+          slot.count || 1,
+        )
+      : t(`${keyRoot}.slot`);
     if (slotHasItem(slot)) {
       button.appendChild(
         makePetalStack(slot.petalType, slot.rarity, slot.count || 1),
@@ -2917,7 +3843,11 @@ function renderCraftStage() {
     state.craftPhase !== "success" || !slotHasItem(state.craftResult),
   );
   if (state.craftPhase === "success" && slotHasItem(state.craftResult)) {
-    craftResultSlot.title = `${petalTypeName(state.craftResult.petalType)} ${rarityName(state.craftResult.rarity)} x${formatShortCount(state.craftResult.count || 1)}`;
+    craftResultSlot.title = formatPetalItem(
+      state.craftResult.petalType,
+      state.craftResult.rarity,
+      state.craftResult.count || 1,
+    );
     craftResultSlot.appendChild(
       makePetalStack(
         state.craftResult.petalType,
@@ -2943,22 +3873,29 @@ function renderCraftStage() {
   craftOnceBtn.disabled = !(
     state.authenticated &&
     state.craftPhase === "staged" &&
-    stagedCount >= 5
+    (state.forgeMode ? stagedCount === 5 : stagedCount >= 5)
   );
-  craftChance.textContent = state.craftSource
-    ? `${formatCraftChance(state.craftSource.rarity)} success chance`
+  craftChance.textContent = state.forgeMode
+    ? ""
+    : state.craftSource
+    ? t("ui.craft.successChance", {
+        chance: formatCraftChance(state.craftSource.rarity),
+      })
     : "";
   if (state.craftPhase === "spinning") {
-    craftSelection.textContent = "Crafting...";
+    craftSelection.textContent = t(`${keyRoot}.working`);
   } else if (state.craftPhase === "success") {
-    craftSelection.textContent = "Craft success";
+    craftSelection.textContent = t(`${keyRoot}.success`);
   } else if (state.craftPhase === "returned") {
-    craftSelection.textContent = "Craft failed";
+    craftSelection.textContent = t(`${keyRoot}.failed`);
   } else if (state.craftSource) {
-    craftSelection.textContent = `${petalTypeName(state.craftSource.petalType)} ${rarityName(state.craftSource.rarity)} x${stagedCount}`;
+    craftSelection.textContent = formatPetalItem(
+      state.craftSource.petalType,
+      state.craftSource.rarity,
+      stagedCount,
+    );
   } else {
-    craftSelection.textContent =
-      "Combine 5 of the same petal to craft an upgrade";
+    craftSelection.textContent = t(`${keyRoot}.instruction`);
   }
 }
 
@@ -2980,8 +3917,22 @@ function submitCraft() {
   )
     return;
   const { petalType, rarity } = state.craftSource;
-  if (!canCraftRarity(rarity)) return;
   const count = getCraftSlotCount(petalType, rarity);
+  if (state.forgeMode) {
+    if (
+      rarity !== raritySuper ||
+      count !== 5 ||
+      count > getInventoryCount(petalType, raritySuper)
+    )
+      return;
+    state.craftPhase = "spinning";
+    state.craftSpinStarted = performance.now();
+    renderCraftPanel();
+    sendBytes(packForge(petalType));
+    return;
+  }
+
+  if (!canCraftRarity(rarity)) return;
   if (count < 5 || count > getInventoryCount(petalType, rarity)) return;
   state.craftPhase = "spinning";
   state.craftSpinStarted = performance.now();
@@ -3030,9 +3981,9 @@ function compactCraftItems(items) {
   return compacted.sort(
     (a, b) =>
       raritySortRank(b.rarity) - raritySortRank(a.rarity) ||
-      petalTypeName(a.petalType).localeCompare(
+      compareLocalized(
+        petalTypeName(a.petalType),
         petalTypeName(b.petalType),
-        "en",
       ),
   );
 }
@@ -3103,7 +4054,7 @@ function makeSlotButton(
   button.dataset.dropIndex = String(index);
 
   if (slotHasItem(slot)) {
-    button.title = `${petalTypeName(slot.petalType)} ${rarityName(slot.rarity)}`;
+    button.title = formatPetalItem(slot.petalType, slot.rarity);
     button.appendChild(
       makePetalStack(
         slot.petalType,
@@ -3166,6 +4117,7 @@ function slotVisualPetalType(
 }
 
 function petalBaseCopy(petalType, rarity) {
+  const level = rarityLevel(rarity);
   switch (petalType) {
     case petalAntEggType:
       return 4;
@@ -3174,24 +4126,21 @@ function petalBaseCopy(petalType, rarity) {
     case petalDahliaType:
       return 3;
     case petalDandelionType:
-      return raritySortRank(rarity) >= raritySortRank(8)
-        ? 3
-        : raritySortRank(rarity) >= raritySortRank(6)
-          ? 2
-          : 1;
+      return level >= rarityLevel(8) ? 3 : level >= rarityLevel(6) ? 2 : 1;
     case petalOrangeType:
       return 3;
     case petalShovelType:
       return 1;
     case petalStingerType:
-      return rarity >= 6 ? 3 : 1;
+      return level >= rarityLevel(6) ? 3 : 1;
     case petalLightType:
-      return rarity >= 6 ? 5 : rarity >= 4 ? 3 : rarity >= 2 ? 2 : 1;
+      return level >= 6 ? 5 : level >= 4 ? 3 : level >= 2 ? 2 : 1;
     case petalPollenType:
-      return rarity >= 4 ? 3 : rarity >= 2 ? 2 : 1;
+      return level >= 4 ? 3 : level >= 2 ? 2 : 1;
     case 34:
-      return rarity === 10 ? 1 : rarity >= 7 ? 3 : 1;
+      return rarity === 10 ? 1 : level >= 7 ? 3 : 1;
     case petalMimicType:
+    case petalDouliType:
     case petalNullificationType:
     case petalThirdEyeType:
     case 1:
@@ -3336,12 +4285,12 @@ function renderPetalInfoTooltip(info) {
   const title = document.createElement("div");
   title.className = "petal-info-title";
   title.style.color = rarityColor(info.rarity, 1);
-  title.textContent = `${rarityName(info.rarity)} ${petalTypeName(info.petalType)}`;
+  title.textContent = formatRarityPetal(info.petalType, info.rarity);
   petalInfoTooltip.appendChild(title);
 
   const subtitle = document.createElement("div");
   subtitle.className = "petal-info-subtitle";
-  subtitle.textContent = "Single petal";
+  subtitle.textContent = t("ui.petalInfo.single");
   petalInfoTooltip.appendChild(subtitle);
 
   for (const item of info.rows) {
@@ -3362,13 +4311,86 @@ function renderPetalInfoTooltip(info) {
   }
 }
 
+const petalInfoStatKeys = Object.freeze({
+  Petals: "petals",
+  Damage: "damage",
+  Durability: "durability",
+  Armor: "armor",
+  Reload: "reload",
+  Preload: "preload",
+  Vision: "vision",
+  "Attack range": "attackRange",
+  "Reload cut": "reloadCut",
+  Undead: "undead",
+  "Summon HP": "summonHp",
+  "Summon DMG": "summonDmg",
+  "Linked HP": "linkedHp",
+  "Flower body": "flowerBody",
+  Delay: "delay",
+  Effect: "effect",
+  Mass: "mass",
+  Regen: "regen",
+  "Defend regen": "defendRegen",
+  "Petal hits/tick": "petalHitsPerTick",
+  "Compression power": "compressionPower",
+  "Petal HP healing/s": "petalHpHealingPerSecond",
+  "Throw CD": "throwCooldown",
+  "Web time": "webTime",
+  "Web radius": "webRadius",
+  "Flower HP": "flowerHp",
+  "Healing taken": "healingTaken",
+  "Flower radius": "flowerRadius",
+  Attracts: "attracts",
+  Burrow: "burrow",
+  Heal: "heal",
+  "Anti-heal": "antiHeal",
+  Healing: "healing",
+  Lifetime: "lifetime",
+  Magnet: "magnet",
+  Poison: "poison",
+  "Poison time": "poisonTime",
+  "Attract range": "attractRange",
+  Rotation: "rotation",
+  Revive: "revive",
+  "Tri bonus": "triBonus",
+  Copies: "copies",
+  "Fire interval": "fireInterval",
+  "Trap damage": "trapDamage",
+  "Trap durability": "trapDurability",
+});
+
+const petalInfoValueKeys = Object.freeze({
+  Corrupted: "corrupted",
+  Nullify: "nullify",
+  "left petal": "leftPetal",
+  "x0.8 per hit": "healingPerHit",
+});
+
+function localizePetalInfoLabel(label) {
+  const key = petalInfoStatKeys[label];
+  return key
+    ? t("ui.petalInfo.stats." + key, {}, { defaultValue: label })
+    : label;
+}
+
+function localizePetalInfoValue(value) {
+  const text = String(value);
+  const key = petalInfoValueKeys[text];
+  return key
+    ? t("ui.petalInfo.values." + key, {}, { defaultValue: text })
+    : text;
+}
+
 function buildPetalInfo(petalType, rarity) {
   const rows = [];
   const level = rarityValueLevel(rarity);
   const scale = petalRarityScale(rarity);
   const addRow = (label, value) => {
     if (value === null || value === undefined || value === "") return;
-    rows.push({ label, value: String(value) });
+    rows.push({
+      label: localizePetalInfoLabel(label),
+      value: localizePetalInfoValue(value),
+    });
   };
   const addNumber = (label, value, suffix = "") => {
     if (!Number.isFinite(value) || Math.abs(value) <= 0.000001) return;
@@ -3446,6 +4468,24 @@ function buildPetalInfo(petalType, rarity) {
       addCombat(16 * scale, 12 * scale, 1.8);
       addNumber("Defend regen", 3 * roseMedicineScale(rarity), "/s");
       break;
+    case petalWhiteFungusType: {
+      const hitBonus = Math.round(2 * rarityValueLevel(rarity));
+      addCombat(8 * scale, 10 * scale, 1);
+      addRow("Petal hits/tick", `+${hitBonus}`);
+      break;
+    }
+    case petalBlackFungusType: {
+      const compressionPower = Math.round(2 * rarityValueLevel(rarity));
+      addCombat(8 * scale, 10 * scale, 1);
+      addRow("Compression power", `+${compressionPower}`);
+      break;
+    }
+    case petalBroccoliType: {
+      const health = Math.round((20 * roseMedicineScale(rarity)) / 10) * 10;
+      addCombat(2.5 * scale, health, 5);
+      addPercent("Petal HP healing/s", 0.2);
+      break;
+    }
     case petalRockType:
       addCombat(25 * scale, 30 * scale, 3);
       break;
@@ -3520,6 +4560,13 @@ function buildPetalInfo(petalType, rarity) {
     }
     case petalMissileType:
       addCombat(35 * scale, 2 * scale, 1.5);
+      addSeconds("Lifetime", 5);
+      break;
+    case petalTrapperType:
+      addCombat(2.5 * scale, 25 * scale, 4);
+      addSeconds("Fire interval", 2);
+      addNumber("Trap damage", 40 * scale);
+      addNumber("Trap durability", 40 * scale);
       addSeconds("Lifetime", 5);
       break;
     case petalAntEggType:
@@ -3615,22 +4662,18 @@ function buildPetalInfo(petalType, rarity) {
 
 function rarityLevel(rarity) {
   const value = Math.max(1, Math.floor(Number(rarity) || 1));
-  if (value === rarityExotic) return 8;
+  if (value === rarityExotic) return 1;
   if (value === 10) return 9;
   if (value >= 11) return 10;
   return clamp(value, 1, 9);
 }
 
 function rarityValueLevel(rarity) {
-  return Math.floor(Number(rarity) || 1) === rarityExotic
-    ? 7.5
-    : rarityLevel(rarity);
+  return rarityLevel(rarity);
 }
 
 function raritySpecialLevel(rarity) {
-  return Math.floor(Number(rarity) || 1) === rarityExotic
-    ? 7.25
-    : rarityLevel(rarity);
+  return rarityLevel(rarity);
 }
 
 function raritySortRank(rarity) {
@@ -3639,9 +4682,6 @@ function raritySortRank(rarity) {
 }
 
 function petalRarityScale(rarity) {
-  if (Math.floor(Number(rarity) || 1) === rarityExotic) {
-    return (3 ** (rarityLevel(7) - 1) + 3 ** (rarityLevel(8) - 1)) / 2;
-  }
   return 3 ** (rarityLevel(rarity) - 1);
 }
 
@@ -3675,7 +4715,7 @@ function roseMedicineScale(rarity) {
     case 7:
       return 243 * sqrt3;
     case rarityExotic:
-      return (243 * sqrt3 + 243 * 3) / 2;
+      return 1;
     case 8:
       return 243 * 3;
     case 9:
@@ -3784,7 +4824,7 @@ function webRadiusValue(rarity) {
 }
 
 function yggdrasilChannelTime(rarity) {
-  if (Math.floor(Number(rarity) || 1) === rarityExotic) return 1;
+  if (Math.floor(Number(rarity) || 1) === rarityExotic) return 600;
   if (rarity >= 11) return 0.016;
   if (rarity >= 9) return 0.33;
   if (rarity === 8) return 1;
@@ -3801,7 +4841,7 @@ function fragmentValue(rarity) {
     case 7:
       return 364.5;
     case rarityExotic:
-      return (364.5 + 729) / 2;
+      return petalRarityScale(1);
     case 8:
       return 729;
     case 9:
@@ -3817,24 +4857,23 @@ function fragmentValue(rarity) {
 
 function previousDisplayRarity(rarity) {
   const value = Math.floor(Number(rarity) || 1);
+  if (value === rarityExotic) return 1;
   const index = rarityDisplayOrder.indexOf(value);
   if (index > 0) return rarityDisplayOrder[index - 1];
   return Math.max(1, value - 1);
 }
 
 function byRarity(rarity, values) {
-  return byRarityWeighted(rarity, values, 0.5);
+  return byRarityWeighted(rarity, values);
 }
 
 function bySpecialRarity(rarity, values) {
-  return byRarityWeighted(rarity, values, 0.25);
+  return byRarityWeighted(rarity, values);
 }
 
-function byRarityWeighted(rarity, values, superWeight) {
+function byRarityWeighted(rarity, values) {
   if (Math.floor(Number(rarity) || 1) === rarityExotic) {
-    const ultra = values[7] ?? values[values.length - 1] ?? values[1] ?? 0;
-    const superValue = values[8] ?? ultra;
-    return ultra + (superValue - ultra) * clamp(superWeight, 0, 1);
+    return values[1] ?? 0;
   }
   const index = clamp(Math.floor(Number(rarity) || 1), 1, values.length - 1);
   return values[index] ?? values[1] ?? 0;
@@ -4166,11 +5205,14 @@ function petalIconPath(petalType, rarity = 0, options = {}) {
   if (
     !options.live &&
     petalType === petalStingerType &&
-    rarity >= stingerSplitIconMinRarity
+    rarityLevel(rarity) >= rarityLevel(stingerSplitIconMinRarity)
   )
-    return "./assets/petals/6_5.svg";
-  if (petalType === petalCompassType && rarity >= compassUltraIconMinRarity)
-    return "./assets/petals/71_7.svg";
+    return "./assets/petals/stinger_split.svg";
+  if (
+    petalType === petalCompassType &&
+    rarityLevel(rarity) >= rarityLevel(compassUltraIconMinRarity)
+  )
+    return "./assets/petals/compass_ultra.svg";
 
   const iconId = PetalIconIds[petalType] || 0;
   if (!iconId) return "";
@@ -4218,10 +5260,32 @@ function imageReady(image) {
   return image && !image.failed && image.complete && image.naturalWidth > 0;
 }
 
-function ownerHasPetal(petalType) {
-  return displayOwnerSlots().some(
-    (slot) => slotHasItem(slot) && slot.petalType === petalType,
+function slotsHavePetal(slots, petalType, rarity = null) {
+  return (slots || []).some(
+    (slot) =>
+      slotHasItem(slot) &&
+      slot.petalType === petalType &&
+      (rarity === null || slot.rarity === rarity),
   );
+}
+
+function ownerHasPetal(petalType, rarity = null) {
+  return slotsHavePetal(displayOwnerSlots(), petalType, rarity);
+}
+
+function ownerCollidesWithWalls() {
+  return !slotsHavePetal(
+    state.ownerSlots,
+    petalNullificationType,
+    rarityPrimordial,
+  );
+}
+
+function resolveOwnerPredictedMotion(start, end, radius) {
+  if (!ownerCollidesWithWalls()) {
+    return { pos: { x: end.x, y: end.y }, normals: [] };
+  }
+  return mapRenderer.resolvePredictedCircleMotion(start, end, radius);
 }
 
 function playerSnapHasPetal(snap, petalType) {
@@ -4389,6 +5453,185 @@ function quickSwapSlot(index) {
     oldSecondary,
   ]);
   renderInventoryPanel();
+}
+
+function quickSwapAllSlots() {
+  if (!state.authenticated) return;
+  const display = makeDisplaySlotState();
+  const slotCount = display.ownerSlots.length;
+  if (slotCount <= 0) return;
+
+  const desiredOwnerSlots = copySlots(display.secondarySlots, slotCount);
+  const desiredSecondarySlots = copySlots(display.ownerSlots, slotCount);
+  if (
+    slotArraysEqual(display.ownerSlots, desiredOwnerSlots) &&
+    slotArraysEqual(display.secondarySlots, desiredSecondarySlots)
+  ) {
+    return;
+  }
+
+  const packets = [];
+  for (let index = 0; index < slotCount; index += 1) {
+    if (slotHasItem(display.ownerSlots[index]))
+      packets.push(packUnequip(index));
+  }
+  for (let index = 0; index < slotCount; index += 1) {
+    if (slotHasItem(display.secondarySlots[index]))
+      packets.push(packSecondarySlot(index, 0, 0));
+  }
+  for (let index = 0; index < slotCount; index += 1) {
+    const slot = desiredOwnerSlots[index];
+    if (slotHasItem(slot))
+      packets.push(packEquip(index, slot.petalType, slot.rarity));
+  }
+  for (let index = 0; index < slotCount; index += 1) {
+    const slot = desiredSecondarySlots[index];
+    if (slotHasItem(slot))
+      packets.push(packSecondarySlot(index, slot.petalType, slot.rarity));
+  }
+
+  if (!sendPacketBatch(...packets)) return;
+
+  enqueueSlotTransaction(
+    desiredOwnerSlots,
+    desiredSecondarySlots,
+    display.inventory,
+    [...display.ownerSlots, ...display.secondarySlots],
+  );
+  renderInventoryPanel();
+}
+
+function saveActiveLoadoutPreset() {
+  if (!state.authenticated || !state.ownerStateLoaded) {
+    addConsoleLine(t("commands.loadout.notReady"), "error");
+    return false;
+  }
+
+  const index = clamp(
+    Number(state.activeLoadoutPreset) || 0,
+    0,
+    loadoutPresetCount - 1,
+  );
+  const display = makeDisplaySlotState();
+  state.loadoutPresets[index] = {
+    primarySlots: display.ownerSlots.map(copySlot),
+    secondarySlots: display.secondarySlots.map(copySlot),
+  };
+  saveSettings();
+  addConsoleLine(t("commands.loadout.saved", { index: index + 1 }));
+  return true;
+}
+
+function applyLoadoutPreset(index) {
+  if (
+    !state.authenticated ||
+    !state.ownerStateLoaded ||
+    !state.inventoryLoaded
+  ) {
+    addConsoleLine(t("commands.loadout.notReady"), "error");
+    return false;
+  }
+
+  const display = makeDisplaySlotState();
+  const slotCount = display.ownerSlots.length;
+  const preset = state.loadoutPresets[index] || {};
+  const presetOwnerSlots = copySlots(preset.primarySlots || [], slotCount);
+  const presetSecondarySlots = copySlots(
+    preset.secondarySlots || [],
+    slotCount,
+  );
+
+  let inventory = copyInventoryItems(display.inventory);
+  const touchedItems = [];
+  for (const slot of [...display.ownerSlots, ...display.secondarySlots]) {
+    if (!slotHasItem(slot)) continue;
+    inventory = applyInventoryDelta(
+      inventory,
+      slot.petalType,
+      slot.rarity,
+      1,
+    );
+    touchedItems.push(slot);
+  }
+
+  const resolvePresetSlot = (slot) => {
+    if (!slotHasItem(slot)) return emptySlot();
+    for (let rarity = slot.rarity; rarity >= 1; rarity -= 1) {
+      if (getDisplayInventoryCount(slot.petalType, rarity, inventory) <= 0)
+        continue;
+      const resolved = { petalType: slot.petalType, rarity };
+      inventory = applyInventoryDelta(
+        inventory,
+        resolved.petalType,
+        resolved.rarity,
+        -1,
+      );
+      touchedItems.push(resolved);
+      return resolved;
+    }
+    return emptySlot();
+  };
+  const desiredOwnerSlots = presetOwnerSlots.map(resolvePresetSlot);
+  const desiredSecondarySlots = presetSecondarySlots.map(resolvePresetSlot);
+
+  if (
+    slotArraysEqual(display.ownerSlots, desiredOwnerSlots) &&
+    slotArraysEqual(display.secondarySlots, desiredSecondarySlots)
+  ) {
+    addConsoleLine(t("commands.loadout.applied", { index: index + 1 }));
+    return true;
+  }
+
+  const packets = [];
+  for (let slotIndex = 0; slotIndex < slotCount; slotIndex += 1) {
+    if (slotHasItem(display.ownerSlots[slotIndex]))
+      packets.push(packUnequip(slotIndex));
+  }
+  for (let slotIndex = 0; slotIndex < slotCount; slotIndex += 1) {
+    if (slotHasItem(display.secondarySlots[slotIndex]))
+      packets.push(packSecondarySlot(slotIndex, 0, 0));
+  }
+  for (let slotIndex = 0; slotIndex < slotCount; slotIndex += 1) {
+    const slot = desiredOwnerSlots[slotIndex];
+    if (slotHasItem(slot))
+      packets.push(packEquip(slotIndex, slot.petalType, slot.rarity));
+  }
+  for (let slotIndex = 0; slotIndex < slotCount; slotIndex += 1) {
+    const slot = desiredSecondarySlots[slotIndex];
+    if (slotHasItem(slot))
+      packets.push(
+        packSecondarySlot(slotIndex, slot.petalType, slot.rarity),
+      );
+  }
+
+  if (!sendPacketBatch(...packets)) {
+    addConsoleLine(
+      t("commands.loadout.applyFailed", { index: index + 1 }),
+      "error",
+    );
+    return false;
+  }
+
+  enqueueSlotTransaction(
+    desiredOwnerSlots,
+    desiredSecondarySlots,
+    inventory,
+    touchedItems,
+  );
+  renderInventoryPanel();
+  addConsoleLine(t("commands.loadout.applied", { index: index + 1 }));
+  return true;
+}
+
+function selectLoadoutPreset(index) {
+  if (index < 0 || index >= loadoutPresetCount) return false;
+  state.activeLoadoutPreset = index;
+  saveSettings();
+  if (!state.authenticated) {
+    addConsoleLine(t("commands.loadout.selected", { index: index + 1 }));
+    return true;
+  }
+  return applyLoadoutPreset(index);
 }
 
 function getDisplayInventoryCount(
@@ -4681,10 +5924,91 @@ function updateRenderPositions(dt) {
     stepEntityRenderToSnapshot(entity, dt, false);
   }
 
+  lockTrapperRenderPositionsToMounts();
+
   for (const id of dead) {
     state.entities.delete(id);
     clearLadybugPattern(id);
   }
+}
+
+function lockTrapperRenderPositionsToMounts() {
+  const trappers = [];
+  const mounts = [];
+
+  for (const entity of state.entities.values()) {
+    const snap = entity?.snapshot;
+    if (!snap?.pos || entity.dying) continue;
+
+    if (
+      isPetalEntity(snap.entityType) &&
+      petalTypeFromEntity(snap.entityType) === petalTrapperType
+    ) {
+      trappers.push(entity);
+    } else if (
+      snap.entityType === playerFlowerType ||
+      (isPetalEntity(snap.entityType) &&
+        petalTypeFromEntity(snap.entityType) === petalMoonType)
+    ) {
+      mounts.push(entity);
+    }
+  }
+
+  for (const trapper of trappers) {
+    const mount = findTrapperMountEntity(trapper, mounts);
+    if (!mount?.renderPos) {
+      trapper.trapperMountEntityId = null;
+      continue;
+    }
+
+    const trapperSnap = trapper.snapshot;
+    const mountSnap = mount.snapshot;
+    trapper.trapperMountEntityId = mountSnap.entityId;
+    trapper.renderPos.x =
+      mount.renderPos.x + (trapperSnap.pos.x - mountSnap.pos.x);
+    trapper.renderPos.y =
+      mount.renderPos.y + (trapperSnap.pos.y - mountSnap.pos.y);
+  }
+}
+
+function findTrapperMountEntity(trapper, mounts) {
+  let best = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+  const previousMountId = trapper.trapperMountEntityId;
+
+  for (const mount of mounts) {
+    const score = trapperMountScore(trapper, mount);
+    if (!Number.isFinite(score)) continue;
+
+    const stickyScore =
+      mount.snapshot.entityId === previousMountId ? score * 0.75 : score;
+    if (stickyScore >= bestScore) continue;
+    best = mount;
+    bestScore = stickyScore;
+  }
+
+  return best;
+}
+
+function trapperMountScore(trapper, mount) {
+  const trapperSnap = trapper?.snapshot;
+  const mountSnap = mount?.snapshot;
+  if (!trapperSnap?.pos || !mountSnap?.pos || trapper === mount)
+    return Number.POSITIVE_INFINITY;
+  if (trapperSnap.team !== mountSnap.team) return Number.POSITIVE_INFINITY;
+
+  const distance = Math.hypot(
+    trapperSnap.pos.x - mountSnap.pos.x,
+    trapperSnap.pos.y - mountSnap.pos.y,
+  );
+  let score = Math.abs(distance - Math.max(0, mountSnap.radius || 0));
+
+  if (
+    mountSnap.entityType === playerFlowerType &&
+    playerSnapHasPetal(mountSnap, petalTrapperType)
+  )
+    score *= 0.5;
+  return score;
 }
 
 function updateEntityMotion(entity, dt) {
@@ -5465,6 +6789,19 @@ function shouldAlwaysDrawDetailed(snap) {
   return raritySortRank(snap.rarity) >= raritySortRank(bossRarity);
 }
 
+function flowerMobVisualScale(entityType) {
+  if (entityType === titanType)
+    return getClientConfigValue(state.clientConfig, "titan_sprite_scale");
+  if (entityType === dummyType)
+    return getClientConfigValue(state.clientConfig, "dummy_sprite_scale");
+  return 1;
+}
+
+function flowerMobCullScale(entityType) {
+  if (entityType !== titanType && entityType !== dummyType) return 1;
+  return Math.max(1, flowerMobVisualScale(entityType) * 1.35);
+}
+
 function drawEntity(entity) {
   const snap = entity.snapshot;
   const pos = worldToScreen(entity.renderPos);
@@ -5481,6 +6818,7 @@ function drawEntity(entity) {
   const deathScale = entity.dying ? 1 + deathEase * deathScaleBoost : 1;
   const deathAlpha = entity.dying ? 1 - deathEase : 1;
   const hurtFlash = entity.dying ? 0 : hurtFlashAmount(entity);
+  const spriteScale = flowerMobVisualScale(snap.entityType);
 
   if (isPetal) emitPetalParticleBurst(entity, snap);
   else if (snap.entityType === playerFlowerType)
@@ -5491,7 +6829,7 @@ function drawEntity(entity) {
   if (hurtFlash > 0)
     ctx.filter = `brightness(${1 + hurtFlash * 3.5}) saturate(${1 - hurtFlash * 0.92})`;
 
-  const visibleRadius = radius * deathScale;
+  const visibleRadius = radius * spriteScale * deathScale;
   if (visibleRadius < entityPixelMinScreenRadius) {
     ctx.restore();
     return;
@@ -5796,6 +7134,7 @@ function drawEntity(entity) {
   if (
     !isPetal &&
     (snap.entityType === soldierAntType ||
+      snap.entityType === leafcutterSoldierType ||
       snap.entityType === summonedSoldierAntType ||
       snap.entityType === soldierFireAntType ||
       snap.entityType === soldierTermiteType)
@@ -5820,6 +7159,17 @@ function drawEntity(entity) {
         entity.renderAngle ?? snap.angle,
         entity.motionBlend || 0,
         currentRenderTimeSeconds,
+      );
+    } else if (snap.entityType === leafcutterSoldierType) {
+      drawLeafcutterSoldier(
+        ctx,
+        pos,
+        radius * deathScale,
+        snap.entityId,
+        entity.renderAngle ?? snap.angle,
+        entity.motionBlend || 0,
+        currentRenderTimeSeconds,
+        (snap.flags & flagCarryingLeafPiece) !== 0,
       );
     } else {
       drawSoldierAnt(
@@ -5947,6 +7297,16 @@ function drawEntity(entity) {
     return;
   }
 
+  if (!isPetal && !isDrop && snap.entityType === trapProjectileType) {
+    drawTrapProjectile(
+      pos,
+      radius * deathScale,
+      entity.renderAngle ?? snap.angle,
+    );
+    ctx.restore();
+    return;
+  }
+
   if (!isPetal && !isDrop && snap.entityType === spiderWebZoneType) {
     drawSpiderWeb(
       ctx,
@@ -5994,21 +7354,48 @@ function drawEntity(entity) {
       ? (entity.deathAngle ?? entity.renderAngle ?? snap.angle)
       : (entity.renderAngle ?? snap.angle);
     drawPlayerFlower(snap, pos, radius * deathScale, flowerAngle, isOwner);
-    if (!entity.dying && (snap.flags & flagDigging) === 0)
+    if (!entity.dying && !entityHasState(snap, stateDigging))
       drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
 
-  if (!isPetal && snap.entityType === dummyType) {
-    drawPlayerFlower(
+  if (!isPetal && snap.entityType === mechaFlowerType) {
+    drawMechaFlower(
       snap,
       pos,
       radius * deathScale,
       entity.renderAngle ?? snap.angle,
-      false,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === titanType) {
+    const visualRadius = radius * spriteScale;
+    drawPlayerFlower(
+      snap,
+      pos,
+      visualRadius * deathScale,
+      entity.renderAngle ?? snap.angle,
+      false,
+    );
+    if (!entity.dying) drawMobFrame(snap, pos, visualRadius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === dummyType) {
+    const visualRadius = radius * spriteScale;
+    drawPlayerFlower(
+      snap,
+      pos,
+      visualRadius * deathScale,
+      entity.renderAngle ?? snap.angle,
+      false,
+    );
+    if (!entity.dying) drawMobFrame(snap, pos, visualRadius);
     ctx.restore();
     return;
   }
@@ -6058,8 +7445,16 @@ function drawEntity(entity) {
 }
 
 function drawPlayerFlower(snap, pos, radius, angle, isOwner) {
+  drawFlower(snap, pos, radius, angle, isOwner, "player");
+}
+
+function drawMechaFlower(snap, pos, radius, angle) {
+  drawFlower(snap, pos, radius, angle, false, "mecha");
+}
+
+function drawFlower(snap, pos, radius, angle, isOwner, bodyKind) {
   const flags = snap.flags || 0;
-  const digging = (flags & flagDigging) !== 0;
+  const digging = entityHasState(snap, stateDigging);
   if (digging) {
     ctx.save();
     ctx.translate(pos.x, pos.y);
@@ -6076,51 +7471,79 @@ function drawPlayerFlower(snap, pos, radius, angle, isOwner) {
     (flags & flagAntennae) !== 0 ||
     playerSnapHasPetal(snap, petalAntennaeType) ||
     (isOwner && ownerHasPetal(petalAntennaeType));
+  const hasDouli =
+    playerSnapHasPetal(snap, petalDouliType) ||
+    (isOwner && ownerHasPetal(petalDouliType));
   const hasThirdEye =
     playerSnapHasPetal(snap, petalThirdEyeType) ||
     (isOwner && ownerHasPetal(petalThirdEyeType));
   const hasBandage =
     playerSnapHasPetal(snap, petalBandageType) ||
     (isOwner && ownerHasPetal(petalBandageType));
-  const hasRelic = (flags & flagRelic) !== 0;
   const nullified =
     playerSnapHasPetal(snap, petalNullificationType) ||
     (isOwner && ownerHasPetal(petalNullificationType));
-  const corrupted = (flags & flagCorrupted) !== 0;
-  const undead = (flags & flagUndead) !== 0;
-  const poisoned = (flags & flagPoisoned) !== 0;
+  const undead = entityHasState(snap, stateUndead);
   const dead = (flags & flagDead) !== 0;
-  const suppressPetalOverlays = corrupted;
-
-  let texture = "normal";
-  if (corrupted) texture = "gambler";
-  else if (undead) texture = "undead";
-  else if (poisoned) texture = "poisoned";
-  else if (hasRelic) texture = "relic";
-
-  const image = assetImage(playerFlowerTexturePath(texture));
-  const size = Math.max(0.5, radius * 2.36);
   ctx.save();
   ctx.translate(pos.x, pos.y);
   if (dead && Number.isFinite(angle)) ctx.rotate(angle);
-  if (nullified && !suppressPetalOverlays) ctx.globalAlpha *= 0.58;
-  if (imageReady(image)) {
-    ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
-  } else {
-    drawPlayerFlowerFallback(radius, texture);
-  }
-  if (hasBandage && !suppressPetalOverlays) drawBandagePetalLayer(radius);
+  if (nullified) ctx.globalAlpha *= 0.58;
+  drawFlowerBody(bodyKind, radius, snap);
+  if (hasBandage) drawBandagePetalLayer(radius);
   const attacking = (flags & flagAttacking) !== 0;
   const defending = (flags & flagDefending) !== 0;
   drawPlayerFlowerFace(
     radius,
     angle,
-    texture,
+    undead ? "undead" : "normal",
     dead ? "dead" : attacking ? "attack" : defending ? "defend" : "normal",
   );
   if (hasAntennae) drawAntennaeOverlay(radius);
   if (hasThirdEye) drawThirdEyeOverlay(radius);
+  if (hasDouli) drawDouliOverlay(radius);
   ctx.restore();
+}
+
+function drawFlowerBody(bodyKind, radius, snap) {
+  const image = assetImage(flowerBodyTexturePath(bodyKind));
+  const size = Math.max(0.5, radius * 2.36);
+
+  ctx.save();
+  ctx.filter = flowerBodyFilter(snap, bodyKind === "mecha", ctx.filter);
+  if (imageReady(image)) {
+    ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
+  } else if (bodyKind === "mecha") {
+    drawMechaFlowerFallback(radius);
+  } else {
+    drawPlayerFlowerFallback(radius);
+  }
+  ctx.restore();
+}
+
+function flowerBodyFilter(snap, mechanical, inheritedFilter) {
+  const filters = [];
+  const corrupted = entityHasState(snap, stateCorruption);
+  const undead = entityHasState(snap, stateUndead);
+  const poisoned = entityHasState(snap, statePoison);
+  const psionic = entityHasState(snap, statePsionicConnection);
+
+  if (mechanical && (corrupted || undead || poisoned || psionic))
+    filters.push("sepia(0.55)");
+  if (psionic)
+    filters.push("saturate(0.82) brightness(0.88)");
+  if (poisoned)
+    filters.push("hue-rotate(-165deg) saturate(2.4) brightness(0.94)");
+  if (undead)
+    filters.push("hue-rotate(30deg) saturate(0.7) brightness(0.96)");
+  if (corrupted)
+    filters.push(
+      "hue-rotate(-60deg) saturate(2.1) brightness(0.62) contrast(1.45)",
+    );
+  if (inheritedFilter && inheritedFilter !== "none")
+    filters.push(inheritedFilter);
+
+  return filters.length > 0 ? filters.join(" ") : "none";
 }
 
 function drawMobSvg(src, pos, radius, angle) {
@@ -6146,17 +7569,8 @@ function drawMobSvg(src, pos, radius, angle) {
   ctx.restore();
 }
 
-function playerFlowerTexturePath(texture = "normal") {
-  const textureFile =
-    texture === "undead"
-      ? "player_flower_undead"
-      : texture === "gambler"
-        ? "player_flower_gambler"
-        : texture === "poisoned"
-          ? "player_flower_poisoned"
-          : texture === "relic"
-            ? "player_flower_relic"
-            : "player_flower";
+function flowerBodyTexturePath(bodyKind) {
+  const textureFile = bodyKind === "mecha" ? "mecha_flower" : "player_flower";
   return `./assets/${textureFile}.svg?v=${flowerTextureVersion}`;
 }
 
@@ -6237,6 +7651,18 @@ function drawAntennaeOverlay(radius) {
   ctx.restore();
 }
 
+function drawDouliOverlay(radius) {
+  const icon = douliOverlayImage();
+  const size = Math.max(0.5, radius * douliOverlaySizeScale);
+  ctx.save();
+  ctx.translate(0, radius * douliOverlayOffsetYScale);
+  ctx.rotate(douliOverlayAngle);
+  if (imageReady(icon)) {
+    ctx.drawImage(icon, -size * 0.5, -size * 0.5, size, size);
+  }
+  ctx.restore();
+}
+
 function drawThirdEyeOverlay(radius) {
   const icon = thirdEyeOverlayImage();
   const size = Math.max(0.5, radius * 0.82);
@@ -6262,42 +7688,55 @@ function drawThirdEyeOverlay(radius) {
   ctx.restore();
 }
 
-function drawPlayerFlowerFallback(radius, texture) {
-  const centerFill =
-    texture === "undead"
-      ? "#a7c66f"
-      : texture === "gambler"
-        ? "#c64136"
-        : texture === "poisoned"
-          ? "#9a64c7"
-          : texture === "relic"
-            ? "#c7a93f"
-            : "#f2cc42";
-  const stroke =
-    texture === "undead"
-      ? "#73934c"
-      : texture === "gambler"
-        ? "#782821"
-        : texture === "poisoned"
-          ? "#6a3d94"
-          : texture === "relic"
-            ? "#9c8430"
-            : "#d9b638";
-  ctx.fillStyle = centerFill;
+function drawPlayerFlowerFallback(radius) {
+  ctx.fillStyle = "#d7bd3c";
   ctx.beginPath();
-  ctx.arc(0, 0, radius * 0.88, 0, Math.PI * 2);
+  ctx.arc(0, 0, radius * 0.9, 0, Math.PI * 2);
   ctx.fill();
-  ctx.lineWidth = Math.max(0.45, radius * 0.18);
-  ctx.strokeStyle = stroke;
+  ctx.fillStyle = "#f4dc59";
+  ctx.beginPath();
+  ctx.arc(0, 0, radius * 0.74, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawMechaFlowerFallback(radius) {
+  ctx.fillStyle = "#706959";
+  for (let index = 0; index < 5; index += 1) {
+    const angle = -Math.PI * 0.5 + (index * Math.PI * 2) / 5;
+    ctx.beginPath();
+    ctx.arc(
+      Math.cos(angle) * radius * 0.75,
+      Math.sin(angle) * radius * 0.75,
+      radius * 0.2,
+      0,
+      Math.PI * 2,
+    );
+    ctx.fill();
+  }
+
+  ctx.fillStyle = "#999";
+  ctx.strokeStyle = "#7c7c7c";
+  ctx.lineWidth = Math.max(0.75, radius * 0.08);
+  ctx.beginPath();
+  for (let index = 0; index < 16; index += 1) {
+    const angle = -Math.PI * 0.5 + (index * Math.PI * 2) / 16;
+    const bodyRadius = radius * (index % 2 === 0 ? 0.66 : 0.63);
+    const x = Math.cos(angle) * bodyRadius;
+    const y = Math.sin(angle) * bodyRadius;
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
   ctx.stroke();
 }
 
-function drawPlayerFlowerFace(radius, angle, texture, expression = "normal") {
+function drawPlayerFlowerFace(radius, angle, faceStyle, expression = "normal") {
   const look = Number.isFinite(angle)
     ? { x: Math.cos(angle), y: Math.sin(angle) }
     : { x: 0, y: 0 };
-  const eyeFill = texture === "undead" ? "#27351f" : "#333127";
-  const smileFill = texture === "undead" ? "#35472a" : "#5a4a26";
+  const eyeFill = faceStyle === "undead" ? "#27351f" : "#333127";
+  const smileFill = faceStyle === "undead" ? "#35472a" : "#5a4a26";
 
   ctx.save();
   ctx.translate(0, radius * 0.06);
@@ -6310,7 +7749,7 @@ function drawPlayerFlowerFace(radius, angle, texture, expression = "normal") {
   if (expression === "dead") drawPlayerFlowerDeadMouth(radius, smileFill);
   else if (expression === "attack" || expression === "defend")
     drawPlayerFlowerAngryMouth(radius, smileFill);
-  else drawPlayerFlowerSmile(radius, texture, smileFill);
+  else drawPlayerFlowerSmile(radius, faceStyle, smileFill);
   ctx.restore();
 }
 
@@ -6399,12 +7838,12 @@ function drawPlayerFlowerDeadEyes(radius, eyeFill) {
   }
 }
 
-function drawPlayerFlowerSmile(radius, texture, smileFill) {
+function drawPlayerFlowerSmile(radius, faceStyle, smileFill) {
   ctx.strokeStyle = smileFill;
   ctx.lineWidth = Math.max(0.45, radius * 0.075);
   ctx.lineCap = "round";
   ctx.beginPath();
-  if (texture === "undead") {
+  if (faceStyle === "undead") {
     ctx.arc(0, radius * 0.37, radius * 0.2, Math.PI * 1.16, Math.PI * 1.84);
   } else {
     ctx.arc(0, radius * 0.02, radius * 0.29, 0.22 * Math.PI, 0.78 * Math.PI);
@@ -6481,12 +7920,23 @@ function drawLivePetal(petalType, rarity, pos, radius, angle, entityId = 0) {
       extractDandelionLiveSvg,
       "dandelion-petal",
     );
+  } else if (petalType === petalTrapperType) {
+    icon = livePetalIconImage(
+      petalType,
+      rarity,
+      extractTrapperLiveSvg,
+      "trapper-petal-centered",
+    );
   } else {
     icon = livePetalIconImage(petalType, rarity);
   }
 
   if (imageReady(icon)) {
-    drawCenteredImage(icon, size, petalType === petalWaxType ? 0.82 : 1);
+    drawCenteredImage(
+      icon,
+      size,
+      petalType === petalWaxType ? waxLivePetalVisualScale : 1,
+    );
   } else {
     drawPetalSilhouette(size, rarity);
   }
@@ -6545,7 +7995,43 @@ function drawDandelionMissile(pos, radius, angle, rarity, entityId = 0) {
   ctx.restore();
 }
 
+function drawTrapProjectile(pos, radius, angle) {
+  const image = assetImage("./assets/trap.svg?v=2");
+  const imageSize = Math.max(1, radius * 3);
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  ctx.rotate(Number.isFinite(angle) ? angle : 0);
+
+  if (imageReady(image)) {
+    ctx.drawImage(
+      image,
+      -imageSize * 0.5,
+      -imageSize * 0.5,
+      imageSize,
+      imageSize,
+    );
+    ctx.restore();
+    return;
+  }
+
+  const size = Math.max(1, radius * 1.35);
+  ctx.lineJoin = "round";
+  ctx.lineWidth = Math.max(1.2, radius * 0.24);
+  ctx.strokeStyle = "#d7bd3c";
+  ctx.fillStyle = "#f4dc59";
+  ctx.beginPath();
+  ctx.moveTo(size, 0);
+  ctx.quadraticCurveTo(0, 0, -size * 0.72, size * 0.86);
+  ctx.quadraticCurveTo(0, 0, -size * 0.72, -size * 0.86);
+  ctx.quadraticCurveTo(0, 0, size, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
 function livePetalRenderAngle(petalType, angle) {
+  if (petalType === petalCompassType) return angle + compassPetalAngleOffset;
   if (
     petalType === petalMissileType ||
     petalType === petalCarrotType ||
@@ -6829,11 +8315,27 @@ function extractSingleAntEggLiveSvg(svgText) {
 }
 
 function extractWaxLiveSvg(svgText) {
-  return extractFirstLivePetalPathsSvg(svgText, 2, "28 24 52 48");
+  return extractFirstLivePetalPathsSvg(svgText, 2, waxLivePetalViewBox);
 }
 
 function extractDandelionLiveSvg(svgText) {
   return extractFirstLivePetalPathsSvg(svgText, 3, "22 14 68 68");
+}
+
+function extractTrapperLiveSvg(svgText) {
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
+    return stripLivePetalLabel(svgText);
+
+  const doc = new DOMParser().parseFromString(
+    stripLivePetalLabel(svgText),
+    "image/svg+xml",
+  );
+  const root = doc.documentElement;
+  if (!root || root.tagName.toLowerCase() !== "svg")
+    return stripLivePetalLabel(svgText);
+
+  root.setAttribute("viewBox", trapperLivePetalViewBox);
+  return new XMLSerializer().serializeToString(root);
 }
 
 function extractFirstLivePetalPathsSvg(svgText, pathCount, viewBox) {
@@ -6902,6 +8404,12 @@ function antennaeOverlayImage() {
   const src = petalIconPath(petalAntennaeType);
   if (!src) return null;
   return transformedPetalImage(src, stripLivePetalLabel, "antennae-overlay");
+}
+
+function douliOverlayImage() {
+  const src = petalIconPath(petalDouliType);
+  if (!src) return null;
+  return transformedPetalImage(src, stripLivePetalLabel, "douli-overlay");
 }
 
 function thirdEyeOverlayImage() {
@@ -7119,6 +8627,7 @@ function isProjectileSnap(snap) {
     (snap.entityType === dandelionMissileType ||
       snap.entityType === hornetMissileType ||
       snap.entityType === pollenProjectileType ||
+      snap.entityType === trapProjectileType ||
       snap.entityType === spiderWebZoneType)
   );
 }
@@ -7164,21 +8673,6 @@ function rarityOrLevelLabel(snap) {
   return rarityName(snap.rarity);
 }
 
-function roundedRectPath(x, y, width, height, radius = height * 0.5) {
-  const r = Math.max(0, Math.min(radius, width * 0.5, height * 0.5));
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + width - r, y);
-  ctx.arcTo(x + width, y, x + width, y + r, r);
-  ctx.lineTo(x + width, y + height - r);
-  ctx.arcTo(x + width, y + height, x + width - r, y + height, r);
-  ctx.lineTo(x + r, y + height);
-  ctx.arcTo(x, y + height, x, y + height - r, r);
-  ctx.lineTo(x, y + r);
-  ctx.arcTo(x, y, x + r, y, r);
-  ctx.closePath();
-}
-
 function drawCapsuleBar(
   x,
   y,
@@ -7198,22 +8692,53 @@ function drawCapsuleBar(
   const innerH = Math.max(0, safeHeight - inset * 2);
   const amount = clamp(progress || 0, 0, 1);
 
-  ctx.fillStyle = "#050506";
-  roundedRectPath(x, y, safeWidth, safeHeight);
-  ctx.fill();
+  drawSolidProgressBar(ctx, {
+    x,
+    y,
+    maxLength: safeWidth,
+    width: safeHeight,
+    color: "#050506",
+  });
 
   if (innerW <= 0 || innerH <= 0) return;
 
-  ctx.save();
-  roundedRectPath(innerX, innerY, innerW, innerH);
-  ctx.clip();
-  ctx.fillStyle = track;
-  ctx.fillRect(innerX, innerY, innerW, innerH);
-  if (amount > 0) {
-    ctx.fillStyle = fill;
-    ctx.fillRect(innerX, innerY, innerW * amount, innerH);
-  }
-  ctx.restore();
+  drawSolidProgressBar(ctx, {
+    x: innerX,
+    y: innerY,
+    maxLength: innerW,
+    width: innerH,
+    color: track,
+  });
+  drawSolidProgressBar(ctx, {
+    x: innerX,
+    y: innerY,
+    maxLength: innerW,
+    width: innerH,
+    progress: amount,
+    color: fill,
+  });
+}
+
+function healthBarColor(snap) {
+  return entityHasState(snap, stateInvincible) ? "#e8d64b" : "#68d443";
+}
+
+function drawShieldBar(x, y, width, height, shieldPercent) {
+  const shield = clamp(shieldPercent || 0, 0, 1);
+  if (shield <= 0) return;
+
+  const shieldLength = width * 0.94;
+  const shieldWidth = height * 0.72;
+  drawCapsuleBar(
+    x + (width - shieldLength) * 0.5,
+    y + (height - shieldWidth) * 0.5,
+    shieldLength,
+    shieldWidth,
+    shield,
+    "#65c9f2",
+    Math.max(0.5, shieldWidth * 0.16),
+    "#123141",
+  );
 }
 
 function drawLayeredCapsuleBar(x, y, width, height, members, fill, border = 5) {
@@ -7222,54 +8747,56 @@ function drawLayeredCapsuleBar(x, y, width, height, members, fill, border = 5) {
       hp: clamp(member?.hp || 0, 0, 1),
       count: Math.max(1, Math.floor(member?.count || 1)),
     }))
-    .filter((member) => Number.isFinite(member.hp) && member.count > 0)
-    .sort((a, b) => a.hp - b.hp);
+    .filter((member) => Number.isFinite(member.hp) && member.count > 0);
   const inset = Math.min(border, width * 0.35, height * 0.35);
   const innerX = x + inset;
   const innerY = y + inset;
   const innerW = Math.max(0, width - inset * 2);
   const innerH = Math.max(0, height - inset * 2);
 
-  ctx.fillStyle = "#050506";
-  roundedRectPath(x, y, width, height);
-  ctx.fill();
+  drawSolidProgressBar(ctx, {
+    x,
+    y,
+    maxLength: width,
+    width: height,
+    color: "#050506",
+  });
 
   if (innerW <= 0 || innerH <= 0) return;
 
-  ctx.save();
-  roundedRectPath(innerX, innerY, innerW, innerH);
-  ctx.clip();
-  ctx.fillStyle = "#111115";
-  ctx.fillRect(innerX, innerY, innerW, innerH);
+  drawSolidProgressBar(ctx, {
+    x: innerX,
+    y: innerY,
+    maxLength: innerW,
+    width: innerH,
+    color: "#111115",
+  });
 
   const totalCount = entries.reduce((sum, member) => sum + member.count, 0);
-  if (totalCount > 0) {
-    let previous = 0;
-    let index = 0;
-    let covering = totalCount;
-    ctx.fillStyle = fill;
-    while (index < entries.length) {
-      const hp = entries[index].hp;
-      if (hp > previous) {
-        ctx.globalAlpha = covering / totalCount;
-        ctx.fillRect(
-          innerX + innerW * previous,
-          innerY,
-          innerW * (hp - previous),
-          innerH,
-        );
-      }
-      while (
-        index < entries.length &&
-        Math.abs(entries[index].hp - hp) <= 0.0001
-      ) {
-        covering -= entries[index].count;
-        index += 1;
-      }
-      previous = hp;
+  if (totalCount <= 0) return;
+
+  for (const member of entries) {
+    ctx.save();
+    const geometry = traceSolidProgressBarPath(ctx, {
+      x: innerX,
+      y: innerY,
+      maxLength: innerW,
+      width: innerH,
+      progress: member.hp,
+    });
+    if (!geometry) {
+      ctx.restore();
+      continue;
     }
+
+    // A short capsule contributes (m * p) / (d * copy_num) per logical copy.
+    const perCopyAlpha = geometry.alpha / totalCount;
+    const bucketAlpha = 1 - Math.pow(1 - perCopyAlpha, member.count);
+    ctx.globalAlpha *= bucketAlpha;
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.restore();
   }
-  ctx.restore();
 }
 
 function drawOutlinedText(
@@ -7390,9 +8917,10 @@ function drawMobFrame(snap, pos, radius) {
     width,
     barHeight,
     hp,
-    "#68d443",
+    healthBarColor(snap),
     Math.max(1, barHeight * 0.28),
   );
+  drawShieldBar(x, y, width, barHeight, snap.shieldPercent);
 
   drawOutlinedText(
     rarityOrLevelLabel(snap),
@@ -7477,7 +9005,8 @@ function bossBarCandidates(entities) {
       continue;
     if (snap.entityType === dummyType) continue;
     if (isSummonedMobSnap(snap)) continue;
-    const key = `${snap.entityType}:${snap.rarity}`;
+    const invincible = entityHasState(snap, stateInvincible);
+    const key = `${snap.entityType}:${snap.rarity}:${invincible ? 1 : 0}`;
     let group = groups.get(key);
     if (!group) {
       group = {
@@ -7485,8 +9014,12 @@ function bossBarCandidates(entities) {
         entityType: snap.entityType,
         rarity: snap.rarity,
         name: mobDisplayName(snap),
+        invincible,
         members: [],
         memberBuckets: new Map(),
+        shieldMembers: [],
+        shieldBuckets: new Map(),
+        hasShield: false,
         count: 0,
         nearestDistance: Number.POSITIVE_INFINITY,
       };
@@ -7507,6 +9040,17 @@ function bossBarCandidates(entities) {
       group.members.push(member);
     }
     member.count += 1;
+
+    const shield =
+      Math.round(clamp(snap.shieldPercent || 0, 0, 1) * 1000) / 1000;
+    let shieldMember = group.shieldBuckets.get(shield);
+    if (!shieldMember) {
+      shieldMember = { hp: shield, count: 0 };
+      group.shieldBuckets.set(shield, shieldMember);
+      group.shieldMembers.push(shieldMember);
+    }
+    shieldMember.count += 1;
+    if (shield > 0) group.hasShield = true;
   }
 
   return [...groups.values()]
@@ -7579,9 +9123,22 @@ function drawBossBars(entities) {
       width,
       height,
       group.members,
-      "#69d33e",
+      group.invincible ? "#e8d64b" : "#69d33e",
       bossBarRadiusPx * scale,
     );
+    if (group.hasShield) {
+      const shieldLength = width * 0.94;
+      const shieldHeight = height * 0.72;
+      drawLayeredCapsuleBar(
+        x + (width - shieldLength) * 0.5,
+        y + (height - shieldHeight) * 0.5,
+        shieldLength,
+        shieldHeight,
+        group.shieldMembers,
+        "#65c9f2",
+        Math.max(0.5, shieldHeight * 0.16),
+      );
+    }
     drawOutlinedText(
       rarityName(group.rarity),
       x + width * 0.5,
@@ -7646,8 +9203,15 @@ function drawSelfHud() {
     healthW,
     healthH,
     health,
-    "#69d348",
+    healthBarColor(owner.snapshot),
     6 * scale,
+  );
+  drawShieldBar(
+    healthX,
+    healthY,
+    healthW,
+    healthH,
+    owner.snapshot.shieldPercent,
   );
   drawCapsuleBar(expX, expY, expW, expH, expProgress, "#e8e95a", 4 * scale);
   drawPlayerFlower(
@@ -7715,8 +9279,15 @@ function drawSquadHud() {
       healthW,
       healthH,
       health,
-      "#69d348",
+      healthBarColor(snap),
       healthBorder,
+    );
+    drawShieldBar(
+      healthX,
+      centerY - healthH * 0.5,
+      healthW,
+      healthH,
+      snap.shieldPercent,
     );
     drawPlayerFlower(
       snap,
@@ -7818,7 +9389,7 @@ function drawMinimap() {
   minimapHitRect = layout;
   const bounds = minimapWorldBounds(map);
   const scale = layout.size / Math.max(bounds.width, bounds.height, 1);
-  const cache = getMinimapCache(map, layout, bounds);
+  const cache = getMinimapCache(map);
 
   ctx.save();
   ctx.beginPath();
@@ -7828,24 +9399,11 @@ function drawMinimap() {
     ? minimapBackgroundColor
     : minimapMonochromeBackgroundColor;
   ctx.fillRect(layout.x, layout.y, layout.size, layout.size);
-  if (cache?.canvas) {
-    const sourceX = bounds.left / cache.cellWidth - cache.renderOriginX;
-    const sourceY = bounds.top / cache.cellHeight - cache.renderOriginY;
-    const sourceWidth = bounds.width / cache.cellWidth;
-    const sourceHeight = bounds.height / cache.cellHeight;
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(
-      cache.canvas,
-      sourceX,
-      sourceY,
-      sourceWidth,
-      sourceHeight,
-      layout.x,
-      layout.y,
-      layout.size,
-      layout.size,
-    );
-  }
+  ctx.imageSmoothingEnabled = false;
+  if (cache?.canvas)
+    drawMinimapRasterLayer(cache.canvas, cache, layout, bounds);
+  if (state.altFeaturesEnabled && cache?.difficultyCanvas)
+    drawMinimapRasterLayer(cache.difficultyCanvas, cache, layout, bounds);
 
   for (const teammate of currentSquadMemberEntities()) {
     const teammatePos = teammate.renderPos || teammate.snapshot?.pos;
@@ -7924,66 +9482,118 @@ function minimapGridMetrics(map) {
   };
 }
 
-function getMinimapCache(map, layout, bounds) {
+function getMinimapCache(map) {
   const grid = minimapGridMetrics(map);
-  const cellLeft = Math.floor(bounds.left / grid.cellWidth);
-  const cellTop = Math.floor(bounds.top / grid.cellHeight);
-  const cellSpan = Math.ceil(
-    Math.max(bounds.width / grid.cellWidth, bounds.height / grid.cellHeight),
+  const columns = Math.max(
+    1,
+    Math.ceil(
+      (map.width || map.layers?.[0]?.width || 1) * grid.subdivisions,
+    ),
+  );
+  const rows = Math.max(
+    1,
+    Math.ceil(
+      (map.height || map.layers?.[0]?.height || 1) * grid.subdivisions,
+    ),
   );
   const colorful = colorfulMinimapEnabled();
   const key = [
     map.path,
-    state.minimapMode,
-    state.altFeaturesEnabled ? "difficulty" : "terrain",
     colorful ? "color" : "mono",
     grid.subdivisions,
-    state.minimapMode === "full" ? 0 : cellLeft,
-    state.minimapMode === "full" ? 0 : cellTop,
-    cellSpan,
+    columns,
+    rows,
     map.minimapTileMasks?.size || 0,
     map.minimapCollisionCells?.length || 0,
     map.spawnDifficultyCells?.length || 0,
   ].join(":");
-  if (minimapCache?.key === key) return minimapCache;
+  if (minimapCache?.map === map && minimapCache.key === key)
+    return minimapCache;
 
-  const right = bounds.left + bounds.width;
-  const bottom = bounds.top + bounds.height;
-  const visibleCells = {
-    ...grid,
-    minCellX: Math.floor(bounds.left / grid.cellWidth) - 1,
-    minCellY: Math.floor(bounds.top / grid.cellHeight) - 1,
-    maxCellX: Math.ceil(right / grid.cellWidth) + 1,
-    maxCellY: Math.ceil(bottom / grid.cellHeight) + 1,
-  };
-  // Rasterize one pixel per logical subcell before scaling to avoid gaps and overlap.
-  const canvas = document.createElement("canvas");
-  canvas.width = visibleCells.maxCellX - visibleCells.minCellX + 1;
-  canvas.height = visibleCells.maxCellY - visibleCells.minCellY + 1;
-  const target = canvas.getContext("2d");
-  if (!target) return null;
+  const resolveColor = createMinimapColorResolver();
   const backgroundColor = colorful
     ? minimapBackgroundColor
     : minimapMonochromeBackgroundColor;
-  target.fillStyle = backgroundColor;
-  target.fillRect(0, 0, canvas.width, canvas.height);
-  visibleCells.renderOriginX = visibleCells.minCellX;
-  visibleCells.renderOriginY = visibleCells.minCellY;
+  const canvas = document.createElement("canvas");
+  canvas.width = columns;
+  canvas.height = rows;
+  const target = canvas.getContext("2d");
+  if (!target) return null;
+  const terrainPixels = target.createImageData(columns, rows);
+  fillMinimapPixels(terrainPixels.data, resolveColor(backgroundColor));
   if (colorful)
-    drawMinimapTerrainLayers(target, map, visibleCells);
-  else drawMinimapMonochromeTerrain(target, map, visibleCells);
-  if (state.altFeaturesEnabled)
-    drawMinimapDifficultyOverlay(target, map, visibleCells);
+    rasterizeMinimapTerrain(terrainPixels.data, columns, rows, map, grid, resolveColor);
+  else
+    rasterizeMinimapMonochromeTerrain(
+      terrainPixels.data,
+      columns,
+      rows,
+      map,
+      resolveColor,
+    );
+  target.putImageData(terrainPixels, 0, 0);
+
+  const difficultyCanvas = document.createElement("canvas");
+  difficultyCanvas.width = columns;
+  difficultyCanvas.height = rows;
+  const difficultyTarget = difficultyCanvas.getContext("2d");
+  if (difficultyTarget) {
+    const difficultyPixels = difficultyTarget.createImageData(columns, rows);
+    rasterizeMinimapDifficulty(
+      difficultyPixels.data,
+      columns,
+      rows,
+      map,
+      resolveColor,
+    );
+    difficultyTarget.putImageData(difficultyPixels, 0, 0);
+  }
 
   minimapCache = {
+    map,
     key,
     canvas,
+    difficultyCanvas: difficultyTarget ? difficultyCanvas : null,
     cellWidth: grid.cellWidth,
     cellHeight: grid.cellHeight,
-    renderOriginX: visibleCells.renderOriginX,
-    renderOriginY: visibleCells.renderOriginY,
+    renderOriginX: 0,
+    renderOriginY: 0,
   };
   return minimapCache;
+}
+
+function drawMinimapRasterLayer(canvasLayer, cache, layout, bounds) {
+  const sourceX = bounds.left / cache.cellWidth - cache.renderOriginX;
+  const sourceY = bounds.top / cache.cellHeight - cache.renderOriginY;
+  const sourceWidth = bounds.width / cache.cellWidth;
+  const sourceHeight = bounds.height / cache.cellHeight;
+  if (sourceWidth <= 0 || sourceHeight <= 0) return;
+
+  const clippedLeft = clamp(sourceX, 0, canvasLayer.width);
+  const clippedTop = clamp(sourceY, 0, canvasLayer.height);
+  const clippedRight = clamp(sourceX + sourceWidth, 0, canvasLayer.width);
+  const clippedBottom = clamp(sourceY + sourceHeight, 0, canvasLayer.height);
+  const clippedWidth = clippedRight - clippedLeft;
+  const clippedHeight = clippedBottom - clippedTop;
+  if (clippedWidth <= 0 || clippedHeight <= 0) return;
+
+  const destinationX =
+    layout.x + ((clippedLeft - sourceX) / sourceWidth) * layout.size;
+  const destinationY =
+    layout.y + ((clippedTop - sourceY) / sourceHeight) * layout.size;
+  const destinationWidth = (clippedWidth / sourceWidth) * layout.size;
+  const destinationHeight = (clippedHeight / sourceHeight) * layout.size;
+  ctx.drawImage(
+    canvasLayer,
+    clippedLeft,
+    clippedTop,
+    clippedWidth,
+    clippedHeight,
+    destinationX,
+    destinationY,
+    destinationWidth,
+    destinationHeight,
+  );
 }
 
 function minimapTileColor(map, gid) {
@@ -8072,82 +9682,93 @@ function minimapTileTransformMatrix(raw, subdivisions) {
   return transform;
 }
 
-function drawMinimapCell(target, cells, cellX, cellY) {
-  target.fillRect(
-    cellX - cells.renderOriginX,
-    cellY - cells.renderOriginY,
-    1,
-    1,
-  );
+function createMinimapColorResolver() {
+  const parser = document.createElement("canvas");
+  parser.width = 1;
+  parser.height = 1;
+  const parserContext = parser.getContext("2d", { willReadFrequently: true });
+  const colors = new Map();
+
+  return (color) => {
+    const key = String(color || "transparent");
+    const cached = colors.get(key);
+    if (cached) return cached;
+    if (!parserContext) return [0, 0, 0, 255];
+
+    parserContext.clearRect(0, 0, 1, 1);
+    parserContext.fillStyle = "#000000";
+    parserContext.fillStyle = key;
+    parserContext.fillRect(0, 0, 1, 1);
+    const rgba = Array.from(parserContext.getImageData(0, 0, 1, 1).data);
+    colors.set(key, rgba);
+    return rgba;
+  };
 }
 
-function minimapCellIsVisible(cell, cells) {
-  return (
-    cell.x >= cells.minCellX &&
-    cell.x <= cells.maxCellX &&
-    cell.y >= cells.minCellY &&
-    cell.y <= cells.maxCellY
-  );
+function fillMinimapPixels(pixels, rgba) {
+  for (let offset = 0; offset < pixels.length; offset += 4) {
+    pixels[offset] = rgba[0];
+    pixels[offset + 1] = rgba[1];
+    pixels[offset + 2] = rgba[2];
+    pixels[offset + 3] = rgba[3];
+  }
 }
 
-function drawMinimapTerrainLayers(target, map, cells) {
-  let currentColor = "";
+function setMinimapPixel(pixels, width, height, x, y, rgba) {
+  if (x < 0 || x >= width || y < 0 || y >= height) return;
+  const offset = (y * width + x) * 4;
+  pixels[offset] = rgba[0];
+  pixels[offset + 1] = rgba[1];
+  pixels[offset + 2] = rgba[2];
+  pixels[offset + 3] = rgba[3];
+}
+
+function rasterizeMinimapTerrain(
+  pixels,
+  width,
+  height,
+  map,
+  grid,
+  resolveColor,
+) {
+  const tileColors = new Map();
   // Tiled stores visual layers bottom-to-top, so later TMJ layers must win.
   for (const layer of map.layers || []) {
-    if (layer.visible === false || !layer.width || !layer.height) continue;
-    const minX = clamp(
-      Math.floor(cells.minCellX / cells.subdivisions),
-      0,
-      layer.width - 1,
-    );
-    const minY = clamp(
-      Math.floor(cells.minCellY / cells.subdivisions),
-      0,
-      layer.height - 1,
-    );
-    const maxX = clamp(
-      Math.floor(cells.maxCellX / cells.subdivisions),
-      0,
-      layer.width - 1,
-    );
-    const maxY = clamp(
-      Math.floor(cells.maxCellY / cells.subdivisions),
-      0,
-      layer.height - 1,
-    );
-    for (let y = minY; y <= maxY; y += 1) {
-      for (let x = minX; x <= maxX; x += 1) {
+    if (
+      layer.visible === false ||
+      !layer.width ||
+      !layer.height ||
+      !layer.tiles?.length
+    )
+      continue;
+
+    for (let y = 0; y < layer.height; y += 1) {
+      for (let x = 0; x < layer.width; x += 1) {
         const raw = layer.tiles[y * layer.width + x] || 0;
         const gid = minimapCanonicalTileGid(raw);
         if (!gid) continue;
-        const color = minimapTileColor(map, gid);
-        if (color !== currentColor) {
-          target.fillStyle = color;
-          currentColor = color;
+
+        let rgba = tileColors.get(gid);
+        if (!rgba) {
+          rgba = resolveColor(minimapTileColor(map, gid));
+          tileColors.set(gid, rgba);
         }
         const mask = transformedMinimapTileMask(
           map,
           raw,
-          cells.subdivisions,
+          grid.subdivisions,
         );
-        for (let cellY = 0; cellY < cells.subdivisions; cellY += 1) {
-          for (let cellX = 0; cellX < cells.subdivisions; cellX += 1) {
-            const bit = 1 << (cellY * cells.subdivisions + cellX);
+        for (let cellY = 0; cellY < grid.subdivisions; cellY += 1) {
+          for (let cellX = 0; cellX < grid.subdivisions; cellX += 1) {
+            const bit = 1 << (cellY * grid.subdivisions + cellX);
             if ((mask & bit) === 0) continue;
-            const globalCellX = x * cells.subdivisions + cellX;
-            const globalCellY = y * cells.subdivisions + cellY;
-            if (
-              globalCellX < cells.minCellX ||
-              globalCellX > cells.maxCellX ||
-              globalCellY < cells.minCellY ||
-              globalCellY > cells.maxCellY
-            )
-              continue;
-            drawMinimapCell(
-              target,
-              cells,
-              globalCellX,
-              globalCellY,
+            setMinimapPixel(
+              pixels,
+              width,
+              height,
+              x * grid.subdivisions + cellX,
+              y * grid.subdivisions + cellY,
+              rgba,
             );
           }
         }
@@ -8156,12 +9777,16 @@ function drawMinimapTerrainLayers(target, map, cells) {
   }
 }
 
-function drawMinimapMonochromeTerrain(target, map, cells) {
-  target.fillStyle = minimapMonochromeWallColor;
-  for (const cell of map.minimapCollisionCells || []) {
-    if (!minimapCellIsVisible(cell, cells)) continue;
-    drawMinimapCell(target, cells, cell.x, cell.y);
-  }
+function rasterizeMinimapMonochromeTerrain(
+  pixels,
+  width,
+  height,
+  map,
+  resolveColor,
+) {
+  const wallColor = resolveColor(minimapMonochromeWallColor);
+  for (const cell of map.minimapCollisionCells || [])
+    setMinimapPixel(pixels, width, height, cell.x, cell.y, wallColor);
 }
 
 function minimapDifficultyRarity(difficulty) {
@@ -8170,22 +9795,27 @@ function minimapDifficultyRarity(difficulty) {
   return clamp(Math.round(value / 10), 1, rarityPrimordial);
 }
 
-function drawMinimapDifficultyOverlay(target, map, cells) {
-  let currentRarity = 0;
+function rasterizeMinimapDifficulty(
+  pixels,
+  width,
+  height,
+  map,
+  resolveColor,
+) {
+  const rarityColors = new Map();
   for (const cell of map.spawnDifficultyCells || []) {
-    if (!minimapCellIsVisible(cell, cells)) continue;
     const rarity = minimapDifficultyRarity(cell.difficulty);
-    if (rarity !== currentRarity) {
-      target.fillStyle = rarityColor(rarity, 1);
-      currentRarity = rarity;
+    let rgba = rarityColors.get(rarity);
+    if (!rgba) {
+      rgba = resolveColor(rarityColor(rarity, 1));
+      rarityColors.set(rarity, rgba);
     }
-    drawMinimapCell(target, cells, cell.x, cell.y);
+    setMinimapPixel(pixels, width, height, cell.x, cell.y, rgba);
   }
 }
 
 function toggleMinimapMode() {
   state.minimapMode = state.minimapMode === "full" ? "local" : "full";
-  minimapCache = null;
 }
 
 function eventCanvasPoint(event) {
@@ -8221,6 +9851,7 @@ function isEntityInRenderView(entity, scale) {
   const deathEase = deathProgress * deathProgress * (3 - deathProgress * 2);
   const radius =
     Math.max(0, snap.radius || 0) *
+    flowerMobCullScale(snap.entityType) *
     (entity.dying ? 1 + deathEase * deathScaleBoost : 1);
   const padding = renderCullPaddingPx / scale;
   const halfW = (state.canvasWidth * 0.5) / scale + radius + padding;
@@ -8442,9 +10073,16 @@ function tick(now) {
       state.fps <= 0 ? instantFps : state.fps + (instantFps - state.fps) * 0.08;
   }
   flushPendingSnapshot();
+  updateViewRadius(now);
   flushInput(dt);
   updateRenderPositions(dt);
-  drawScene(now);
+  mysteryAudio.updateProximity({
+    enabled: state.authenticated,
+    owner: state.entities.get(state.ownerEntityId),
+    entities: state.entities.values(),
+    viewRadius: state.viewRadius,
+  });
+  if (!state.mapLoadPromise) drawScene(now);
   updateChatVisibility(now);
   updateDebugInfo();
   requestAnimationFrame(tick);
@@ -8460,8 +10098,23 @@ function inputKeyFromEvent(event) {
 }
 
 function setupEvents() {
+  window.addEventListener("pointerdown", () => mysteryAudio.unlock(), {
+    capture: true,
+    passive: true,
+  });
+  window.addEventListener("keydown", () => mysteryAudio.unlock(), {
+    capture: true,
+  });
   window.addEventListener("resize", resizeCanvas);
   connectBtn.addEventListener("click", connectAndAuth);
+  sendCodeBtn.addEventListener("click", requestVerificationCode);
+  registerModeInput.addEventListener("change", () => {
+    if (authUiMode === AuthUiMode.Binding) return;
+    verificationCodeField.clear();
+    setAuthUiMode(
+      registerModeInput.checked ? AuthUiMode.Register : AuthUiMode.Login,
+    );
+  });
   reviveBtn.addEventListener("click", requestRevive);
   deathCloseBtn?.addEventListener("click", closeDeathOverlay);
   backpackCloseBtn.addEventListener("click", () => toggleBackpack(false));
@@ -8483,22 +10136,6 @@ function setupEvents() {
   quickCraftBtn?.addEventListener("click", () => toggleCraft());
   chatHint?.addEventListener("click", () => openChat(""));
   chatChannels?.addEventListener("change", chatUi.handleFilterChange);
-  for (const input of [wsUrlInput, accountInput, passwordInput]) {
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") connectAndAuth();
-    });
-  }
-
-  chatInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      submitChat();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      closeChat();
-    }
-  });
-
   window.addEventListener(
     "pointerdown",
     (event) => {
@@ -8610,12 +10247,26 @@ function setupEvents() {
       if (!event.repeat) {
         state.altFeaturesEnabled = !state.altFeaturesEnabled;
         state.keys.delete("alt");
-        minimapCache = null;
       }
+      return;
+    }
+    if (key === "r") {
+      event.preventDefault();
+      if (!event.repeat) quickSwapAllSlots();
+      return;
+    }
+    if (key === "o") {
+      event.preventDefault();
+      if (!event.repeat) saveActiveLoadoutPreset();
       return;
     }
     if (key === "space" || key === "shift") event.preventDefault();
     const slotIndex = slotIndexFromKey(key);
+    if (slotIndex !== null && state.keys.has("l")) {
+      event.preventDefault();
+      if (!event.repeat) selectLoadoutPreset(slotIndex);
+      return;
+    }
     const ownerSlots = displayOwnerSlots();
     if (slotIndex !== null && slotIndex < ownerSlots.length) {
       state.selectedSlot = slotIndex;
@@ -8649,8 +10300,7 @@ function setupEvents() {
     state.defending = false;
     state.digging = false;
     mobileControls?.reset();
-    sendBytes(packInput(0, 0));
-    sendBytes(packChores(false, false, false, false, false));
+    sendNeutralGameplayState({ includeInput: true });
   });
 
   window.addEventListener("mousedown", (event) => {
@@ -8675,7 +10325,10 @@ function setupEvents() {
     if (!isUiTarget(event.target)) event.preventDefault();
   });
 
-  window.addEventListener("beforeunload", () => closeSocket(true));
+  window.addEventListener("beforeunload", () => {
+    pageUnloading = true;
+    closeSocket(true);
+  });
 }
 
 function slotIndexFromKey(key) {
@@ -8684,10 +10337,20 @@ function slotIndexFromKey(key) {
   return null;
 }
 
+document.title = appDisplayName;
+const appVersionElement = document.getElementById("appVersion");
+if (appVersionElement) appVersionElement.textContent = `v${appVersion}`;
+
 loadSettings();
+await initI18n(state.locale);
+state.locale = getLocale();
+applyDocumentTranslations();
+setAuthUiMode(AuthUiMode.Login);
 setupEvents();
+updateQuickActionButtons();
 resizeCanvas();
 renderInventoryPanel();
-addConsoleLine("Web client ready");
+setStatus(t("status.disconnected"));
+addConsoleLine(t("status.clientReady", { app: appDisplayName }));
 loadLoginMap();
 requestAnimationFrame(tick);

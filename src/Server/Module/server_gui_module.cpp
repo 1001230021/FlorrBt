@@ -3,10 +3,14 @@
 #include "../../Shared/game_config.h"
 #include "../Game/entities/mob.h"
 #include "../Game/entities/petals/petal.h"
+#include "../Game/gamecontext.h"
+#include "../Game/gameworld.h"
+#include "../Game/player.h"
 #include "../server.h"
 #include <SFML/Window/Clipboard.hpp>
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <sstream>
@@ -32,8 +36,8 @@ std::vector<std::string> RarityNames()
 std::vector<std::string> PetalNames()
 {
     std::vector<std::string> names;
-    names.reserve(g_petal_registry.size());
-    for (const auto& [type, proto] : g_petal_registry)
+    names.reserve(PetalRegistry().size());
+    for (const auto& [type, proto] : PetalRegistry())
     {
         if (proto && !proto->m_name.empty()) names.push_back(proto->m_name);
         else names.emplace_back(GetPetalTypeName(type));
@@ -45,8 +49,8 @@ std::vector<std::string> PetalNames()
 std::vector<std::string> MobNames()
 {
     std::vector<std::string> names;
-    names.reserve(g_mob_registry.size());
-    for (const auto& [type, proto] : g_mob_registry)
+    names.reserve(MobRegistry().size());
+    for (const auto& [type, proto] : MobRegistry())
     {
         if (proto && !proto->m_name.empty()) names.push_back(proto->m_name);
         else names.emplace_back(GetMobTypeName(type));
@@ -82,6 +86,141 @@ bool IsUnsignedInteger(std::string_view text)
 {
     return !text.empty() &&
            std::all_of(text.begin(), text.end(), [](char ch) { return std::isdigit(static_cast<unsigned char>(ch)); });
+}
+
+std::vector<std::string> SplitWhitespace(const std::string& input);
+
+std::vector<std::string> PlayerNames()
+{
+    std::vector<std::string> names;
+    CServer* server = CServer::GetInstance();
+    CGameContext* context = server ? server->GameContext() : nullptr;
+    if (!context) return names;
+
+    names.reserve(context->Players().size());
+    for (const auto& player : context->Players())
+    {
+        if (player && !player->GetName().empty()) names.push_back(player->GetName());
+    }
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
+std::vector<std::string> WorldIds()
+{
+    std::vector<std::string> ids;
+    CServer* server = CServer::GetInstance();
+    if (!server) return ids;
+
+    const std::vector<CGameWorld*> worlds = server->GetWorlds();
+    ids.reserve(worlds.size());
+    for (const CGameWorld* world : worlds)
+    {
+        if (world) ids.push_back(std::to_string(world->GetId()));
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
+std::vector<std::string> WorldIdsAndMapNames()
+{
+    std::vector<std::string> values = WorldIds();
+    CServer* server = CServer::GetInstance();
+    if (!server) return values;
+
+    for (const CGameWorld* world : server->GetWorlds())
+    {
+        if (world && !world->GetMapName().empty()) values.push_back(world->GetMapName());
+    }
+    std::sort(values.begin(), values.end());
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+    return values;
+}
+
+std::vector<std::string> EntityRefs(std::string_view prefix)
+{
+    std::vector<std::string> refs;
+    CServer* server = CServer::GetInstance();
+    if (!server) return refs;
+
+    const size_t separator = prefix.find(':');
+    if (separator == std::string_view::npos)
+    {
+        for (const std::string& world_id : WorldIds())
+            refs.push_back(world_id + ":");
+        return refs;
+    }
+    const std::string world_prefix(prefix.substr(0, separator));
+    if (world_prefix.empty() || !IsUnsignedInteger(world_prefix)) return refs;
+
+    std::uint32_t world_id = 0;
+    const char* begin = world_prefix.data();
+    const char* end = begin + world_prefix.size();
+    const auto [ptr, error] = std::from_chars(begin, end, world_id);
+    if (error != std::errc{} || ptr != end) return refs;
+    CGameWorld* world = server->FindWorldById(world_id);
+    if (!world) return refs;
+
+    world->ForEachEntity([&](const CEntity* entity) {
+        if (entity) refs.push_back(std::to_string(world_id) + ":" + std::to_string(entity->m_id));
+    });
+    std::sort(refs.begin(), refs.end());
+    return refs;
+}
+
+std::string CompletionKindAt(const CConsole& console, const std::string& command, const std::string& input,
+                             size_t argument_index)
+{
+    if (command == "equip")
+    {
+        const std::vector<std::string> tokens = SplitWhitespace(input);
+        const bool has_slot = tokens.size() > 2 && IsUnsignedInteger(tokens[2]);
+        if (argument_index == 0) return "target";
+        if (argument_index == (has_slot ? 2u : 1u)) return "petal";
+        if (argument_index == (has_slot ? 3u : 2u)) return "rarity";
+        return {};
+    }
+    if (command == "say")
+    {
+        const std::vector<std::string> tokens = SplitWhitespace(input);
+        if (argument_index == 0) return "channel";
+        if (tokens.size() < 2) return {};
+
+        std::string channel = tokens[1];
+        std::transform(channel.begin(), channel.end(), channel.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (channel == "local" && argument_index == 1) return "world";
+        if (channel == "whisper" && argument_index == 1) return "player";
+        if (channel == "server" && argument_index == 1) return "player";
+        return {};
+    }
+
+    const auto schema = console.CommandCompletionSchema(command);
+    if (!schema) return {};
+    const std::vector<std::string> kinds = SplitWhitespace(std::string(*schema));
+    return argument_index < kinds.size() ? kinds[argument_index] : std::string{};
+}
+
+std::vector<std::string> CompletionCandidates(std::string_view kind, std::string_view prefix, CConsole& console)
+{
+    if (kind == "command") return console.CommandNames();
+    if (kind == "config") return game_config::ConfigNames();
+    if (kind == "rarity") return RarityNames();
+    if (kind == "petal") return PetalNames();
+    if (kind == "mob") return MobNames();
+    if (kind == "player" || kind == "target")
+    {
+        std::vector<std::string> candidates = PlayerNames();
+        std::vector<std::string> refs = EntityRefs(prefix);
+        candidates.insert(candidates.end(), refs.begin(), refs.end());
+        return candidates;
+    }
+    if (kind == "entity") return EntityRefs(prefix);
+    if (kind == "world") return WorldIds();
+    if (kind == "world_or_map") return WorldIdsAndMapNames();
+    if (kind == "bool") return { "0", "1" };
+    if (kind == "channel") return { "global", "local", "server", "whisper" };
+    return {};
 }
 
 std::vector<std::string> SplitWhitespace(const std::string& input)
@@ -457,21 +596,21 @@ void IServerGuiModule::CompleteCommand()
         const std::string command = input.substr(0, input.find(' '));
         const size_t token_index = TokenIndexAt(input, replace_begin);
         if (token_index == 0) source = m_console.CommandNames();
-        else if ((command == "set" || command == "get") && token_index == 1) source = game_config::ConfigNames();
-        else if (command == "equip" && token_index == 2) source = RarityNames();
-        else if (command == "equip" && token_index == 3)
-        {
-            std::vector<std::string> tokens = SplitWhitespace(input);
-            source = tokens.size() > 2 && IsUnsignedInteger(tokens[2]) ? RarityNames() : PetalNames();
-        } else if (command == "equip" && token_index == 4) source = PetalNames();
-        else if (command == "spawn" && token_index == 1) source = MobNames();
-        else if (command == "spawn" && token_index == 2) source = RarityNames();
-        else return;
+        else
+            source =
+                CompletionCandidates(CompletionKindAt(m_console, command, input, token_index - 1), prefix, m_console);
+        if (source.empty()) return;
 
         m_completion_matches.clear();
+        std::string normalized_prefix = prefix;
+        std::transform(normalized_prefix.begin(), normalized_prefix.end(), normalized_prefix.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
         for (const std::string& candidate : source)
         {
-            if (candidate.rfind(prefix, 0) == 0) m_completion_matches.push_back(candidate);
+            std::string normalized_candidate = candidate;
+            std::transform(normalized_candidate.begin(), normalized_candidate.end(), normalized_candidate.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            if (normalized_candidate.rfind(normalized_prefix, 0) == 0) m_completion_matches.push_back(candidate);
         }
         std::sort(m_completion_matches.begin(), m_completion_matches.end());
         if (m_completion_matches.empty()) return;

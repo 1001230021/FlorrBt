@@ -1,4 +1,4 @@
-import { dom, state } from "./app_context.js";
+import { dom, loadoutPresetCount, state } from "./app_context.js";
 import {
   clientRuntimeConfig,
   defaultClientConfig,
@@ -6,7 +6,7 @@ import {
 } from "./client_config.js";
 
 const settingsKey = "florrbt.web.settings";
-const settingsVersion = 10;
+const settingsVersion = 13;
 const dandelionRightFacingConfigVersion = 7;
 const loginMapViewDefaultsVersion = 10;
 const {
@@ -27,6 +27,39 @@ export function normalizeMobileControlMode(value) {
   return "auto";
 }
 
+function normalizeLoadoutSlot(value) {
+  const petalType = Number(value?.petalType);
+  const rarity = Number(value?.rarity);
+  if (
+    !Number.isInteger(petalType) ||
+    !Number.isInteger(rarity) ||
+    petalType <= 0 ||
+    rarity <= 0 ||
+    petalType > 255 ||
+    rarity > 255
+  )
+    return { petalType: 0, rarity: 0 };
+  return { petalType, rarity };
+}
+
+function normalizeLoadoutPreset(value) {
+  return {
+    primarySlots: Array.isArray(value?.primarySlots)
+      ? value.primarySlots.map(normalizeLoadoutSlot)
+      : [],
+    secondarySlots: Array.isArray(value?.secondarySlots)
+      ? value.secondarySlots.map(normalizeLoadoutSlot)
+      : [],
+  };
+}
+
+function normalizeLoadoutPresets(value) {
+  const presets = Array.isArray(value) ? value : [];
+  return Array.from({ length: loadoutPresetCount }, (_, index) =>
+    normalizeLoadoutPreset(presets[index]),
+  );
+}
+
 export function loadClientSettings() {
   let saved = {};
   try {
@@ -35,14 +68,29 @@ export function loadClientSettings() {
     saved = {};
   }
 
+  if (Object.prototype.hasOwnProperty.call(saved, "password")) {
+    delete saved.password;
+    try {
+      localStorage.setItem(settingsKey, JSON.stringify(saved));
+    } catch {
+      // Settings remain usable even when storage is unavailable.
+    }
+  }
+
   wsUrlInput.value =
     saved.wsUrl || `ws://${location.host || "127.0.0.1:8080"}/ws`;
   accountInput.value = saved.account || "";
-  passwordInput.value = saved.password || "";
+  passwordInput.value = "";
+  state.locale = String(saved.locale || "en");
   state.keyboardControl = saved.keyboardControl === true;
   state.mobileControlMode = normalizeMobileControlMode(
     saved.mobileControlMode || "auto",
   );
+  state.loadoutPresets = normalizeLoadoutPresets(saved.loadoutPresets);
+  const activeLoadoutPreset = Number(saved.activeLoadoutPreset);
+  state.activeLoadoutPreset = Number.isInteger(activeLoadoutPreset)
+    ? Math.min(loadoutPresetCount - 1, Math.max(0, activeLoadoutPreset))
+    : 0;
   state.loginMapName =
     String(saved.loginMapName || loginMapDefaultName).trim() ||
     loginMapDefaultName;
@@ -85,9 +133,11 @@ export function saveClientSettings() {
       version: settingsVersion,
       wsUrl: wsUrlInput.value.trim(),
       account: accountInput.value,
-      password: passwordInput.value,
+      locale: state.locale,
       keyboardControl: state.keyboardControl,
       mobileControlMode: state.mobileControlMode,
+      loadoutPresets: normalizeLoadoutPresets(state.loadoutPresets),
+      activeLoadoutPreset: state.activeLoadoutPreset,
       loginMapName: state.loginMapName,
       loginMapX: state.loginMapX,
       loginMapY: state.loginMapY,

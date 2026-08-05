@@ -70,6 +70,7 @@ function Build-InteractiveSelfArgs([string]$ChildMode) {
 
 function Find-Node {
     $candidates = @(
+        (Join-Path $RepoRoot "runtime\node.exe"),
         (Get-Command node -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
         "C:\Program Files\nodejs\node.exe",
         "C:\Program Files (x86)\nodejs\node.exe",
@@ -115,6 +116,21 @@ function Resolve-ServerExe {
     throw "FlorrBt.Server.exe was not found. Build the server first, or pass -ServerExe <path>."
 }
 
+function Resolve-LauncherExe {
+    $candidates = @(
+        (Join-Path $RepoRoot "x64\Release\FlorrBt.Launcher.exe"),
+        (Join-Path $RepoRoot "x64\Debug\FlorrBt.Launcher.exe"),
+        (Join-Path $RepoRoot "build\Release\FlorrBt.Launcher.exe"),
+        (Join-Path $RepoRoot "build\Debug\FlorrBt.Launcher.exe")
+    )
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) { return $candidate }
+    }
+
+    return $null
+}
+
 function Ensure-ServerCfg {
     $cfg = Join-Path $RepoRoot "data\server.cfg"
     if (Test-Path $cfg) {
@@ -148,11 +164,18 @@ function Start-ServerForeground {
     Ensure-ServerCfg
 
     $exe = Resolve-ServerExe
+    $launcher = Resolve-LauncherExe
     Write-Section "FlorrBt server"
     Write-Host "Root: $RepoRoot"
     Write-Host "Exe : $exe"
     Write-Host "Port: $GamePort unless data/server.cfg overrides it"
-    & $exe
+    if ($launcher) {
+        Write-Host "Hot reload launcher: $launcher"
+        & $launcher --server $exe
+    } else {
+        Write-Warning "FlorrBt.Launcher.exe was not found; hot_reload cannot restart this process."
+        & $exe
+    }
 }
 
 function Start-WebForeground {

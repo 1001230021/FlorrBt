@@ -366,3 +366,10 @@ FodyWeavers.xsd
 .vscode/
 
 build/
+
+# FlorrBt runtime and recovery data
+.catalog_registry_test/
+data/hot_reload/
+data/unique_petals.json
+*.corrupt.bak
+tools/*.exe

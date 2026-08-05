@@ -14,7 +14,8 @@ class CStateZone : public CEntity
     using state_factory = std::function<std::unique_ptr<CState>(CMobBase*)>;
     using zone_filter = std::function<bool(CEntity*)>;
 
-    CStateZone(CGameWorld* world, sf::Vector2f pos, float radius, state_factory state, zone_filter filter = nullptr);
+    CStateZone(CGameWorld* world, sf::Vector2f pos, float radius, state_factory state, zone_filter filter = nullptr,
+               SEntityTypeInfo entity_type = MakeEntityType(EEntityType::StateZone));
 
     template <typename TState, typename... TArgs> static state_factory MakeStateFactory(TArgs... args)
     {

@@ -42,18 +42,20 @@ enum class EMobType : int
     WorkerTermite,
     TermiteOvermind,
     LeafPiece,
+    LeafcutterSoldier,
+    Titan,
 };
 
 using MobType = EMobType;
 
-inline constexpr std::array<std::string_view, 37> mob_type_names = {
+inline constexpr std::array<std::string_view, 39> mob_type_names = {
     "None",          "Beetle",        "Gambler",        "NormalLadybug",  "MechaFlower",    "NormalFlower",
     "PlayerFlower",  "SoldierAnt",    "SoldierFireAnt", "SoldierTermite", "SummonedBeetle", "SummonedSoldierAnt",
     "BandageBeetle", "Bee",           "Hornet",         "BumbleBee",      "Rock",           "BabyAnt",
     "WorkerAnt",     "QueenAnt",      "AntHole",        "Spider",         "Sandstorm",      "Dummy",
     "Dandelion",     "AntEgg",        "FireAntEgg",     "TermiteEgg",     "QueenAntEgg",    "QueenFireAntEgg",
     "BabyFireAnt",   "WorkerFireAnt", "FireQueenAnt",   "BabyTermite",    "WorkerTermite",  "TermiteOvermind",
-    "LeafPiece",
+    "LeafPiece",     "LeafcutterSoldier", "Titan",
 };
 
 inline std::string_view GetMobTypeName(EMobType type)
@@ -73,6 +75,8 @@ inline bool MatchMobTypeAlias(std::string_view text, EMobType type)
     {
     case EMobType::NormalLadybug:
         return text == "lady" || text == "ladybug" || text == "clady" || text == "normal_ladybug";
+    case EMobType::MechaFlower:
+        return text == "mf" || text == "mechaflower" || text == "mecha_flower";
     case EMobType::Beetle:
         return text == "btl";
     case EMobType::BandageBeetle:
@@ -82,7 +86,7 @@ inline bool MatchMobTypeAlias(std::string_view text, EMobType type)
     case EMobType::SoldierFireAnt:
         return text == "sfa" || text == "soldierfireant";
     case EMobType::SoldierTermite:
-        return text == "stm" || text == "soldiertermite";
+        return text == "sta" || text == "stm" || text == "soldiertermite";
     case EMobType::SummonedSoldierAnt:
         return text == "ssat";
     case EMobType::Bee:
@@ -133,6 +137,10 @@ inline bool MatchMobTypeAlias(std::string_view text, EMobType type)
         return text == "ovm" || text == "overmind" || text == "termiteovermind" || text == "termite_overmind";
     case EMobType::LeafPiece:
         return text == "lp" || text == "leafpiece" || text == "leaf_piece";
+    case EMobType::LeafcutterSoldier:
+        return text == "lcs" || text == "leafcuttersoldier" || text == "leafcutter_soldier";
+    case EMobType::Titan:
+        return text == "titan";
     default:
         return false;
     }

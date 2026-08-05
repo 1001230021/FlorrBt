@@ -1,11 +1,13 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
 class CEntity;
 class CGameWorld;
 class CPlayer;
+enum class EPlayerSpawnReason : std::uint8_t;
 
 class IPlayerLifecycleNotifier
 {
@@ -22,7 +24,7 @@ class CPlayerLifecycleService
   public:
     void ProcessDropPickups(const std::vector<std::unique_ptr<CPlayer>>& players,
                             IPlayerLifecycleNotifier& notifier) const;
-    CEntity* Respawn(CPlayer& player, CGameWorld& world) const;
+    CEntity* SpawnPlayer(CPlayer& player, CGameWorld& world, EPlayerSpawnReason reason) const;
     void RespawnDeadControlledEntities(const std::vector<std::unique_ptr<CPlayer>>& players, CGameWorld& respawn_world,
                                        IPlayerLifecycleNotifier& notifier) const;
     void NotifyPlayerLogin(CPlayer& player, IPlayerLifecycleNotifier& notifier) const;
