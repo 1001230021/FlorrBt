@@ -6,6 +6,7 @@ import {
   NETWORK_PETAL_TYPE_OFFSET,
   PetalNames,
   PetalSlotCopyState,
+  PetalSlotVisualType,
   RarityNames,
   ServerType,
   appendBytes,
@@ -149,6 +150,7 @@ import {
   nonStackPetalTypes,
   normalLadybugType,
   petalAirType,
+  petalAmuletType,
   petalAntEggType,
   petalAntennaeType,
   petalBandageType,
@@ -189,6 +191,7 @@ import {
   petalNullificationType,
   petalOrangeType,
   petalPincerType,
+  petalPlankType,
   petalPollenType,
   petalRelicType,
   petalRiceType,
@@ -201,6 +204,7 @@ import {
   petalThirdEyeType,
   petalTriangleType,
   petalTrapperType,
+  petalTomatoType,
   petalWaxType,
   petalWebType,
   petalWhiteFungusType,
@@ -404,6 +408,7 @@ const {
   deathScaleBoost,
   hurtFlashDuration,
   hurtFlashMinDelta,
+  hurtFlashFilterEntityLimit,
   missingEntityViewEdgeGrace,
   viewScreenFill,
   viewScreenPadding,
@@ -519,6 +524,7 @@ const ownerMovementTalentMultiplierByRarity = Object.freeze({
 let currentRenderTimeSeconds = 0;
 let currentVisibleEntityCount = 0;
 let currentRenderLoad = 0;
+let currentHurtFlashFilterCount = 0;
 let currentHornetSkill2WindupOwners = [];
 let minimapHitRect = null;
 let minimapCache = null;
@@ -1221,7 +1227,6 @@ function resetNetworkScene({ resetRunCollection = true } = {}) {
   state.serverTick = -1;
   state.serverTickReceivedAt = 0;
   state.serverTickInterval = serverFixedDt;
-  state.inputSequence = 0;
   state.lastInput = {
     x: 99,
     y: 99,
@@ -1775,6 +1780,7 @@ function applySnapshot(msg) {
         syncEntityRenderToSnapshot(existing, snap);
       existing.dying = false;
       existing.deathAge = 0;
+      existing.missingSnapshotCount = 0;
       if (!isDead && snap.hpPercent < previousHp - hurtFlashMinDelta)
         existing.hurtFlashAge = 0;
       if (isDead && !wasDead) existing.deathAngle = Math.random() * Math.PI * 2;
@@ -1789,6 +1795,7 @@ function applySnapshot(msg) {
         snapshotVelocity: { x: 0, y: 0 },
         snapshotAt: snapshotNow,
         lastSnapshotAt: snapshotNow,
+        missingSnapshotCount: 0,
         playerPrimarySlotRarity:
           snap.entityType === playerFlowerType
             ? highestSlotRarity(snap.primarySlots)
@@ -1823,6 +1830,8 @@ function applySnapshot(msg) {
     if (live.has(id)) continue;
     const entity = state.entities.get(id);
     if (!entity) continue;
+    entity.missingSnapshotCount = (entity.missingSnapshotCount || 0) + 1;
+    if (entity.missingSnapshotCount < 3) continue;
     if (entity.dying) continue;
     if (!shouldFadeMissingEntity(entity)) {
       state.entities.delete(id);
@@ -1900,9 +1909,11 @@ function syncOwnerSlotRuntimeFromSnapshot(ownerSnap) {
   state.ownerSlotRuntime = ownerSnap.primarySlots.map((slot) => ({
     petalType: slot?.petalType || 0,
     rarity: slot?.rarity || 0,
+    visualType: slot?.visualType || PetalSlotVisualType.None,
     copies: (slot?.copies || []).map((copy) => ({
       loading: copy?.state === PetalSlotCopyState.Loading,
       progress: clamp(copy?.progress || 0, 0, 1),
+      visual: Number.isFinite(copy?.visual) ? copy.visual : null,
     })),
   }));
   updateOwnerSlotRuntimeOverlays();
@@ -3160,6 +3171,7 @@ function updateSlotDurabilityOverlay(button, slot, index, kind) {
     runtime.rarity === (slot?.rarity || 0)
       ? runtime.copies || []
       : [];
+  updateSlotLiveVisual(button, runtime, copies);
   let overlays = button.querySelector(":scope > .slot-durability-overlays");
   if (!slotHasItem(slot) || copies.length === 0) {
     overlays?.remove();
@@ -3186,6 +3198,47 @@ function updateSlotDurabilityOverlay(button, slot, index, kind) {
     layer.style.height = `${(1 - clamp(copy.progress || 0, 0, 1)) * 100}%`;
     layer.style.opacity = String(layerOpacity);
   });
+}
+
+function updateSlotLiveVisual(button, runtime, copies) {
+  const icons = button.querySelectorAll(
+    ":scope > .petal-stack > .petal-live-visual",
+  );
+  for (const icon of icons) {
+    const copyIndex = Number(icon.dataset.petalCopyIndex || 0);
+    const petalType = Number(icon.dataset.petalVisualType || 0);
+    const copy = copies[copyIndex] || null;
+    let angle = 0;
+    let scale = 1;
+
+    if (
+      runtime?.visualType === PetalSlotVisualType.Angle &&
+      Number.isFinite(copy?.visual)
+    ) {
+      const targetAngle = livePetalRenderAngle(petalType, copy.visual);
+      const previousAngle = Number(icon.dataset.liveRenderAngle);
+      if (Number.isFinite(previousAngle)) {
+        let delta = normalizeAngle(targetAngle) - normalizeAngle(previousAngle);
+        if (delta > Math.PI) delta -= Math.PI * 2;
+        else if (delta < -Math.PI) delta += Math.PI * 2;
+        angle = previousAngle + delta;
+      } else {
+        angle = targetAngle;
+      }
+      icon.dataset.liveRenderAngle = String(angle);
+    } else if (
+      runtime?.visualType === PetalSlotVisualType.Size &&
+      Number.isFinite(copy?.visual)
+    ) {
+      scale = clamp(copy.visual, 0.05, 1);
+      delete icon.dataset.liveRenderAngle;
+    } else {
+      delete icon.dataset.liveRenderAngle;
+    }
+
+    icon.style.setProperty("--live-angle", `${angle}rad`);
+    icon.style.setProperty("--live-scale", String(scale));
+  }
 }
 
 function renderCraftPanel() {
@@ -4055,15 +4108,25 @@ function makeSlotButton(
 
   if (slotHasItem(slot)) {
     button.title = formatPetalItem(slot.petalType, slot.rarity);
+    const visualPetalType = slotVisualPetalType(
+      slot,
+      index,
+      kind,
+      primaryForVisual,
+    );
     button.appendChild(
       makePetalStack(
         slot.petalType,
         slot.rarity,
         0,
-        slotVisualPetalType(slot, index, kind),
+        visualPetalType,
         {
           kind,
           slotIndex: index,
+          liveVisual:
+            kind === "primary" &&
+            (visualPetalType === petalCompassType ||
+              visualPetalType === petalTomatoType),
         },
       ),
     );
@@ -4357,6 +4420,13 @@ const petalInfoStatKeys = Object.freeze({
   "Fire interval": "fireInterval",
   "Trap damage": "trapDamage",
   "Trap durability": "trapDurability",
+  "Overheal to shield": "overhealToShield",
+  "Projectile damage": "projectileDamage",
+  "Growth delay": "growthDelay",
+  "Growth time": "growthTime",
+  "Max damage": "maxDamage",
+  "Max durability": "maxDurability",
+  "Max radius": "maxRadius",
 });
 
 const petalInfoValueKeys = Object.freeze({
@@ -4364,6 +4434,7 @@ const petalInfoValueKeys = Object.freeze({
   Nullify: "nullify",
   "left petal": "leftPetal",
   "x0.8 per hit": "healingPerHit",
+  "Cosmetic only": "cosmeticOnly",
 });
 
 function localizePetalInfoLabel(label) {
@@ -4448,6 +4519,9 @@ function buildPetalInfo(petalType, rarity) {
       break;
     case petalNullificationType:
       addRow("Effect", "Nullify");
+      break;
+    case petalDouliType:
+      addRow("Effect", "Cosmetic only");
       break;
     case petalAirType:
       addRow("Mass", "16");
@@ -4568,6 +4642,22 @@ function buildPetalInfo(petalType, rarity) {
       addNumber("Trap damage", 40 * scale);
       addNumber("Trap durability", 40 * scale);
       addSeconds("Lifetime", 5);
+      break;
+    case petalAmuletType:
+      addCombat(0, 10 * scale, 2);
+      addPercent("Overheal to shield", 0.05 * level);
+      break;
+    case petalPlankType:
+      addCombat(18 * scale, 15 * scale, 2.5);
+      addRow("Projectile damage", "x20");
+      break;
+    case petalTomatoType:
+      addCombat(5 * scale, 10 * scale, 2.5);
+      addSeconds("Growth delay", 1);
+      addSeconds("Growth time", 3);
+      addNumber("Max damage", 70 * scale);
+      addNumber("Max durability", 70 * scale);
+      addRow("Max radius", "x3.33");
       break;
     case petalAntEggType:
       addRow("Petals", "x4");
@@ -4998,6 +5088,8 @@ function makePetalStack(
   const copy =
     options.copy ?? effectivePetalCardCopy(iconPetalType, rarity, options);
   const splitLabel = copy > 1;
+  const liveVisual = options.liveVisual === true;
+  const separateLabel = splitLabel || liveVisual;
   if (mimicVisual) stack.classList.add("mimic-visual");
   if (copy > 1) stack.classList.add("multi-copy");
 
@@ -5009,11 +5101,17 @@ function makePetalStack(
   stack.appendChild(base);
 
   const layout = petalCopyLayout(copy, iconPetalType);
-  for (const part of layout) {
+  for (let copyIndex = 0; copyIndex < layout.length; copyIndex += 1) {
+    const part = layout[copyIndex];
     const icon = makePetalIcon(iconPetalType, rarity, {
-      stripped: mimicVisual || splitLabel,
+      stripped: mimicVisual || separateLabel,
     });
     if (!icon) continue;
+    if (liveVisual) {
+      icon.classList.add("petal-live-visual");
+      icon.dataset.petalCopyIndex = String(copyIndex);
+      icon.dataset.petalVisualType = String(iconPetalType);
+    }
     if (layout.length > 1) {
       icon.classList.add("petal-icon-copy");
       icon.style.setProperty("--copy-x", `${part.x * 0.54}px`);
@@ -5026,7 +5124,7 @@ function makePetalStack(
   if (mimicVisual) {
     const label = makeMimicLabelIcon();
     if (label) stack.appendChild(label);
-  } else if (splitLabel) {
+  } else if (separateLabel) {
     const label = makePetalLabelIcon(iconPetalType, rarity);
     if (label) stack.appendChild(label);
   }
@@ -6826,8 +6924,21 @@ function drawEntity(entity) {
 
   ctx.save();
   ctx.globalAlpha *= deathAlpha;
-  if (hurtFlash > 0)
-    ctx.filter = `brightness(${1 + hurtFlash * 3.5}) saturate(${1 - hurtFlash * 0.92})`;
+  if (hurtFlash > 0) {
+    const filterLimit = Math.max(0, Number(hurtFlashFilterEntityLimit) || 0);
+    const priorityEntity = isOwner || shouldAlwaysDrawDetailed(snap);
+    const usePreciseFilter =
+      priorityEntity ||
+      (currentRenderLoad <= 0 && currentHurtFlashFilterCount < filterLimit);
+    if (usePreciseFilter) {
+      currentHurtFlashFilterCount += 1;
+      ctx.filter = `brightness(${1 + hurtFlash * 3.5}) saturate(${1 - hurtFlash * 0.92})`;
+    } else {
+      // Canvas filters are expensive for large batches. A single blend pass keeps
+      // the hit feedback visible without forcing an offscreen filter operation.
+      ctx.globalCompositeOperation = "screen";
+    }
+  }
 
   const visibleRadius = radius * spriteScale * deathScale;
   if (visibleRadius < entityPixelMinScreenRadius) {
@@ -8727,27 +8838,57 @@ function drawShieldBar(x, y, width, height, shieldPercent) {
   const shield = clamp(shieldPercent || 0, 0, 1);
   if (shield <= 0) return;
 
-  const shieldLength = width * 0.94;
-  const shieldWidth = height * 0.72;
-  drawCapsuleBar(
-    x + (width - shieldLength) * 0.5,
-    y + (height - shieldWidth) * 0.5,
-    shieldLength,
-    shieldWidth,
-    shield,
-    "#65c9f2",
-    Math.max(0.5, shieldWidth * 0.16),
-    "#123141",
-  );
+  const shieldLength = width * 0.82;
+  const shieldWidth = height * 0.48;
+  drawSolidProgressBar(ctx, {
+    x: x + (width - shieldLength) * 0.5,
+    y: y + (height - shieldWidth) * 0.5,
+    maxLength: shieldLength,
+    width: shieldWidth,
+    progress: shield,
+    color: "#ffffff",
+  });
 }
 
-function drawLayeredCapsuleBar(x, y, width, height, members, fill, border = 5) {
-  const entries = (members || [])
+function normalizedLayeredBarMembers(members) {
+  return (members || [])
     .map((member) => ({
       hp: clamp(member?.hp || 0, 0, 1),
       count: Math.max(1, Math.floor(member?.count || 1)),
     }))
     .filter((member) => Number.isFinite(member.hp) && member.count > 0);
+}
+
+function drawLayeredSolidProgressBar(x, y, width, height, members, fill) {
+  const entries = normalizedLayeredBarMembers(members);
+  const totalCount = entries.reduce((sum, member) => sum + member.count, 0);
+  if (totalCount <= 0) return;
+
+  for (const member of entries) {
+    ctx.save();
+    const geometry = traceSolidProgressBarPath(ctx, {
+      x,
+      y,
+      maxLength: width,
+      width: height,
+      progress: member.hp,
+    });
+    if (!geometry) {
+      ctx.restore();
+      continue;
+    }
+
+    // A short capsule contributes (m * p) / (d * copy_num) per logical copy.
+    const perCopyAlpha = geometry.alpha / totalCount;
+    const bucketAlpha = 1 - Math.pow(1 - perCopyAlpha, member.count);
+    ctx.globalAlpha *= bucketAlpha;
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawLayeredCapsuleBar(x, y, width, height, members, fill, border = 5) {
   const inset = Math.min(border, width * 0.35, height * 0.35);
   const innerX = x + inset;
   const innerY = y + inset;
@@ -8772,31 +8913,7 @@ function drawLayeredCapsuleBar(x, y, width, height, members, fill, border = 5) {
     color: "#111115",
   });
 
-  const totalCount = entries.reduce((sum, member) => sum + member.count, 0);
-  if (totalCount <= 0) return;
-
-  for (const member of entries) {
-    ctx.save();
-    const geometry = traceSolidProgressBarPath(ctx, {
-      x: innerX,
-      y: innerY,
-      maxLength: innerW,
-      width: innerH,
-      progress: member.hp,
-    });
-    if (!geometry) {
-      ctx.restore();
-      continue;
-    }
-
-    // A short capsule contributes (m * p) / (d * copy_num) per logical copy.
-    const perCopyAlpha = geometry.alpha / totalCount;
-    const bucketAlpha = 1 - Math.pow(1 - perCopyAlpha, member.count);
-    ctx.globalAlpha *= bucketAlpha;
-    ctx.fillStyle = fill;
-    ctx.fill();
-    ctx.restore();
-  }
+  drawLayeredSolidProgressBar(innerX, innerY, innerW, innerH, members, fill);
 }
 
 function drawOutlinedText(
@@ -9127,16 +9244,15 @@ function drawBossBars(entities) {
       bossBarRadiusPx * scale,
     );
     if (group.hasShield) {
-      const shieldLength = width * 0.94;
-      const shieldHeight = height * 0.72;
-      drawLayeredCapsuleBar(
+      const shieldLength = width * 0.82;
+      const shieldHeight = height * 0.48;
+      drawLayeredSolidProgressBar(
         x + (width - shieldLength) * 0.5,
         y + (height - shieldHeight) * 0.5,
         shieldLength,
         shieldHeight,
         group.shieldMembers,
-        "#65c9f2",
-        Math.max(0.5, shieldHeight * 0.16),
+        "#ffffff",
       );
     }
     drawOutlinedText(
@@ -10045,6 +10161,7 @@ function drawScene(now = performance.now()) {
   });
   currentVisibleEntityCount = countScenePassEntities(passes);
   currentRenderLoad = renderLoadForVisibleCount(currentVisibleEntityCount);
+  currentHurtFlashFilterCount = 0;
   prepareFrameRenderCaches(passes);
 
   drawEntityPass(passes.ground);

@@ -20,6 +20,11 @@ class CProjectile : public CEntity
           m_owner_generation(owner ? owner->m_generation : 0)
     {
         m_allow_skip_tick = owner && owner->m_allow_skip_tick;
+        if (owner)
+        {
+            m_tick_mode = owner->m_tick_mode;
+            m_tick_horizon = owner->TickHorizon();
+        }
         if (owner) owner->AddTag(EEntityTag::ClearOwnedEntitiesOnDestroy);
     }
 
@@ -33,6 +38,10 @@ class CProjectile : public CEntity
         m_pos += m_vel * dt;
     }
     CEntity* GetOwner() const;
+    bool CanPhysicallyCollideWith(const CEntity* other) const override
+    {
+        return other && !CheckTeam(m_team, other->m_team);
+    }
 
     CEntity* m_p_owner = nullptr;
     int m_owner_id = -1;
@@ -59,6 +68,7 @@ class CMissile : public CProjectile
     float m_damage = 0.f;
     float m_lifetime = 0.f;
     float m_age = 0.f;
+    float m_decay_base_health = 0.f;
 
   protected:
     virtual sf::Vector2f AttachedDirection(const CEntity& owner) const;
@@ -99,6 +109,10 @@ class CPollenProjectile : public CProjectile
     float m_damage = 0.f;
     float m_lifetime = 0.f;
     float m_age = 0.f;
+    float m_decay_base_health = 0.f;
+
+  protected:
+    bool m_decay_health_over_lifetime = true;
 };
 
 class CTrapProjectile final : public CPollenProjectile

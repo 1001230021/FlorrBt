@@ -145,13 +145,21 @@
         "copies": "复制",
         "fireInterval": "发射间隔",
         "trapDamage": "陷阱伤害",
-        "trapDurability": "陷阱耐久"
+        "trapDurability": "陷阱耐久",
+        "overhealToShield": "过量治疗转化护盾",
+        "projectileDamage": "对弹射物伤害",
+        "growthDelay": "生长延迟",
+        "growthTime": "生长时间",
+        "maxDamage": "最大伤害",
+        "maxDurability": "最大耐久",
+        "maxRadius": "最大半径"
       },
       "values": {
         "corrupted": "腐化",
         "nullify": "无效化",
         "leftPetal": "左侧花瓣",
-        "healingPerHit": "每次命中 x0.8"
+        "healingPerHit": "每次命中 x0.8",
+        "cosmeticOnly": "仅外观效果"
       }
     },
     "mobile": {

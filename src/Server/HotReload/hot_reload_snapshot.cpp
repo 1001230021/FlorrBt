@@ -106,6 +106,8 @@ void CaptureEntityCommon(const CEntity& entity, CSnapshotWriter& writer)
     writer.Field("radius", entity.m_radius);
     writer.Field("skip_world_tick", entity.m_skip_world_tick);
     writer.Field("allow_skip_tick", entity.m_allow_skip_tick);
+    writer.Field("tick_mode", static_cast<int>(entity.m_tick_mode));
+    writer.Field("tick_horizon", entity.m_tick_horizon);
     writer.Field("tags", entity.m_tags);
     writer.Field("team", entity.m_team);
     writer.Field("mass", entity.m_mass);
@@ -122,6 +124,10 @@ void RestoreEntityCommon(CEntity& entity, const CSnapshotReader& reader)
     entity.m_radius = std::max(0.f, reader.Float("radius", entity.m_radius));
     entity.m_skip_world_tick = reader.Bool("skip_world_tick", entity.m_skip_world_tick);
     entity.m_allow_skip_tick = reader.Bool("allow_skip_tick", entity.m_allow_skip_tick);
+    entity.m_tick_mode = static_cast<EEntityTickMode>(
+        std::clamp(reader.Int("tick_mode", static_cast<int>(entity.m_tick_mode)),
+                   static_cast<int>(EEntityTickMode::Default), static_cast<int>(EEntityTickMode::PlayerVisible)));
+    entity.m_tick_horizon = std::max(0.f, reader.Float("tick_horizon", entity.m_tick_horizon));
     entity.m_tags = reader.UInt32("tags", entity.m_tags);
     entity.m_team = reader.Int("team", entity.m_team);
     entity.m_mass = reader.Float("mass", entity.m_mass);
@@ -152,6 +158,7 @@ std::unique_ptr<IController> CreateController(std::string_view key)
     if (key == "controller.leafcutter_soldier") return std::make_unique<CLeafcutterSoldierController>();
     if (key == "controller.summoned_melee") return std::make_unique<CSummonedMeleeController>(-1);
     if (key == "controller.neutral_melee") return std::make_unique<CNeutralMeleeController>();
+    if (key == "controller.termite_overmind") return std::make_unique<CTermiteOvermindController>();
     if (key == "controller.random_wander") return std::make_unique<CRandomWanderController>();
     if (key == "controller.queen_ant") return std::make_unique<CQueenAntController>();
     if (key == "controller.spider") return std::make_unique<CSpiderController>();
@@ -617,6 +624,7 @@ CJsonOwner CaptureEntity(const CEntity& entity, bool& ephemeral, std::string& er
         data_writer.Field("damage", dandelion->m_damage);
         data_writer.Field("lifetime", dandelion->m_lifetime);
         data_writer.Field("age", dandelion->m_age);
+        data_writer.Field("decay_base_health", dandelion->m_decay_base_health);
         data_writer.Field("attached", dandelion->IsAttachedToOwner());
         data_writer.Field("attach_angle", dandelion->GetAttachAngle());
         data_writer.Field("rarity", static_cast<int>(dandelion->GetRarity()));
@@ -629,6 +637,7 @@ CJsonOwner CaptureEntity(const CEntity& entity, bool& ephemeral, std::string& er
         data_writer.Field("damage", missile->m_damage);
         data_writer.Field("lifetime", missile->m_lifetime);
         data_writer.Field("age", missile->m_age);
+        data_writer.Field("decay_base_health", missile->m_decay_base_health);
         data_writer.Field("attached", missile->IsAttachedToOwner());
     } else if (const auto* trap = dynamic_cast<const CTrapProjectile*>(&entity))
     {
@@ -652,6 +661,7 @@ CJsonOwner CaptureEntity(const CEntity& entity, bool& ephemeral, std::string& er
         data_writer.Field("damage", pollen->m_damage);
         data_writer.Field("lifetime", pollen->m_lifetime);
         data_writer.Field("age", pollen->m_age);
+        data_writer.Field("decay_base_health", pollen->m_decay_base_health);
     } else if (const auto* drop = dynamic_cast<const CDrop*>(&entity))
     {
         writer.Field("kind", "drop");
@@ -931,6 +941,7 @@ bool CreateDependentEntity(CGameWorld& world, const json_t* record, std::string&
         missile->m_damage = data.Float("damage");
         missile->m_lifetime = data.Float("lifetime");
         missile->m_age = data.Float("age");
+        missile->m_decay_base_health = data.Float("decay_base_health", common.Float("health", 1.f));
         missile->RestoreAttachedToOwner(data.Bool("attached"));
     } else if (kind == "trap_projectile")
     {
@@ -962,6 +973,7 @@ bool CreateDependentEntity(CGameWorld& world, const json_t* record, std::string&
         pollen->m_damage = data.Float("damage");
         pollen->m_lifetime = data.Float("lifetime");
         pollen->m_age = data.Float("age");
+        pollen->m_decay_base_health = data.Float("decay_base_health", common.Float("health", 1.f));
         entity = std::move(pollen);
     }
 

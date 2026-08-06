@@ -199,6 +199,7 @@ export const clientRuntimeConfig = Object.freeze({
   deathScaleBoost: 0.72,
   hurtFlashDuration: 0.14,
   hurtFlashMinDelta: 0.002,
+  hurtFlashFilterEntityLimit: 32,
   missingEntityViewEdgeGrace: 48,
   viewScreenFill: 0.46,
   viewScreenPadding: 36,

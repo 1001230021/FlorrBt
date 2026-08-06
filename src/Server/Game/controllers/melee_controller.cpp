@@ -10,6 +10,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <random>
 #include <unordered_set>
 #include <vector>
 
@@ -21,10 +22,32 @@ struct melee_target_candidate
     CEntity* target = nullptr;
 };
 
+struct hornet_aim_target
+{
+    sf::Vector2f relative = { 0.f, 0.f };
+    float hit_radius = 0.f;
+    float weight = 0.f;
+};
+
+struct hornet_aim_event
+{
+    float angle = 0.f;
+    float delta = 0.f;
+};
+
+struct hornet_aim_candidate
+{
+    float angle = 0.f;
+    float upper_score = 0.f;
+};
+
 struct melee_scan_scratch
 {
     std::vector<melee_target_candidate> honey_candidates;
     std::vector<melee_target_candidate> target_candidates;
+    std::vector<hornet_aim_target> hornet_aim_targets;
+    std::vector<hornet_aim_event> hornet_aim_events;
+    std::vector<hornet_aim_candidate> hornet_aim_candidates;
     std::unordered_set<const CEntity*> carried_leaf_pieces;
 };
 
@@ -32,6 +55,15 @@ thread_local melee_scan_scratch g_melee_scan_scratch;
 constexpr float mecha_flower_orbit_exit_hysteresis_radius_multiplier = 0.25f;
 
 bool IsMeleeTargetBlockedByWall(CMobBase* mob, const CEntity* target);
+
+sf::Vector2f NormalizeOrZero(sf::Vector2f value)
+{
+    const float length = Length(value);
+    if (length <= game_config::entity_collision_epsilon) return { 0.f, 0.f };
+    return value / length;
+}
+
+float DotProduct(sf::Vector2f lhs, sf::Vector2f rhs) { return lhs.x * rhs.x + lhs.y * rhs.y; }
 
 float TargetEdgeDistanceSq(const CEntity* source, const CEntity* target)
 {
@@ -262,6 +294,151 @@ CEntity* FindClosestMeleeTarget(CMobBase* mob, float search_range, int ignored_i
     return FirstVisibleMeleeTarget(mob, target_candidates);
 }
 
+float NormalizeAimAngle(float angle)
+{
+    const float full_turn = 2.f * game_config::pi;
+    while (angle < -game_config::pi) angle += full_turn;
+    while (angle >= game_config::pi) angle -= full_turn;
+    return angle;
+}
+
+float ScoreHornetAimDirection(CMobBase* mob, sf::Vector2f direction, float missile_radius, float max_range,
+                              const std::vector<hornet_aim_target>& targets)
+{
+    if (!mob || !mob->GameWorld()) return 0.f;
+
+    float score = 0.f;
+    for (const hornet_aim_target& target : targets)
+    {
+        const float along = DotProduct(target.relative, direction);
+        const float travel = std::clamp(along, 0.f, max_range);
+        const sf::Vector2f offset = target.relative - direction * travel;
+        if (LengthSq(offset) > target.hit_radius * target.hit_radius) continue;
+
+        const sf::Vector2f end = mob->m_pos + direction * travel;
+        if (travel > game_config::entity_collision_epsilon &&
+            mob->GameWorld()->SweptCircleBlockedByWall(mob->m_pos, end, missile_radius))
+            continue;
+        score += target.weight;
+    }
+    return score;
+}
+
+bool FindBestHornetAimDirection(CMobBase* mob, float missile_radius, float missile_speed, float lifetime,
+                                sf::Vector2f& result)
+{
+    if (!mob || !mob->GameWorld()) return false;
+    const float max_range = std::max(0.f, missile_speed) * std::max(0.f, lifetime);
+    if (max_range <= game_config::entity_collision_epsilon) return false;
+
+    auto& targets = g_melee_scan_scratch.hornet_aim_targets;
+    auto& events = g_melee_scan_scratch.hornet_aim_events;
+    auto& aim_candidates = g_melee_scan_scratch.hornet_aim_candidates;
+    targets.clear();
+    events.clear();
+    aim_candidates.clear();
+
+    float initial_score = 0.f;
+    const float query_range = max_range + std::max(0.f, missile_radius);
+    mob->GameWorld()->ForEachEntityInEdgeRange(mob->m_pos, query_range, [&](CEntity* candidate) {
+        if (!candidate || !candidate->IsEntityType(EEntityType::Mob)) return;
+        if (IsInvalidMeleeTarget(mob, candidate)) return;
+
+        const sf::Vector2f relative = candidate->m_pos - mob->m_pos;
+        const float distance_sq = LengthSq(relative);
+        const float distance = std::sqrt(std::max(0.f, distance_sq));
+        const float hit_radius = std::max(0.f, missile_radius) + std::max(0.f, candidate->m_radius);
+        if (distance > max_range + hit_radius) return;
+
+        const float first_contact_distance = std::max(0.f, distance - hit_radius);
+        const float distance_ratio = std::clamp(first_contact_distance / max_range, 0.f, 1.f);
+        const float weight = std::sqrt(std::max(0.f, 1.f - distance_ratio * distance_ratio));
+        if (weight <= game_config::entity_collision_epsilon) return;
+        targets.push_back({ relative, hit_radius, weight });
+
+        if (distance <= hit_radius)
+        {
+            initial_score += weight;
+            return;
+        }
+
+        float half_angle = 0.f;
+        if (distance <= max_range)
+        {
+            half_angle = std::asin(std::clamp(hit_radius / distance, 0.f, 1.f));
+        } else
+        {
+            const float cosine =
+                (distance_sq + max_range * max_range - hit_radius * hit_radius) /
+                std::max(game_config::entity_collision_epsilon, 2.f * distance * max_range);
+            half_angle = std::acos(std::clamp(cosine, -1.f, 1.f));
+        }
+
+        const float center = std::atan2(relative.y, relative.x);
+        const float start = NormalizeAimAngle(center - half_angle);
+        const float end = NormalizeAimAngle(center + half_angle);
+        if (start <= end)
+        {
+            events.push_back({ start, weight });
+            events.push_back({ end, -weight });
+        } else
+        {
+            initial_score += weight;
+            events.push_back({ end, -weight });
+            events.push_back({ start, weight });
+        }
+    });
+    if (targets.empty()) return false;
+
+    std::sort(events.begin(), events.end(), [](const hornet_aim_event& lhs, const hornet_aim_event& rhs) {
+        return lhs.angle < rhs.angle;
+    });
+
+    float score = initial_score;
+    float previous_angle = -game_config::pi;
+    size_t event_index = 0;
+    while (event_index < events.size())
+    {
+        const float event_angle = events[event_index].angle;
+        if (event_angle - previous_angle > game_config::entity_collision_epsilon)
+            aim_candidates.push_back({ (previous_angle + event_angle) * 0.5f, score });
+
+        float delta = 0.f;
+        while (event_index < events.size() &&
+               std::abs(events[event_index].angle - event_angle) <= game_config::entity_collision_epsilon)
+        {
+            delta += events[event_index].delta;
+            ++event_index;
+        }
+        score += delta;
+        previous_angle = event_angle;
+    }
+    if (game_config::pi - previous_angle > game_config::entity_collision_epsilon)
+        aim_candidates.push_back({ (previous_angle + game_config::pi) * 0.5f, score });
+    if (aim_candidates.empty())
+        aim_candidates.push_back({ mob->m_has_facing ? mob->m_facing_angle : 0.f, initial_score });
+
+    std::sort(aim_candidates.begin(), aim_candidates.end(), [](const hornet_aim_candidate& lhs,
+                                                               const hornet_aim_candidate& rhs) {
+        return lhs.upper_score > rhs.upper_score;
+    });
+
+    const int candidate_limit = std::max(1, game_config::mob_hornet_aim_candidate_limit);
+    float best_score = 0.f;
+    int checked = 0;
+    for (const hornet_aim_candidate& candidate : aim_candidates)
+    {
+        if (checked >= candidate_limit || candidate.upper_score <= best_score) break;
+        ++checked;
+        const sf::Vector2f direction = { std::cos(candidate.angle), std::sin(candidate.angle) };
+        const float exact_score = ScoreHornetAimDirection(mob, direction, missile_radius, max_range, targets);
+        if (exact_score <= best_score) continue;
+        best_score = exact_score;
+        result = direction;
+    }
+    return best_score > game_config::entity_collision_epsilon;
+}
+
 void FaceTarget(CMobBase* mob, const CEntity* target)
 {
     if (!mob || !target) return;
@@ -284,6 +461,9 @@ void CMeleeController::CaptureSnapshot(CSnapshotWriter& writer) const
     writer.Field("has_random_target_pos", m_has_random_target_pos);
     writer.Field("random_idle", m_random_idle);
     writer.Field("random_idle_timer", m_random_idle_timer);
+    writer.Field("wander_progress_anchor", m_wander_progress_anchor);
+    writer.Field("wander_progress_timer", m_wander_progress_timer);
+    writer.Field("wander_progress_initialized", m_wander_progress_initialized);
     writer.Field("target_scan_cooldown", m_target_scan_cooldown);
     writer.Field("honey_target_scan_cooldown", m_honey_target_scan_cooldown);
 }
@@ -305,6 +485,9 @@ bool CMeleeController::RestoreSnapshot(const CSnapshotReader& reader, std::uint3
     m_has_random_target_pos = reader.Bool("has_random_target_pos");
     m_random_idle = reader.Bool("random_idle");
     m_random_idle_timer = reader.Float("random_idle_timer");
+    m_wander_progress_anchor = reader.Vector2("wander_progress_anchor", m_target_pos);
+    m_wander_progress_timer = reader.Float("wander_progress_timer");
+    m_wander_progress_initialized = reader.Bool("wander_progress_initialized");
     m_target_scan_cooldown = reader.Int("target_scan_cooldown", -1);
     m_honey_target_scan_cooldown = reader.Int("honey_target_scan_cooldown", -1);
     return true;
@@ -393,8 +576,10 @@ void CSpecialHornetController::CaptureSnapshot(CSnapshotWriter& writer) const
     writer.Field("skill3_captured_id", m_skill3_captured_id);
     writer.UInt64("skill3_captured_generation", m_skill3_captured_generation);
     writer.Field("skill3_launch_pos", m_skill3_launch_pos);
+    writer.Field("skill3_launch_direction", m_skill3_launch_direction);
     writer.Field("skill3_captured_prev_skip_tick", m_skill3_captured_prev_skip_tick);
     writer.Field("skill3_has_captured_prev_skip_tick", m_skill3_has_captured_prev_skip_tick);
+    writer.Field("skill3_missile_suppressed", m_skill3_missile_suppressed);
 }
 
 bool CSpecialHornetController::RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version,
@@ -423,8 +608,10 @@ bool CSpecialHornetController::RestoreSnapshot(const CSnapshotReader& reader, st
     m_skill3_captured_id = reader.Int("skill3_captured_id", -1);
     m_skill3_captured_generation = reader.UInt64("skill3_captured_generation");
     m_skill3_launch_pos = reader.Vector2("skill3_launch_pos");
+    m_skill3_launch_direction = reader.Vector2("skill3_launch_direction", { 1.f, 0.f });
     m_skill3_captured_prev_skip_tick = reader.Bool("skill3_captured_prev_skip_tick");
     m_skill3_has_captured_prev_skip_tick = reader.Bool("skill3_has_captured_prev_skip_tick");
+    m_skill3_missile_suppressed = reader.Bool("skill3_missile_suppressed");
     return true;
 }
 
@@ -474,6 +661,7 @@ void CMeleeController::PickRandomTargetPos(CMobBase* mob, const SMobStats& stats
 void CMeleeController::PickRandomTargetPosNear(CMobBase* mob, const sf::Vector2f& center, float half_range)
 {
     if (!mob) return;
+    ResetWanderProgress();
     m_random_idle = false;
     m_random_idle_timer = 0.f;
 
@@ -487,8 +675,23 @@ void CMeleeController::PickRandomTargetPosNear(CMobBase* mob, const sf::Vector2f
 
     half_range = std::max(0.f, half_range);
     sf::Vector2f min_pos = center - sf::Vector2f(half_range, half_range);
-    m_target_pos = min_pos + sf::Vector2f(GetLimitedRng(0.f, half_range * 2.f), GetLimitedRng(0.f, half_range * 2.f));
+    CGameWorld* world = mob->GameWorld();
+    float collision_radius = std::max(0.f, mob->WallCollisionRadius());
+    int attempts = std::max(1, game_config::melee_random_wander_candidate_attempts);
+    for (int attempt = 0; attempt < attempts; ++attempt)
+    {
+        sf::Vector2f candidate =
+            min_pos + sf::Vector2f(GetLimitedRng(0.f, half_range * 2.f), GetLimitedRng(0.f, half_range * 2.f));
+        if (world && world->SweptCircleBlockedByWall(mob->m_pos, candidate, collision_radius)) continue;
+
+        m_target_pos = candidate;
+        m_has_random_target_pos = true;
+        return;
+    }
+
+    m_target_pos = mob->m_pos;
     m_has_random_target_pos = true;
+    m_random_idle = true;
 }
 
 bool CMeleeController::IsRandomIdleDone(float dt)
@@ -498,8 +701,61 @@ bool CMeleeController::IsRandomIdleDone(float dt)
     return m_random_idle_timer >= game_config::melee_random_idle_time;
 }
 
+void CMeleeController::ResetWanderProgress()
+{
+    m_wander_progress_anchor = { 0.f, 0.f };
+    m_wander_progress_timer = 0.f;
+    m_wander_progress_initialized = false;
+}
+
+bool CMeleeController::ReachedOrStalledRandomTarget(CMobBase* mob, float dt)
+{
+    if (!mob || !m_has_random_target_pos)
+    {
+        ResetWanderProgress();
+        return false;
+    }
+    if (m_random_idle)
+    {
+        ResetWanderProgress();
+        return IsRandomIdleDone(dt);
+    }
+    if (DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius)
+    {
+        ResetWanderProgress();
+        return true;
+    }
+
+    float stuck_time = game_config::melee_wander_stuck_time;
+    if (stuck_time <= 0.f) return false;
+
+    float progress_distance =
+        std::max(game_config::entity_collision_epsilon,
+                 mob->WallCollisionRadius() * std::max(0.f, game_config::melee_wander_progress_radius_multiplier));
+    if (!m_wander_progress_initialized)
+    {
+        m_wander_progress_anchor = mob->m_pos;
+        m_wander_progress_timer = 0.f;
+        m_wander_progress_initialized = true;
+        return false;
+    }
+    if (DistanceSq(mob->m_pos, m_wander_progress_anchor) >= progress_distance * progress_distance)
+    {
+        m_wander_progress_anchor = mob->m_pos;
+        m_wander_progress_timer = 0.f;
+        return false;
+    }
+
+    m_wander_progress_timer += std::max(0.f, dt);
+    if (m_wander_progress_timer < stuck_time) return false;
+
+    ResetWanderProgress();
+    return true;
+}
+
 void CMeleeController::SetTarget(CEntity* target)
 {
+    if (target) ResetWanderProgress();
     m_p_target = target;
     m_target_world_id = target && target->GameWorld() ? target->GameWorld()->GetId() : 0;
     m_target_id = target ? target->m_id : -1;
@@ -517,6 +773,7 @@ void CMeleeController::LoseTarget(CMobBase* mob)
     m_has_random_target_pos = false;
     m_random_idle = false;
     m_random_idle_timer = 0.f;
+    ResetWanderProgress();
 }
 
 CEntity* CMeleeController::ResolveTarget(CMobBase* mob)
@@ -603,9 +860,7 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
     {
         target = ResolveTarget(mob);
     }
-    bool reached_random_target =
-        !target && m_has_random_target_pos &&
-        (m_random_idle ? IsRandomIdleDone(dt) : DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
+    bool reached_random_target = !target && ReachedOrStalledRandomTarget(mob, dt);
     if (!target && m_has_random_target_pos && !reached_random_target && TryAcquireWanderTarget(mob, stats->horizon))
         target = ResolveTarget(mob);
 
@@ -1066,9 +1321,7 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
         target = ResolveTarget(mob);
         target_invalid = false;
     }
-    bool reached_random_target =
-        !target && m_has_random_target_pos &&
-        (m_random_idle ? IsRandomIdleDone(dt) : DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
+    bool reached_random_target = !target && ReachedOrStalledRandomTarget(mob, dt);
     if (!target && m_has_random_target_pos && !reached_random_target &&
         TryAcquireWanderTarget(mob, search_range, owner->m_id, owner_owner_id))
         target = ResolveTarget(mob);
@@ -1143,15 +1396,13 @@ void CNeutralMeleeController::OnTick(CMobBase* mob, float dt)
 
     set_attack_state(nullptr);
 
-    bool reached_random_target =
-        m_has_random_target_pos &&
-        (m_random_idle ? IsRandomIdleDone(dt) : DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
+    bool reached_random_target = ReachedOrStalledRandomTarget(mob, dt);
 
     if (!target &&
         (!m_has_random_target_pos || reached_random_target || m_change_target_count >= game_config::melee_target_time))
     {
         m_change_target_count = 0.f;
-        if (!m_has_random_target_pos || reached_random_target) PickRandomTargetPos(mob, *stats);
+        PickRandomTargetPos(mob, *stats);
     }
     mob->MoveTowards(m_target_pos, dt);
 }
@@ -1167,6 +1418,125 @@ void CNeutralMeleeController::OnDamaged(CMobBase* mob, CEntity* attacker)
     m_random_idle = false;
     m_random_idle_timer = 0.f;
     m_change_target_count = 0.f;
+}
+
+namespace
+{
+struct overmind_ban_profile
+{
+    float interval = 0.f;
+    float duration = 0.f;
+};
+
+overmind_ban_profile OvermindBanProfile(ERarity rarity)
+{
+    switch (rarity)
+    {
+    case ERarity::Super:
+        return { std::max(0.f, game_config::mob_termite_overmind_ban_interval_super),
+                 std::max(0.f, game_config::mob_termite_overmind_ban_duration_super) };
+    case ERarity::Eternal:
+    case ERarity::Unique:
+        return { std::max(0.f, game_config::mob_termite_overmind_ban_interval_eternal),
+                 std::max(0.f, game_config::mob_termite_overmind_ban_duration_eternal) };
+    case ERarity::Primordial:
+        return { std::max(0.f, game_config::mob_termite_overmind_ban_interval_primordial),
+                 std::max(0.f, game_config::mob_termite_overmind_ban_duration_primordial) };
+    default:
+        return {};
+    }
+}
+} // namespace
+
+void CTermiteOvermindController::OnTick(CMobBase* mob, float dt)
+{
+    CNeutralMeleeController::OnTick(mob, dt);
+    if (!mob || !mob->GameWorld() || mob->IsDead() || mob->m_is_marked_for_des) return;
+
+    const overmind_ban_profile profile = OvermindBanProfile(mob->GetRarity());
+    if (profile.interval <= game_config::entity_collision_epsilon ||
+        profile.duration <= game_config::entity_collision_epsilon)
+        return;
+
+    if (!m_ban_skill_initialized)
+    {
+        m_ban_skill_timer = profile.interval;
+        m_ban_skill_initialized = true;
+        return;
+    }
+
+    m_ban_skill_timer -= std::max(0.f, dt);
+    if (m_ban_skill_timer > 0.f) return;
+
+    const float remainder = std::fmod(std::max(0.f, -m_ban_skill_timer), profile.interval);
+    m_ban_skill_timer = profile.interval - remainder;
+    if (m_ban_skill_timer <= game_config::entity_collision_epsilon) m_ban_skill_timer = profile.interval;
+    ApplyBanSkill(mob, profile.duration);
+}
+
+void CTermiteOvermindController::ApplyBanSkill(CMobBase* mob, float duration) const
+{
+    if (!mob || !mob->GameWorld() || duration <= game_config::entity_collision_epsilon) return;
+
+    const float range = std::max(0.f, mob->m_radius) + std::max(0.f, game_config::psionic_connection_range);
+    if (range <= game_config::entity_collision_epsilon) return;
+    const float range_sq = range * range;
+
+    std::vector<CFlower*> targets;
+    mob->GameWorld()->GetSpatialGrid().ForEachInRange(mob->m_pos, range, [&](CEntity* entity) {
+        if (!entity || entity == mob || entity->m_is_marked_for_des || entity->IsDead()) return;
+        auto* flower = dynamic_cast<CFlower*>(entity);
+        if (!flower || !CheckTeam(flower->m_team, mob->m_team)) return;
+        if (DistanceSq(flower->m_pos, mob->m_pos) > range_sq) return;
+        targets.push_back(flower);
+    });
+
+    for (CFlower* flower : targets)
+    {
+        if (!flower || flower->m_is_marked_for_des || flower->IsDead()) continue;
+
+        std::vector<int> eligible_slots;
+        const auto& slots = flower->GetSlots();
+        eligible_slots.reserve(slots.size());
+        for (size_t index = 0; index < slots.size(); ++index)
+        {
+            const CPetalSlot& slot = slots[index];
+            if (!slot.m_available || slot.m_banned) continue;
+
+            bool has_ban_state = false;
+            for (const auto& state : flower->GetStates())
+            {
+                const auto* ban_state = state ? dynamic_cast<const CBanSlotState*>(state.get()) : nullptr;
+                if (ban_state && ban_state->GetSlotIndex() == static_cast<int>(index))
+                {
+                    has_ban_state = true;
+                    break;
+                }
+            }
+            if (!has_ban_state) eligible_slots.push_back(static_cast<int>(index));
+        }
+        if (eligible_slots.empty()) continue;
+
+        std::uniform_int_distribution<size_t> slot_dist(0, eligible_slots.size() - 1);
+        const int slot_index = eligible_slots[slot_dist(GetRng())];
+        flower->AddState(std::make_unique<CBanSlotState>(flower, duration, slot_index, mob->GetRarity()));
+    }
+}
+
+void CTermiteOvermindController::CaptureSnapshot(CSnapshotWriter& writer) const
+{
+    CMeleeController::CaptureSnapshot(writer);
+    writer.Field("ban_skill_timer", m_ban_skill_timer);
+    writer.Field("ban_skill_initialized", m_ban_skill_initialized);
+}
+
+bool CTermiteOvermindController::RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version,
+                                                 std::string& error)
+{
+    if (!CMeleeController::RestoreSnapshot(reader, version, error)) return false;
+    m_ban_skill_timer = reader.Float("ban_skill_timer");
+    m_ban_skill_initialized = reader.Bool("ban_skill_initialized");
+    return true;
 }
 
 // ============ Random Wander ============
@@ -1202,15 +1572,13 @@ void CRandomWanderController::OnTick(CMobBase* mob, float dt)
         return;
     }
 
-    bool reached_random_target =
-        m_has_random_target_pos &&
-        (m_random_idle ? IsRandomIdleDone(dt) : DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
+    bool reached_random_target = ReachedOrStalledRandomTarget(mob, dt);
 
     if (!target &&
         (!m_has_random_target_pos || reached_random_target || m_change_target_count >= game_config::melee_target_time))
     {
         m_change_target_count = 0.f;
-        if (!m_has_random_target_pos || reached_random_target) PickRandomTargetPos(mob, *stats);
+        PickRandomTargetPos(mob, *stats);
     }
     mob->MoveTowards(m_target_pos, dt);
 }
@@ -1281,9 +1649,7 @@ void CHornetRangedController::OnTick(CMobBase* mob, float dt)
         target = ResolveTarget(mob);
         target_invalid = false;
     }
-    bool reached_random_target =
-        !target && m_has_random_target_pos &&
-        (m_random_idle ? IsRandomIdleDone(dt) : DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
+    bool reached_random_target = !target && ReachedOrStalledRandomTarget(mob, dt);
     if (!target && m_has_random_target_pos && !reached_random_target && TryAcquireWanderTarget(mob, stats->horizon))
         target = ResolveTarget(mob);
 
@@ -1355,9 +1721,7 @@ void CMechaFlowerRangedController::OnTick(CMobBase* mob, float dt)
         target_invalid = false;
     }
 
-    bool reached_random_target =
-        !target && m_has_random_target_pos &&
-        (m_random_idle ? IsRandomIdleDone(dt) : DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
+    bool reached_random_target = !target && ReachedOrStalledRandomTarget(mob, dt);
     if (!target && m_has_random_target_pos && !reached_random_target && TryAcquireWanderTarget(mob, stats->horizon))
         target = ResolveTarget(mob);
 
@@ -1644,8 +2008,15 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
 
         sf::Vector2f mount_dir = { std::cos(mob->m_facing_angle), std::sin(mob->m_facing_angle) };
         if (LengthSq(mount_dir) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+            mount_dir = { -m_skill3_launch_direction.x, -m_skill3_launch_direction.y };
+        else
+            mount_dir = NormalizeOrZero(mount_dir);
+        if (LengthSq(mount_dir) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
             mount_dir = { 1.f, 0.f };
-        m_skill3_launch_pos = mob->m_pos + mount_dir * (mob->m_radius * game_config::mob_hornet_missile_attach_offset);
+
+        // The caster faces away from the attack target, so the captured mob is held on its back.
+        const sf::Vector2f back_dir = -mount_dir;
+        m_skill3_launch_pos = mob->m_pos + back_dir * (mob->m_radius * game_config::mob_hornet_missile_attach_offset);
         captured->m_pos = m_skill3_launch_pos;
         captured->m_prev_pos = m_skill3_launch_pos;
         captured->m_vel = { 0.f, 0.f };
@@ -1655,10 +2026,9 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
         m_state_timer = std::max(0.f, m_state_timer - dt);
         if (m_state_timer <= 0.f)
         {
-            sf::Vector2f direction = target->m_pos - mob->m_pos;
+            sf::Vector2f direction = NormalizeOrZero(m_skill3_launch_direction);
             if (LengthSq(direction) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
-                direction = mount_dir;
-            else direction /= Length(direction);
+                direction = back_dir;
 
             const SMobStats* stats = captured->GetFinalStats();
             float launch_speed = (stats ? stats->max_velocity : game_config::mob_hornet_max_velocity) *
@@ -1709,7 +2079,24 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
         return;
     }
 
-    if (skill_caster->TryCastSkill(0, target))
+    bool fired = false;
+    if (IsAtLeastRarity(mob->GetRarity(), ERarity::Eternal))
+    {
+        auto* hornet = dynamic_cast<IHornetMob*>(mob);
+        if (hornet)
+        {
+            sf::Vector2f aim_direction = { 0.f, 0.f };
+            const float missile_speed = HornetMissileSpeed(mob->GetRarity());
+            const float missile_radius =
+                game_config::mob_hornet_missile_radius *
+                (mob->m_radius / std::max(game_config::entity_collision_epsilon, game_config::mob_hornet_radius));
+            if (FindBestHornetAimDirection(mob, missile_radius, missile_speed, game_config::default_missile_lifetime,
+                                            aim_direction))
+                fired = hornet->TryCastMissileInDirection(aim_direction);
+        }
+    }
+    if (!fired) fired = skill_caster->TryCastSkill(0, target);
+    if (fired)
     {
         if (phase_skill_attempted)
         {
@@ -1744,9 +2131,7 @@ void CSpecialHornetController::TickMovementAndTarget(CMobBase* mob, float dt)
         target = ResolveTarget(mob);
         target_invalid = false;
     }
-    bool reached_random_target =
-        !target && m_has_random_target_pos &&
-        (m_random_idle ? IsRandomIdleDone(dt) : DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius);
+    bool reached_random_target = !target && ReachedOrStalledRandomTarget(mob, dt);
     if (!target && m_has_random_target_pos && !reached_random_target && TryAcquireWanderTarget(mob, stats->horizon))
         target = ResolveTarget(mob);
 
@@ -1871,6 +2256,18 @@ bool CSpecialHornetController::TryStartSkill3(CMobBase* mob)
         FindHighestHornetInRange(mob, mob->m_radius * game_config::mob_hornet_skill3_grab_range_radius_multiplier);
     if (!captured) return false;
 
+    auto* hornet = dynamic_cast<IHornetMob*>(mob);
+    if (!hornet) return false;
+
+    sf::Vector2f launch_direction = NormalizeOrZero(target->m_pos - mob->m_pos);
+    if (LengthSq(launch_direction) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+        launch_direction = { 1.f, 0.f };
+    m_skill3_launch_direction = launch_direction;
+    mob->m_facing_angle = std::atan2(-launch_direction.y, -launch_direction.x);
+    mob->m_has_facing = true;
+    hornet->SetMissileGenerationSuppressed(true, true);
+    m_skill3_missile_suppressed = true;
+
     m_skill3_target_world_id = target->GameWorld()->GetId();
     m_skill3_target_id = target->m_id;
     m_skill3_target_generation = target->m_generation;
@@ -1908,6 +2305,7 @@ bool CSpecialHornetController::FireSkill2Missile(CMobBase* mob, const sf::Vector
         std::make_unique<CMissile>(mob->GameWorld(), pos, radius, rear_direction, HornetMissileSpeed(missile_rarity),
                                    damage, health, game_config::mob_hornet_skill2_missile_lifetime, mob);
     missile->m_team = mob->m_team;
+    missile->m_mass = game_config::MobProjectileMassForLevel(GetLevel(missile_rarity));
     return mob->GameWorld()->InsertEntity(std::move(missile)) != nullptr;
 }
 
@@ -1938,6 +2336,12 @@ void CSpecialHornetController::FinishCurrentAction(CMobBase* mob)
     m_skill3_captured_generation = 0;
     m_skill3_captured_prev_skip_tick = false;
     m_skill3_has_captured_prev_skip_tick = false;
+    m_skill3_launch_direction = { 1.f, 0.f };
+    if (m_skill3_missile_suppressed)
+    {
+        if (auto* hornet = dynamic_cast<IHornetMob*>(mob)) hornet->SetMissileGenerationSuppressed(false, false);
+        m_skill3_missile_suppressed = false;
+    }
     if (mob) mob->m_vel *= game_config::mob_stop_damping;
 }
 
@@ -2047,7 +2451,7 @@ float CSpecialHornetController::HornetMissileDamage(ERarity rarity)
 float CSpecialHornetController::HornetMissileHealth(ERarity rarity)
 {
     return game_config::mob_hornet_missile_base_health *
-           std::pow(game_config::mob_projectile_health_scale_base, static_cast<float>(GetLevel(rarity) - 1));
+           game_config::MobHealthScaleForLevel(GetLevel(rarity));
 }
 
 // ============ Bumble Bee ============
@@ -2067,8 +2471,8 @@ void CBumbleBeeController::SpawnPollen(CMobBase* mob) const
     float damage = game_config::mob_bumblebee_pollen_base_damage *
                    std::pow(game_config::mob_damage_scale_base, static_cast<float>(level - 1));
     float health = game_config::mob_bumblebee_pollen_base_health *
-                   std::pow(game_config::mob_projectile_health_scale_base, static_cast<float>(level - 1));
-    float mass = std::pow(game_config::mob_projectile_mass_scale_base, static_cast<float>(level - 1));
+                   game_config::MobHealthScaleForLevel(level);
+    float mass = game_config::MobProjectileMassForLevel(level);
     float radius = std::max(1.f, mob->m_radius * game_config::mob_bumblebee_pollen_radius_multiplier);
 
     auto pollen = std::make_unique<CPollenProjectile>(mob->GameWorld(), mob->m_pos, radius, damage, health,

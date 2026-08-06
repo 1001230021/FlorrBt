@@ -68,7 +68,7 @@ bool IsUndeadDamageSource(CEntity* entity)
 
 bool ShouldBlockDiggingDamage(CMobBase* receiver, CEntity* attacker, EDamageType dmg_type)
 {
-    return receiver && receiver->HasState<CDiggingState>() && dmg_type != EDamageType::Poison &&
+    return receiver && receiver->HasState<CDiggingState>() && BaseDamageType(dmg_type) != EDamageType::Poison &&
            !IsDiggingEntity(attacker);
 }
 

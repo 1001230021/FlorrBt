@@ -293,6 +293,12 @@ CPsionicConnectionState::CPsionicConnectionState(CMobBase* owner, float timer, E
     else if (existing->m_timer != endless) existing->m_timer = std::max(existing->m_timer, timer);
 }
 
+bool HasActivePsionicConnection(const CMobBase* mob)
+{
+    const auto* state = mob ? mob->FindFirstState<CPsionicConnectionState>() : nullptr;
+    return state && state->IsValid() && (state->m_timer == endless || state->m_timer > 0.f);
+}
+
 bool BlocksNullifiedInteraction(const CEntity* lhs, const CEntity* rhs)
 {
     return BlocksNullifiedMobInteraction(GetInteractionMob(lhs), GetInteractionMob(rhs));
@@ -385,27 +391,13 @@ void ApplyDandelionAntiHeal(CMobBase* mob, ERarity rarity)
 bool TrySharePsionicDamage(CMobBase* receiver, float dmg, CEntity* attacker, EDamageType dmg_type)
 {
     if (!receiver || dmg <= 0.f) return false;
-    if (!receiver->HasState<CPsionicConnectionState>()) return false;
+    if (IsSharedDamageType(dmg_type)) return false;
+    if (receiver->m_team == 0) return false;
+    if (!HasActivePsionicConnection(receiver)) return false;
 
     CGameWorld* world = receiver->GameWorld();
     if (!world) return false;
-
-    std::vector<CMobBase*> candidates;
-    world->GetSpatialGrid().ForEachInRange(receiver->m_pos, game_config::psionic_connection_range,
-                                           [&](CEntity* entity) {
-                                               if (!entity || entity->m_is_marked_for_des) return;
-                                               auto* mob = dynamic_cast<CMobBase*>(entity);
-                                               if (!mob) return;
-                                               if (!CheckTeam(mob->m_team, receiver->m_team)) return;
-                                               if (!mob->HasState<CPsionicConnectionState>()) return;
-                                               candidates.push_back(mob);
-                                           });
-
-    if (candidates.empty()) return false;
-
-    float shared_damage = dmg / static_cast<float>(candidates.size());
-    for (CMobBase* mob : candidates)
-        if (mob) mob->ApplyDamageDirect(shared_damage, attacker);
+    world->QueuePsionicDamage(receiver, dmg, attacker, dmg_type);
     return true;
 }
 

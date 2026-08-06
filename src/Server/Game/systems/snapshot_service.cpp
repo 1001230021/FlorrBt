@@ -69,6 +69,24 @@ void PopulateOwnerPetalRuntime(const CEntity& owner, ServerEntitySnap& snap)
     {
         const CPetalSlot& slot = slots[slot_index];
         SOwnerPetalSlot& slot_snap = snap.primary_slots[slot_index];
+        EPetalType runtime_type = slot.m_runtime_type;
+        for (const CPetal* petal : slot.m_p_petals)
+        {
+            if (!petal) continue;
+            runtime_type = petal->GetPetalType();
+            break;
+        }
+        if (runtime_type == EPetalType::Compass)
+            slot_snap.visual_type = SOwnerPetalSlot::EVisualType::Angle;
+        else if (runtime_type == EPetalType::Tomato)
+            slot_snap.visual_type = SOwnerPetalSlot::EVisualType::Size;
+        else
+            slot_snap.visual_type = SOwnerPetalSlot::EVisualType::None;
+
+        const float tomato_max_radius_multiplier =
+            std::max(1.f, game_config::default_tomato_max_radius_multiplier);
+        const uint16_t tomato_spawn_size = static_cast<uint16_t>(std::round(
+            std::clamp(1.f / tomato_max_radius_multiplier, 0.f, 1.f) * static_cast<float>(UINT16_MAX)));
         slot_snap.copies.clear();
         slot_snap.copies.reserve(std::min<size_t>(slot.m_p_petals.size(), UINT8_MAX));
         for (size_t copy_index = 0; copy_index < slot.m_p_petals.size() && copy_index < UINT8_MAX; ++copy_index)
@@ -80,10 +98,28 @@ void PopulateOwnerPetalRuntime(const CEntity& owner, ServerEntitySnap& snap)
                 copy_snap.state = SOwnerPetalSlot::ECopyState::Alive;
                 const float max_health = petal->m_final_petal_stats.health;
                 copy_snap.progress = PackPercent(max_health > 0.f ? petal->m_health / max_health : 0.f);
+                if (slot_snap.visual_type == SOwnerPetalSlot::EVisualType::Angle)
+                {
+                    copy_snap.visual_value = static_cast<uint16_t>(PackAngle(petal->m_facing_angle));
+                } else if (slot_snap.visual_type == SOwnerPetalSlot::EVisualType::Size)
+                {
+                    const float base_radius =
+                        petal->m_growth_base_radius > game_config::entity_collision_epsilon
+                            ? petal->m_growth_base_radius
+                            : petal->m_final_petal_stats.radius;
+                    const float max_radius = base_radius * tomato_max_radius_multiplier;
+                    const float size_ratio = max_radius > game_config::entity_collision_epsilon
+                                                 ? petal->m_radius / max_radius
+                                                 : 1.f;
+                    copy_snap.visual_value = static_cast<uint16_t>(std::round(
+                        std::clamp(size_ratio, 0.f, 1.f) * static_cast<float>(UINT16_MAX)));
+                }
             } else
             {
                 copy_snap.state = SOwnerPetalSlot::ECopyState::Loading;
                 copy_snap.progress = PackPercent(slot.GetLoadProgress(static_cast<int>(copy_index)));
+                if (slot_snap.visual_type == SOwnerPetalSlot::EVisualType::Size)
+                    copy_snap.visual_value = tomato_spawn_size;
             }
             slot_snap.copies.push_back(copy_snap);
         }
@@ -244,7 +280,19 @@ bool BetterSnapshotCandidate(const visible_candidate& lhs, const visible_candida
     if (lhs.same_team != rhs.same_team) return lhs.same_team;
     if (lhs.rarity_rank != rhs.rarity_rank) return lhs.rarity_rank > rhs.rarity_rank;
     if (lhs.attached != rhs.attached) return lhs.attached;
-    return lhs.dist_sq < rhs.dist_sq;
+    if (lhs.dist_sq != rhs.dist_sq) return lhs.dist_sq < rhs.dist_sq;
+
+    // Spatial-grid iteration order is not stable. Use the entity identity as a final tie-breaker so
+    // an nth_element cutoff does not randomly replace equally ranked entities between snapshots.
+    const CEntity* lhs_entity = lhs.cached ? lhs.cached->entity : nullptr;
+    const CEntity* rhs_entity = rhs.cached ? rhs.cached->entity : nullptr;
+    if (lhs_entity && rhs_entity)
+    {
+        if (lhs_entity->m_id != rhs_entity->m_id) return lhs_entity->m_id < rhs_entity->m_id;
+        if (lhs_entity->m_generation != rhs_entity->m_generation)
+            return lhs_entity->m_generation < rhs_entity->m_generation;
+    }
+    return lhs_entity != nullptr;
 }
 
 void TrimSnapshotPool(std::vector<visible_candidate>& pool, size_t budget)

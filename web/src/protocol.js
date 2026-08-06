@@ -18,6 +18,7 @@ export const NET_RELATIVE_COORD_SCALE = 1;
 export const NET_RADIUS_SCALE = 1;
 export const NET_ANGLE_SCALE = 1000;
 export const NET_PERCENT_SCALE = 255;
+export const NET_SLOT_SIZE_SCALE = 65535;
 export const FULL_SNAPSHOT_BASE_ID = 0xffffffff;
 const ENTITY_SNAPSHOT_FULL = 0;
 const ENTITY_SNAPSHOT_COMPACT = 1;
@@ -43,6 +44,12 @@ export const ServerType = Object.freeze({
 export const PetalSlotCopyState = Object.freeze({
   Alive: 0,
   Loading: 1,
+});
+
+export const PetalSlotVisualType = Object.freeze({
+  None: 0,
+  Angle: 1,
+  Size: 2,
 });
 
 export const AuthMode = Object.freeze({
@@ -399,14 +406,27 @@ function parseEntity(reader, origin = null) {
     const slot = {
       petalType: reader.u8(),
       rarity: reader.u8(),
+      visualType: reader.u8(),
       copies: [],
     };
+    if (
+      slot.visualType !== PetalSlotVisualType.None &&
+      slot.visualType !== PetalSlotVisualType.Angle &&
+      slot.visualType !== PetalSlotVisualType.Size
+    )
+      throw new Error("unknown petal slot visual type");
     const copyCount = reader.u8();
     for (let copy = 0; copy < copyCount; copy += 1) {
-      slot.copies.push({
+      const copySnap = {
         state: reader.u8(),
         progress: reader.u8() / NET_PERCENT_SCALE,
-      });
+        visual: null,
+      };
+      if (slot.visualType === PetalSlotVisualType.Angle)
+        copySnap.visual = reader.i16() / NET_ANGLE_SCALE;
+      else if (slot.visualType === PetalSlotVisualType.Size)
+        copySnap.visual = reader.u16() / NET_SLOT_SIZE_SCALE;
+      slot.copies.push(copySnap);
     }
     entity.primarySlots.push(slot);
   }

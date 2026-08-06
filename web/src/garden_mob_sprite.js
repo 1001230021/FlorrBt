@@ -230,7 +230,7 @@ export function drawBabyTermite(
 ) {
   drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
     src: "./assets/baby_termite.svg",
-    sizeScale: 5.65,
+    sizeScale: BABY_ANT_VISUAL_SCALE,
     stripWings: false,
     forelimbAmplitude: 0.18,
   });
@@ -281,10 +281,11 @@ export function drawSoldierTermite(
   time,
 ) {
   drawGardenAnt(ctx, pos, radius, entityId, angle, motion, time, {
-    src: "./assets/worker_termite.svg",
+    src: "./assets/soldier_termite.svg",
     sizeScale: 5.45,
-    stripWings: false,
-    forelimbAmplitude: 0.2,
+    stripWings: true,
+    layeredWings: true,
+    forelimbAmplitude: 0.22,
   });
 }
 

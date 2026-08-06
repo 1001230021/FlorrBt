@@ -101,14 +101,27 @@ inline std::string_view GetPetalTypeName(EPetalType type)
 
 inline std::string_view GetPetalTypeName(uint8_t type) { return GetPetalTypeName(static_cast<EPetalType>(type)); }
 
+inline bool PetalUsesBaseAndDefenseReach(EPetalType type)
+{
+    switch (type)
+    {
+    case EPetalType::Rose:
+    case EPetalType::Dahlia:
+    case EPetalType::Yucca:
+    case EPetalType::Broccoli:
+    case EPetalType::Amulet:
+        return true;
+    default:
+        return false;
+    }
+}
+
 inline bool PetalIgnoresReachBonus(EPetalType type)
 {
     switch (type)
     {
     case EPetalType::BrokenEgg:
     case EPetalType::Basil:
-    case EPetalType::Rose:
-    case EPetalType::Dahlia:
     case EPetalType::Web:
     case EPetalType::Pollen:
     case EPetalType::Honey:

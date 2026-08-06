@@ -29,7 +29,10 @@ std::optional<sf::Vector2f> CalculateSpawnGlobal(CPetal* petal, CFlower* flower)
                                                                  ? flower->GetMoonPetal()->m_radius
                                                                  : flower->GetFinalStats()->radius);
     float reach = game_config::default_petal_neutral_reach;
-    if (!PetalIgnoresReachBonus(petal->GetPetalType()))
+    if (PetalUsesBaseAndDefenseReach(petal->GetPetalType()))
+    {
+        if (flower->m_defending) reach += game_config::default_petal_defend_offset;
+    } else if (!PetalIgnoresReachBonus(petal->GetPetalType()))
     {
         if (flower->m_attacking)
         {

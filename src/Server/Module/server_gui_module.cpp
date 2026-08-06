@@ -335,7 +335,11 @@ bool IServerGuiModule::OpenGui()
 
     m_window.create(sf::VideoMode({ game_config::gui_console_window_width, game_config::gui_console_window_height }),
                     "FlorrBt Server GUI Console");
-    m_window.setFramerateLimit(game_config::gui_console_framerate_limit);
+    m_window.setFramerateLimit(0);
+    m_window.setVerticalSyncEnabled(false);
+
+    const float frame_rate = static_cast<float>(std::max(1u, game_config::gui_console_framerate_limit));
+    m_render_accumulator = 1.f / frame_rate;
 
     if (!LoadFont(m_font))
     {
@@ -352,7 +356,7 @@ bool IServerGuiModule::OpenGui()
     return true;
 }
 
-void IServerGuiModule::Tick(float)
+void IServerGuiModule::Tick(float dt)
 {
     if (!game_config::gui_console_enabled)
     {
@@ -522,7 +526,14 @@ void IServerGuiModule::Tick(float)
         }
     }
 
-    Render();
+    const float frame_rate = static_cast<float>(std::max(1u, game_config::gui_console_framerate_limit));
+    const float render_interval = 1.f / frame_rate;
+    m_render_accumulator = std::min(m_render_accumulator + std::max(0.f, dt), render_interval * 2.f);
+    if (m_render_accumulator >= render_interval)
+    {
+        m_render_accumulator -= render_interval;
+        Render();
+    }
 }
 
 void IServerGuiModule::ShutDown() { CloseGui(); }
@@ -535,6 +546,7 @@ void IServerGuiModule::CloseGui()
         m_log_sink_id = 0;
     }
     if (m_window.isOpen()) m_window.close();
+    m_render_accumulator = 0.f;
 }
 
 void IServerGuiModule::PushLine(std::string sender, ELogPriority priority, std::string text)

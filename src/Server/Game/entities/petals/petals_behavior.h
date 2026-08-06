@@ -89,6 +89,12 @@ inline float PetalOrbitReach(const CPetal* owner, const CFlower* flower, bool in
     if (!flower || !flower->GetFinalStats()) return 0.f;
 
     float reach = game_config::default_petal_neutral_reach;
+    if (owner && PetalUsesBaseAndDefenseReach(owner->GetPetalType()))
+    {
+        if (include_mode_offset && flower->m_defending)
+            reach += game_config::default_petal_defend_offset;
+        return reach;
+    }
     if (owner && PetalIgnoresReachBonus(owner->GetPetalType())) return reach;
 
     if (flower->m_attacking) reach += flower->GetFinalStats()->reach;
@@ -2061,6 +2067,28 @@ inline bool MobNeedsHealing(const CMobBase* mob)
     return max_health > 0.f && mob->m_health < max_health - game_config::entity_collision_epsilon;
 }
 
+enum class EMedicRecoveryNeed
+{
+    None,
+    Shield,
+    Health,
+};
+
+inline EMedicRecoveryNeed MedicRecoveryNeed(const CMobBase* mob)
+{
+    if (MobNeedsHealing(mob)) return EMedicRecoveryNeed::Health;
+
+    const auto* flower = dynamic_cast<const CFlower*>(mob);
+    const SFlowerStats* stats = flower ? flower->GetFinalStats() : nullptr;
+    if (!flower || !stats || stats->overheal_to_shield <= game_config::entity_collision_epsilon ||
+        stats->max_health <= 0.f)
+        return EMedicRecoveryNeed::None;
+
+    return flower->GetShield() < stats->max_health - game_config::entity_collision_epsilon
+               ? EMedicRecoveryNeed::Shield
+               : EMedicRecoveryNeed::None;
+}
+
 inline float HealingReceivedMultiplier(const CMobBase* mob)
 {
     if (!mob) return 0.f;
@@ -2116,11 +2144,7 @@ class CBroccoliBehavior final : public CPetalBehavior
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
         PetalClearTarget(owner);
-        float reach = game_config::default_petal_neutral_reach;
-        if (flower && flower->m_defending) reach += game_config::default_petal_defend_offset;
-        const float orbit_distance =
-            PetalOrbitBaseRadius(owner, flower) + game_config::default_petal_orbit_radius + reach;
-        PetalOrbitMove(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true);
+        PetalOrbitMove(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
 
         if (!owner || !flower || dt <= 0.f || owner->m_health <= 0.f || flower->IsDead() ||
             !MobNeedsHealing(flower))
@@ -2146,7 +2170,8 @@ class CBroccoliBehavior final : public CPetalBehavior
     void OnPetalDestroyed(CPetal*, ERarity, CFlower*) override {}
 };
 
-inline bool RoseCanHealTarget(const CPetal* owner, const CFlower* flower, const CEntity* entity)
+inline bool RoseCanHealTarget(const CPetal* owner, const CFlower* flower, const CEntity* entity,
+                              EMedicRecoveryNeed required_need)
 {
     if (!owner || !flower || !entity || entity == owner) return false;
     if (entity->m_is_marked_for_des || entity->IsDead() || !entity->CanCollide()) return false;
@@ -2154,7 +2179,7 @@ inline bool RoseCanHealTarget(const CPetal* owner, const CFlower* flower, const 
     if (BlocksNullifiedInteraction(owner, entity)) return false;
 
     const auto* mob = dynamic_cast<const CMobBase*>(entity);
-    return mob && MobNeedsHealing(mob);
+    return mob && MedicRecoveryNeed(mob) == required_need;
 }
 
 inline float YggdrasilChannelTime(ERarity rarity)
@@ -2300,22 +2325,26 @@ inline CEntity* RoseFindTarget(CPetal* owner, CFlower* flower)
     if (!owner || !flower || !flower->GameWorld()) return nullptr;
     if (owner->m_lifetime < game_config::default_healing_petal_target_delay) return nullptr;
 
-    auto is_valid_heal_target = [owner, flower](const CEntity* entity) -> bool {
-        return RoseCanHealTarget(owner, flower, entity);
+    float range = owner->m_radius * game_config::default_healing_petal_target_range_multiplier;
+    auto find_target_for_need = [owner, flower, range](EMedicRecoveryNeed need) -> CEntity* {
+        auto is_valid_heal_target = [owner, flower, need](const CEntity* entity) -> bool {
+            return RoseCanHealTarget(owner, flower, entity, need);
+        };
+
+        if (RoseCanHealTarget(owner, flower, flower, need)) return flower;
+        if (range <= 0.f) return nullptr;
+
+        CEntity* raw = PetalGetCachedTarget(owner, flower, owner->m_pos, range, is_valid_heal_target);
+        return raw ? raw : PetalFindClosestTarget(owner, flower, owner->m_pos, range, is_valid_heal_target);
     };
 
-    if (RoseCanHealTarget(owner, flower, flower)) return flower;
-
-    float range = owner->m_radius * game_config::default_healing_petal_target_range_multiplier;
+    if (CEntity* target = find_target_for_need(EMedicRecoveryNeed::Health)) return target;
+    if (CEntity* target = find_target_for_need(EMedicRecoveryNeed::Shield)) return target;
     if (range <= 0.f)
     {
         PetalClearTarget(owner);
-        return nullptr;
     }
-
-    CEntity* raw = PetalGetCachedTarget(owner, flower, owner->m_pos, range, is_valid_heal_target);
-    if (!raw) raw = PetalFindClosestTarget(owner, flower, owner->m_pos, range, is_valid_heal_target);
-    return raw;
+    return nullptr;
 }
 
 class CRoseBehavior : public CPetalBehavior
@@ -2384,7 +2413,7 @@ class CRoseBehavior : public CPetalBehavior
 
         if (CheckTeam(GetPreCorruptionTeam(owner), GetPreCorruptionTeam(target)))
         {
-            if (!MobNeedsHealing(mob))
+            if (MedicRecoveryNeed(mob) == EMedicRecoveryNeed::None)
             {
                 damage = 0.f;
                 return;
@@ -2465,7 +2494,7 @@ class CDahliaBehavior : public CPetalBehavior
 
         if (CheckTeam(GetPreCorruptionTeam(owner), GetPreCorruptionTeam(target)))
         {
-            if (!MobNeedsHealing(mob))
+            if (MedicRecoveryNeed(mob) == EMedicRecoveryNeed::None)
             {
                 damage = 0.f;
                 return;

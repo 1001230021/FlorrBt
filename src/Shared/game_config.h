@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -486,7 +487,7 @@ inline float default_tomato_growth_duration = 3.0f;
 inline float default_tomato_mass = 2.0f;
 inline float default_tomato_max_damage_multiplier = 14.0f;
 inline float default_tomato_max_health_multiplier = 7.0f;
-inline float default_tomato_max_radius_multiplier = 5.0f;
+inline float default_tomato_max_radius_multiplier = 10.0f / 3.0f;
 inline float default_tomato_reload = 2.5f;
 inline float default_white_fungus_base_damage = 8.0f;
 inline float default_white_fungus_base_health = 10.0f;
@@ -677,10 +678,13 @@ inline int petal_default_extra_hit_num = 2;
 inline float player_collision_knockback_multiplier = 1.0001f;
 inline float melee_random_idle_chance = 0.5f;
 inline float melee_random_idle_time = 2.0f;
+inline int melee_random_wander_candidate_attempts = 12;
 inline float melee_random_wander_divisor = 4.0f;
 inline float melee_retarget_chance_multiplier = 2.0f;
 inline float melee_target_time = 80.0f;
 inline int melee_target_scan_ticks = 10;
+inline float melee_wander_progress_radius_multiplier = 0.25f;
+inline float melee_wander_stuck_time = 1.5f;
 inline float mob_beetle_armor = 1.0f;
 inline float mob_beetle_damage = 30.0f;
 inline float mob_beetle_mass = 10.0f;
@@ -705,9 +709,9 @@ inline float mob_bumblebee_mass = 2.5f;
 inline float mob_bumblebee_max_health = 25.0f;
 inline float mob_bumblebee_max_velocity = WorldUnits(180.0f);
 inline float mob_bumblebee_pollen_base_damage = 10.0f;
-inline float mob_bumblebee_pollen_base_health = 5.0f;
-inline float mob_bumblebee_pollen_interval = 0.5f;
-inline float mob_bumblebee_pollen_lifetime = 1.0f;
+inline float mob_bumblebee_pollen_base_health = mob_bumblebee_max_health / 8.0f;
+inline float mob_bumblebee_pollen_interval = 1.0f;
+inline float mob_bumblebee_pollen_lifetime = 2.0f;
 inline float mob_bumblebee_pollen_radius_multiplier = 2.0f / 3.0f;
 inline float mob_bumblebee_radius = WorldUnits(12.0f);
 inline int mob_bumblebee_team = 2;
@@ -757,6 +761,12 @@ inline float mob_queen_ant_radius = WorldUnits(26.0f);
 inline int mob_queen_ant_team = 2;
 inline float mob_termite_overmind_radius_multiplier = 2.5f;
 inline float mob_termite_overmind_velocity_multiplier = 0.33333334f;
+inline float mob_termite_overmind_ban_interval_super = 10.0f;
+inline float mob_termite_overmind_ban_interval_eternal = 3.0f;
+inline float mob_termite_overmind_ban_interval_primordial = 1.0f;
+inline float mob_termite_overmind_ban_duration_super = 60.0f;
+inline float mob_termite_overmind_ban_duration_eternal = 24.0f;
+inline float mob_termite_overmind_ban_duration_primordial = 30.0f;
 inline float mob_ant_hole_armor = 1.0f;
 inline float mob_ant_hole_damage = 15.0f;
 inline float mob_ant_hole_max_health = 750.0f;
@@ -805,7 +815,7 @@ inline float mob_hornet_mass = 2.5f;
 inline float mob_hornet_max_health = 40.0f;
 inline float mob_hornet_max_velocity = default_max_velocity;
 inline float mob_hornet_missile_base_damage = 10.0f;
-inline float mob_hornet_missile_base_health = 5.0f;
+inline float mob_hornet_missile_base_health = mob_hornet_max_health / 8.0f;
 inline float mob_hornet_missile_attach_offset = 1.5f;
 inline float mob_hornet_missile_radius = WorldUnits(10.0f);
 inline float mob_hornet_missile_reload = 0.5f;
@@ -827,6 +837,7 @@ inline float mob_hornet_skill2_missile_lifetime = 3.0f;
 inline float mob_hornet_skill2_pause_time = 1.0f;
 inline float mob_hornet_skill3_charge_time = 1.0f;
 inline float mob_hornet_skill3_launch_speed_multiplier = 7.0f;
+inline int mob_hornet_aim_candidate_limit = 12;
 inline int mob_hornet_team = 2;
 inline float mob_dandelion_acceleration = default_acceleration;
 inline float mob_dandelion_armor = 1.0f;
@@ -836,7 +847,7 @@ inline float mob_dandelion_max_health = 25.0f;
 inline float mob_dandelion_max_velocity = default_max_velocity;
 inline float mob_dandelion_missile_attach_offset = 1.4167f;
 inline float mob_dandelion_missile_base_damage = 15.0f;
-inline float mob_dandelion_missile_base_health = 25.0f;
+inline float mob_dandelion_missile_base_health = mob_dandelion_max_health / 2.0f;
 inline float mob_dandelion_missile_fire_interval = 0.12f;
 inline float mob_dandelion_missile_lifetime = 30.0f;
 inline int mob_dandelion_missile_count = 10;
@@ -870,7 +881,7 @@ inline float mob_normal_ladybug_max_health = 60.0f;
 inline float mob_normal_ladybug_radius = WorldUnits(18.0f);
 inline int mob_normal_ladybug_team = 2;
 inline int nullification_level_gap = 2;
-inline float psionic_connection_range = WorldUnits(2048.0f);
+inline float psionic_connection_range = WorldUnits(1024.0f);
 inline float mob_player_flower_armor = 0.0f;
 inline float mob_player_flower_damage = 25.0f;
 inline float mob_player_flower_level_damage_exponent = 0.5f;
@@ -983,6 +994,9 @@ inline float open_min_spawn_distance = WorldUnits(128.0f);
 inline float open_rarity_difficulty_scale = 10.0f;
 inline float open_rarity_gaussian_sigma = 0.36f;
 inline float open_spawn_interval = 1.f;
+inline float open_spawn_wave_period = 30.0f;
+inline float open_spawn_wave_min_multiplier = 0.2f;
+inline float open_spawn_wave_max_multiplier = 1.0f;
 inline float open_spawn_density_area = 1024.0f * 1024.0f;
 inline int open_spawn_position_attempts = 32;
 inline float open_spawn_query_radius = WorldUnits(512.0f);
@@ -1151,6 +1165,39 @@ inline float mob_health_scale_ultra = 145800.0f;
 inline float mob_health_scale_super = 4374000.0f;
 inline float mob_health_scale_eternal = 78732000.0f;
 inline float mob_health_scale_primordial = 944784000.0f;
+inline float MobHealthScaleForLevel(int level)
+{
+    switch (std::clamp(level, 1, 10))
+    {
+    case 1:
+        return mob_health_scale_common;
+    case 2:
+        return mob_health_scale_unusual;
+    case 3:
+        return mob_health_scale_rare;
+    case 4:
+        return mob_health_scale_epic;
+    case 5:
+        return mob_health_scale_legendary;
+    case 6:
+        return mob_health_scale_mythic;
+    case 7:
+        return mob_health_scale_ultra * 1.25f;
+    case 8:
+        return mob_health_scale_super * 1.25f * 1.5f;
+    case 9:
+        return mob_health_scale_eternal * 1.25f * 1.5f * 1.2f;
+    case 10:
+        return mob_health_scale_primordial * 1.25f * 1.5f * 1.2f;
+    default:
+        return mob_health_scale_common;
+    }
+}
+inline float MobMassScaleForLevel(int level)
+{
+    return std::pow(mob_mass_scale_base,
+                    static_cast<float>(std::max(1, level) - 1) * mob_mass_scale_exp_multiplier);
+}
 inline float mob_hornet_attack_range_radius_multiplier = 4.0f;
 inline float mob_hornet_horizon_lifetime_multiplier = 0.5f;
 inline float mob_hornet_missile_close_range_squared_multiplier = 0.25f;
@@ -1198,8 +1245,11 @@ inline int mob_rock_super_cap = 10;
 inline int mob_rock_ultra_cap = 150;
 inline float mob_rock_radius_random_min = 0.75f;
 inline float mob_rock_radius_random_max = 1.5f;
-inline float mob_projectile_health_scale_base = 5.0f;
-inline float mob_projectile_mass_scale_base = 2.0f;
+inline float mob_projectile_base_mass = 1.0f;
+inline float MobProjectileMassForLevel(int level)
+{
+    return mob_projectile_base_mass * MobMassScaleForLevel(level);
+}
 inline float mob_stop_damping_ticks_per_second = 60.0f;
 inline float mob_summoned_rarity_linear_scale = 0.2f;
 inline size_t network_rcon_max_reply_lines = 12;
@@ -1556,10 +1606,13 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("max_velocity", default_max_velocity),
         REGISTER_CONFIG("melee_random_idle_chance", melee_random_idle_chance),
         REGISTER_CONFIG("melee_random_idle_time", melee_random_idle_time),
+        REGISTER_CONFIG("melee_random_wander_candidate_attempts", melee_random_wander_candidate_attempts),
         REGISTER_CONFIG("melee_random_wander_divisor", melee_random_wander_divisor),
         REGISTER_CONFIG("melee_retarget_chance_multiplier", melee_retarget_chance_multiplier),
         REGISTER_CONFIG("melee_target_time", melee_target_time),
         REGISTER_CONFIG("melee_target_scan_ticks", melee_target_scan_ticks),
+        REGISTER_CONFIG("melee_wander_progress_radius_multiplier", melee_wander_progress_radius_multiplier),
+        REGISTER_CONFIG("melee_wander_stuck_time", melee_wander_stuck_time),
         REGISTER_CONFIG("moon_base_damage", default_moon_base_damage),
         REGISTER_CONFIG("moon_base_health", default_moon_base_health),
         REGISTER_CONFIG("moon_base_mass", default_moon_base_mass),
@@ -1657,6 +1710,12 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_queen_ant_team", mob_queen_ant_team),
         REGISTER_CONFIG("mob_termite_overmind_radius_multiplier", mob_termite_overmind_radius_multiplier),
         REGISTER_CONFIG("mob_termite_overmind_velocity_multiplier", mob_termite_overmind_velocity_multiplier),
+        REGISTER_CONFIG("mob_termite_overmind_ban_interval_super", mob_termite_overmind_ban_interval_super),
+        REGISTER_CONFIG("mob_termite_overmind_ban_interval_eternal", mob_termite_overmind_ban_interval_eternal),
+        REGISTER_CONFIG("mob_termite_overmind_ban_interval_primordial", mob_termite_overmind_ban_interval_primordial),
+        REGISTER_CONFIG("mob_termite_overmind_ban_duration_super", mob_termite_overmind_ban_duration_super),
+        REGISTER_CONFIG("mob_termite_overmind_ban_duration_eternal", mob_termite_overmind_ban_duration_eternal),
+        REGISTER_CONFIG("mob_termite_overmind_ban_duration_primordial", mob_termite_overmind_ban_duration_primordial),
         REGISTER_CONFIG("mob_ant_hole_armor", mob_ant_hole_armor),
         REGISTER_CONFIG("mob_ant_hole_damage", mob_ant_hole_damage),
         REGISTER_CONFIG("mob_ant_hole_max_health", mob_ant_hole_max_health),
@@ -1727,6 +1786,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_hornet_skill2_pause_time", mob_hornet_skill2_pause_time),
         REGISTER_CONFIG("mob_hornet_skill3_charge_time", mob_hornet_skill3_charge_time),
         REGISTER_CONFIG("mob_hornet_skill3_launch_speed_multiplier", mob_hornet_skill3_launch_speed_multiplier),
+        REGISTER_CONFIG("mob_hornet_aim_candidate_limit", mob_hornet_aim_candidate_limit),
         REGISTER_CONFIG("mob_hornet_team", mob_hornet_team),
         REGISTER_CONFIG("mob_dandelion_acceleration", mob_dandelion_acceleration),
         REGISTER_CONFIG("mob_dandelion_armor", mob_dandelion_armor),
@@ -1877,6 +1937,9 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("open_rarity_difficulty_scale", open_rarity_difficulty_scale),
         REGISTER_CONFIG("open_rarity_gaussian_sigma", open_rarity_gaussian_sigma),
         REGISTER_CONFIG("open_spawn_interval", open_spawn_interval),
+        REGISTER_CONFIG("open_spawn_wave_period", open_spawn_wave_period),
+        REGISTER_CONFIG("open_spawn_wave_min_multiplier", open_spawn_wave_min_multiplier),
+        REGISTER_CONFIG("open_spawn_wave_max_multiplier", open_spawn_wave_max_multiplier),
         REGISTER_CONFIG("open_spawn_position_attempts", open_spawn_position_attempts),
         REGISTER_CONFIG("open_spawn_query_radius", open_spawn_query_radius),
         REGISTER_CONFIG("open_spawn_x", open_spawn_x),
@@ -2456,8 +2519,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_rock_ultra_cap", mob_rock_ultra_cap),
         REGISTER_CONFIG("mob_rock_radius_random_min", mob_rock_radius_random_min),
         REGISTER_CONFIG("mob_rock_radius_random_max", mob_rock_radius_random_max),
-        REGISTER_CONFIG("mob_projectile_health_scale_base", mob_projectile_health_scale_base),
-        REGISTER_CONFIG("mob_projectile_mass_scale_base", mob_projectile_mass_scale_base),
+        REGISTER_CONFIG("mob_projectile_base_mass", mob_projectile_base_mass),
         REGISTER_CONFIG("mob_stop_damping_ticks_per_second", mob_stop_damping_ticks_per_second),
         REGISTER_CONFIG("mob_summoned_rarity_linear_scale", mob_summoned_rarity_linear_scale),
         REGISTER_CONFIG("network_rcon_max_reply_lines", network_rcon_max_reply_lines),

@@ -55,6 +55,11 @@ class CMobBase : public CEntity
         const SMobStats* stats = GetFinalStats();
         return stats ? static_cast<const SEntityStats&>(*stats) : CEntity::GetEntityStats();
     }
+    float TickHorizon() const override
+    {
+        const SMobStats* stats = GetFinalStats();
+        return stats ? std::max(0.f, stats->horizon) : CEntity::TickHorizon();
+    }
     virtual ERarity GetRarity() const = 0;
     virtual bool IsFacingLocked() const { return false; }
     float WallCollisionRadius() const override
@@ -148,6 +153,9 @@ template <typename TStats = SMobStats> class CMob : public CMobBase
     CMob(CGameWorld* pworld, sf::Vector2f pos, float r, EMobType mob_type, ERarity rarity, const TStats& stats)
         : CMobBase(pworld, pos, r, mob_type), m_base_stats(stats), m_final_stats(stats), m_rarity(rarity)
     {
+        if (rarity == ERarity::Eternal || rarity == ERarity::Unique || rarity == ERarity::Primordial)
+            m_tick_mode = EEntityTickMode::Always;
+        m_tick_horizon = std::max(0.f, stats.horizon);
         m_health = stats.max_health;
         m_mass = stats.mass;
         m_facing_angle = GetLimitedRng(-game_config::pi, game_config::pi);
@@ -210,6 +218,14 @@ class ISkillCasterMob
     virtual bool TryCastSkill(int skill_index, CEntity* target) = 0;
     virtual bool IsSkillBusy() const = 0;
     virtual uint8_t GetWindupSkillId() const = 0;
+};
+
+class IHornetMob
+{
+  public:
+    virtual ~IHornetMob() = default;
+    virtual bool TryCastMissileInDirection(sf::Vector2f direction) = 0;
+    virtual void SetMissileGenerationSuppressed(bool suppressed, bool discard_loaded) = 0;
 };
 
 template <typename TStats = SMobStats> class CAttackableMob : public CMob<TStats>, public IAttackableMob

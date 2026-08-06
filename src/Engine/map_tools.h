@@ -59,6 +59,15 @@ struct FlorrBtMap
         float x, y;
     };
 
+    struct PreciseSpawn
+    {
+        float x = 0.f;
+        float y = 0.f;
+        std::string type;
+        std::string rarity;
+    };
+    std::vector<PreciseSpawn> precise_spawns;
+
     struct Layer
     {
         int width;
@@ -629,6 +638,31 @@ inline bool BuildZoneFromJsonObject(const CJsonValue& obj, FlorrBtMap::Zone& zon
     return zone.vertices.size() >= 3;
 }
 
+inline bool BuildPreciseSpawnFromJsonObject(const CJsonValue& obj, FlorrBtMap::PreciseSpawn& spawn)
+{
+    spawn = {};
+    spawn.x = Scale512(JsonNumberField(obj, "x", 0.f));
+    spawn.y = Scale512(JsonNumberField(obj, "y", 0.f));
+    spawn.type = MapToLower(JsonPropertyString(obj, "type"));
+    spawn.rarity = MapToLower(JsonPropertyString(obj, "rarity"));
+    return !spawn.type.empty() && !spawn.rarity.empty();
+}
+
+inline bool SamePreciseSpawn(const FlorrBtMap::PreciseSpawn& lhs, const FlorrBtMap::PreciseSpawn& rhs)
+{
+    constexpr float epsilon = 0.5f;
+    return std::abs(lhs.x - rhs.x) <= epsilon && std::abs(lhs.y - rhs.y) <= epsilon && lhs.type == rhs.type &&
+           lhs.rarity == rhs.rarity;
+}
+
+inline bool HasPreciseSpawn(const FlorrBtMap& map, const FlorrBtMap::PreciseSpawn& spawn)
+{
+    return std::any_of(map.precise_spawns.begin(), map.precise_spawns.end(),
+                       [&spawn](const FlorrBtMap::PreciseSpawn& existing) {
+                           return SamePreciseSpawn(existing, spawn);
+                       });
+}
+
 inline bool BuildCheckpointFromJsonObject(const CJsonValue& obj, const std::string& object_type,
                                           FlorrBtMap::Checkpoint& checkpoint)
 {
@@ -680,6 +714,7 @@ inline void AddJsonClassObjectLayers(const std::filesystem::path& map_path, Flor
 
     size_t zones_before = fbt_map.zones.size();
     size_t warps_before = fbt_map.warps.size();
+    size_t precise_spawns_before = fbt_map.precise_spawns.size();
     for (const CJsonValue& layer : layers->AsArray())
     {
         if (JsonStringField(layer, "type") != "objectgroup") continue;
@@ -698,6 +733,11 @@ inline void AddJsonClassObjectLayers(const std::filesystem::path& map_path, Flor
                 if (zones_before != 0) continue;
                 FlorrBtMap::Zone zone;
                 if (BuildZoneFromJsonObject(obj, zone)) fbt_map.zones.push_back(std::move(zone));
+            } else if (object_type == "precise_spawn")
+            {
+                FlorrBtMap::PreciseSpawn spawn;
+                if (BuildPreciseSpawnFromJsonObject(obj, spawn) && !HasPreciseSpawn(fbt_map, spawn))
+                    fbt_map.precise_spawns.push_back(std::move(spawn));
             } else if (object_type == "checkpoint" || object_type == "respawn_area" || object_type == "new_players")
             {
                 FlorrBtMap::Checkpoint checkpoint;
@@ -727,11 +767,13 @@ inline void AddJsonClassObjectLayers(const std::filesystem::path& map_path, Flor
         }
     }
 
-    if (fbt_map.zones.size() != zones_before || fbt_map.warps.size() != warps_before)
+    if (fbt_map.zones.size() != zones_before || fbt_map.warps.size() != warps_before ||
+        fbt_map.precise_spawns.size() != precise_spawns_before)
     {
         LOG_INFO("maploader", "Map json object classes registered: zones +" +
                                   std::to_string(fbt_map.zones.size() - zones_before) + ", warps +" +
-                                  std::to_string(fbt_map.warps.size() - warps_before));
+                                  std::to_string(fbt_map.warps.size() - warps_before) + ", precise spawns +" +
+                                  std::to_string(fbt_map.precise_spawns.size() - precise_spawns_before));
     }
 }
 
@@ -863,6 +905,20 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
                         zone.vertices.push_back({ x1, y2 });
                     }
                     fbt_map->zones.push_back(zone);
+                } else if (object_type == "precise_spawn")
+                {
+                    FlorrBtMap::PreciseSpawn spawn;
+                    spawn.x = Scale512(static_cast<float>(obj.x));
+                    spawn.y = Scale512(static_cast<float>(obj.y));
+                    for (size_t p = 0; p < obj.property_count; ++p)
+                    {
+                        const Property& prop = obj.properties[p];
+                        if (!prop.name || !prop.value_string) continue;
+                        if (strcmp(prop.name, "type") == 0) spawn.type = MapToLower(prop.value_string);
+                        else if (strcmp(prop.name, "rarity") == 0) spawn.rarity = MapToLower(prop.value_string);
+                    }
+                    if (!spawn.type.empty() && !spawn.rarity.empty() && !HasPreciseSpawn(*fbt_map, spawn))
+                        fbt_map->precise_spawns.push_back(std::move(spawn));
                 } else if (object_type == "checkpoint" || object_type == "respawn_area" || object_type == "new_players")
                 {
                     FlorrBtMap::Checkpoint cp;

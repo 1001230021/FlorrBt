@@ -149,13 +149,21 @@
         "copies": "Copies",
         "fireInterval": "Fire interval",
         "trapDamage": "Trap damage",
-        "trapDurability": "Trap durability"
+        "trapDurability": "Trap durability",
+        "overhealToShield": "Overheal to shield",
+        "projectileDamage": "Projectile damage",
+        "growthDelay": "Growth delay",
+        "growthTime": "Growth time",
+        "maxDamage": "Max damage",
+        "maxDurability": "Max durability",
+        "maxRadius": "Max radius"
       },
       "values": {
         "corrupted": "Corrupted",
         "nullify": "Nullify",
         "leftPetal": "left petal",
-        "healingPerHit": "x0.8 per hit"
+        "healingPerHit": "x0.8 per hit",
+        "cosmeticOnly": "Cosmetic only"
       }
     },
     "mobile": {

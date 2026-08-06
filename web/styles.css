@@ -1904,7 +1904,8 @@ body.mobile-mode-forced .quick-actions {
   bottom: auto;
   width: 92%;
   height: 92%;
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) rotate(var(--live-angle, 0rad))
+    scale(var(--live-scale, 1));
   object-fit: contain;
 }
 
@@ -1915,7 +1916,13 @@ body.mobile-mode-forced .quick-actions {
       calc(-50% + var(--copy-x, 0px)),
       calc(-50% + var(--copy-y, 0px))
     )
-    rotate(var(--copy-angle, 0rad));
+    rotate(var(--copy-angle, 0rad)) rotate(var(--live-angle, 0rad))
+    scale(var(--live-scale, 1));
+}
+
+.petal-live-visual {
+  transition: transform 40ms linear;
+  will-change: transform;
 }
 
 .petal-stack.multi-copy .petal-icon {

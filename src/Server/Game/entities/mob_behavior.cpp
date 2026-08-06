@@ -34,38 +34,9 @@ float HornetMissileSpeed(ERarity rarity)
            (1.f + game_config::mob_hornet_missile_speed_level_step * static_cast<float>(level));
 }
 
-inline float GetHealthMult(int level)
-{
-    switch (level)
-    {
-    case 1:
-        return game_config::mob_health_scale_common;
-    case 2:
-        return game_config::mob_health_scale_unusual;
-    case 3:
-        return game_config::mob_health_scale_rare;
-    case 4:
-        return game_config::mob_health_scale_epic;
-    case 5:
-        return game_config::mob_health_scale_legendary;
-    case 6:
-        return game_config::mob_health_scale_mythic;
-    case 7:
-        return game_config::mob_health_scale_ultra * 1.25f;
-    case 8:
-        return game_config::mob_health_scale_super * 1.25f * 1.5f;
-    case 9:
-        return game_config::mob_health_scale_eternal * 1.25f * 1.5f * 1.2f;
-    case 10:
-        return game_config::mob_health_scale_primordial * 1.25f * 1.5f * 1.2f;
-    default:
-        return 0.f;
-    }
-}
-
 float MobHealthScaleForRarity(ERarity rarity)
 {
-    return GetHealthMult(GetLevel(rarity));
+    return game_config::MobHealthScaleForLevel(GetLevel(rarity));
 }
 
 SMobStats ScaleMobStats(SMobStats stats, ERarity rarity)
@@ -75,8 +46,7 @@ SMobStats ScaleMobStats(SMobStats stats, ERarity rarity)
     float damage_scale = std::pow(game_config::mob_damage_scale_base, static_cast<float>(level - 1));
     float radius_scale = game_config::MobRadiusScaleForLevel(level);
     float horizon_scale = std::pow(static_cast<float>(level), game_config::mob_horizon_scale_exp);
-    float mass_scale = std::pow(game_config::mob_mass_scale_base,
-                                static_cast<float>(level - 1) * game_config::mob_mass_scale_exp_multiplier);
+    float mass_scale = game_config::MobMassScaleForLevel(level);
 
     stats.max_health *= health_scale;
     stats.damage *= damage_scale;
@@ -474,7 +444,7 @@ class CBeeMob : public CBasicMob
     float m_wave_timer = 0.f;
 };
 
-class CHornetMob : public CSkillCasterBasicMob
+class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
 {
   public:
     using CSkillCasterBasicMob::CSkillCasterBasicMob;
@@ -491,6 +461,9 @@ class CHornetMob : public CSkillCasterBasicMob
         writer.UInt64("attack_target_generation", m_attack_target_generation);
         writer.Field("loaded_missile_id", m_loaded_missile_id);
         writer.UInt64("loaded_missile_generation", m_loaded_missile_generation);
+        writer.Field("attack_direction", m_attack_direction);
+        writer.Field("has_attack_direction", m_has_attack_direction);
+        writer.Field("missile_generation_suppressed", m_missile_generation_suppressed);
     }
 
     bool RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override
@@ -506,6 +479,10 @@ class CHornetMob : public CSkillCasterBasicMob
         m_attack_target_generation = reader.UInt64("attack_target_generation", m_attack_target_generation);
         m_loaded_missile_id = reader.Int("loaded_missile_id", m_loaded_missile_id);
         m_loaded_missile_generation = reader.UInt64("loaded_missile_generation", m_loaded_missile_generation);
+        m_attack_direction = reader.Vector2("attack_direction", m_attack_direction);
+        m_has_attack_direction = reader.Bool("has_attack_direction", m_has_attack_direction);
+        m_missile_generation_suppressed =
+            reader.Bool("missile_generation_suppressed", m_missile_generation_suppressed);
         return true;
     }
 
@@ -523,7 +500,7 @@ class CHornetMob : public CSkillCasterBasicMob
         UpdateLoadedMissile(dt);
     }
 
-    bool IsFacingLocked() const override { return m_attack_recovery_timer > 0.f; }
+    bool IsFacingLocked() const override { return m_attack_windup_timer > 0.f || m_attack_recovery_timer > 0.f; }
 
     int GetSkillCount() const override { return 4; }
 
@@ -533,6 +510,7 @@ class CHornetMob : public CSkillCasterBasicMob
         if (skill_index == hornet_missile_skill)
         {
             return m_attack_timer <= 0.f && m_attack_windup_timer <= 0.f && m_special_windup_timer <= 0.f &&
+                   !m_missile_generation_suppressed &&
                    (m_loaded_missile_id >= 0 || m_missile_reload_timer <= 0.f);
         }
         if (skill_index == hornet_summon_skill || skill_index == hornet_dash_skill || skill_index == hornet_grab_skill)
@@ -558,8 +536,36 @@ class CHornetMob : public CSkillCasterBasicMob
 
         m_attack_target_id = target ? target->m_id : -1;
         m_attack_target_generation = target ? target->m_generation : 0;
+        m_has_attack_direction = false;
         m_attack_windup_timer = game_config::mob_hornet_attack_windup;
         return true;
+    }
+
+    bool TryCastMissileInDirection(sf::Vector2f direction) override
+    {
+        if (m_attack_timer > 0.f || m_attack_windup_timer > 0.f || m_special_windup_timer > 0.f ||
+            m_missile_generation_suppressed || !GameWorld())
+            return false;
+        if (!GetLoadedMissile()) return false;
+
+        const float length = Length(direction);
+        if (length <= game_config::entity_collision_epsilon) return false;
+        m_attack_direction = direction / length;
+        m_has_attack_direction = true;
+        m_attack_target_id = -1;
+        m_attack_target_generation = 0;
+        m_attack_windup_timer = game_config::mob_hornet_attack_windup;
+        return true;
+    }
+
+    void SetMissileGenerationSuppressed(bool suppressed, bool discard_loaded) override
+    {
+        m_missile_generation_suppressed = suppressed;
+        if (!discard_loaded) return;
+        if (CMissile* missile = FindLoadedMissile()) missile->MarkForDestroy(EEntityRemovalReason::Replaced);
+        m_loaded_missile_id = -1;
+        m_loaded_missile_generation = 0;
+        m_missile_reload_timer = 0.f;
     }
 
     bool TryAttack(CEntity* target) override { return TryCastSkill(hornet_missile_skill, target); }
@@ -614,7 +620,8 @@ class CHornetMob : public CSkillCasterBasicMob
     CMissile* GetLoadedMissile()
     {
         RefreshLoadedMissileState();
-        if (m_loaded_missile_id < 0 && m_missile_reload_timer <= 0.f) SpawnLoadedMissile();
+        if (m_loaded_missile_id < 0 && m_missile_reload_timer <= 0.f && !m_missile_generation_suppressed)
+            SpawnLoadedMissile();
         return FindLoadedMissile();
     }
 
@@ -637,6 +644,7 @@ class CHornetMob : public CSkillCasterBasicMob
 
         RefreshLoadedMissileState();
         if (m_loaded_missile_id >= 0) return;
+        if (m_missile_generation_suppressed) return;
 
         if (m_missile_reload_timer > 0.f)
         {
@@ -649,13 +657,12 @@ class CHornetMob : public CSkillCasterBasicMob
 
     void SpawnLoadedMissile()
     {
-        if (!GameWorld()) return;
+        if (!GameWorld() || m_missile_generation_suppressed) return;
 
         int level = GetLevel(GetRarity());
         float missile_damage = game_config::mob_hornet_missile_base_damage *
                                std::pow(game_config::mob_damage_scale_base, static_cast<float>(level - 1));
-        float missile_health = game_config::mob_hornet_missile_base_health *
-                               std::pow(game_config::mob_projectile_health_scale_base, static_cast<float>(level - 1));
+        float missile_health = game_config::mob_hornet_missile_base_health * MobHealthScaleForRarity(GetRarity());
         float radius_scale = m_radius / std::max(game_config::entity_collision_epsilon, game_config::mob_hornet_radius);
         float missile_radius = game_config::mob_hornet_missile_radius * radius_scale;
 
@@ -663,6 +670,7 @@ class CHornetMob : public CSkillCasterBasicMob
                                                   LoadedMissileDirection(), 0.f, missile_damage, missile_health,
                                                   game_config::default_missile_lifetime, this);
         missile->m_team = m_team;
+        missile->m_mass = game_config::MobProjectileMassForLevel(level);
         missile->AttachToOwner();
 
         CEntity* inserted = GameWorld()->InsertEntity(std::move(missile));
@@ -679,12 +687,22 @@ class CHornetMob : public CSkillCasterBasicMob
 
     void FireQueuedAttack()
     {
-        if (!GameWorld()) return;
+        auto clear_queued_attack = [this]() {
+            m_attack_target_id = -1;
+            m_attack_target_generation = 0;
+            m_attack_direction = { 1.f, 0.f };
+            m_has_attack_direction = false;
+        };
+
+        if (!GameWorld())
+        {
+            clear_queued_attack();
+            return;
+        }
         CMissile* missile = GetLoadedMissile();
         if (!missile)
         {
-            m_attack_target_id = -1;
-            m_attack_target_generation = 0;
+            clear_queued_attack();
             return;
         }
 
@@ -692,7 +710,10 @@ class CHornetMob : public CSkillCasterBasicMob
             m_attack_target_id >= 0 ? GameWorld()->GetEntity(m_attack_target_id, m_attack_target_generation) : nullptr;
         sf::Vector2f rear_direction = { std::cos(m_facing_angle), std::sin(m_facing_angle) };
         float missile_speed = HornetMissileSpeed(GetRarity());
-        if (target && !target->m_is_marked_for_des && !target->IsDead())
+        if (m_has_attack_direction)
+        {
+            rear_direction = m_attack_direction;
+        } else if (target && !target->m_is_marked_for_des && !target->IsDead())
         {
             sf::Vector2f shot_direction = GetHornetShotDirection(this, target, missile_speed, GetRarity());
             if (LengthSq(shot_direction) >
@@ -701,7 +722,10 @@ class CHornetMob : public CSkillCasterBasicMob
         }
 
         if (LengthSq(rear_direction) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+        {
+            clear_queued_attack();
             return;
+        }
 
         sf::Vector2f recoil_direction = -rear_direction;
         m_facing_angle = std::atan2(recoil_direction.y, recoil_direction.x);
@@ -714,8 +738,7 @@ class CHornetMob : public CSkillCasterBasicMob
         missile->m_team = m_team;
         if (!missile->Fire(rear_direction, missile_speed, game_config::default_missile_lifetime))
         {
-            m_attack_target_id = -1;
-            m_attack_target_generation = 0;
+            clear_queued_attack();
             RefreshLoadedMissileState();
             return;
         }
@@ -727,8 +750,7 @@ class CHornetMob : public CSkillCasterBasicMob
         m_vel += recoil_direction * game_config::mob_hornet_recoil_speed;
         m_attack_timer = game_config::mob_hornet_attack_interval;
         m_attack_recovery_timer = game_config::mob_hornet_attack_recovery;
-        m_attack_target_id = -1;
-        m_attack_target_generation = 0;
+        clear_queued_attack();
     }
 
     float m_attack_timer = 0.f;
@@ -741,6 +763,9 @@ class CHornetMob : public CSkillCasterBasicMob
     std::uint64_t m_attack_target_generation = 0;
     int m_loaded_missile_id = -1;
     std::uint64_t m_loaded_missile_generation = 0;
+    sf::Vector2f m_attack_direction = { 1.f, 0.f };
+    bool m_has_attack_direction = false;
+    bool m_missile_generation_suppressed = false;
 };
 
 class CDandelionMob : public CAttackableBasicMob
@@ -836,6 +861,19 @@ class CDandelionMob : public CAttackableBasicMob
         return true;
     }
 
+    void OnBeforeRemoved(EEntityRemovalReason) override
+    {
+        if (!m_spawned_initial_missiles)
+        {
+            SpawnInitialMissiles();
+            m_spawned_initial_missiles = true;
+        }
+        while (FireNextMissile())
+        {
+        }
+        RemoveTag(EEntityTag::ClearOwnedEntitiesOnDestroy);
+    }
+
   private:
     static int MissileCount() { return std::clamp(game_config::mob_dandelion_missile_count, 0, missile_capacity); }
 
@@ -859,8 +897,7 @@ class CDandelionMob : public CAttackableBasicMob
 
     float MissileHealth() const
     {
-        return game_config::mob_dandelion_missile_base_health *
-               RarityPowScale(GetRarity(), game_config::mob_projectile_health_scale_base);
+        return game_config::mob_dandelion_missile_base_health * MobHealthScaleForRarity(GetRarity());
     }
 
     CDandelionMissile* FindMissile(int index)
@@ -911,7 +948,7 @@ class CDandelionMob : public CAttackableBasicMob
             auto missile = std::make_unique<CDandelionMissile>(world, pos, radius, attach_angle, damage, health,
                                                                lifetime, GetRarity(), this);
             missile->m_team = m_team;
-            missile->m_mass = m_mass;
+            missile->m_mass = game_config::MobProjectileMassForLevel(GetLevel(GetRarity()));
             missile->AttachToOwner();
 
             CEntity* inserted = world->InsertEntity(std::move(missile));
@@ -2420,7 +2457,7 @@ bool RegisterMobs(std::string& error)
         proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
             return ScaleMobStats(TermiteStats(base_stats), rarity);
         };
-        proto.m_controller_factory = [](ERarity) { return std::make_unique<CNeutralMeleeController>(); };
+        proto.m_controller_factory = [](ERarity) { return std::make_unique<CTermiteOvermindController>(); };
         proto.m_after_create = [](CMobBase& mob, ERarity rarity) {
             mob.AddState(std::make_unique<CPsionicConnectionState>(&mob, endless, rarity));
         };

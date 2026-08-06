@@ -18,6 +18,8 @@ class CMeleeController : public IController
     void PickRandomTargetPos(CMobBase* mob, const SMobStats& stats);
     void PickRandomTargetPosNear(CMobBase* mob, const sf::Vector2f& center, float half_range);
     bool IsRandomIdleDone(float dt);
+    bool ReachedOrStalledRandomTarget(CMobBase* mob, float dt);
+    void ResetWanderProgress();
     void SetTarget(CEntity* target);
     void ClearTarget();
     void LoseTarget(CMobBase* mob);
@@ -36,6 +38,9 @@ class CMeleeController : public IController
     bool m_has_random_target_pos = false;
     bool m_random_idle = false;
     float m_random_idle_timer = 0.f;
+    sf::Vector2f m_wander_progress_anchor = { 0.f, 0.f };
+    float m_wander_progress_timer = 0.f;
+    bool m_wander_progress_initialized = false;
     int m_target_scan_cooldown = -1;
     int m_honey_target_scan_cooldown = -1;
 };
@@ -113,6 +118,21 @@ class CNeutralMeleeController : public CMeleeController
     void OnTick(CMobBase* mob, float dt) override;
     void OnDamaged(CMobBase* mob, CEntity* attacker) override;
     std::string_view SnapshotKey() const override { return "controller.neutral_melee"; }
+};
+
+class CTermiteOvermindController final : public CNeutralMeleeController
+{
+  public:
+    void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.termite_overmind"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
+
+  private:
+    void ApplyBanSkill(CMobBase* mob, float duration) const;
+
+    float m_ban_skill_timer = 0.f;
+    bool m_ban_skill_initialized = false;
 };
 
 class CRandomWanderController : public CMeleeController
@@ -222,8 +242,10 @@ class CSpecialHornetController : public CMeleeController
     int m_skill3_captured_id = -1;
     std::uint64_t m_skill3_captured_generation = 0;
     sf::Vector2f m_skill3_launch_pos = { 0.f, 0.f };
+    sf::Vector2f m_skill3_launch_direction = { 1.f, 0.f };
     bool m_skill3_captured_prev_skip_tick = false;
     bool m_skill3_has_captured_prev_skip_tick = false;
+    bool m_skill3_missile_suppressed = false;
 };
 
 class CBumbleBeeController : public IController

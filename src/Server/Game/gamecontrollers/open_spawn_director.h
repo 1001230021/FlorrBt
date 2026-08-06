@@ -24,8 +24,8 @@ class COpenSpawnDirector
     COpenSpawnDirector(const COpenSpawnDirector&) = delete;
     COpenSpawnDirector& operator=(const COpenSpawnDirector&) = delete;
 
-    void Tick(CGameWorld& world, float dt, spawn_callback on_spawn);
-    void SpawnMobs(CGameWorld& world, spawn_callback on_spawn);
+    void Tick(CGameWorld& world, float dt, float density_multiplier, spawn_callback on_spawn);
+    void SpawnMobs(CGameWorld& world, float density_multiplier, spawn_callback on_spawn);
     std::optional<sf::Vector2f> SelectPlayerSpawn(CGameWorld& world, bool use_new_player_spawn,
                                                   EPlayerSpawnReason reason);
     void OnEntityRemoved(const CEntity& entity);

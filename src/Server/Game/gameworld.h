@@ -10,15 +10,24 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 class CPlayer;
+class CMobBase;
 
 struct CActiveTickView
 {
     sf::Vector2f center;
+    float radius = 0.f;
+};
+
+struct CPlayerTickView
+{
+    sf::Vector2f center;
+    float horizon = 0.f;
     float radius = 0.f;
 };
 
@@ -89,6 +98,7 @@ class CGameWorld
     CEntity* GetEntity(int id) const;
     CEntity* GetEntity(int id, std::uint64_t generation) const;
     void QueueEntityForCleanup(CEntity* entity);
+    void QueuePsionicDamage(CMobBase* receiver, float damage, CEntity* attacker, EDamageType damage_type);
     CEntity* FindClosestEntity(const sf::Vector2f& center, float max_range,
                                std::function<bool(const CEntity*)> filter = nullptr) const;
     CEntity* FindClosestEntityByEdge(const sf::Vector2f& center, float max_edge_range,
@@ -137,13 +147,91 @@ class CGameWorld
     ERarity GetSpawnZoneRarity(const sf::Vector2f& pos) const;
     bool SegmentBlockedByWall(sf::Vector2f start, sf::Vector2f end) const;
     bool CircleBlockedByWall(sf::Vector2f center, float radius) const;
+    bool SweptCircleBlockedByWall(sf::Vector2f start, sf::Vector2f end, float radius) const;
 
   private:
+    struct SPsionicReceiverKey
+    {
+        int entity_id = -1;
+        std::uint64_t entity_generation = 0;
+
+        bool operator==(const SPsionicReceiverKey& other) const
+        {
+            return entity_id == other.entity_id && entity_generation == other.entity_generation;
+        }
+    };
+
+    struct SPsionicReceiverKeyHash
+    {
+        std::size_t operator()(const SPsionicReceiverKey& key) const
+        {
+            std::size_t seed = std::hash<int>{}(key.entity_id);
+            seed ^= std::hash<std::uint64_t>{}(key.entity_generation) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
+            return seed;
+        }
+    };
+
+    struct SPsionicSourceKey
+    {
+        CEntity* attacker = nullptr;
+        EDamageType damage_type = EDamageType::Normal;
+
+        bool operator==(const SPsionicSourceKey& other) const
+        {
+            return attacker == other.attacker && damage_type == other.damage_type;
+        }
+    };
+
+    struct SPsionicSourceKeyHash
+    {
+        std::size_t operator()(const SPsionicSourceKey& key) const
+        {
+            std::size_t seed = std::hash<CEntity*>{}(key.attacker);
+            seed ^= std::hash<int>{}(static_cast<int>(key.damage_type)) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
+            return seed;
+        }
+    };
+
+    struct SPsionicDamageKey
+    {
+        int entity_id = -1;
+        std::uint64_t entity_generation = 0;
+        CEntity* attacker = nullptr;
+        EDamageType damage_type = EDamageType::SharedNormal;
+
+        bool operator==(const SPsionicDamageKey& other) const
+        {
+            return entity_id == other.entity_id && entity_generation == other.entity_generation &&
+                   attacker == other.attacker && damage_type == other.damage_type;
+        }
+    };
+
+    struct SPsionicDamageKeyHash
+    {
+        std::size_t operator()(const SPsionicDamageKey& key) const
+        {
+            std::size_t seed = std::hash<int>{}(key.entity_id);
+            seed ^= std::hash<std::uint64_t>{}(key.entity_generation) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
+            seed ^= std::hash<CEntity*>{}(key.attacker) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
+            seed ^= std::hash<int>{}(static_cast<int>(key.damage_type)) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
+            return seed;
+        }
+    };
+
+    struct SPendingPsionicDamage
+    {
+        sf::Vector2f origin = { 0.f, 0.f };
+        int team = 0;
+        std::unordered_map<SPsionicSourceKey, float, SPsionicSourceKeyHash> damage_by_source;
+    };
+
     void RegisterLiveEntity(CEntity* entity);
     void UnregisterLiveEntity(CEntity* entity);
     void RemoveQueuedCleanupEntity(CEntity* entity);
     void SyncAlwaysTickMembership(CEntity* entity);
     void RemoveAlwaysTickEntity(CEntity* entity);
+    void SyncConditionalTickMembership(CEntity* entity);
+    void RemoveConditionalTickEntity(CEntity* entity);
     void SyncLargeEntityMembership(CEntity* entity);
     void RemoveLargeEntity(CEntity* entity);
     void SpawnMapPortals();
@@ -152,6 +240,7 @@ class CGameWorld
     void BuildWallGrid();
     void CollectActiveEntitiesForTick();
     void TickActiveEntities(float dt);
+    void FlushPendingPsionicDamage();
     void RemoveTransferredActiveEntities();
     void ResolveWallCollisions(const std::vector<CEntity*>& entities);
     void ResolveCollisions(const std::vector<CEntity*>& entities, float dt);
@@ -178,14 +267,18 @@ class CGameWorld
     std::vector<CEntity*> m_live_entities;
     std::vector<CEntity*> m_cleanup_entities;
     std::vector<CEntity*> m_always_tick_entities;
+    std::vector<CEntity*> m_conditional_tick_entities;
     std::vector<CEntity*> m_large_entities;
     std::vector<CEntity*> m_active_entities;
     std::vector<CActiveTickView> m_active_tick_views;
+    std::vector<CPlayerTickView> m_player_tick_views;
     std::vector<CEntity*> m_collision_normal_entities;
     std::vector<std::pair<float, CEntity*>> m_collision_large_entities;
     std::vector<CEntity*> m_collision_inactive_entities;
     std::vector<std::pair<int, std::uint64_t>> m_clear_owned_owner_keys;
     std::vector<std::pair<int, std::uint64_t>> m_clear_summon_owner_keys;
+    std::unordered_map<SPsionicReceiverKey, SPendingPsionicDamage, SPsionicReceiverKeyHash>
+        m_pending_psionic_damage;
     std::unordered_set<int> m_wall_query_visited;
     std::uint64_t m_active_tick_marker = 1;
     float m_normal_entity_radius_limit = 1.f;

@@ -694,8 +694,8 @@ struct ClientInputFrame
 // EntitySnap full:    [format:1 byte][entity_id:2 bytes][entity_type:1 byte][team:1 byte][x:4
 // bytes][y:4 bytes][radius:2 bytes][hp_percent:1 byte][shield_percent:1 byte][flags:2 bytes][angle:2
 // bytes][rarity:1 byte][name_len:1
-// byte][name][primary_slot_count:1 byte][petal_type:1 byte][rarity:1 byte][copy_count:1 byte]
-// [copy_state:1 byte][copy_progress:1 byte]......[state_count:1 byte]
+// byte][name][primary_slot_count:1 byte][petal_type:1 byte][rarity:1 byte][visual_type:1 byte]
+// [copy_count:1 byte][copy_state:1 byte][copy_progress:1 byte][copy_visual_value:0/2 bytes]......[state_count:1 byte]
 // [state_type:1 byte][rarity:1 byte]... EntitySnap compact: [format:1
 // byte][entity_id:2 bytes][entity_type:1 byte][team:1 byte][rel_x:2 bytes][rel_y:2 bytes][radius:2 bytes][hp_percent:1
 // byte][shield_percent:1 byte][flags:2 bytes][angle:2 bytes][rarity:1 byte]
@@ -863,8 +863,16 @@ inline bool HasFlag(ServerEntityFlag flags, ServerEntityFlag flag)
 
 struct SOwnerPetalSlot
 {
+    enum class EVisualType : uint8_t
+    {
+        None = 0,
+        Angle = 1,
+        Size = 2,
+    };
+
     uint8_t petal_type = 0;
     uint8_t rarity = 0;
+    EVisualType visual_type = EVisualType::None;
     enum class ECopyState : uint8_t
     {
         Alive = 0,
@@ -875,13 +883,27 @@ struct SOwnerPetalSlot
     {
         ECopyState state = ECopyState::Loading;
         uint8_t progress = 0;
+        uint16_t visual_value = 0;
     };
 
     std::vector<SCopy> copies;
 };
 
-constexpr size_t entity_owner_slot_header_size = 3;
-constexpr size_t entity_owner_slot_copy_size = 2;
+constexpr size_t entity_owner_slot_header_size = 4;
+constexpr size_t entity_owner_slot_copy_base_size = 2;
+constexpr size_t entity_owner_slot_copy_visual_size = 2;
+
+inline bool IsKnownOwnerPetalVisualType(SOwnerPetalSlot::EVisualType type)
+{
+    return type == SOwnerPetalSlot::EVisualType::None || type == SOwnerPetalSlot::EVisualType::Angle ||
+           type == SOwnerPetalSlot::EVisualType::Size;
+}
+
+inline size_t GetEntityOwnerPetalCopyPackedSize(const SOwnerPetalSlot& slot)
+{
+    return entity_owner_slot_copy_base_size +
+           (slot.visual_type == SOwnerPetalSlot::EVisualType::None ? 0 : entity_owner_slot_copy_visual_size);
+}
 
 inline bool ParseEntityOwnerPetalSlot(const uint8_t* data, size_t len, size_t& offset, SOwnerPetalSlot& slot)
 {
@@ -889,8 +911,11 @@ inline bool ParseEntityOwnerPetalSlot(const uint8_t* data, size_t len, size_t& o
 
     slot.petal_type = data[offset++];
     slot.rarity = data[offset++];
+    slot.visual_type = static_cast<SOwnerPetalSlot::EVisualType>(data[offset++]);
+    if (!IsKnownOwnerPetalVisualType(slot.visual_type)) return false;
     const uint8_t copy_count = data[offset++];
-    if (offset + static_cast<size_t>(copy_count) * entity_owner_slot_copy_size > len) return false;
+    const size_t copy_size = GetEntityOwnerPetalCopyPackedSize(slot);
+    if (offset + static_cast<size_t>(copy_count) * copy_size > len) return false;
 
     slot.copies.clear();
     slot.copies.reserve(copy_count);
@@ -899,6 +924,7 @@ inline bool ParseEntityOwnerPetalSlot(const uint8_t* data, size_t len, size_t& o
         SOwnerPetalSlot::SCopy copy;
         copy.state = static_cast<SOwnerPetalSlot::ECopyState>(data[offset++]);
         copy.progress = data[offset++];
+        if (slot.visual_type != SOwnerPetalSlot::EVisualType::None) copy.visual_value = ReadU16(data, offset);
         if (copy.state != SOwnerPetalSlot::ECopyState::Alive &&
             copy.state != SOwnerPetalSlot::ECopyState::Loading)
             return false;
@@ -911,19 +937,22 @@ inline void PackEntityOwnerPetalSlot(const SOwnerPetalSlot& slot, uint8_t* out, 
 {
     out[offset++] = slot.petal_type;
     out[offset++] = slot.rarity;
+    out[offset++] = static_cast<uint8_t>(slot.visual_type);
     const uint8_t copy_count = static_cast<uint8_t>(std::min<size_t>(slot.copies.size(), UINT8_MAX));
     out[offset++] = copy_count;
     for (uint8_t i = 0; i < copy_count; ++i)
     {
         out[offset++] = static_cast<uint8_t>(slot.copies[i].state);
         out[offset++] = slot.copies[i].progress;
+        if (slot.visual_type != SOwnerPetalSlot::EVisualType::None)
+            WriteU16(out, offset, slot.copies[i].visual_value);
     }
 }
 
 inline size_t GetEntityOwnerPetalSlotPackedSize(const SOwnerPetalSlot& slot)
 {
     return entity_owner_slot_header_size +
-           std::min<size_t>(slot.copies.size(), UINT8_MAX) * entity_owner_slot_copy_size;
+           std::min<size_t>(slot.copies.size(), UINT8_MAX) * GetEntityOwnerPetalCopyPackedSize(slot);
 }
 
 struct SEntityStateSnap

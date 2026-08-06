@@ -26,6 +26,13 @@ enum class EEntityRemovalReason : std::uint8_t
     OwnerRemoved,
 };
 
+enum class EEntityTickMode : std::uint8_t
+{
+    Default,
+    Always,
+    PlayerVisible,
+};
+
 class CEntity
 {
   public:
@@ -58,7 +65,9 @@ class CEntity
     virtual bool IsCollisionPositionLocked() const { return false; }
     virtual bool CollidesWithWalls() const { return true; }
     virtual float WallCollisionRadius() const { return m_radius; }
+    virtual float TickHorizon() const { return m_tick_horizon; }
     virtual bool IsVisible() const { return !IsDead(); }
+    virtual void OnBeforeRemoved(EEntityRemovalReason) {}
     void MarkForDestroy(EEntityRemovalReason reason = EEntityRemovalReason::Despawned);
     void CancelDestroy();
     EEntityRemovalReason RemovalReason() const { return m_removal_reason; }
@@ -73,12 +82,15 @@ class CEntity
 
     bool m_skip_world_tick = false;
     bool m_allow_skip_tick = false;
+    EEntityTickMode m_tick_mode = EEntityTickMode::Default;
+    float m_tick_horizon = 0.f;
 
     int m_id = -1;
     std::uint64_t m_generation = 0;
     size_t m_live_index = std::numeric_limits<size_t>::max();
     size_t m_cleanup_index = std::numeric_limits<size_t>::max();
     size_t m_always_tick_index = std::numeric_limits<size_t>::max();
+    size_t m_conditional_tick_index = std::numeric_limits<size_t>::max();
     size_t m_large_spatial_index = std::numeric_limits<size_t>::max();
     std::uint64_t m_active_tick_marker = 0;
     bool m_is_marked_for_des = false;

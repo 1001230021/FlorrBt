@@ -295,13 +295,16 @@ bool SameSnapshotEntity(const ServerEntitySnap& lhs, const ServerEntitySnap& rhs
     {
         if (lhs.primary_slots[i].petal_type != rhs.primary_slots[i].petal_type ||
             lhs.primary_slots[i].rarity != rhs.primary_slots[i].rarity ||
+            lhs.primary_slots[i].visual_type != rhs.primary_slots[i].visual_type ||
             lhs.primary_slots[i].copies.size() != rhs.primary_slots[i].copies.size())
             return false;
         for (size_t copy = 0; copy < lhs.primary_slots[i].copies.size(); ++copy)
         {
             const auto& lhs_copy = lhs.primary_slots[i].copies[copy];
             const auto& rhs_copy = rhs.primary_slots[i].copies[copy];
-            if (lhs_copy.state != rhs_copy.state || lhs_copy.progress != rhs_copy.progress) return false;
+            if (lhs_copy.state != rhs_copy.state || lhs_copy.progress != rhs_copy.progress ||
+                lhs_copy.visual_value != rhs_copy.visual_value)
+                return false;
         }
     }
     for (size_t i = 0; i < lhs.states.size(); ++i)
@@ -529,11 +532,20 @@ void INetworkModule::Tick(float dt)
     m_player_lifecycle_service.RespawnDeadControlledEntities(m_players, m_lobby_world, *this);
     m_player_lifecycle_service.ProcessDropPickups(m_players, *this);
     TickBans(dt);
-    m_snapshot_timer += dt;
-    if (m_snapshot_timer >= game_config::network_snapshot_interval)
+    const float snapshot_interval = game_config::network_snapshot_interval;
+    if (!std::isfinite(snapshot_interval) || snapshot_interval <= 0.f)
     {
         m_snapshot_timer = 0.f;
         SendSnapshots();
+    }
+    else
+    {
+        m_snapshot_timer += std::max(0.f, dt);
+        if (m_snapshot_timer >= snapshot_interval)
+        {
+            m_snapshot_timer = std::fmod(m_snapshot_timer, snapshot_interval);
+            SendSnapshots();
+        }
     }
     TickTimeouts(dt);
 }

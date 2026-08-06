@@ -364,13 +364,17 @@ struct COpenSpawnDirector::implementation
         return { game_config::player_respawn_x, game_config::player_respawn_y };
     }
 
-    int ZoneTargetMobCount(const FlorrBtMap::Zone& zone, float area)
+    int ZoneTargetMobCount(const FlorrBtMap::Zone& zone, float area, float density_multiplier)
     {
         if (zone.density < 0.f) return 0;
+        // density == 0 with a mob pool is a map-authored single-spawn sentinel,
+        // not a population density. Keep it independent from the ambient wave.
         if (zone.density == 0.f) return zone.mobs.empty() ? 0 : 1;
 
         const double density_area = std::max(1.0, static_cast<double>(game_config::open_spawn_density_area));
-        const double desired = static_cast<double>(area) / density_area * static_cast<double>(zone.density);
+        const float wave = std::clamp(density_multiplier, 0.f, 1.f);
+        const double desired = static_cast<double>(area) / density_area * static_cast<double>(zone.density) *
+                               static_cast<double>(wave);
         if (!std::isfinite(desired) || desired <= 0.0) return 0;
 
         const int max_target = std::max(0, game_config::open_max_zone_spawn_target);
@@ -496,7 +500,7 @@ struct COpenSpawnDirector::implementation
         }
     }
 
-    void SpawnMobs(CGameWorld& world, COpenSpawnDirector::spawn_callback on_spawn)
+    void SpawnMobs(CGameWorld& world, float density_multiplier, COpenSpawnDirector::spawn_callback on_spawn)
     {
         const FlorrBtMap* map = world.GetMap();
         if (!map)
@@ -553,7 +557,7 @@ struct COpenSpawnDirector::implementation
             const bool single_spawn_zone = IsSingleSpawnZone(zone);
             if (single_spawn_zone && SingleSpawnZoneMobAlive(world, zone_index)) continue;
 
-            const int target_mobs = ZoneTargetMobCount(zone, cached_zone.area);
+            const int target_mobs = ZoneTargetMobCount(zone, cached_zone.area, density_multiplier);
             if (target_mobs <= 0) continue;
             zone_work.push_back({ zone_index, &zone, cached_zone.bounds, target_mobs, 0, single_spawn_zone });
         }
@@ -643,11 +647,11 @@ COpenSpawnDirector::COpenSpawnDirector() : m_impl(std::make_unique<implementatio
 
 COpenSpawnDirector::~COpenSpawnDirector() = default;
 
-void COpenSpawnDirector::Tick(CGameWorld& world, float dt, spawn_callback on_spawn)
+void COpenSpawnDirector::Tick(CGameWorld& world, float dt, float density_multiplier, spawn_callback on_spawn)
 {
     if (m_impl->count <= 0)
     {
-        m_impl->SpawnMobs(world, on_spawn);
+        m_impl->SpawnMobs(world, density_multiplier, on_spawn);
         m_impl->count = game_config::open_spawn_interval;
     } else
     {
@@ -655,7 +659,10 @@ void COpenSpawnDirector::Tick(CGameWorld& world, float dt, spawn_callback on_spa
     }
 }
 
-void COpenSpawnDirector::SpawnMobs(CGameWorld& world, spawn_callback on_spawn) { m_impl->SpawnMobs(world, on_spawn); }
+void COpenSpawnDirector::SpawnMobs(CGameWorld& world, float density_multiplier, spawn_callback on_spawn)
+{
+    m_impl->SpawnMobs(world, density_multiplier, on_spawn);
+}
 
 std::optional<sf::Vector2f> COpenSpawnDirector::SelectPlayerSpawn(CGameWorld& world, bool use_new_player_spawn,
                                                                   EPlayerSpawnReason reason)

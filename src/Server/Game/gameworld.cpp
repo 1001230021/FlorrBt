@@ -134,6 +134,31 @@ collision_entity_view BuildCollisionEntityView(CEntity* entity)
 }
 
 using active_tick_view = CActiveTickView;
+using player_tick_view = CPlayerTickView;
+
+EEntityTickMode EffectiveTickMode(const CEntity* entity)
+{
+    if (!entity) return EEntityTickMode::Default;
+    if (entity->IsEntityType(EEntityType::Mob))
+    {
+        const ERarity rarity = static_cast<const CMobBase*>(entity)->GetRarity();
+        if (rarity == ERarity::Eternal || rarity == ERarity::Unique || rarity == ERarity::Primordial)
+            return EEntityTickMode::Always;
+    }
+    if (entity->IsProjectileType(EProjectileType::Missile) || entity->IsProjectileType(EProjectileType::Pollen) ||
+        entity->IsProjectileType(EProjectileType::Trap))
+    {
+        const auto* projectile = static_cast<const CProjectile*>(entity);
+        const CEntity* owner = projectile->GetOwner();
+        if (owner && owner->IsEntityType(EEntityType::Mob))
+        {
+            const ERarity rarity = static_cast<const CMobBase*>(owner)->GetRarity();
+            if (rarity == ERarity::Eternal || rarity == ERarity::Unique || rarity == ERarity::Primordial)
+                return EEntityTickMode::Always;
+        }
+    }
+    return entity->m_tick_mode;
+}
 
 float Dot(sf::Vector2f a, sf::Vector2f b);
 bool CollisionPairAlive(const CEntity* lhs, const CEntity* rhs);
@@ -398,21 +423,6 @@ void SetLastCollisionCrashContext(const CEntity* entity, const CEntity* other)
     g_last_collision_crash_context = context;
 }
 
-bool HasSandstormMob(const CMobBase* lhs, const CMobBase* rhs)
-{
-    if (!lhs || !rhs) return false;
-    return lhs->GetMobType() == EMobType::Sandstorm || rhs->GetMobType() == EMobType::Sandstorm;
-}
-
-bool HasFriendlyPhaseMob(const CMobBase* lhs, const CMobBase* rhs)
-{
-    if (!lhs || !rhs) return false;
-    auto ignores_same_team_collision = [](const CMobBase* mob) {
-        return mob->GetMobType() == EMobType::AntHole || mob->GetMobType() == EMobType::Dandelion;
-    };
-    return ignores_same_team_collision(lhs) || ignores_same_team_collision(rhs);
-}
-
 bool IsCarriedLeafPiecePair(const collision_entity_view& lhs, const collision_entity_view& rhs)
 {
     auto is_carried_pair = [](const collision_entity_view& soldier_entity, const collision_entity_view& leaf_piece) {
@@ -438,14 +448,17 @@ void ResolveLeafcutterCarryConstraints(const std::vector<CEntity*>& entities)
     }
 }
 
-void BuildActiveTickViews(CGameWorld& world, std::vector<active_tick_view>& views)
+void BuildActiveTickViews(CGameWorld& world, std::vector<active_tick_view>& views,
+                          std::vector<player_tick_view>& player_views)
 {
     views.clear();
+    player_views.clear();
     CGameContext* context = world.GameContext();
     if (!context) return;
 
     const auto& players = context->Players();
     views.reserve(players.size());
+    player_views.reserve(players.size());
     for (const auto& player : players)
     {
         if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
@@ -456,18 +469,14 @@ void BuildActiveTickViews(CGameWorld& world, std::vector<active_tick_view>& view
         if (owner && owner->GameWorld() != &world) continue;
         if (!owner || owner->m_is_marked_for_des || !stats) continue;
 
-        float radius = std::max(0.f, game_config::simulation_active_view_padding) + std::max(0.f, stats->horizon);
+        const float horizon = std::max(0.f, stats->horizon);
+        player_views.push_back({ owner->m_pos, horizon, std::max(0.f, owner->m_radius) });
+
+        float radius = std::max(0.f, game_config::simulation_active_view_padding) + horizon;
         const float radius_cap = game_config::simulation_active_view_radius_cap;
         if (std::isfinite(radius_cap) && radius_cap > 0.f) radius = std::min(radius, radius_cap);
         AddActiveTickView(views, { owner->m_pos, radius });
     }
-}
-
-bool IsPetalFlowerPair(const collision_entity_view& lhs, const collision_entity_view& rhs)
-{
-    if (lhs.petal && rhs.flower) return lhs.petal->GetOwner() != rhs.entity;
-    if (rhs.petal && lhs.flower) return rhs.petal->GetOwner() != lhs.entity;
-    return false;
 }
 
 bool IsOwnedTrapTrapperPair(const collision_entity_view& lhs, const collision_entity_view& rhs)
@@ -489,14 +498,6 @@ bool IsFiredCarrotPetal(const CEntity* entity)
 {
     const auto* missile = dynamic_cast<const CMissilePetal*>(entity);
     return missile && missile->GetPetalType() == EPetalType::Carrot && missile->m_fired;
-}
-
-bool IsSummonWaxPair(const collision_entity_view& lhs, const collision_entity_view& rhs,
-                     const summon_owner_link& lhs_link, const summon_owner_link& rhs_link)
-{
-    if (!lhs.IsWax() && !rhs.IsWax()) return false;
-
-    return HasSummonOwnerLink(lhs.IsWax() ? rhs_link : lhs_link);
 }
 
 int CollisionDamageHitCount(const CPetal* source_petal, int base_hit_count)
@@ -564,9 +565,7 @@ struct collision_pair_context
 
     bool HasWax() const { return lhs.IsWax() || rhs.IsWax(); }
     bool HasGlass() const { return lhs.IsGlass() || rhs.IsGlass(); }
-    bool HasTrap() const { return lhs.trap || rhs.trap; }
     bool IsTrapPair() const { return lhs.trap && rhs.trap; }
-    bool HasNonPetalProjectile() const { return lhs.missile || lhs.pollen || rhs.missile || rhs.pollen; }
 };
 
 collision_pair_context BuildCollisionPairContext(CEntity* lhs, CEntity* rhs)
@@ -605,16 +604,7 @@ bool ShouldIgnoreOwnershipCollision(const collision_pair_context& pair)
 
 bool ShouldIgnoreFriendlyCollision(const collision_pair_context& pair)
 {
-    if (!pair.same_team || pair.team_heal) return false;
-
-    // Traps and non-petal projectiles never interact with friendlies, including their own type.
-    if (pair.HasTrap() || pair.HasNonPetalProjectile()) return true;
-    if (pair.lhs.petal && pair.rhs.petal) return true;
-    if (IsPetalFlowerPair(pair.lhs, pair.rhs)) return true;
-    if (HasFriendlyPhaseMob(pair.lhs.mob, pair.rhs.mob)) return true;
-    if (HasSandstormMob(pair.lhs.mob, pair.rhs.mob)) return true;
-
-    return pair.HasWax() && IsSummonWaxPair(pair.lhs, pair.rhs, pair.lhs_summon, pair.rhs_summon);
+    return false;
 }
 
 bool ShouldResolveWeakSummonCollision(const collision_pair_context& pair)
@@ -628,19 +618,19 @@ bool ResolveWaxMobHardCollision(const collision_entity_view& lhs, const collisio
 
 bool CanResolvePhysicalCollision(const collision_pair_context& pair)
 {
-    if (pair.team_heal || pair.HasGlass() || pair.IsTrapPair()) return false;
+    if (pair.team_heal || pair.HasGlass()) return false;
     return pair.lhs.entity->CanPhysicallyCollideWith(pair.rhs.entity) &&
            pair.rhs.entity->CanPhysicallyCollideWith(pair.lhs.entity);
 }
 
 void ResolvePhysicalCollision(const collision_pair_context& pair)
 {
+    if (!CanResolvePhysicalCollision(pair)) return;
     if (pair.IsTrapPair())
     {
         ApplyWeakOverlapCollision(pair.lhs, pair.rhs, game_config::default_trapper_trap_collision_push);
         return;
     }
-    if (!CanResolvePhysicalCollision(pair)) return;
 
     // Wax-to-mob separation has its own immovable-wall response.
     if (ResolveWaxMobHardCollision(pair.lhs, pair.rhs)) return;
@@ -1080,9 +1070,9 @@ void ApplyBodyPoison(CMobBase* attacker, CFlower* attacker_flower, CMobBase* tar
     if (poison->IsValid()) target->AddState(std::move(poison));
 }
 
-void ResolveOverlappingEntityPair(CEntity* entity, CEntity* other, float dt)
+void ResolveOverlappingEntityPair(CEntity* entity, CEntity* other, float dt, bool resolve_physical_collision)
 {
-    if (!CollisionPairAlive(entity, other) || entity == other || !entity->IsCollision(*other)) return;
+    if (!CollisionPairAlive(entity, other) || entity == other) return;
 
     const collision_pair_context pair = BuildCollisionPairContext(entity, other);
 
@@ -1092,18 +1082,19 @@ void ResolveOverlappingEntityPair(CEntity* entity, CEntity* other, float dt)
     // 2. Constraint and ownership filters: bound entities cannot collide with their anchors or owners.
     if (ShouldIgnoreConstraintCollision(pair) || ShouldIgnoreOwnershipCollision(pair)) return;
 
-    // 3. Team filters: selected friendly pairs phase, while ordinary friendly mobs still separate.
+    // 3. Team filters: friendlies phase unless the pair is an explicit team-heal interaction.
     if (ShouldIgnoreFriendlyCollision(pair)) return;
 
     SetLastCollisionCrashContext(entity, other);
     if (ShouldResolveWeakSummonCollision(pair))
     {
-        ApplyWeakOverlapCollision(pair.lhs, pair.rhs, game_config::world_mob_overlap_weak_push);
+        if (resolve_physical_collision)
+            ApplyWeakOverlapCollision(pair.lhs, pair.rhs, game_config::world_mob_overlap_weak_push);
         return;
     }
 
     // 4. Physical response is independent from damage eligibility.
-    ResolvePhysicalCollision(pair);
+    if (resolve_physical_collision) ResolvePhysicalCollision(pair);
 
     // 5. Damage dispatch only runs for hostile pairs or an explicitly targeted team heal.
     if (!CanResolveCollisionDamage(pair)) return;
@@ -1583,6 +1574,7 @@ CGameWorld::~CGameWorld()
 {
     m_cleanup_entities.clear();
     m_always_tick_entities.clear();
+    m_conditional_tick_entities.clear();
     m_large_entities.clear();
     m_live_entities.clear();
     m_p_entities.clear();
@@ -1637,6 +1629,7 @@ void CGameWorld::RegisterLiveEntity(CEntity* entity)
     m_spatial_grid.InsertTracked(entity);
     if (entity->m_is_marked_for_des) QueueEntityForCleanup(entity);
     SyncAlwaysTickMembership(entity);
+    SyncConditionalTickMembership(entity);
     SyncLargeEntityMembership(entity);
 }
 
@@ -1646,6 +1639,7 @@ void CGameWorld::UnregisterLiveEntity(CEntity* entity)
     m_spatial_grid.RemoveTracked(entity->m_id);
     RemoveQueuedCleanupEntity(entity);
     RemoveAlwaysTickEntity(entity);
+    RemoveConditionalTickEntity(entity);
     RemoveLargeEntity(entity);
 
     const size_t index = entity->m_live_index;
@@ -1694,7 +1688,9 @@ void CGameWorld::SyncAlwaysTickMembership(CEntity* entity)
 {
     if (!entity) return;
 
-    const bool should_tick_always = !entity->m_allow_skip_tick;
+    const EEntityTickMode tick_mode = EffectiveTickMode(entity);
+    const bool should_tick_always = tick_mode == EEntityTickMode::Always ||
+                                    (tick_mode == EEntityTickMode::Default && !entity->m_allow_skip_tick);
     const bool is_always_tick = entity->m_always_tick_index < m_always_tick_entities.size() &&
                                 m_always_tick_entities[entity->m_always_tick_index] == entity;
     if (should_tick_always == is_always_tick) return;
@@ -1723,6 +1719,41 @@ void CGameWorld::RemoveAlwaysTickEntity(CEntity* entity)
     moved->m_always_tick_index = index;
     m_always_tick_entities.pop_back();
     entity->m_always_tick_index = std::numeric_limits<size_t>::max();
+}
+
+void CGameWorld::SyncConditionalTickMembership(CEntity* entity)
+{
+    if (!entity) return;
+
+    const bool should_tick_conditionally = EffectiveTickMode(entity) == EEntityTickMode::PlayerVisible;
+    const bool is_conditional_tick = entity->m_conditional_tick_index < m_conditional_tick_entities.size() &&
+                                     m_conditional_tick_entities[entity->m_conditional_tick_index] == entity;
+    if (should_tick_conditionally == is_conditional_tick) return;
+    if (!should_tick_conditionally)
+    {
+        RemoveConditionalTickEntity(entity);
+        return;
+    }
+
+    entity->m_conditional_tick_index = m_conditional_tick_entities.size();
+    m_conditional_tick_entities.push_back(entity);
+}
+
+void CGameWorld::RemoveConditionalTickEntity(CEntity* entity)
+{
+    if (!entity) return;
+    const size_t index = entity->m_conditional_tick_index;
+    if (index >= m_conditional_tick_entities.size() || m_conditional_tick_entities[index] != entity)
+    {
+        entity->m_conditional_tick_index = std::numeric_limits<size_t>::max();
+        return;
+    }
+
+    CEntity* moved = m_conditional_tick_entities.back();
+    m_conditional_tick_entities[index] = moved;
+    moved->m_conditional_tick_index = index;
+    m_conditional_tick_entities.pop_back();
+    entity->m_conditional_tick_index = std::numeric_limits<size_t>::max();
 }
 
 void CGameWorld::SyncLargeEntityMembership(CEntity* entity)
@@ -1831,11 +1862,13 @@ void CGameWorld::ClearEntitiesForRestore()
 {
     m_cleanup_entities.clear();
     m_always_tick_entities.clear();
+    m_conditional_tick_entities.clear();
     m_large_entities.clear();
     m_active_entities.clear();
     m_collision_normal_entities.clear();
     m_collision_large_entities.clear();
     m_collision_inactive_entities.clear();
+    m_pending_psionic_damage.clear();
     m_live_entities.clear();
     m_spatial_grid.Clear();
     m_p_entity_refs.clear();
@@ -1845,6 +1878,114 @@ void CGameWorld::ClearEntitiesForRestore()
     m_next_id = 0;
     m_next_generation = 1;
     m_active_tick_marker = 1;
+}
+
+void CGameWorld::QueuePsionicDamage(CMobBase* receiver, float damage, CEntity* attacker, EDamageType damage_type)
+{
+    if (!receiver || receiver->GameWorld() != this || damage <= 0.f) return;
+    if (IsSharedDamageType(damage_type)) return;
+
+    const SPsionicReceiverKey key{ receiver->m_id, receiver->m_generation };
+    auto [it, inserted] = m_pending_psionic_damage.try_emplace(key);
+    if (inserted)
+    {
+        it->second.origin = receiver->m_pos;
+        it->second.team = receiver->m_team;
+    }
+    it->second.damage_by_source[{ attacker, BaseDamageType(damage_type) }] += damage;
+}
+
+void CGameWorld::FlushPendingPsionicDamage()
+{
+    if (m_pending_psionic_damage.empty()) return;
+
+    auto pending_damage = std::move(m_pending_psionic_damage);
+    m_pending_psionic_damage.clear();
+    std::vector<SPsionicReceiverKey> anchor_keys;
+    anchor_keys.reserve(pending_damage.size());
+    for (const auto& [key, pending] : pending_damage)
+    {
+        (void)pending;
+        anchor_keys.push_back(key);
+    }
+    std::sort(anchor_keys.begin(), anchor_keys.end(), [](const SPsionicReceiverKey& lhs, const SPsionicReceiverKey& rhs) {
+        if (lhs.entity_id != rhs.entity_id) return lhs.entity_id < rhs.entity_id;
+        return lhs.entity_generation < rhs.entity_generation;
+    });
+
+    std::unordered_map<SPsionicDamageKey, float, SPsionicDamageKeyHash> distributed_damage;
+    std::unordered_set<SPsionicReceiverKey, SPsionicReceiverKeyHash> assigned_targets;
+    std::vector<CMobBase*> candidates;
+    std::unordered_map<SPsionicSourceKey, float, SPsionicSourceKeyHash> group_damage_by_source;
+    const float link_range = std::max(0.f, game_config::psionic_connection_range);
+    const float link_range_sq = link_range * link_range;
+    for (const SPsionicReceiverKey& anchor_key : anchor_keys)
+    {
+        auto anchor_it = pending_damage.find(anchor_key);
+        if (anchor_it == pending_damage.end()) continue;
+        const SPendingPsionicDamage anchor = anchor_it->second;
+        candidates.clear();
+        m_spatial_grid.ForEachInRange(anchor.origin, link_range, [&](CEntity* entity) {
+            if (!entity || entity->m_is_marked_for_des || entity->IsDead()) return;
+            if (!entity->IsEntityType(EEntityType::Mob)) return;
+            auto* mob = static_cast<CMobBase*>(entity);
+            if (!mob || !CheckTeam(mob->m_team, anchor.team)) return;
+            if (DistanceSq(mob->m_pos, anchor.origin) > link_range_sq) return;
+            if (!HasActivePsionicConnection(mob)) return;
+            const SPsionicReceiverKey candidate_key{ mob->m_id, mob->m_generation };
+            if (!assigned_targets.insert(candidate_key).second) return;
+            candidates.push_back(mob);
+        });
+        if (candidates.empty())
+        {
+            pending_damage.erase(anchor_it);
+            continue;
+        }
+        std::sort(candidates.begin(), candidates.end(), [](const CMobBase* lhs, const CMobBase* rhs) {
+            if (lhs->m_id != rhs->m_id) return lhs->m_id < rhs->m_id;
+            return lhs->m_generation < rhs->m_generation;
+        });
+
+        group_damage_by_source.clear();
+        for (CMobBase* mob : candidates)
+        {
+            const SPsionicReceiverKey key{ mob->m_id, mob->m_generation };
+            auto pending_it = pending_damage.find(key);
+            if (pending_it == pending_damage.end()) continue;
+            for (const auto& [source, damage] : pending_it->second.damage_by_source)
+                group_damage_by_source[source] += damage;
+            pending_damage.erase(pending_it);
+        }
+
+        // The anchor can disappear between receiving damage and this flush, while nearby linked mobs remain valid.
+        auto stale_anchor = pending_damage.find(anchor_key);
+        if (stale_anchor != pending_damage.end())
+        {
+            for (const auto& [source, damage] : stale_anchor->second.damage_by_source)
+                group_damage_by_source[source] += damage;
+            pending_damage.erase(stale_anchor);
+        }
+
+        const float divisor = static_cast<float>(candidates.size());
+        for (const auto& [source, damage] : group_damage_by_source)
+        {
+            if (damage <= 0.f) continue;
+            const float shared_damage = damage / divisor;
+            const EDamageType shared_type = ToSharedDamageType(source.damage_type);
+            for (CMobBase* mob : candidates)
+            {
+                const SPsionicDamageKey target{ mob->m_id, mob->m_generation, source.attacker, shared_type };
+                distributed_damage[target] += shared_damage;
+            }
+        }
+    }
+
+    for (const auto& [target, damage] : distributed_damage)
+    {
+        CEntity* entity = GetEntity(target.entity_id, target.entity_generation);
+        if (!entity || !entity->IsEntityType(EEntityType::Mob)) continue;
+        static_cast<CMobBase*>(entity)->TakeDamage(damage, target.attacker, target.damage_type);
+    }
 }
 
 void CGameWorld::FinalizeEntityRestore()
@@ -2050,11 +2191,13 @@ void CGameWorld::Tick(float dt)
         phase_done(ETickPhase::ActiveCollection);
 
         TickActiveEntities(dt);
+        FlushPendingPsionicDamage();
         phase_done(ETickPhase::EntityUpdate);
 
         SyncSpatialPositionsAndMemberships(m_active_entities);
         if (m_p_controller) m_p_controller->OnTick(*this, dt);
         RemoveTransferredActiveEntities();
+        FlushPendingPsionicDamage();
         phase_done(ETickPhase::ControllerAndSync);
 
         ResolveWallCollisions(m_active_entities);
@@ -2063,6 +2206,7 @@ void CGameWorld::Tick(float dt)
         phase_done(ETickPhase::WallResolution);
 
         ResolveCollisions(m_active_entities, dt);
+        FlushPendingPsionicDamage();
         ResolveLeafcutterCarryConstraints(m_active_entities);
         RefreshAttachedMissileTransforms(m_active_entities);
         SyncSpatialPositionsAndMemberships(m_active_entities);
@@ -2099,9 +2243,9 @@ void CGameWorld::Tick(float dt)
 
 void CGameWorld::CollectActiveEntitiesForTick()
 {
-    BuildActiveTickViews(*this, m_active_tick_views);
+    BuildActiveTickViews(*this, m_active_tick_views, m_player_tick_views);
     m_active_entities.clear();
-    m_active_entities.reserve(m_always_tick_entities.size());
+    m_active_entities.reserve(m_always_tick_entities.size() + m_conditional_tick_entities.size());
 
     ++m_active_tick_marker;
     if (m_active_tick_marker == 0)
@@ -2126,8 +2270,24 @@ void CGameWorld::CollectActiveEntitiesForTick()
     {
         ForEachEntityInEdgeRange(view.center, view.radius, [&](CEntity* entity) {
             if (!entity || !entity->m_allow_skip_tick) return;
+            if (EffectiveTickMode(entity) == EEntityTickMode::PlayerVisible) return;
             add_active_entity(entity);
         });
+    }
+
+    for (CEntity* entity : m_conditional_tick_entities)
+    {
+        if (!entity || entity->m_is_marked_for_des || entity->GameWorld() != this) continue;
+        const float entity_horizon = std::max(0.f, entity->TickHorizon());
+        for (const player_tick_view& player_view : m_player_tick_views)
+        {
+            const float entity_sees_player = entity_horizon + player_view.radius;
+            const float player_sees_entity = player_view.horizon + std::max(0.f, entity->m_radius);
+            const float activation_radius = std::max(entity_sees_player, player_sees_entity);
+            if (DistanceSq(entity->m_pos, player_view.center) > activation_radius * activation_radius) continue;
+            add_active_entity(entity);
+            break;
+        }
     }
 }
 
@@ -2211,6 +2371,7 @@ void CGameWorld::SyncSpatialPositionsAndMemberships(const std::vector<CEntity*>&
         if (!entity || entity->GameWorld() != this) continue;
         m_spatial_grid.UpdateTracked(entity);
         SyncAlwaysTickMembership(entity);
+        SyncConditionalTickMembership(entity);
         SyncLargeEntityMembership(entity);
     }
 }
@@ -2294,32 +2455,31 @@ void CGameWorld::BuildWallGrid()
     }
 }
 
-bool CGameWorld::SegmentBlockedByWall(sf::Vector2f start, sf::Vector2f end) const
+bool CGameWorld::SweptCircleBlockedByWall(sf::Vector2f start, sf::Vector2f end, float radius) const
 {
     if (!m_map || m_map->walls.empty()) return false;
 
+    radius = std::max(0.f, radius);
     sf::Vector2f center = (start + end) * 0.5f;
     float travel = Distance(start, end);
-    float query_radius = travel * 0.5f + game_config::gameworld_wall_swept_query_padding;
+    float query_radius =
+        travel * 0.5f + radius + std::max(0.f, game_config::gameworld_wall_swept_query_padding);
     bool blocked = false;
     m_wall_grid.ForEachInRangeBroadphase(center, query_radius, [&](FlorrBtMap::Wall* wall) {
         if (blocked || !wall) return;
-        if (SweptCircleHitsWall(start, end, 0.f, *wall)) blocked = true;
+        if (SweptCircleHitsWall(start, end, radius, *wall)) blocked = true;
     });
     return blocked;
 }
 
+bool CGameWorld::SegmentBlockedByWall(sf::Vector2f start, sf::Vector2f end) const
+{
+    return SweptCircleBlockedByWall(start, end, 0.f);
+}
+
 bool CGameWorld::CircleBlockedByWall(sf::Vector2f center, float radius) const
 {
-    if (!m_map || m_map->walls.empty()) return false;
-
-    float query_radius = std::max(0.f, radius) + std::max(0.f, game_config::gameworld_wall_swept_query_padding);
-    bool blocked = false;
-    m_wall_grid.ForEachInRangeBroadphase(center, query_radius, [&](FlorrBtMap::Wall* wall) {
-        if (blocked || !wall) return;
-        if (SweptCircleHitsWall(center, center, std::max(0.f, radius), *wall)) blocked = true;
-    });
-    return blocked;
+    return SweptCircleBlockedByWall(center, center, radius);
 }
 
 void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
@@ -2505,7 +2665,9 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
         if (!is_active(other)) other->m_prev_pos = other->m_pos;
 
         const bool overlapping = entity->IsCollision(*other);
-        ResolveOverlappingEntityPair(entity, other, dt);
+        if (!overlapping) return;
+        const bool unloaded_mob = !is_active(other) && other->IsEntityType(EEntityType::Mob);
+        ResolveOverlappingEntityPair(entity, other, dt, !unloaded_mob);
         if (overlapping && !is_active(other)) inactive_collision_entities.push_back(other);
     };
 
@@ -2585,6 +2747,8 @@ void CGameWorld::Cleanup()
         if (!entity || entity->GameWorld() != this || !entity->m_is_marked_for_des) continue;
 
         const EEntityRemovalReason removal_reason = entity->RemovalReason();
+        entity->OnBeforeRemoved(removal_reason);
+        if (entity->GameWorld() != this || !entity->m_is_marked_for_des) continue;
         if (m_p_controller)
         {
             if (removal_reason == EEntityRemovalReason::Defeated)

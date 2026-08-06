@@ -175,6 +175,8 @@ class CPsionicConnectionState : public CState
     bool m_is_valid = false;
 };
 
+bool HasActivePsionicConnection(const CMobBase* mob);
+
 bool BlocksNullifiedInteraction(const CEntity* lhs, const CEntity* rhs);
 const CMobBase* ResolveInteractionMob(const CEntity* entity);
 bool BlocksNullifiedMobInteraction(const CMobBase* lhs, const CMobBase* rhs);
