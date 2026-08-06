@@ -1,4 +1,4 @@
-# FlorrBt
+# FlorrBt v1.0.1
 
 FlorrBt is a C++ florr.io-inspired server with a browser-based HTML client.
 

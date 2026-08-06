@@ -1,4 +1,4 @@
-<svg xml:space="preserve" viewBox="0 0 256 256">
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 256 256">
 	<path fill="#856e49" d="M0 0h124v256H0z"/>
 	<path fill="#856e49" d="M0 0h256v124H0z"/>
 	<path fill="#856e49" d="M36.67 256H122l-.14-133.69L256 122V36.67L35.87 38.2z"/>

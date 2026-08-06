@@ -75,15 +75,8 @@ inline constexpr int poison_tier_count = 9;
 inline constexpr int concentrated_poison_tier_count = 1;
 inline constexpr int movement_tier_count = 7;
 inline constexpr std::array<ERarity, talent_tier_count> talent_tier_rarities = {
-    ERarity::Common,
-    ERarity::Unusual,
-    ERarity::Rare,
-    ERarity::Epic,
-    ERarity::Legendary,
-    ERarity::Mythic,
-    ERarity::Ultra,
-    ERarity::Super,
-    ERarity::Eternal,
+    ERarity::Common, ERarity::Unusual, ERarity::Rare,  ERarity::Epic,    ERarity::Legendary,
+    ERarity::Mythic, ERarity::Ultra,   ERarity::Super, ERarity::Eternal,
 };
 
 class CFlowerHealthTalent final : public ITalent
@@ -112,7 +105,8 @@ class CBodyDamageTalent final : public ITalent
     CBodyDamageTalent() = default;
     CBodyDamageTalent(ERarity rarity, int cost, float total_multiplier, float previous_total_multiplier)
         : ITalent(ETalentId::BodyDamage, rarity, cost), m_total_multiplier(total_multiplier),
-          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier : total_multiplier)
+          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier
+                                                            : total_multiplier)
     {
     }
 
@@ -132,7 +126,8 @@ class CMovementTalent final : public ITalent
     CMovementTalent() = default;
     CMovementTalent(ERarity rarity, int cost, float total_multiplier, float previous_total_multiplier)
         : ITalent(ETalentId::Movement, rarity, cost), m_total_multiplier(total_multiplier),
-          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier : total_multiplier)
+          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier
+                                                            : total_multiplier)
     {
     }
 
@@ -175,7 +170,8 @@ class CPetalHealthTalent final : public ITalent
     CPetalHealthTalent() = default;
     CPetalHealthTalent(ERarity rarity, int cost, float total_multiplier, float previous_total_multiplier)
         : ITalent(ETalentId::PetalHealth, rarity, cost), m_total_multiplier(total_multiplier),
-          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier : total_multiplier)
+          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier
+                                                            : total_multiplier)
     {
     }
 
@@ -195,7 +191,8 @@ class CMedicTalent final : public ITalent
     CMedicTalent() = default;
     CMedicTalent(ERarity rarity, int cost, float total_multiplier, float previous_total_multiplier)
         : ITalent(ETalentId::Medic, rarity, cost), m_total_multiplier(total_multiplier),
-          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier : total_multiplier)
+          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier
+                                                            : total_multiplier)
     {
     }
 
@@ -216,7 +213,8 @@ class CPetalReloadTalent final : public ITalent
     CPetalReloadTalent(ERarity rarity, int cost, float total_multiplier, float previous_total_multiplier,
                        float swap_min_reload)
         : ITalent(ETalentId::PetalReload, rarity, cost), m_total_multiplier(total_multiplier),
-          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier : total_multiplier),
+          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier
+                                                            : total_multiplier),
           m_swap_min_reload(swap_min_reload)
     {
     }
@@ -311,7 +309,8 @@ class CSummonerTalent final : public ITalent
     CSummonerTalent() = default;
     CSummonerTalent(ERarity rarity, int cost, float total_multiplier, float previous_total_multiplier)
         : ITalent(ETalentId::Summoner, rarity, cost), m_total_multiplier(total_multiplier),
-          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier : total_multiplier)
+          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier
+                                                            : total_multiplier)
     {
     }
 
@@ -331,7 +330,8 @@ class CAntennaeTalent final : public ITalent
     CAntennaeTalent() = default;
     CAntennaeTalent(ERarity rarity, int cost, float total_multiplier, float previous_total_multiplier)
         : ITalent(ETalentId::Antennae, rarity, cost), m_total_multiplier(total_multiplier),
-          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier : total_multiplier)
+          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier
+                                                            : total_multiplier)
     {
     }
 
@@ -356,8 +356,7 @@ class CPetalSplitTalent final : public ITalent
     };
 
     CPetalSplitTalent() = default;
-    CPetalSplitTalent(ERarity rarity, int cost, Mode mode)
-        : ITalent(ETalentId::PetalSplit, rarity, cost), m_mode(mode)
+    CPetalSplitTalent(ERarity rarity, int cost, Mode mode) : ITalent(ETalentId::PetalSplit, rarity, cost), m_mode(mode)
     {
     }
 
@@ -450,8 +449,7 @@ class CSecondChanceTalent final : public ITalent
     float m_cooldown = 0.f;
 };
 
-template <typename TTalent, size_t N>
-inline bool LinkTalentChain(std::array<TTalent, N>& talents)
+template <typename TTalent, size_t N> inline bool LinkTalentChain(std::array<TTalent, N>& talents)
 {
     for (size_t i = 1; i < talents.size(); ++i)
         talents[i].m_based = &talents[i - 1];
@@ -471,14 +469,10 @@ inline ITalent* FindTalentByRarity(std::array<TTalent, N>& talents, ERarity rari
 inline std::array<CFlowerHealthTalent, talent_tier_count>& FlowerHealthTalents()
 {
     static std::array<CFlowerHealthTalent, talent_tier_count> talents = {
-        CFlowerHealthTalent(ERarity::Common, 2, 1.3f),
-        CFlowerHealthTalent(ERarity::Unusual, 5, 1.69f),
-        CFlowerHealthTalent(ERarity::Rare, 8, 2.197f),
-        CFlowerHealthTalent(ERarity::Epic, 11, 2.8561f),
-        CFlowerHealthTalent(ERarity::Legendary, 14, 3.71293f),
-        CFlowerHealthTalent(ERarity::Mythic, 17, 4.826809f),
-        CFlowerHealthTalent(ERarity::Ultra, 20, 6.274852f),
-        CFlowerHealthTalent(ERarity::Super, 21, 8.157307f),
+        CFlowerHealthTalent(ERarity::Common, 2, 1.3f),         CFlowerHealthTalent(ERarity::Unusual, 5, 1.69f),
+        CFlowerHealthTalent(ERarity::Rare, 8, 2.197f),         CFlowerHealthTalent(ERarity::Epic, 11, 2.8561f),
+        CFlowerHealthTalent(ERarity::Legendary, 14, 3.71293f), CFlowerHealthTalent(ERarity::Mythic, 17, 4.826809f),
+        CFlowerHealthTalent(ERarity::Ultra, 20, 6.274852f),    CFlowerHealthTalent(ERarity::Super, 21, 8.157307f),
         CFlowerHealthTalent(ERarity::Eternal, 24, 10.604499f),
     };
     static const bool linked = LinkTalentChain(talents);
@@ -506,16 +500,12 @@ inline std::array<CBodyDamageTalent, sharp_edges_tier_count>& BodyDamageTalents(
 inline std::array<CMovementTalent, movement_tier_count>& MovementTalents()
 {
     static std::array<CMovementTalent, movement_tier_count> talents = {
-        CMovementTalent(ERarity::Rare, 3, 1.1f, 1.f),
-        CMovementTalent(ERarity::Epic, 4, 1.2f, 1.1f),
-        CMovementTalent(ERarity::Legendary, 5, 1.3f, 1.2f),
-        CMovementTalent(ERarity::Mythic, 6, 1.4f, 1.3f),
-        CMovementTalent(ERarity::Ultra, 7, 1.5f, 1.4f),
-        CMovementTalent(ERarity::Super, 9, 1.75f, 1.5f),
+        CMovementTalent(ERarity::Rare, 3, 1.1f, 1.f),       CMovementTalent(ERarity::Epic, 4, 1.2f, 1.1f),
+        CMovementTalent(ERarity::Legendary, 5, 1.3f, 1.2f), CMovementTalent(ERarity::Mythic, 6, 1.4f, 1.3f),
+        CMovementTalent(ERarity::Ultra, 7, 1.5f, 1.4f),     CMovementTalent(ERarity::Super, 9, 1.75f, 1.5f),
         CMovementTalent(ERarity::Eternal, 13, 2.f, 1.75f),
     };
-    static const bool linked = []()
-    {
+    static const bool linked = []() {
         auto& health = FlowerHealthTalents();
         talents[0].m_based = &health[1];
         for (size_t i = 1; i < talents.size(); ++i)
@@ -531,8 +521,7 @@ inline std::array<CBodyToxicityTalent, body_toxicity_tier_count>& BodyToxicityTa
     static std::array<CBodyToxicityTalent, body_toxicity_tier_count> talents = {
         CBodyToxicityTalent(ERarity::Ultra, 10, 0.8f, 1.f),
     };
-    static const bool linked = []()
-    {
+    static const bool linked = []() {
         auto& sharp_edges = BodyDamageTalents();
         talents[0].m_based = &sharp_edges[5];
         return true;
@@ -562,14 +551,10 @@ inline std::array<CPetalHealthTalent, talent_tier_count>& PetalHealthTalents()
 inline std::array<CMedicTalent, talent_tier_count>& MedicTalents()
 {
     static std::array<CMedicTalent, talent_tier_count> talents = {
-        CMedicTalent(ERarity::Common, 2, 1.15f, 1.f),
-        CMedicTalent(ERarity::Unusual, 5, 1.322f, 1.15f),
-        CMedicTalent(ERarity::Rare, 8, 1.521f, 1.322f),
-        CMedicTalent(ERarity::Epic, 11, 1.749f, 1.521f),
-        CMedicTalent(ERarity::Legendary, 14, 2.011f, 1.749f),
-        CMedicTalent(ERarity::Mythic, 17, 2.313f, 2.011f),
-        CMedicTalent(ERarity::Ultra, 20, 2.66f, 2.313f),
-        CMedicTalent(ERarity::Super, 23, 3.059f, 2.66f),
+        CMedicTalent(ERarity::Common, 2, 1.15f, 1.f),         CMedicTalent(ERarity::Unusual, 5, 1.322f, 1.15f),
+        CMedicTalent(ERarity::Rare, 8, 1.521f, 1.322f),       CMedicTalent(ERarity::Epic, 11, 1.749f, 1.521f),
+        CMedicTalent(ERarity::Legendary, 14, 2.011f, 1.749f), CMedicTalent(ERarity::Mythic, 17, 2.313f, 2.011f),
+        CMedicTalent(ERarity::Ultra, 20, 2.66f, 2.313f),      CMedicTalent(ERarity::Super, 23, 3.059f, 2.66f),
         CMedicTalent(ERarity::Eternal, 26, 4.046f, 3.059f),
     };
     static const bool linked = LinkTalentChain(talents);
@@ -616,10 +601,8 @@ inline std::array<CPetalReloadTalent, talent_tier_count>& PetalReloadTalents()
 inline std::array<CPetalRotationTalent, short_talent_tier_count>& PetalRotationTalents()
 {
     static std::array<CPetalRotationTalent, short_talent_tier_count> talents = {
-        CPetalRotationTalent(ERarity::Common, 1, 3.1f),
-        CPetalRotationTalent(ERarity::Unusual, 2, 3.7f),
-        CPetalRotationTalent(ERarity::Rare, 3, 4.3f),
-        CPetalRotationTalent(ERarity::Epic, 4, 4.9f),
+        CPetalRotationTalent(ERarity::Common, 1, 3.1f),    CPetalRotationTalent(ERarity::Unusual, 2, 3.7f),
+        CPetalRotationTalent(ERarity::Rare, 3, 4.3f),      CPetalRotationTalent(ERarity::Epic, 4, 4.9f),
         CPetalRotationTalent(ERarity::Legendary, 5, 5.5f),
     };
     static const bool linked = LinkTalentChain(talents);
@@ -630,10 +613,8 @@ inline std::array<CPetalRotationTalent, short_talent_tier_count>& PetalRotationT
 inline std::array<CSlotNumTalent, short_talent_tier_count>& SlotNumTalents()
 {
     static std::array<CSlotNumTalent, short_talent_tier_count> talents = {
-        CSlotNumTalent(ERarity::Common, 3, 6),
-        CSlotNumTalent(ERarity::Unusual, 6, 7),
-        CSlotNumTalent(ERarity::Rare, 9, 8),
-        CSlotNumTalent(ERarity::Epic, 12, 9),
+        CSlotNumTalent(ERarity::Common, 3, 6),      CSlotNumTalent(ERarity::Unusual, 6, 7),
+        CSlotNumTalent(ERarity::Rare, 9, 8),        CSlotNumTalent(ERarity::Epic, 12, 9),
         CSlotNumTalent(ERarity::Legendary, 15, 10),
     };
     static const bool linked = LinkTalentChain(talents);
@@ -648,8 +629,7 @@ inline std::array<CAntennaeTalent, antennae_tier_count>& AntennaeTalents()
         CAntennaeTalent(ERarity::Epic, 3, 1.5f, 1.25f),
         CAntennaeTalent(ERarity::Legendary, 5, 2.f, 1.5f),
     };
-    static const bool linked = []()
-    {
+    static const bool linked = []() {
         auto& slots = SlotNumTalents();
         talents[0].m_based = &slots[0];
         talents[1].m_based = &talents[0];
@@ -668,8 +648,7 @@ inline std::array<CPetalSplitTalent, duplicator_tier_count>& PetalSplitTalents()
         CPetalSplitTalent(ERarity::Super, 30, CPetalSplitTalent::Mode::LeftmostNonEternalUnique),
         CPetalSplitTalent(ERarity::Eternal, 40, CPetalSplitTalent::Mode::LeftmostEternalUnique),
     };
-    static const bool linked = []()
-    {
+    static const bool linked = []() {
         auto& slots = SlotNumTalents();
         talents[0].m_based = &slots[3];
         talents[1].m_based = &talents[0];
@@ -688,8 +667,7 @@ inline std::array<CReachTalent, reach_tier_count>& ReachTalents()
         CReachTalent(ERarity::Mythic, 6, 128.f),
         CReachTalent(ERarity::Super, 9, 192.f),
     };
-    static const bool linked = []()
-    {
+    static const bool linked = []() {
         auto& slots = SlotNumTalents();
         talents[0].m_based = &slots[1];
         talents[1].m_based = &talents[0];
@@ -703,18 +681,13 @@ inline std::array<CReachTalent, reach_tier_count>& ReachTalents()
 inline std::array<CPoisonDamageTalent, poison_tier_count>& PoisonDamageTalents()
 {
     static std::array<CPoisonDamageTalent, poison_tier_count> talents = {
-        CPoisonDamageTalent(ERarity::Common, 1, 0, 0.0625f),
-        CPoisonDamageTalent(ERarity::Unusual, 2, 0, 0.0625f),
-        CPoisonDamageTalent(ERarity::Rare, 3, 0, 0.0625f),
-        CPoisonDamageTalent(ERarity::Rare, 3, 1, 0.0625f),
-        CPoisonDamageTalent(ERarity::Rare, 3, 2, 0.0625f),
-        CPoisonDamageTalent(ERarity::Rare, 3, 3, 0.0625f),
-        CPoisonDamageTalent(ERarity::Rare, 3, 4, 0.0625f),
-        CPoisonDamageTalent(ERarity::Rare, 3, 5, 0.0625f),
+        CPoisonDamageTalent(ERarity::Common, 1, 0, 0.0625f), CPoisonDamageTalent(ERarity::Unusual, 2, 0, 0.0625f),
+        CPoisonDamageTalent(ERarity::Rare, 3, 0, 0.0625f),   CPoisonDamageTalent(ERarity::Rare, 3, 1, 0.0625f),
+        CPoisonDamageTalent(ERarity::Rare, 3, 2, 0.0625f),   CPoisonDamageTalent(ERarity::Rare, 3, 3, 0.0625f),
+        CPoisonDamageTalent(ERarity::Rare, 3, 4, 0.0625f),   CPoisonDamageTalent(ERarity::Rare, 3, 5, 0.0625f),
         CPoisonDamageTalent(ERarity::Rare, 3, 6, 0.0625f),
     };
-    static const bool linked = []()
-    {
+    static const bool linked = []() {
         talents[1].m_based = &talents[0];
         for (size_t i = 2; i < talents.size(); ++i)
             talents[i].m_based = &talents[1];
@@ -729,8 +702,7 @@ inline std::array<CConcentratedPoisonTalent, concentrated_poison_tier_count>& Co
     static std::array<CConcentratedPoisonTalent, concentrated_poison_tier_count> talents = {
         CConcentratedPoisonTalent(ERarity::Super, 15, 1.2f, 1.f / 1.2f),
     };
-    static const bool linked = []()
-    {
+    static const bool linked = []() {
         auto& poison = PoisonDamageTalents();
         talents[0].m_based = &poison[3];
         return true;
@@ -744,8 +716,7 @@ inline std::array<CMagnetismTalent, magnetism_tier_count>& MagnetismTalents()
     static std::array<CMagnetismTalent, magnetism_tier_count> talents = {
         CMagnetismTalent(ERarity::Mythic, 15, 1024.f),
     };
-    static const bool linked = []()
-    {
+    static const bool linked = []() {
         auto& slots = SlotNumTalents();
         talents[0].m_based = &slots[4];
         return true;
@@ -760,8 +731,7 @@ inline std::array<CSecondChanceTalent, second_chance_tier_count>& SecondChanceTa
         CSecondChanceTalent(ERarity::Legendary, 10, 0.3f, 60.f),
         CSecondChanceTalent(ERarity::Mythic, 20, 1.5f, 30.f),
     };
-    static const bool linked = []()
-    {
+    static const bool linked = []() {
         auto& health = FlowerHealthTalents();
         talents[0].m_based = &health[2];
         talents[1].m_based = &talents[0];

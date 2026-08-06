@@ -31,19 +31,19 @@ struct SRarityColor
 };
 
 inline constexpr std::array<SRarityColor, 13> rarity_colors = {
-    SRarityColor{0, 0, 0, 0, 0, 0},
-    SRarityColor{111, 211, 96, 75, 193, 164},
-    SRarityColor{255, 230, 93, 34, 240, 164},
-    SRarityColor{68, 72, 200, 159, 131, 126},
-    SRarityColor{134, 31, 222, 182, 181, 119},
-    SRarityColor{219, 31, 31, 0, 180, 118},
-    SRarityColor{31, 219, 222, 121, 181, 119},
-    SRarityColor{225, 38, 103, 226, 182, 124},
-    SRarityColor{40, 240, 153, 103, 209, 132},
-    SRarityColor{238, 238, 238, 160, 0, 224},
-    SRarityColor{53, 53, 53, 160, 0, 50},
-    SRarityColor{110, 110, 110, 0, 0, 103},
-    SRarityColor{180, 180, 180, 126, 126, 126},
+    SRarityColor{ 0, 0, 0, 0, 0, 0 },
+    SRarityColor{ 111, 211, 96, 75, 193, 164 },
+    SRarityColor{ 255, 230, 93, 34, 240, 164 },
+    SRarityColor{ 68, 72, 200, 159, 131, 126 },
+    SRarityColor{ 134, 31, 222, 182, 181, 119 },
+    SRarityColor{ 219, 31, 31, 0, 180, 118 },
+    SRarityColor{ 31, 219, 222, 121, 181, 119 },
+    SRarityColor{ 225, 38, 103, 226, 182, 124 },
+    SRarityColor{ 40, 240, 153, 103, 209, 132 },
+    SRarityColor{ 238, 238, 238, 160, 0, 224 },
+    SRarityColor{ 53, 53, 53, 160, 0, 50 },
+    SRarityColor{ 110, 110, 110, 0, 0, 103 },
+    SRarityColor{ 180, 180, 180, 126, 126, 126 },
 };
 
 inline bool IsKnownRarity(ERarity rarity)

@@ -1,7 +1,7 @@
 #pragma once
+#include "../../../Shared/game_config.h"
 #include "../controller.h"
 #include "../entities/flower.h"
-#include "../../../Shared/game_config.h"
 #include <cstdint>
 
 class CGameWorld;
@@ -10,29 +10,76 @@ class CMeleeController : public IController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.melee"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
 
   protected:
     void PickRandomTargetPos(CMobBase* mob, const SMobStats& stats);
     void PickRandomTargetPosNear(CMobBase* mob, const sf::Vector2f& center, float half_range);
     bool IsRandomIdleDone(float dt);
+    bool ReachedOrStalledRandomTarget(CMobBase* mob, float dt);
+    void ResetWanderProgress();
     void SetTarget(CEntity* target);
     void ClearTarget();
+    void LoseTarget(CMobBase* mob);
     CEntity* ResolveTarget(CMobBase* mob);
     bool ShouldRunTargetScan(CMobBase* mob);
     bool TryAcquireWanderTarget(CMobBase* mob, float search_range, int ignored_id = -1, int ignored_owner_id = -1);
     bool TryAcquireHoneyTarget(CMobBase* mob, float search_range, int ignored_id = -1, int ignored_owner_id = -1);
 
     CEntity* m_p_target = nullptr;
+    std::uint32_t m_target_world_id = 0;
     int m_target_id = -1;
     std::uint64_t m_target_generation = 0;
-    sf::Vector2f m_target_pos = {0.f, 0.f};
+    sf::Vector2f m_target_pos = { 0.f, 0.f };
     float m_change_target_count = game_config::melee_target_time;
     float m_target_los_check_timer = 0.f;
     bool m_has_random_target_pos = false;
     bool m_random_idle = false;
     float m_random_idle_timer = 0.f;
+    sf::Vector2f m_wander_progress_anchor = { 0.f, 0.f };
+    float m_wander_progress_timer = 0.f;
+    bool m_wander_progress_initialized = false;
     int m_target_scan_cooldown = -1;
     int m_honey_target_scan_cooldown = -1;
+};
+
+class CLeafcutterSoldierController : public CMeleeController
+{
+  public:
+    void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.leafcutter_soldier"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
+    bool IsCarryingLeafPiece(const CMobBase* mob) const;
+    bool IsCarryingLeafPiece(const CMobBase* mob, const CEntity* leaf_piece) const;
+    void SyncCarriedLeafPiece(CMobBase* mob);
+    void ResolveCarriedLeafPieceConstraint(CMobBase* mob);
+
+  private:
+    CEntity* ResolveLeafPieceReference(const CMobBase* mob, std::uint32_t world_id, int entity_id,
+                                       std::uint64_t generation) const;
+    CEntity* ResolveLeafPieceTarget(const CMobBase* mob) const;
+    CEntity* ResolveCarriedLeafPiece(const CMobBase* mob) const;
+    bool IsEligibleLeafPiece(const CMobBase* mob, const CEntity* entity, bool reject_carried = true) const;
+    bool IsLeafPieceCarried(const CMobBase* mob, const CEntity* leaf_piece) const;
+    bool TryAcquireLeafPieceTarget(CMobBase* mob, float search_range);
+    bool TryCarryLeafPiece(CMobBase* mob);
+    void ClearLeafPieceTarget();
+    void SetLeafPieceTarget(CEntity* leaf_piece);
+    void ClearCarriedLeafPiece();
+    void SetCarriedLeafPiece(CEntity* leaf_piece);
+    void ApplyCarryingTurn(CMobBase* mob, float previous_angle, bool had_facing, float dt) const;
+
+    std::uint32_t m_leaf_piece_target_world_id = 0;
+    int m_leaf_piece_target_id = -1;
+    std::uint64_t m_leaf_piece_target_generation = 0;
+    std::uint32_t m_carried_leaf_piece_world_id = 0;
+    int m_carried_leaf_piece_id = -1;
+    std::uint64_t m_carried_leaf_piece_generation = 0;
+    float m_leaf_piece_attack_timer = 0.f;
+    int m_leaf_piece_target_scan_cooldown = -1;
 };
 
 class CSummonedMeleeController : public CMeleeController
@@ -48,6 +95,9 @@ class CSummonedMeleeController : public CMeleeController
     }
 
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.summoned_melee"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
     int GetOwnerId() const { return m_owner_id; }
     std::uint64_t GetOwnerGeneration() const { return m_owner_generation; }
     CEntity* GetOwner(CGameWorld* world) const;
@@ -59,6 +109,7 @@ class CSummonedMeleeController : public CMeleeController
     int m_owner_id = -1;
     std::uint64_t m_owner_generation = 0;
     bool m_persist_after_owner_death = false;
+    bool m_owner_lost = false;
 };
 
 class CNeutralMeleeController : public CMeleeController
@@ -66,24 +117,45 @@ class CNeutralMeleeController : public CMeleeController
   public:
     void OnTick(CMobBase* mob, float dt) override;
     void OnDamaged(CMobBase* mob, CEntity* attacker) override;
+    std::string_view SnapshotKey() const override { return "controller.neutral_melee"; }
+};
+
+class CTermiteOvermindController final : public CNeutralMeleeController
+{
+  public:
+    void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.termite_overmind"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
+
+  private:
+    void ApplyBanSkill(CMobBase* mob, float duration) const;
+
+    float m_ban_skill_timer = 0.f;
+    bool m_ban_skill_initialized = false;
 };
 
 class CRandomWanderController : public CMeleeController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.random_wander"; }
 };
 
 class CQueenAntController : public CMeleeController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.queen_ant"; }
 };
 
 class CSpiderController : public CMeleeController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.spider"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
 
   private:
     float m_web_timer = 0.f;
@@ -93,12 +165,36 @@ class CHornetRangedController : public CMeleeController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.hornet_ranged"; }
+};
+
+class CMechaFlowerRangedController final : public CMeleeController
+{
+  public:
+    void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.mecha_flower_ranged"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
+
+  private:
+    void ClearOrbitTarget();
+    void SyncOrbitTarget(const CEntity* target);
+    void MoveAroundTarget(CMobBase* mob, const CEntity* target, float stop_distance, float dt) const;
+
+    bool m_orbiting = false;
+    float m_orbit_direction = 0.f;
+    std::uint32_t m_orbit_target_world_id = 0;
+    int m_orbit_target_id = -1;
+    std::uint64_t m_orbit_target_generation = 0;
 };
 
 class CSpecialHornetController : public CMeleeController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.hornet_special"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
 
   private:
     enum class EState
@@ -131,27 +227,34 @@ class CSpecialHornetController : public CMeleeController
     float m_state_timer = 0.f;
     float m_action_timer = 0.f;
     float m_fire_timer = 0.f;
-    sf::Vector2f m_skill2_orbit_center = {0.f, 0.f};
+    sf::Vector2f m_skill2_orbit_center = { 0.f, 0.f };
     float m_skill2_orbit_radius = 0.f;
     float m_skill2_orbit_angle = 0.f;
     float m_skill2_orbit_dir = 1.f;
     float m_skill2_remaining_angle = 0.f;
-    sf::Vector2f m_skill2_tangent_dir = {1.f, 0.f};
+    sf::Vector2f m_skill2_tangent_dir = { 1.f, 0.f };
     int m_cycle_phase = 0;
     int m_cycle_attack_count = 0;
+    std::uint32_t m_skill3_target_world_id = 0;
     int m_skill3_target_id = -1;
     std::uint64_t m_skill3_target_generation = 0;
+    std::uint32_t m_skill3_captured_world_id = 0;
     int m_skill3_captured_id = -1;
     std::uint64_t m_skill3_captured_generation = 0;
-    sf::Vector2f m_skill3_launch_pos = {0.f, 0.f};
+    sf::Vector2f m_skill3_launch_pos = { 0.f, 0.f };
+    sf::Vector2f m_skill3_launch_direction = { 1.f, 0.f };
     bool m_skill3_captured_prev_skip_tick = false;
     bool m_skill3_has_captured_prev_skip_tick = false;
+    bool m_skill3_missile_suppressed = false;
 };
 
 class CBumbleBeeController : public IController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.bumble_bee"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
 
   private:
     void PickTurnTimer();
@@ -167,6 +270,7 @@ class CBumbleBeeController : public IController
     float m_honey_los_check_timer = 0.f;
     int m_honey_target_scan_cooldown = -1;
     CEntity* m_p_honey_target = nullptr;
+    std::uint32_t m_honey_target_world_id = 0;
     int m_honey_target_id = -1;
     std::uint64_t m_honey_target_generation = 0;
     bool m_initialized = false;

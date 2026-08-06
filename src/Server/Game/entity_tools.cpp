@@ -78,10 +78,7 @@ CEntity* FindRootOwnerEntity(CEntity* entity)
     return nullptr;
 }
 
-const CEntity* FindRootOwnerEntity(const CEntity* entity)
-{
-    return FindRootOwnerEntity(const_cast<CEntity*>(entity));
-}
+const CEntity* FindRootOwnerEntity(const CEntity* entity) { return FindRootOwnerEntity(const_cast<CEntity*>(entity)); }
 
 bool ShareRootOwner(const CEntity* lhs, const CEntity* rhs)
 {

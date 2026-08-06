@@ -7,6 +7,18 @@
     <Filter Include="web\src">
       <UniqueIdentifier>{A1D777C3-94B3-4EAF-987D-3AB97686548B}</UniqueIdentifier>
     </Filter>
+    <Filter Include="web\locales">
+      <UniqueIdentifier>{D1CC2D22-8E5D-4A20-A49A-F0A67A7F340E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="web\assets\audio">
+      <UniqueIdentifier>{79FB5D15-77D0-46B9-9AA9-9528E82BE584}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="web\assets\petals">
+      <UniqueIdentifier>{3B602548-BBD4-44A6-A154-4FC45748B3C7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="web\assets\ui">
+      <UniqueIdentifier>{D764FDC2-2AD5-4307-9638-F558E2977AA7}</UniqueIdentifier>
+    </Filter>
     <Filter Include="tools">
       <UniqueIdentifier>{BA23406E-B5AB-44B4-BB59-7DA979C5ABCB}</UniqueIdentifier>
     </Filter>
@@ -24,8 +36,56 @@
     <None Include="web\src\game.js">
       <Filter>web\src</Filter>
     </None>
+    <None Include="web\src\i18n.js">
+      <Filter>web\src</Filter>
+    </None>
+    <None Include="web\src\mystery_audio.js">
+      <Filter>web\src</Filter>
+    </None>
     <None Include="web\src\protocol.js">
       <Filter>web\src</Filter>
+    </None>
+    <None Include="web\src\render_primitives.js">
+      <Filter>web\src</Filter>
+    </None>
+    <None Include="web\src\text_input.js">
+      <Filter>web\src</Filter>
+    </None>
+    <None Include="web\src\version.js">
+      <Filter>web\src</Filter>
+    </None>
+    <None Include="web\locales\manifest.json">
+      <Filter>web\locales</Filter>
+    </None>
+    <None Include="web\locales\manifest.schema.json">
+      <Filter>web\locales</Filter>
+    </None>
+    <None Include="web\locales\locale.schema.json">
+      <Filter>web\locales</Filter>
+    </None>
+    <None Include="web\locales\en.json">
+      <Filter>web\locales</Filter>
+    </None>
+    <None Include="web\locales\zh-Hant.json">
+      <Filter>web\locales</Filter>
+    </None>
+    <None Include="web\locales\zh-Hans.json">
+      <Filter>web\locales</Filter>
+    </None>
+    <None Include="web\assets\audio\kghlkjo.mp3">
+      <Filter>web\assets\audio</Filter>
+    </None>
+    <None Include="web\assets\audio\phone_linging_trigger.mp3">
+      <Filter>web\assets\audio</Filter>
+    </None>
+    <None Include="web\assets\audio\douli.mp3">
+      <Filter>web\assets\audio</Filter>
+    </None>
+    <None Include="web\assets\petals\douli.svg">
+      <Filter>web\assets\petals</Filter>
+    </None>
+    <None Include="web\assets\ui\healthy_game_notice.png">
+      <Filter>web\assets\ui</Filter>
     </None>
     <None Include="tools\web_client_server.js">
       <Filter>tools</Filter>

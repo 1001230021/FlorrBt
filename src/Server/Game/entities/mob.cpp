@@ -1,12 +1,12 @@
 #include "mob.h"
-#include "drop.h"
-#include "projectile.h"
+#include "../../../Shared/game_config.h"
 #include "../controllers/melee_controller.h"
 #include "../gamecontext.h"
 #include "../gameworld.h"
 #include "../player.h"
 #include "../states/states.h"
-#include "../../../Shared/game_config.h"
+#include "drop.h"
+#include "projectile.h"
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -16,6 +16,13 @@ CMobBase::~CMobBase()
 {
     for (auto& state : m_states)
         if (state) state->m_p_owner = nullptr;
+}
+
+void CMobBase::ClearStatesForRestore()
+{
+    for (auto& state : m_states)
+        if (state) state->m_p_owner = nullptr;
+    m_states.clear();
 }
 
 template <typename TStats> CMob<TStats>::~CMob() = default;
@@ -57,11 +64,12 @@ bool IsUndeadDamageSource(CEntity* entity)
 
     return false;
 }
-}
+} // namespace
 
 bool ShouldBlockDiggingDamage(CMobBase* receiver, CEntity* attacker, EDamageType dmg_type)
 {
-    return receiver && receiver->HasState<CDiggingState>() && dmg_type != EDamageType::Poison && !IsDiggingEntity(attacker);
+    return receiver && receiver->HasState<CDiggingState>() && BaseDamageType(dmg_type) != EDamageType::Poison &&
+           !IsDiggingEntity(attacker);
 }
 
 void CMobBase::AddState(std::unique_ptr<CState> state)
@@ -81,15 +89,17 @@ void CMobBase::TickStates(float dt)
         }
 
         state->Tick(dt);
-        if (index >= m_states.size() || m_states[index].get() != state)
-            continue;
+        if (IsDead()) return;
+        if (index >= m_states.size() || m_states[index].get() != state) continue;
 
         if (state->m_timer != endless && state->m_timer <= 0.0f)
         {
             std::unique_ptr<CState> expired = std::move(m_states[index]);
             m_states.erase(m_states.begin() + static_cast<std::ptrdiff_t>(index));
             expired.reset();
-        } else {
+            if (IsDead()) return;
+        } else
+        {
             ++index;
         }
     }
@@ -105,8 +115,7 @@ bool CMobBase::TickDropPickup(CPlayer* player)
     if (!world || !stats || stats->max_absorb_range <= 0.f) return false;
 
     bool picked_any = false;
-    world->GetSpatialGrid().ForEachInRange(m_pos, stats->max_absorb_range, [&](CEntity* candidate)
-    {
+    world->GetSpatialGrid().ForEachInRange(m_pos, stats->max_absorb_range, [&](CEntity* candidate) {
         auto* drop = dynamic_cast<CDrop*>(candidate);
         if (!drop || !drop->CanBePickedUpBy(player->GetId())) return;
         picked_any = drop->PickUpTo(*player) || picked_any;
@@ -138,7 +147,8 @@ void CMobBase::ApplyDamageDirect(float dmg, CEntity* attacker)
             data.m_total_dmg = dmg;
             data.ResetTimer();
             m_damage_data.push_back(data);
-        } else {
+        } else
+        {
             it->m_total_dmg += dmg;
             it->ResetTimer();
         }
@@ -149,7 +159,7 @@ void CMobBase::ApplyDamageDirect(float dmg, CEntity* attacker)
     if (m_health <= 0.f)
     {
         m_health = 0.f;
-        m_is_marked_for_des = true;
+        MarkForDestroy(EEntityRemovalReason::Defeated);
     }
 }
 
@@ -159,7 +169,7 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
     if (!stats) return;
 
     float speed_multiplier = GetPincerSpeedMultiplier(this) * game_config::mob_velocity_multiplier;
-    if (HasState<CDiggingState>()) speed_multiplier *= 0.5f;
+    if (HasState<CDiggingState>()) speed_multiplier *= game_config::mob_digging_speed_multiplier;
     float max_velocity = stats->max_velocity * speed_multiplier;
     float acceleration = stats->acceleration * speed_multiplier;
 
@@ -178,7 +188,7 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
     if (len <= m_radius)
     {
         m_vel *= game_config::mob_stop_damping;
-        if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = {0.f, 0.f};
+        if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = { 0.f, 0.f };
         return;
     }
 
@@ -188,16 +198,15 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
     {
         if (!m_has_facing && !facing_locked)
         {
-            if (LengthSq(m_vel) > game_config::entity_collision_epsilon)
-                m_facing_angle = std::atan2(m_vel.y, m_vel.x);
-            else
-                m_facing_angle = target_angle;
+            if (LengthSq(m_vel) > game_config::entity_collision_epsilon) m_facing_angle = std::atan2(m_vel.y, m_vel.x);
+            else m_facing_angle = target_angle;
             m_has_facing = true;
         }
 
         if (!facing_locked)
         {
-            float angle_delta = std::atan2(std::sin(target_angle - m_facing_angle), std::cos(target_angle - m_facing_angle));
+            float angle_delta =
+                std::atan2(std::sin(target_angle - m_facing_angle), std::cos(target_angle - m_facing_angle));
             float max_turn = stats->turn_speed * dt;
             angle_delta = std::clamp(angle_delta, -max_turn, max_turn);
             m_facing_angle += angle_delta;
@@ -224,7 +233,8 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
     if (diff_len <= max_accel)
     {
         m_vel = desired_vel;
-    } else {
+    } else
+    {
         m_vel += diff / diff_len * max_accel;
     }
 }
@@ -248,56 +258,15 @@ bool CMobBase::RemoveState(CState* state)
 
 const CMobPrototype* FindMobPrototype(EMobType type)
 {
-    auto it = g_mob_registry.find(type);
-    if (it == g_mob_registry.end()) return nullptr;
-    return it->second.get();
+    return MobRegistry().Find(type);
 }
 
-std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, sf::Vector2f pos, ERarity rarity)
+std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, sf::Vector2f pos, ERarity rarity,
+                                    bool resolve_special_rarity)
 {
     const CMobPrototype* prototype = FindMobPrototype(type);
     if (!prototype || !prototype->m_factory) return nullptr;
-    auto mob = prototype->m_factory(world, pos, rarity);
-    if (mob)
-        mob->m_allow_skip_tick = type != EMobType::PlayerFlower && type != EMobType::LeafPiece &&
-                                 !IsAtLeastRarity(rarity, ERarity::Super);
-    return mob;
-}
-
-void RegisterMobs()
-{
-    RegisterBeetle();
-    RegisterBandageBeetle();
-    RegisterNormalLadybug();
-    RegisterNormalFlower();
-    RegisterPlayerFlower();
-    RegisterSoldierAnt();
-    RegisterSoldierFireAnt();
-    RegisterSoldierTermite();
-    RegisterSummonedBeetle();
-    RegisterSummonedSoldierAnt();
-    RegisterBee();
-    RegisterHornet();
-    RegisterBumbleBee();
-    RegisterRock();
-    RegisterBabyAnt();
-    RegisterWorkerAnt();
-    RegisterQueenAnt();
-    RegisterAntEggMob();
-    RegisterFireAntEgg();
-    RegisterTermiteEgg();
-    RegisterQueenAntEgg();
-    RegisterQueenFireAntEgg();
-    RegisterBabyFireAnt();
-    RegisterWorkerFireAnt();
-    RegisterFireQueenAnt();
-    RegisterBabyTermite();
-    RegisterWorkerTermite();
-    RegisterTermiteOvermind();
-    RegisterLeafPiece();
-    RegisterAntHole();
-    RegisterSpider();
-    RegisterSandstorm();
-    RegisterDummy();
-    RegisterDandelion();
+    if (resolve_special_rarity && world && prototype->m_rarity_resolver)
+        rarity = prototype->m_rarity_resolver(*world, pos, rarity);
+    return prototype->m_factory(world, pos, rarity);
 }

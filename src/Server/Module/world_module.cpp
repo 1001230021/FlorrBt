@@ -1,24 +1,45 @@
 #include "world_module.h"
-#include "../Game/gamecontrollers/opencontroller.h"
 #include "../../Shared/game_config.h"
 #include "../../Shared/tools.h"
+#include "../Game/gamecontrollers/world_controller_factory.h"
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <random>
 
-IWorldModule::IWorldModule()
+namespace
 {
-    auto world = std::make_unique<CGameWorld>(game_config::lobby_map_path);
-    auto controller = std::make_unique<COpenController>();
-    world->SetController(std::move(controller));
-    m_worlds.emplace_back(std::move(world));
+
+constexpr const char* ant_hel_map_path = "data/maps/ant_hel.tmj";
+
+std::unique_ptr<CGameWorld> CreateOpenWorld(std::uint32_t world_id, const std::string& map_path)
+{
+    auto world = std::make_unique<CGameWorld>(map_path, world_id);
+    world->SetController(CreateWorldController(world_controller_keys::open));
+    return world;
 }
 
-bool IWorldModule::Init()
+std::string NormalizeMapName(std::string name)
 {
-    return true;
+    std::replace(name.begin(), name.end(), '\\', '/');
+    std::filesystem::path path(name);
+    if (path.has_extension()) name = path.stem().generic_string();
+    else if (path.has_parent_path()) name = path.filename().generic_string();
+
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return name;
 }
+
+} // namespace
+
+IWorldModule::IWorldModule()
+{
+    m_worlds.emplace_back(CreateOpenWorld(0, game_config::lobby_map_path));
+    m_worlds.emplace_back(CreateOpenWorld(1, ant_hel_map_path));
+}
+
+bool IWorldModule::Init() { return true; }
 
 void IWorldModule::Tick(float dt)
 {
@@ -30,21 +51,13 @@ void IWorldModule::Tick(float dt)
 
 void IWorldModule::ShutDown() {}
 
-namespace
+CGameWorld* IWorldModule::FindWorldById(std::uint32_t world_id) const
 {
-std::string NormalizeMapName(std::string name)
-{
-    std::replace(name.begin(), name.end(), '\\', '/');
-    std::filesystem::path path(name);
-    if (path.has_extension()) name = path.stem().generic_string();
-    else if (path.has_parent_path()) name = path.filename().generic_string();
-
-    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch)
+    for (const auto& world : m_worlds)
     {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return name;
-}
+        if (world && world->GetId() == world_id) return world.get();
+    }
+    return nullptr;
 }
 
 std::vector<CGameWorld*> IWorldModule::FindWorldsByMapName(const std::string& map_name) const

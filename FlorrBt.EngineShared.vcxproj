@@ -29,7 +29,7 @@
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v145</PlatformToolset>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <WholeProgramOptimization>false</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
@@ -64,6 +64,7 @@
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <PreprocessorDefinitions>NDEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;HAVE_CONFIG_H;LIBTMJ_VERSION_MAJOR=1;LIBTMJ_VERSION_MINOR=6;LIBTMJ_VERSION_PATCH=0;LIBTMJ_VERSION="1.6.0";%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
@@ -72,7 +73,6 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="src\Engine\account_data.h" />
     <ClInclude Include="src\Engine\commands_registry.h" />
     <ClInclude Include="src\Engine\console.h" />
     <ClInclude Include="src\Engine\json_value.h" />
@@ -80,6 +80,7 @@
     <ClInclude Include="src\Engine\map_tools.h" />
     <ClInclude Include="src\Engine\spatial_hash_grid.h" />
     <ClInclude Include="src\Shared\damage_type.h" />
+    <ClInclude Include="src\Shared\entity_type.h" />
     <ClInclude Include="src\Shared\drop_rate.h" />
     <ClInclude Include="src\Shared\game_config.h" />
     <ClInclude Include="src\Shared\inventory.h" />
@@ -88,12 +89,13 @@
     <ClInclude Include="src\Shared\petal_type.h" />
     <ClInclude Include="src\Shared\rarity.h" />
     <ClInclude Include="src\Shared\shared.h" />
+    <ClInclude Include="src\Shared\state_type.h" />
     <ClInclude Include="src\Shared\stats.h" />
     <ClInclude Include="src\Shared\talent_type.h" />
     <ClInclude Include="src\Shared\tools.h" />
+    <ClInclude Include="src\Shared\version.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\Engine\account_data.cpp" />
     <ClCompile Include="src\Engine\console.cpp" />
     <ClCompile Include="src\Engine\json_value.cpp" />
     <ClCompile Include="externals\argon2\src\argon2.c" />

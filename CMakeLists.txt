@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.11)
-project(FlorrBt)
+project(FlorrBt VERSION 1.0.1)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,3 +37,5 @@ target_link_libraries(${PROJECT_NAME}_Server PRIVATE SFML::Graphics SFML::Networ
 if(WIN32)
     target_compile_definitions(${PROJECT_NAME}_Server PRIVATE NOMINMAX)
 endif()
+add_executable(${PROJECT_NAME}_Launcher src/Launcher/main.cpp src/Engine/json_value.cpp)
+target_include_directories(${PROJECT_NAME}_Launcher PRIVATE src)

@@ -31,8 +31,17 @@
     <Filter Include="src\Server\Module">
       <UniqueIdentifier>{7EA5AE3C-1420-1628-8510-AA185AA89781}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Server\Persistence">
+      <UniqueIdentifier>{A276092D-847F-407B-AF19-BF1CA5026C54}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Server\Auth">
+      <UniqueIdentifier>{4B912AC0-B98B-4A3A-99D5-7385D1729E1C}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\Server\Auth\email_verification_service.h">
+      <Filter>src\Server\Auth</Filter>
+    </ClInclude>
     <ClInclude Include="src\Server\Game\controller.h">
       <Filter>src\Server\Game</Filter>
     </ClInclude>
@@ -69,7 +78,13 @@
     <ClInclude Include="src\Server\Game\gamecontext.h">
       <Filter>src\Server\Game</Filter>
     </ClInclude>
+    <ClInclude Include="src\Server\Game\game_services.h">
+      <Filter>src\Server\Game</Filter>
+    </ClInclude>
     <ClInclude Include="src\Server\Game\gameworld.h">
+      <Filter>src\Server\Game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server\Game\prototype_registry.h">
       <Filter>src\Server\Game</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\player.h">
@@ -108,6 +123,12 @@
     <ClInclude Include="src\Server\Game\gamecontrollers\opencontroller.h">
       <Filter>src\Server\Game\gamecontrollers</Filter>
     </ClInclude>
+    <ClInclude Include="src\Server\Game\gamecontrollers\open_reward_service.h">
+      <Filter>src\Server\Game\gamecontrollers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server\Game\gamecontrollers\open_spawn_director.h">
+      <Filter>src\Server\Game\gamecontrollers</Filter>
+    </ClInclude>
     <ClInclude Include="src\Server\Game\entities\drop.h">
       <Filter>src\Server\Game\entities</Filter>
     </ClInclude>
@@ -123,14 +144,29 @@
     <ClInclude Include="src\Server\Game\gamecontrollers\waitingcontroller.h">
       <Filter>src\Server\Game\gamecontrollers</Filter>
     </ClInclude>
+    <ClInclude Include="src\Server\Game\gamecontrollers\world_controller_factory.h">
+      <Filter>src\Server\Game\gamecontrollers</Filter>
+    </ClInclude>
     <ClInclude Include="src\Server\Game\systems\snapshot_service.h">
       <Filter>src\Server\Game\systems</Filter>
     </ClInclude>
     <ClInclude Include="src\Server\Game\systems\player_lifecycle_service.h">
       <Filter>src\Server\Game\systems</Filter>
     </ClInclude>
+    <ClInclude Include="src\Server\Persistence\account_store.h">
+      <Filter>src\Server\Persistence</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server\Persistence\server_data_store.h">
+      <Filter>src\Server\Persistence</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server\Persistence\unique_petal_registry.h">
+      <Filter>src\Server\Persistence</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\Server\Auth\email_verification_service.cpp">
+      <Filter>src\Server\Auth</Filter>
+    </ClCompile>
     <ClCompile Include="src\Server\commands.cpp">
       <Filter>src\Server</Filter>
     </ClCompile>
@@ -206,7 +242,16 @@
     <ClCompile Include="src\Server\Game\gamecontrollers\opencontroller.cpp">
       <Filter>src\Server\Game\gamecontrollers</Filter>
     </ClCompile>
+    <ClCompile Include="src\Server\Game\gamecontrollers\open_reward_service.cpp">
+      <Filter>src\Server\Game\gamecontrollers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Game\gamecontrollers\open_spawn_director.cpp">
+      <Filter>src\Server\Game\gamecontrollers</Filter>
+    </ClCompile>
     <ClCompile Include="src\Server\Game\gamecontrollers\waitingcontroller.cpp">
+      <Filter>src\Server\Game\gamecontrollers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Game\gamecontrollers\world_controller_factory.cpp">
       <Filter>src\Server\Game\gamecontrollers</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\entities\drop.cpp">
@@ -220,6 +265,15 @@
     </ClCompile>
     <ClCompile Include="src\Server\Game\systems\player_lifecycle_service.cpp">
       <Filter>src\Server\Game\systems</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Persistence\account_store.cpp">
+      <Filter>src\Server\Persistence</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Persistence\server_data_store.cpp">
+      <Filter>src\Server\Persistence</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Persistence\unique_petal_registry.cpp">
+      <Filter>src\Server\Persistence</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

@@ -1,8 +1,11 @@
+import { t } from "./i18n.js";
+
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 export const NETWORK_PETAL_TYPE_OFFSET = 100;
 export const NETWORK_DROP_TYPE_OFFSET = 180;
+export const NETWORK_TRAP_PROJECTILE_ENTITY_TYPE = 93;
 export const NETWORK_BLOOD_SACRIFICE_ENTITY_TYPE = 94;
 export const NETWORK_DANDELION_MISSILE_ENTITY_TYPE = 95;
 export const NETWORK_POLLEN_ENTITY_TYPE = 96;
@@ -14,6 +17,9 @@ export const NET_COORD_SCALE = 64;
 export const NET_RELATIVE_COORD_SCALE = 1;
 export const NET_RADIUS_SCALE = 1;
 export const NET_ANGLE_SCALE = 1000;
+export const NET_PERCENT_SCALE = 255;
+export const NET_SLOT_SIZE_SCALE = 65535;
+export const FULL_SNAPSHOT_BASE_ID = 0xffffffff;
 const ENTITY_SNAPSHOT_FULL = 0;
 const ENTITY_SNAPSHOT_COMPACT = 1;
 
@@ -22,6 +28,7 @@ export const ChatFlag = Object.freeze({
   Local: 1,
   Server: 2,
   Whisper: 3,
+  Squad: 4,
 });
 
 export const ServerType = Object.freeze({
@@ -34,28 +41,157 @@ export const ServerType = Object.freeze({
   CraftResult: 0x13,
 });
 
+export const PetalSlotCopyState = Object.freeze({
+  Alive: 0,
+  Loading: 1,
+});
+
+export const PetalSlotVisualType = Object.freeze({
+  None: 0,
+  Angle: 1,
+  Size: 2,
+});
+
+export const AuthMode = Object.freeze({
+  Login: 0,
+  Register: 1,
+  RequestRegistrationCode: 2,
+  RequestBindingCode: 3,
+  ConfirmBinding: 4,
+});
+
+export const AuthResultCode = Object.freeze({
+  Failed: 0,
+  Authenticated: 1,
+  EmailBindingRequired: 2,
+  VerificationCodeSending: 3,
+  VerificationCodeSent: 4,
+  EmailBound: 5,
+});
+
 export const PetalNames = [
-  "None", "Air", "AntEgg", "Antennae", "Basic", "BeetleEgg", "Bone", "Bubble", "Carrot",
-  "Coin", "Compass", "Cogwheel", "Disc", "Dust", "GoldenLeaf", "Iris", "Lentil", "Moon",
-  "Nullification", "Pincer", "Relic", "Rose", "YinYang", "Missile", "BloodSacrifice",
-  "Corruption", "Bandage", "Heavy", "Faster", "Yggdrasil", "Dahlia", "Wing", "Triangle",
-  "Sawblade", "Fragment", "Mimic", "Glass", "Stinger", "BrokenEgg", "Light",
-  "Leaf", "Rock", "Web", "Cactus", "Pollen", "Corn", "Rice", "Basil", "Soil",
-  "Honey", "Wax", "ThirdEye", "Dandelion", "Orange", "Shovel",
+  "None",
+  "Air",
+  "AntEgg",
+  "Antennae",
+  "Basic",
+  "BeetleEgg",
+  "Bone",
+  "Bubble",
+  "Carrot",
+  "Coin",
+  "Compass",
+  "Cogwheel",
+  "Disc",
+  "Dust",
+  "GoldenLeaf",
+  "Iris",
+  "Lentil",
+  "Moon",
+  "Nullification",
+  "Pincer",
+  "Relic",
+  "Rose",
+  "YinYang",
+  "Missile",
+  "BloodSacrifice",
+  "Corruption",
+  "Bandage",
+  "Heavy",
+  "Faster",
+  "Yggdrasil",
+  "Dahlia",
+  "Wing",
+  "Triangle",
+  "Sawblade",
+  "Fragment",
+  "Mimic",
+  "Glass",
+  "Stinger",
+  "BrokenEgg",
+  "Light",
+  "Leaf",
+  "Rock",
+  "Web",
+  "Cactus",
+  "Pollen",
+  "Corn",
+  "Rice",
+  "Basil",
+  "Soil",
+  "Honey",
+  "Wax",
+  "ThirdEye",
+  "Dandelion",
+  "Orange",
+  "Shovel",
+  "Yucca",
+  "WhiteFungus",
+  "BlackFungus",
+  "Broccoli",
+  "Douli",
+  "Trapper",
+  "Amulet",
+  "Plank",
+  "Tomato",
 ];
 
 export const MobNames = [
-  "None", "Beetle", "Gambler", "NormalLadybug", "MechaFlower", "NormalFlower", "PlayerFlower",
-  "SoldierAnt", "SoldierFireAnt", "SoldierTermite", "SummonedBeetle", "SummonedSoldierAnt",
-  "BandageBeetle", "Bee", "Hornet", "BumbleBee", "Rock", "BabyAnt", "WorkerAnt", "QueenAnt",
-  "AntHole", "Spider", "Sandstorm", "Dummy", "Dandelion", "AntEgg", "FireAntEgg", "TermiteEgg",
-  "QueenAntEgg", "QueenFireAntEgg", "BabyFireAnt", "WorkerFireAnt", "FireQueenAnt", "BabyTermite",
-  "WorkerTermite", "TermiteOvermind", "LeafPiece",
+  "None",
+  "Beetle",
+  "Gambler",
+  "NormalLadybug",
+  "MechaFlower",
+  "NormalFlower",
+  "PlayerFlower",
+  "SoldierAnt",
+  "SoldierFireAnt",
+  "SoldierTermite",
+  "SummonedBeetle",
+  "SummonedSoldierAnt",
+  "BandageBeetle",
+  "Bee",
+  "Hornet",
+  "BumbleBee",
+  "Rock",
+  "BabyAnt",
+  "WorkerAnt",
+  "QueenAnt",
+  "AntHole",
+  "Spider",
+  "Sandstorm",
+  "Dummy",
+  "Dandelion",
+  "AntEgg",
+  "FireAntEgg",
+  "TermiteEgg",
+  "QueenAntEgg",
+  "QueenFireAntEgg",
+  "BabyFireAnt",
+  "WorkerFireAnt",
+  "FireQueenAnt",
+  "BabyTermite",
+  "WorkerTermite",
+  "TermiteOvermind",
+  "LeafPiece",
+  "LeafcutterSoldier",
+  "Titan",
 ];
 
 export const RarityNames = [
-  "Null", "Common", "Unusual", "Rare", "Epic", "Legendary", "Mythic", "Ultra", "Super",
-  "Eternal", "Unique", "Primordial", "Exotic",
+  "Null",
+  "Common",
+  "Unusual",
+  "Rare",
+  "Epic",
+  "Legendary",
+  "Mythic",
+  "Ultra",
+  "Super",
+  "Eternal",
+  "Unique",
+  "Primordial",
+  "Exotic",
 ];
 
 export const RarityColors = [
@@ -71,7 +207,7 @@ export const RarityColors = [
   [238, 238, 238, 160, 0, 224],
   [53, 53, 53, 160, 0, 50],
   [110, 110, 110, 0, 0, 103],
-  [180, 180, 180, 126, 126, 126],
+  [218, 218, 218, 170, 170, 170],
 ];
 
 export function rarityColor(rarity, alpha = 1) {
@@ -79,20 +215,40 @@ export function rarityColor(rarity, alpha = 1) {
   return `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${alpha})`;
 }
 
+function translationSlug(name) {
+  return String(name || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+}
+
 export function petalTypeName(type) {
-  return PetalNames[type] || `Petal${type}`;
+  const fallback = PetalNames[type] || "Petal" + type;
+  return t("entities.petals." + translationSlug(fallback), {}, {
+    defaultValue: fallback,
+  });
 }
 
 export function mobTypeName(type) {
-  return MobNames[type] || `Mob${type}`;
+  const fallback = MobNames[type] || "Mob" + type;
+  return t("entities.mobs." + translationSlug(fallback), {}, {
+    defaultValue: fallback,
+  });
 }
 
 export function rarityName(rarity) {
-  return RarityNames[rarity] || `Rarity${rarity}`;
+  const fallback = RarityNames[rarity] || "Rarity" + rarity;
+  return t("entities.rarities." + translationSlug(fallback), {}, {
+    defaultValue: fallback,
+  });
 }
 
 export function isPetalEntity(entityType) {
-  return entityType >= NETWORK_PETAL_TYPE_OFFSET && entityType < NETWORK_DROP_TYPE_OFFSET;
+  return (
+    entityType >= NETWORK_PETAL_TYPE_OFFSET &&
+    entityType < NETWORK_DROP_TYPE_OFFSET
+  );
 }
 
 export function isDropEntity(entityType) {
@@ -182,6 +338,12 @@ class Reader {
     return value;
   }
 
+  u64() {
+    const low = this.u32();
+    const high = this.u32();
+    return low + high * 0x100000000;
+  }
+
   i32() {
     if (!this.has(4)) throw new Error("packet underrun");
     const value = this.view.getInt32(this.offset, true);
@@ -210,15 +372,18 @@ function parseEntity(reader, origin = null) {
       y: origin.y + reader.i16() / NET_RELATIVE_COORD_SCALE,
     };
     entity.radius = reader.u16() / NET_RADIUS_SCALE;
-    entity.hpPercent = reader.u8() / 255;
+    entity.hpPercent = reader.u8() / NET_PERCENT_SCALE;
+    entity.shieldPercent = reader.u8() / NET_PERCENT_SCALE;
     entity.flags = reader.u16();
     entity.angle = reader.i16() / NET_ANGLE_SCALE;
     entity.rarity = reader.u8();
     entity.name = "";
     entity.primarySlots = [];
+    entity.states = [];
     return entity;
   }
-  if (format !== ENTITY_SNAPSHOT_FULL) throw new Error("unknown entity snapshot format");
+  if (format !== ENTITY_SNAPSHOT_FULL)
+    throw new Error("unknown entity snapshot format");
 
   entity.entityId = reader.u16();
   entity.entityType = reader.u8();
@@ -228,7 +393,8 @@ function parseEntity(reader, origin = null) {
     y: reader.i32() / NET_COORD_SCALE,
   };
   entity.radius = reader.u16() / NET_RADIUS_SCALE;
-  entity.hpPercent = reader.u8() / 255;
+  entity.hpPercent = reader.u8() / NET_PERCENT_SCALE;
+  entity.shieldPercent = reader.u8() / NET_PERCENT_SCALE;
   entity.flags = reader.u16();
   entity.angle = reader.i16() / NET_ANGLE_SCALE;
   entity.rarity = reader.u8();
@@ -237,7 +403,37 @@ function parseEntity(reader, origin = null) {
   const primarySlotCount = reader.u8();
   entity.primarySlots = [];
   for (let i = 0; i < primarySlotCount; i += 1) {
-    entity.primarySlots.push({ petalType: reader.u8(), rarity: reader.u8() });
+    const slot = {
+      petalType: reader.u8(),
+      rarity: reader.u8(),
+      visualType: reader.u8(),
+      copies: [],
+    };
+    if (
+      slot.visualType !== PetalSlotVisualType.None &&
+      slot.visualType !== PetalSlotVisualType.Angle &&
+      slot.visualType !== PetalSlotVisualType.Size
+    )
+      throw new Error("unknown petal slot visual type");
+    const copyCount = reader.u8();
+    for (let copy = 0; copy < copyCount; copy += 1) {
+      const copySnap = {
+        state: reader.u8(),
+        progress: reader.u8() / NET_PERCENT_SCALE,
+        visual: null,
+      };
+      if (slot.visualType === PetalSlotVisualType.Angle)
+        copySnap.visual = reader.i16() / NET_ANGLE_SCALE;
+      else if (slot.visualType === PetalSlotVisualType.Size)
+        copySnap.visual = reader.u16() / NET_SLOT_SIZE_SCALE;
+      slot.copies.push(copySnap);
+    }
+    entity.primarySlots.push(slot);
+  }
+  const stateCount = reader.u8();
+  entity.states = [];
+  for (let i = 0; i < stateCount; i += 1) {
+    entity.states.push({ type: reader.u8(), rarity: reader.u8() });
   }
   return entity;
 }
@@ -258,9 +454,12 @@ export function parseServerMessage(payload) {
 
     if (type === ServerType.Snapshot) {
       msg.snapshotId = reader.u32();
+      msg.baseSnapshotId = reader.u32();
+      msg.serverTick = reader.u64();
       msg.ownerEntityId = reader.u16();
       msg.viewRadius = reader.i32() / NET_COORD_SCALE;
       const count = reader.u16();
+      const removedCount = reader.u16();
       msg.entities = [];
       let origin = null;
       for (let i = 0; i < count; i += 1) {
@@ -268,11 +467,18 @@ export function parseServerMessage(payload) {
         if (!origin) origin = entity.pos;
         msg.entities.push(entity);
       }
+      msg.removedEntityIds = [];
+      for (let i = 0; i < removedCount; i += 1) {
+        msg.removedEntityIds.push(reader.u16());
+      }
       return msg;
     }
 
     if (type === ServerType.AuthResult) {
-      msg.success = reader.u8() !== 0;
+      msg.resultCode = reader.u8();
+      msg.success =
+        msg.resultCode === AuthResultCode.Authenticated ||
+        msg.resultCode === AuthResultCode.EmailBound;
       msg.message = reader.string(reader.u8());
       return msg;
     }
@@ -294,7 +500,10 @@ export function parseServerMessage(payload) {
         msg.ownerSlots.push({ petalType: reader.u8(), rarity: reader.u8() });
       }
       for (let i = 0; i < secondaryCount; i += 1) {
-        msg.secondarySlots.push({ petalType: reader.u8(), rarity: reader.u8() });
+        msg.secondarySlots.push({
+          petalType: reader.u8(),
+          rarity: reader.u8(),
+        });
       }
       msg.talentPoints = 0;
       msg.talents = [];
@@ -302,7 +511,11 @@ export function parseServerMessage(payload) {
         msg.talentPoints = reader.u16();
         const talentCount = reader.u8();
         for (let i = 0; i < talentCount; i += 1) {
-          msg.talents.push({ id: reader.u16(), rarity: reader.u8(), rank: reader.u8() });
+          msg.talents.push({
+            id: reader.u16(),
+            rarity: reader.u8(),
+            rank: reader.u8(),
+          });
         }
       }
       return msg;
@@ -312,7 +525,11 @@ export function parseServerMessage(payload) {
       const count = reader.u16();
       msg.inventory = [];
       for (let i = 0; i < count; i += 1) {
-        msg.inventory.push({ petalType: reader.u8(), rarity: reader.u8(), count: reader.u32() });
+        msg.inventory.push({
+          petalType: reader.u8(),
+          rarity: reader.u8(),
+          count: reader.u32(),
+        });
       }
       return msg;
     }
@@ -337,7 +554,11 @@ export function parseServerMessage(payload) {
       const count = reader.u16();
       msg.items = [];
       for (let i = 0; i < count; i += 1) {
-        msg.items.push({ petalType: reader.u8(), rarity: reader.u8(), count: reader.u32() });
+        msg.items.push({
+          petalType: reader.u8(),
+          rarity: reader.u8(),
+          count: reader.u32(),
+        });
       }
       return msg;
     }
@@ -348,19 +569,39 @@ export function parseServerMessage(payload) {
   }
 }
 
-export function packAuth(name, password, registerMode) {
+export function packAuth({
+  mode = AuthMode.Login,
+  name = "",
+  password = "",
+  email = "",
+  code = "",
+} = {}) {
   const nameBytes = fitUtf8(name, 32);
   const passwordBytes = fitUtf8(password, 64);
+  const emailBytes = fitUtf8(email, 254);
+  const codeBytes = fitUtf8(code, 32);
   if (nameBytes.length === 0) return null;
-  const out = new Uint8Array(4 + nameBytes.length + passwordBytes.length);
+  const out = new Uint8Array(
+    6 +
+      nameBytes.length +
+      passwordBytes.length +
+      emailBytes.length +
+      codeBytes.length,
+  );
   let offset = 0;
   out[offset++] = 0xf0;
-  out[offset++] = registerMode ? 1 : 0;
+  out[offset++] = mode;
   out[offset++] = nameBytes.length;
   out[offset++] = passwordBytes.length;
+  out[offset++] = emailBytes.length;
+  out[offset++] = codeBytes.length;
   out.set(nameBytes, offset);
   offset += nameBytes.length;
   out.set(passwordBytes, offset);
+  offset += passwordBytes.length;
+  out.set(emailBytes, offset);
+  offset += emailBytes.length;
+  out.set(codeBytes, offset);
   return out;
 }
 
@@ -372,7 +613,42 @@ export function packInput(moveX, moveY) {
   return out;
 }
 
-export function packChores(attacking, defending, agree = false, disconnect = false, digging = false) {
+export function packInputFrame(
+  sequence,
+  targetServerTick,
+  moveX,
+  moveY,
+  attacking,
+  defending,
+  digging,
+) {
+  const out = new Uint8Array(16);
+  const view = new DataView(out.buffer);
+  const safeTick = Math.max(
+    0,
+    Math.min(Number.MAX_SAFE_INTEGER, Math.floor(Number(targetServerTick) || 0)),
+  );
+
+  out[0] = 0xf8;
+  view.setUint32(1, sequence >>> 0, true);
+  view.setUint32(5, safeTick >>> 0, true);
+  view.setUint32(9, Math.floor(safeTick / 0x100000000) >>> 0, true);
+  view.setInt8(13, axisToPacket(moveX));
+  view.setInt8(14, axisToPacket(moveY));
+  out[15] =
+    (attacking ? 1 << 0 : 0) |
+    (defending ? 1 << 1 : 0) |
+    (digging ? 1 << 2 : 0);
+  return out;
+}
+
+export function packChores(
+  attacking,
+  defending,
+  agree = false,
+  disconnect = false,
+  digging = false,
+) {
   let value = 0x03;
   if (attacking) value |= 1 << 2;
   if (defending) value |= 1 << 3;
@@ -383,7 +659,11 @@ export function packChores(attacking, defending, agree = false, disconnect = fal
 }
 
 export function packEquip(slotIndex, petalType, rarity) {
-  return new Uint8Array([0x01, petalType & 0xff, ((slotIndex & 0x0f) << 4) | (rarity & 0x0f)]);
+  return new Uint8Array([
+    0x01,
+    petalType & 0xff,
+    ((slotIndex & 0x0f) << 4) | (rarity & 0x0f),
+  ]);
 }
 
 export function packUnequip(slotIndex) {
@@ -391,7 +671,12 @@ export function packUnequip(slotIndex) {
 }
 
 export function packSecondarySlot(slotIndex, petalType, rarity) {
-  return new Uint8Array([0xf2, slotIndex & 0xff, petalType & 0xff, rarity & 0xff]);
+  return new Uint8Array([
+    0xf2,
+    slotIndex & 0xff,
+    petalType & 0xff,
+    rarity & 0xff,
+  ]);
 }
 
 export function packCraft(petalType, rarity, count) {
@@ -405,8 +690,25 @@ export function packCraft(petalType, rarity, count) {
   return out;
 }
 
+export function packForge(petalType) {
+  const out = new Uint8Array(7);
+  out[0] = 0xf6;
+  out[1] = petalType & 0xff;
+  out[2] = 8;
+  const view = new DataView(out.buffer);
+  view.setUint32(3, 5, true);
+  return out;
+}
+
 export function packStateRequest() {
   return new Uint8Array([0xf5]);
+}
+
+export function packSnapshotAck(snapshotId = FULL_SNAPSHOT_BASE_ID) {
+  const out = new Uint8Array(5);
+  out[0] = 0xf7;
+  new DataView(out.buffer).setUint32(1, snapshotId >>> 0, true);
+  return out;
 }
 
 export function packTalentRequest(action, talents) {

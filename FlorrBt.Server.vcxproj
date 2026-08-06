@@ -50,7 +50,7 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>_DEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -68,9 +68,10 @@
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>NDEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -84,6 +85,9 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="src\Server\Auth\email_verification_service.h" />
+    <ClInclude Include="src\Server\HotReload\hot_reload_snapshot.h" />
+    <ClInclude Include="src\Server\HotReload\snapshot_archive.h" />
     <ClInclude Include="src\Server\Game\controller.h" />
     <ClInclude Include="src\Server\Game\entities\blood_sacrifice_ritual.h" />
     <ClInclude Include="src\Server\Game\entities\drop.h" />
@@ -99,10 +103,15 @@
     <ClInclude Include="src\Server\Game\entities\projectile.h" />
     <ClInclude Include="src\Server\Game\entity.h" />
     <ClInclude Include="src\Server\Game\gamecontext.h" />
+    <ClInclude Include="src\Server\Game\game_services.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\open_reward_service.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\open_spawn_director.h" />
     <ClInclude Include="src\Server\Game\gamecontrollers\opencontroller.h" />
     <ClInclude Include="src\Server\Game\gamecontrollers\waitingcontroller.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\world_controller_factory.h" />
     <ClInclude Include="src\Server\Game\gameworld.h" />
     <ClInclude Include="src\Server\Game\player.h" />
+    <ClInclude Include="src\Server\Game\prototype_registry.h" />
     <ClInclude Include="src\Server\Game\state.h" />
     <ClInclude Include="src\Server\Game\state_zone.h" />
     <ClInclude Include="src\Server\Game\states\states.h" />
@@ -113,11 +122,17 @@
     <ClInclude Include="src\Server\Module\network_module.h" />
     <ClInclude Include="src\Server\Module\server_gui_module.h" />
     <ClInclude Include="src\Server\Module\world_module.h" />
+    <ClInclude Include="src\Server\Persistence\account_store.h" />
+    <ClInclude Include="src\Server\Persistence\server_data_store.h" />
+    <ClInclude Include="src\Server\Persistence\unique_petal_registry.h" />
     <ClInclude Include="src\Server\report.h" />
     <ClInclude Include="src\Server\server.h" />
     <ClInclude Include="src\Server\Game\talent.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\Server\Auth\email_verification_service.cpp" />
+    <ClCompile Include="src\Server\HotReload\hot_reload_snapshot.cpp" />
+    <ClCompile Include="src\Server\HotReload\snapshot_archive.cpp" />
     <ClCompile Include="src\Server\commands.cpp" />
     <ClCompile Include="src\Server\Game\controllers\melee_controller.cpp" />
     <ClCompile Include="src\Server\Game\controllers\player_controller.cpp" />
@@ -133,8 +148,11 @@
     <ClCompile Include="src\Server\Game\entity.cpp" />
     <ClCompile Include="src\Server\Game\entity_tools.cpp" />
     <ClCompile Include="src\Server\Game\gamecontext.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\open_reward_service.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\open_spawn_director.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\opencontroller.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\waitingcontroller.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\world_controller_factory.cpp" />
     <ClCompile Include="src\Server\Game\gameworld.cpp" />
     <ClCompile Include="src\Server\Game\player.cpp" />
     <ClCompile Include="src\Server\Game\state_zone.cpp" />
@@ -146,6 +164,9 @@
     <ClCompile Include="src\Server\Module\network_module.cpp" />
     <ClCompile Include="src\Server\Module\server_gui_module.cpp" />
     <ClCompile Include="src\Server\Module\world_module.cpp" />
+    <ClCompile Include="src\Server\Persistence\account_store.cpp" />
+    <ClCompile Include="src\Server\Persistence\server_data_store.cpp" />
+    <ClCompile Include="src\Server\Persistence\unique_petal_registry.cpp" />
     <ClCompile Include="src\Server\report.cpp" />
     <ClCompile Include="src\Server\server.cpp" />
   </ItemGroup>

@@ -1,7 +1,9 @@
 #pragma once
 #include "../../Shared/shared.h"
 #include <SFML/System/Vector2.hpp>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 
 class CGameWorld;
 class CGameContext;
@@ -10,26 +12,65 @@ enum class EEntityTag : std::uint32_t
 {
     ClearOwnedEntitiesOnDestroy = 1u << 0,
     ClearOwnedSummonsOnDestroy = 1u << 1,
+    NoDefeatRewards = 1u << 2,
+};
+
+enum class EEntityRemovalReason : std::uint8_t
+{
+    Despawned,
+    Defeated,
+    Expired,
+    Consumed,
+    Transformed,
+    Replaced,
+    OwnerRemoved,
+};
+
+enum class EEntityTickMode : std::uint8_t
+{
+    Default,
+    Always,
+    PlayerVisible,
 };
 
 class CEntity
 {
   public:
-    CEntity(CGameWorld* pworld, float x, float y, float r) : m_p_game_world(pworld), m_pos(x, y), m_prev_pos(x, y), m_radius(r) {}
+    CEntity(CGameWorld* pworld, float x, float y, float r, SEntityTypeInfo entity_type)
+        : m_p_game_world(pworld), m_entity_type(entity_type), m_pos(x, y), m_prev_pos(x, y), m_radius(r)
+    {
+    }
     virtual ~CEntity() = default;
 
     CGameWorld* GameWorld() const { return m_p_game_world; }
     void SetGameWorld(CGameWorld* world) { m_p_game_world = world; }
     CGameContext* GameContext();
 
+    const SEntityTypeInfo& GetEntityTypeInfo() const { return m_entity_type; }
+    EEntityType GetEntityType() const { return m_entity_type.family; }
+    EProjectileType GetProjectileType() const { return m_entity_type.projectile; }
+    std::uint8_t GetNetworkType() const { return m_entity_type.network_type; }
+    bool IsEntityType(EEntityType type) const { return m_entity_type.Is(type); }
+    bool IsProjectileType(EProjectileType type) const { return m_entity_type.Is(type); }
+
     virtual void Tick(float dt) = 0;
 
     bool IsCollision(const CEntity& other) const;
     virtual void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type);
-    virtual void OnCollision(CEntity* other);
-    virtual bool IsDead() const { return m_is_marked_for_des; }
+    void OnCollision(CEntity* other);
+    virtual const SEntityStats& GetEntityStats() const { return m_entity_stats; }
+    virtual bool IsDead() const { return m_health <= 0.f; }
     virtual bool CanCollide() const { return !IsDead(); }
+    virtual bool CanPhysicallyCollideWith(const CEntity* other) const { return other != nullptr; }
+    virtual bool IsCollisionPositionLocked() const { return false; }
+    virtual bool CollidesWithWalls() const { return true; }
+    virtual float WallCollisionRadius() const { return m_radius; }
+    virtual float TickHorizon() const { return m_tick_horizon; }
     virtual bool IsVisible() const { return !IsDead(); }
+    virtual void OnBeforeRemoved(EEntityRemovalReason) {}
+    void MarkForDestroy(EEntityRemovalReason reason = EEntityRemovalReason::Despawned);
+    void CancelDestroy();
+    EEntityRemovalReason RemovalReason() const { return m_removal_reason; }
 
     bool HasTag(EEntityTag tag) const { return (m_tags & static_cast<std::uint32_t>(tag)) != 0; }
     void AddTag(EEntityTag tag) { m_tags |= static_cast<std::uint32_t>(tag); }
@@ -41,9 +82,16 @@ class CEntity
 
     bool m_skip_world_tick = false;
     bool m_allow_skip_tick = false;
+    EEntityTickMode m_tick_mode = EEntityTickMode::Default;
+    float m_tick_horizon = 0.f;
 
     int m_id = -1;
     std::uint64_t m_generation = 0;
+    size_t m_live_index = std::numeric_limits<size_t>::max();
+    size_t m_cleanup_index = std::numeric_limits<size_t>::max();
+    size_t m_always_tick_index = std::numeric_limits<size_t>::max();
+    size_t m_conditional_tick_index = std::numeric_limits<size_t>::max();
+    size_t m_large_spatial_index = std::numeric_limits<size_t>::max();
     std::uint64_t m_active_tick_marker = 0;
     bool m_is_marked_for_des = false;
     std::uint32_t m_tags = 0;
@@ -53,7 +101,13 @@ class CEntity
     float m_health = 1.f;
     float m_facing_angle = 0.f;
     bool m_has_facing = false;
+    SEntityStats m_entity_stats;
+
+  protected:
+    void SetNetworkType(std::uint8_t network_type) { m_entity_type.network_type = network_type; }
 
   private:
     CGameWorld* m_p_game_world = nullptr;
+    SEntityTypeInfo m_entity_type;
+    EEntityRemovalReason m_removal_reason = EEntityRemovalReason::Despawned;
 };

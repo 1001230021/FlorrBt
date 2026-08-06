@@ -165,8 +165,7 @@ class CJsonParser
             case 't':
                 result.push_back('\t');
                 break;
-            case 'u':
-            {
+            case 'u': {
                 std::optional<uint32_t> codepoint = ParseUnicodeEscape(error);
                 if (!codepoint) return std::nullopt;
                 AppendUtf8(result, *codepoint);
@@ -186,23 +185,27 @@ class CJsonParser
     {
         size_t start = m_pos;
         if (Peek() == '-') Consume();
-        while (!IsEnd() && std::isdigit(static_cast<unsigned char>(Peek()))) Consume();
+        while (!IsEnd() && std::isdigit(static_cast<unsigned char>(Peek())))
+            Consume();
         if (!IsEnd() && Peek() == '.')
         {
             Consume();
-            while (!IsEnd() && std::isdigit(static_cast<unsigned char>(Peek()))) Consume();
+            while (!IsEnd() && std::isdigit(static_cast<unsigned char>(Peek())))
+                Consume();
         }
         if (!IsEnd() && (Peek() == 'e' || Peek() == 'E'))
         {
             Consume();
             if (!IsEnd() && (Peek() == '+' || Peek() == '-')) Consume();
-            while (!IsEnd() && std::isdigit(static_cast<unsigned char>(Peek()))) Consume();
+            while (!IsEnd() && std::isdigit(static_cast<unsigned char>(Peek())))
+                Consume();
         }
 
         try
         {
             return CJsonValue(std::stod(m_text.substr(start, m_pos - start)));
-        } catch (...) {
+        } catch (...)
+        {
             SetError(error, "Invalid number");
             return std::nullopt;
         }
@@ -268,19 +271,16 @@ class CJsonParser
         if (codepoint <= 0x7F)
         {
             out.push_back(static_cast<char>(codepoint));
-        }
-        else if (codepoint <= 0x7FF)
+        } else if (codepoint <= 0x7FF)
         {
             out.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
             out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
-        }
-        else if (codepoint <= 0xFFFF)
+        } else if (codepoint <= 0xFFFF)
         {
             out.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
             out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
             out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
-        }
-        else
+        } else
         {
             out.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
             out.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
@@ -362,37 +362,19 @@ class CJsonParser
     const std::string& m_text;
     size_t m_pos = 0;
 };
-}
+} // namespace
 
-bool CJsonValue::AsBool(bool fallback) const
-{
-    return IsBool() ? std::get<bool>(m_data) : fallback;
-}
+bool CJsonValue::AsBool(bool fallback) const { return IsBool() ? std::get<bool>(m_data) : fallback; }
 
-double CJsonValue::AsNumber(double fallback) const
-{
-    return IsNumber() ? std::get<double>(m_data) : fallback;
-}
+double CJsonValue::AsNumber(double fallback) const { return IsNumber() ? std::get<double>(m_data) : fallback; }
 
-int CJsonValue::AsInt(int fallback) const
-{
-    return IsNumber() ? static_cast<int>(std::get<double>(m_data)) : fallback;
-}
+int CJsonValue::AsInt(int fallback) const { return IsNumber() ? static_cast<int>(std::get<double>(m_data)) : fallback; }
 
-const std::string& CJsonValue::AsString() const
-{
-    return IsString() ? std::get<std::string>(m_data) : empty_string;
-}
+const std::string& CJsonValue::AsString() const { return IsString() ? std::get<std::string>(m_data) : empty_string; }
 
-const CJsonValue::array& CJsonValue::AsArray() const
-{
-    return IsArray() ? std::get<array>(m_data) : empty_array;
-}
+const CJsonValue::array& CJsonValue::AsArray() const { return IsArray() ? std::get<array>(m_data) : empty_array; }
 
-const CJsonValue::object& CJsonValue::AsObject() const
-{
-    return IsObject() ? std::get<object>(m_data) : empty_object;
-}
+const CJsonValue::object& CJsonValue::AsObject() const { return IsObject() ? std::get<object>(m_data) : empty_object; }
 
 const CJsonValue* CJsonValue::Find(const std::string& key) const
 {

@@ -2035,7 +2035,7 @@
                         {
                          "name":"mobs",
                          "type":"string",
-                         "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                         "value":"lady:0.15,spider:0.15,bee:0.15,bbb:0.15,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -2235,7 +2235,7 @@
                         {
                          "name":"mobs",
                          "type":"string",
-                         "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                         "value":"lady:0.15,spider:0.15,bee:0.15,bbb:0.15,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -2467,7 +2467,7 @@
                         {
                          "name":"mobs",
                          "type":"string",
-                         "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                         "value":"lady:0.15,spider:0.15,bee:0.15,bbb:0.15,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -2943,7 +2943,7 @@
                         {
                          "name":"mobs",
                          "type":"string",
-                         "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                         "value":"lady:0.15,spider:0.15,bee:0.15,bbb:0.15,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -8938,7 +8938,7 @@
                         {
                          "name":"difficulty",
                          "type":"float",
-                         "value":62.5
+                         "value":64
                         }, 
                         {
                          "name":"mobs",
@@ -9070,7 +9070,7 @@
                         {
                          "name":"difficulty",
                          "type":"float",
-                         "value":65
+                         "value":68
                         }, 
                         {
                          "name":"mobs",
@@ -9338,7 +9338,7 @@
                         {
                          "name":"difficulty",
                          "type":"float",
-                         "value":69.5
+                         "value":72
                         }, 
                         {
                          "name":"mobs",
@@ -9662,7 +9662,7 @@
                         {
                          "name":"difficulty",
                          "type":"float",
-                         "value":70
+                         "value":74
                         }, 
                         {
                          "name":"mobs",
@@ -9894,7 +9894,7 @@
                         {
                          "name":"difficulty",
                          "type":"float",
-                         "value":72
+                         "value":76
                         }, 
                         {
                          "name":"mobs",
@@ -10110,7 +10110,7 @@
                         {
                          "name":"difficulty",
                          "type":"float",
-                         "value":74
+                         "value":78
                         }, 
                         {
                          "name":"mobs",
@@ -13706,6 +13706,98 @@
                  "width":0,
                  "x":10752,
                  "y":117760
+                }, 
+                {
+                 "class":"precise_spawn",
+                 "height":0,
+                 "id":129,
+                 "name":"",
+                 "point":true,
+                 "properties":[
+                        {
+                         "name":"rarity",
+                         "type":"string",
+                         "value":"eternal"
+                        }, 
+                        {
+                         "name":"type",
+                         "type":"string",
+                         "value":"dummy"
+                        }],
+                 "rotation":0,
+                 "visible":true,
+                 "width":0,
+                 "x":70144,
+                 "y":56832
+                }, 
+                {
+                 "class":"precise_spawn",
+                 "height":0,
+                 "id":130,
+                 "name":"",
+                 "point":true,
+                 "properties":[
+                        {
+                         "name":"rarity",
+                         "type":"string",
+                         "value":"super"
+                        }, 
+                        {
+                         "name":"type",
+                         "type":"string",
+                         "value":"dummy"
+                        }],
+                 "rotation":0,
+                 "visible":true,
+                 "width":0,
+                 "x":67584,
+                 "y":57344
+                }, 
+                {
+                 "class":"precise_spawn",
+                 "height":0,
+                 "id":131,
+                 "name":"",
+                 "point":true,
+                 "properties":[
+                        {
+                         "name":"rarity",
+                         "type":"string",
+                         "value":"ultra"
+                        }, 
+                        {
+                         "name":"type",
+                         "type":"string",
+                         "value":"dummy"
+                        }],
+                 "rotation":0,
+                 "visible":true,
+                 "width":0,
+                 "x":65024,
+                 "y":57344
+                }, 
+                {
+                 "class":"precise_spawn",
+                 "height":0,
+                 "id":132,
+                 "name":"",
+                 "point":true,
+                 "properties":[
+                        {
+                         "name":"rarity",
+                         "type":"string",
+                         "value":"unique"
+                        }, 
+                        {
+                         "name":"type",
+                         "type":"string",
+                         "value":"titan"
+                        }],
+                 "rotation":0,
+                 "visible":true,
+                 "width":0,
+                 "x":90112,
+                 "y":119808
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -14340,6 +14432,24 @@
                  "width":0,
                  "x":98630,
                  "y":22549
+                }, 
+                {
+                 "class":"warp",
+                 "height":0,
+                 "id":123,
+                 "name":"from_ant_hel",
+                 "point":true,
+                 "properties":[
+                        {
+                         "name":"warp_point",
+                         "type":"string",
+                         "value":"from_ant_hel"
+                        }],
+                 "rotation":0,
+                 "visible":true,
+                 "width":0,
+                 "x":97606,
+                 "y":22549
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -14348,7 +14458,7 @@
          "y":0
         }],
  "nextlayerid":15,
- "nextobjectid":123,
+ "nextobjectid":133,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.9.1",

@@ -9,67 +9,75 @@
 #undef class
 #undef template
 
-#include <array>
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
+#include <memory>
+#include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
-#include <string>
-#include <memory>
-#include <cstring>
-#include <optional>
 
 inline void TmjLogCb(tmj_log_priority priority, const char* msg)
 {
-    switch(priority)
+    switch (priority)
     {
-        case TMJ_LOG_DEBUG:
-            LOG_DEBUG("tmj", msg);
-            break;
-        case TMJ_LOG_INFO:
-            LOG_INFO("tmj", msg);
-            break;
-        case TMJ_LOG_WARNING:
-            LOG_WARN("tmj", msg);
-            break;
-        case TMJ_LOG_ERR:
-            LOG_ERROR("tmj", msg);
-            break;
-        case TMJ_LOG_CRIT:
-            LOG_FATAL("tmj", msg);
-            break;
+    case TMJ_LOG_DEBUG:
+        LOG_DEBUG("tmj", msg);
+        break;
+    case TMJ_LOG_INFO:
+        LOG_INFO("tmj", msg);
+        break;
+    case TMJ_LOG_WARNING:
+        LOG_WARN("tmj", msg);
+        break;
+    case TMJ_LOG_ERR:
+        LOG_ERROR("tmj", msg);
+        break;
+    case TMJ_LOG_CRIT:
+        LOG_FATAL("tmj", msg);
+        break;
     }
 }
 
 struct FlorrBtMap
 {
-    int width; int height;
+    int width;
+    int height;
     int tile_width = 512;
     int tile_height = 512;
     std::string source_path;
 
-    FlorrBtMap(int w, int h, int tw = 512, int th = 512)
-        : width(w), height(h), tile_width(tw), tile_height(th)
-    {}
+    FlorrBtMap(int w, int h, int tw = 512, int th = 512) : width(w), height(h), tile_width(tw), tile_height(th) {}
 
-    struct Point { float x, y; };
+    struct Point
+    {
+        float x, y;
+    };
+
+    struct PreciseSpawn
+    {
+        float x = 0.f;
+        float y = 0.f;
+        std::string type;
+        std::string rarity;
+    };
+    std::vector<PreciseSpawn> precise_spawns;
 
     struct Layer
     {
-        int width; int height;
+        int width;
+        int height;
         std::vector<int> tiles;
         std::string name;
 
-        int* operator[](int row) {
-            return tiles.data() + row * width;
-        }
+        int* operator[](int row) { return tiles.data() + row * width; }
 
-        const int* operator[](int row) const {
-            return tiles.data() + row * width;
-        }
+        const int* operator[](int row) const { return tiles.data() + row * width; }
     };
     std::vector<Layer> tile_layers;
 
@@ -109,7 +117,7 @@ struct FlorrBtMap
         int id = -1;
         std::vector<Point> vertices;
         bool closed = true;
-        Point center = {0.f, 0.f};
+        Point center = { 0.f, 0.f };
         float query_radius = 0.f;
         float min_x = 0.f;
         float min_y = 0.f;
@@ -119,43 +127,33 @@ struct FlorrBtMap
     std::vector<Wall> walls;
 };
 
-inline float Scale512(float n)
-{
-    return n;
-}
-inline float Scale512(int n)
-{
-    return static_cast<float>(n);
-}
-inline float Scale512(double n)
-{
-    return static_cast<float>(n);
-}
+inline float Scale512(float n) { return n; }
+inline float Scale512(int n) { return static_cast<float>(n); }
+inline float Scale512(double n) { return static_cast<float>(n); }
 
-inline FlorrBtMap::Point CheckpointLocalToWorldPoint(const FlorrBtMap::Checkpoint& checkpoint, float local_x, float local_y)
+inline FlorrBtMap::Point CheckpointLocalToWorldPoint(const FlorrBtMap::Checkpoint& checkpoint, float local_x,
+                                                     float local_y)
 {
     float x = checkpoint.x + local_x;
     float y = checkpoint.y + local_y;
-    if (std::abs(checkpoint.rotation) <= 0.0001f) return {x, y};
+    if (std::abs(checkpoint.rotation) <= 0.0001f) return { x, y };
 
     float angle = checkpoint.rotation * 3.14159265359f / 180.f;
     float s = std::sin(angle);
     float c = std::cos(angle);
-    return {checkpoint.x + local_x * c - local_y * s,
-            checkpoint.y + local_x * s + local_y * c};
+    return { checkpoint.x + local_x * c - local_y * s, checkpoint.y + local_x * s + local_y * c };
 }
 
 inline FlorrBtMap::Point CheckpointWorldToLocalPoint(const FlorrBtMap::Checkpoint& checkpoint, float x, float y)
 {
     float local_x = x - checkpoint.x;
     float local_y = y - checkpoint.y;
-    if (std::abs(checkpoint.rotation) <= 0.0001f) return {local_x, local_y};
+    if (std::abs(checkpoint.rotation) <= 0.0001f) return { local_x, local_y };
 
     float angle = -checkpoint.rotation * 3.14159265359f / 180.f;
     float s = std::sin(angle);
     float c = std::cos(angle);
-    return {local_x * c - local_y * s,
-            local_x * s + local_y * c};
+    return { local_x * c - local_y * s, local_x * s + local_y * c };
 }
 
 inline FlorrBtMap::Point CheckpointCenterPoint(const FlorrBtMap::Checkpoint& checkpoint)
@@ -166,15 +164,11 @@ inline FlorrBtMap::Point CheckpointCenterPoint(const FlorrBtMap::Checkpoint& che
 inline bool CheckpointContainsPoint(const FlorrBtMap::Checkpoint& checkpoint, float x, float y)
 {
     FlorrBtMap::Point local = CheckpointWorldToLocalPoint(checkpoint, x, y);
-    return checkpoint.w > 0.f && checkpoint.h > 0.f &&
-           local.x >= 0.f && local.x <= checkpoint.w &&
-           local.y >= 0.f && local.y <= checkpoint.h;
+    return checkpoint.w > 0.f && checkpoint.h > 0.f && local.x >= 0.f && local.x <= checkpoint.w && local.y >= 0.f &&
+           local.y <= checkpoint.h;
 }
 
-inline std::string MapObjectText(const char* text)
-{
-    return text ? std::string(text) : std::string();
-}
+inline std::string MapObjectText(const char* text) { return text ? std::string(text) : std::string(); }
 
 inline std::string JsonStringField(const CJsonValue& object, const std::string& key)
 {
@@ -195,8 +189,7 @@ inline const CJsonValue* JsonPropertyValue(const CJsonValue& object, const std::
 
     for (const CJsonValue& property : properties->AsArray())
     {
-        if (JsonStringField(property, "name") == name)
-            return property.Find("value");
+        if (JsonStringField(property, "name") == name) return property.Find("value");
     }
     return nullptr;
 }
@@ -211,8 +204,7 @@ inline float JsonPropertyFloat(const CJsonValue& object, const std::string& name
         try
         {
             return std::stof(value->AsString());
-        }
-        catch (...)
+        } catch (...)
         {
             return fallback;
         }
@@ -248,8 +240,7 @@ inline bool MapPropertyFloat(const Property& prop, float& out)
         {
             out = std::stof(prop.value_string);
             return true;
-        }
-        catch (...)
+        } catch (...)
         {
             return false;
         }
@@ -276,8 +267,7 @@ inline bool MapPropertyInt(const Property& prop, int& out)
         {
             out = std::stoi(prop.value_string);
             return true;
-        }
-        catch (...)
+        } catch (...)
         {
             return false;
         }
@@ -308,7 +298,7 @@ inline FlorrBtMap::Point TransformObjectPoint(const Object& obj, float local_x, 
 {
     float x = Scale512(static_cast<float>(obj.x + local_x));
     float y = Scale512(static_cast<float>(obj.y + local_y));
-    if (std::abs(obj.rotation) <= 0.0001) return {x, y};
+    if (std::abs(obj.rotation) <= 0.0001) return { x, y };
 
     float origin_x = Scale512(static_cast<float>(obj.x));
     float origin_y = Scale512(static_cast<float>(obj.y));
@@ -317,7 +307,7 @@ inline FlorrBtMap::Point TransformObjectPoint(const Object& obj, float local_x, 
     float c = std::cos(angle);
     float dx = x - origin_x;
     float dy = y - origin_y;
-    return {origin_x + dx * c - dy * s, origin_y + dx * s + dy * c};
+    return { origin_x + dx * c - dy * s, origin_y + dx * s + dy * c };
 }
 
 inline void FinalizeWallBounds(FlorrBtMap::Wall& wall)
@@ -333,7 +323,7 @@ inline void FinalizeWallBounds(FlorrBtMap::Wall& wall)
         wall.max_x = std::max(wall.max_x, point.x);
         wall.max_y = std::max(wall.max_y, point.y);
     }
-    wall.center = {(wall.min_x + wall.max_x) * 0.5f, (wall.min_y + wall.max_y) * 0.5f};
+    wall.center = { (wall.min_x + wall.max_x) * 0.5f, (wall.min_y + wall.max_y) * 0.5f };
     float max_dist_sq = 0.f;
     for (const auto& point : wall.vertices)
     {
@@ -353,22 +343,21 @@ inline bool BuildWallFromObject(const Object& obj, FlorrBtMap::Wall& wall)
     {
         wall.vertices.reserve(obj.polygon_point_count);
         for (size_t v = 0; v < obj.polygon_point_count; ++v)
-            wall.vertices.push_back(TransformObjectPoint(obj, static_cast<float>(obj.polygon[v].x),
-                                                         static_cast<float>(obj.polygon[v].y)));
-    }
-    else if (!obj.is_polygon && obj.polyline_point_count > 0 && obj.polyline)
+            wall.vertices.push_back(
+                TransformObjectPoint(obj, static_cast<float>(obj.polygon[v].x), static_cast<float>(obj.polygon[v].y)));
+    } else if (!obj.is_polygon && obj.polyline_point_count > 0 && obj.polyline)
     {
         wall.closed = false;
         wall.vertices.reserve(obj.polyline_point_count);
         for (size_t v = 0; v < obj.polyline_point_count; ++v)
             wall.vertices.push_back(TransformObjectPoint(obj, static_cast<float>(obj.polyline[v].x),
                                                          static_cast<float>(obj.polyline[v].y)));
-    }
-    else if (obj.width > 0.0 && obj.height > 0.0)
+    } else if (obj.width > 0.0 && obj.height > 0.0)
     {
         wall.vertices.push_back(TransformObjectPoint(obj, 0.f, 0.f));
         wall.vertices.push_back(TransformObjectPoint(obj, static_cast<float>(obj.width), 0.f));
-        wall.vertices.push_back(TransformObjectPoint(obj, static_cast<float>(obj.width), static_cast<float>(obj.height)));
+        wall.vertices.push_back(
+            TransformObjectPoint(obj, static_cast<float>(obj.width), static_cast<float>(obj.height)));
         wall.vertices.push_back(TransformObjectPoint(obj, 0.f, static_cast<float>(obj.height)));
     }
 
@@ -384,14 +373,14 @@ inline FlorrBtMap::Point TransformJsonObjectPoint(const CJsonValue& obj, float l
     float x = obj_x + local_x;
     float y = obj_y + local_y;
     float rotation = static_cast<float>(obj.Find("rotation") ? obj.Find("rotation")->AsNumber() : 0.0);
-    if (std::abs(rotation) <= 0.0001f) return {x, y};
+    if (std::abs(rotation) <= 0.0001f) return { x, y };
 
     float angle = rotation * 3.14159265359f / 180.f;
     float s = std::sin(angle);
     float c = std::cos(angle);
     float dx = x - obj_x;
     float dy = y - obj_y;
-    return {obj_x + dx * c - dy * s, obj_y + dx * s + dy * c};
+    return { obj_x + dx * c - dy * s, obj_y + dx * s + dy * c };
 }
 
 inline bool BuildWallFromJsonObject(const CJsonValue& obj, FlorrBtMap::Wall& wall)
@@ -407,8 +396,7 @@ inline bool BuildWallFromJsonObject(const CJsonValue& obj, FlorrBtMap::Wall& wal
             float y = static_cast<float>(point.Find("y") ? point.Find("y")->AsNumber() : 0.0);
             wall.vertices.push_back(TransformJsonObjectPoint(obj, x, y));
         }
-    }
-    else if (const CJsonValue* polyline = obj.Find("polyline"); polyline && polyline->IsArray())
+    } else if (const CJsonValue* polyline = obj.Find("polyline"); polyline && polyline->IsArray())
     {
         wall.closed = false;
         for (const CJsonValue& point : polyline->AsArray())
@@ -417,8 +405,7 @@ inline bool BuildWallFromJsonObject(const CJsonValue& obj, FlorrBtMap::Wall& wal
             float y = static_cast<float>(point.Find("y") ? point.Find("y")->AsNumber() : 0.0);
             wall.vertices.push_back(TransformJsonObjectPoint(obj, x, y));
         }
-    }
-    else
+    } else
     {
         float w = static_cast<float>(obj.Find("width") ? obj.Find("width")->AsNumber() : 0.0);
         float h = static_cast<float>(obj.Find("height") ? obj.Find("height")->AsNumber() : 0.0);
@@ -436,10 +423,7 @@ inline bool BuildWallFromJsonObject(const CJsonValue& obj, FlorrBtMap::Wall& wal
     return true;
 }
 
-inline int CanonicalTileGid(int gid)
-{
-    return gid & 0x1fffffff;
-}
+inline int CanonicalTileGid(int gid) { return gid & 0x1fffffff; }
 
 inline const Tileset* FindTilesetForGid(const Map& map, int gid)
 {
@@ -461,8 +445,8 @@ inline const Tile* FindTilesetTile(const Tileset& tileset, int local_id)
     return nullptr;
 }
 
-inline void TransformTileWall(FlorrBtMap::Wall& wall, int raw_gid, int tile_x, int tile_y,
-                              int map_tile_width, int map_tile_height, int source_width, int source_height)
+inline void TransformTileWall(FlorrBtMap::Wall& wall, int raw_gid, int tile_x, int tile_y, int map_tile_width,
+                              int map_tile_height, int source_width, int source_height)
 {
     const bool flip_h = (raw_gid & 0x80000000) != 0;
     const bool flip_v = (raw_gid & 0x40000000) != 0;
@@ -510,8 +494,8 @@ inline void AddTileCollisionWalls(const Map& map, FlorrBtMap& fbt_map)
                 {
                     FlorrBtMap::Wall wall;
                     if (!BuildWallFromObject(tile->objectgroup->objects[object_index], wall)) continue;
-                    TransformTileWall(wall, raw_gid, x, y, fbt_map.tile_width, fbt_map.tile_height,
-                                      source_width, source_height);
+                    TransformTileWall(wall, raw_gid, x, y, fbt_map.tile_width, fbt_map.tile_height, source_width,
+                                      source_height);
                     wall.id = static_cast<int>(fbt_map.walls.size());
                     fbt_map.walls.push_back(std::move(wall));
                 }
@@ -545,8 +529,10 @@ inline void AddJsonTilesetCollisionDefs(const CJsonValue& tileset, int first_gid
         if (!objects || !objects->IsArray()) continue;
 
         JsonTileCollision def;
-        def.image_width = tile.Find("imagewidth") ? tile.Find("imagewidth")->AsInt(tileset_tile_width) : tileset_tile_width;
-        def.image_height = tile.Find("imageheight") ? tile.Find("imageheight")->AsInt(tileset_tile_height) : tileset_tile_height;
+        def.image_width =
+            tile.Find("imagewidth") ? tile.Find("imagewidth")->AsInt(tileset_tile_width) : tileset_tile_width;
+        def.image_height =
+            tile.Find("imageheight") ? tile.Find("imageheight")->AsInt(tileset_tile_height) : tileset_tile_height;
 
         for (const CJsonValue& object : objects->AsArray())
         {
@@ -588,8 +574,7 @@ inline void AddJsonTileCollisionWalls(const std::filesystem::path& map_path, Flo
                 continue;
             }
             AddJsonTilesetCollisionDefs(*tileset_json, first_gid, collision_defs);
-        }
-        else
+        } else
         {
             AddJsonTilesetCollisionDefs(tileset_ref, first_gid, collision_defs);
         }
@@ -609,8 +594,8 @@ inline void AddJsonTileCollisionWalls(const std::filesystem::path& map_path, Flo
                 const JsonTileCollision& def = it->second;
                 for (FlorrBtMap::Wall wall : def.walls)
                 {
-                    TransformTileWall(wall, raw_gid, x, y, fbt_map.tile_width, fbt_map.tile_height,
-                                      def.image_width, def.image_height);
+                    TransformTileWall(wall, raw_gid, x, y, fbt_map.tile_width, fbt_map.tile_height, def.image_width,
+                                      def.image_height);
                     wall.id = static_cast<int>(fbt_map.walls.size());
                     fbt_map.walls.push_back(std::move(wall));
                 }
@@ -637,8 +622,7 @@ inline bool BuildZoneFromJsonObject(const CJsonValue& obj, FlorrBtMap::Zone& zon
             float y = JsonNumberField(point, "y", 0.f);
             zone.vertices.push_back(TransformJsonObjectPoint(obj, x, y));
         }
-    }
-    else
+    } else
     {
         float w = JsonNumberField(obj, "width", 0.f);
         float h = JsonNumberField(obj, "height", 0.f);
@@ -652,6 +636,31 @@ inline bool BuildZoneFromJsonObject(const CJsonValue& obj, FlorrBtMap::Zone& zon
     }
 
     return zone.vertices.size() >= 3;
+}
+
+inline bool BuildPreciseSpawnFromJsonObject(const CJsonValue& obj, FlorrBtMap::PreciseSpawn& spawn)
+{
+    spawn = {};
+    spawn.x = Scale512(JsonNumberField(obj, "x", 0.f));
+    spawn.y = Scale512(JsonNumberField(obj, "y", 0.f));
+    spawn.type = MapToLower(JsonPropertyString(obj, "type"));
+    spawn.rarity = MapToLower(JsonPropertyString(obj, "rarity"));
+    return !spawn.type.empty() && !spawn.rarity.empty();
+}
+
+inline bool SamePreciseSpawn(const FlorrBtMap::PreciseSpawn& lhs, const FlorrBtMap::PreciseSpawn& rhs)
+{
+    constexpr float epsilon = 0.5f;
+    return std::abs(lhs.x - rhs.x) <= epsilon && std::abs(lhs.y - rhs.y) <= epsilon && lhs.type == rhs.type &&
+           lhs.rarity == rhs.rarity;
+}
+
+inline bool HasPreciseSpawn(const FlorrBtMap& map, const FlorrBtMap::PreciseSpawn& spawn)
+{
+    return std::any_of(map.precise_spawns.begin(), map.precise_spawns.end(),
+                       [&spawn](const FlorrBtMap::PreciseSpawn& existing) {
+                           return SamePreciseSpawn(existing, spawn);
+                       });
 }
 
 inline bool BuildCheckpointFromJsonObject(const CJsonValue& obj, const std::string& object_type,
@@ -675,12 +684,9 @@ inline bool BuildCheckpointFromJsonObject(const CJsonValue& obj, const std::stri
 inline bool SameCheckpointObject(const FlorrBtMap::Checkpoint& lhs, const FlorrBtMap::Checkpoint& rhs)
 {
     constexpr float epsilon = 0.5f;
-    return std::abs(lhs.x - rhs.x) <= epsilon &&
-           std::abs(lhs.y - rhs.y) <= epsilon &&
-           std::abs(lhs.w - rhs.w) <= epsilon &&
-           std::abs(lhs.h - rhs.h) <= epsilon &&
-           std::abs(lhs.rotation - rhs.rotation) <= epsilon &&
-           lhs.is_save == rhs.is_save &&
+    return std::abs(lhs.x - rhs.x) <= epsilon && std::abs(lhs.y - rhs.y) <= epsilon &&
+           std::abs(lhs.w - rhs.w) <= epsilon && std::abs(lhs.h - rhs.h) <= epsilon &&
+           std::abs(lhs.rotation - rhs.rotation) <= epsilon && lhs.is_save == rhs.is_save &&
            lhs.is_respawn_area == rhs.is_respawn_area;
 }
 
@@ -708,6 +714,7 @@ inline void AddJsonClassObjectLayers(const std::filesystem::path& map_path, Flor
 
     size_t zones_before = fbt_map.zones.size();
     size_t warps_before = fbt_map.warps.size();
+    size_t precise_spawns_before = fbt_map.precise_spawns.size();
     for (const CJsonValue& layer : layers->AsArray())
     {
         if (JsonStringField(layer, "type") != "objectgroup") continue;
@@ -726,15 +733,18 @@ inline void AddJsonClassObjectLayers(const std::filesystem::path& map_path, Flor
                 if (zones_before != 0) continue;
                 FlorrBtMap::Zone zone;
                 if (BuildZoneFromJsonObject(obj, zone)) fbt_map.zones.push_back(std::move(zone));
-            }
-            else if (object_type == "checkpoint" || object_type == "respawn_area" || object_type == "new_players")
+            } else if (object_type == "precise_spawn")
+            {
+                FlorrBtMap::PreciseSpawn spawn;
+                if (BuildPreciseSpawnFromJsonObject(obj, spawn) && !HasPreciseSpawn(fbt_map, spawn))
+                    fbt_map.precise_spawns.push_back(std::move(spawn));
+            } else if (object_type == "checkpoint" || object_type == "respawn_area" || object_type == "new_players")
             {
                 FlorrBtMap::Checkpoint checkpoint;
                 if (BuildCheckpointFromJsonObject(obj, object_type, checkpoint) &&
                     !HasCheckpointObject(fbt_map, checkpoint))
                     fbt_map.checkpoints.push_back(std::move(checkpoint));
-            }
-            else if (object_type == "warp" || object_type == "portal")
+            } else if (object_type == "warp" || object_type == "portal")
             {
                 if (warps_before != 0) continue;
                 FlorrBtMap::Warp warp;
@@ -743,7 +753,8 @@ inline void AddJsonClassObjectLayers(const std::filesystem::path& map_path, Flor
                 warp.name = JsonStringField(obj, "name");
                 warp.radius = JsonPropertyFloat(obj, "radius", 0.f);
                 if (warp.radius <= 0.f)
-                    warp.radius = std::max(JsonNumberField(obj, "width", 0.f), JsonNumberField(obj, "height", 0.f)) * 0.5f;
+                    warp.radius =
+                        std::max(JsonNumberField(obj, "width", 0.f), JsonNumberField(obj, "height", 0.f)) * 0.5f;
                 warp.point = JsonPropertyString(obj, "warp_point");
                 if (warp.point.empty()) warp.point = JsonPropertyString(obj, "from");
                 if (warp.point.empty()) warp.point = JsonPropertyString(obj, "point");
@@ -756,11 +767,13 @@ inline void AddJsonClassObjectLayers(const std::filesystem::path& map_path, Flor
         }
     }
 
-    if (fbt_map.zones.size() != zones_before || fbt_map.warps.size() != warps_before)
+    if (fbt_map.zones.size() != zones_before || fbt_map.warps.size() != warps_before ||
+        fbt_map.precise_spawns.size() != precise_spawns_before)
     {
         LOG_INFO("maploader", "Map json object classes registered: zones +" +
                                   std::to_string(fbt_map.zones.size() - zones_before) + ", warps +" +
-                                  std::to_string(fbt_map.warps.size() - warps_before));
+                                  std::to_string(fbt_map.warps.size() - warps_before) + ", precise spawns +" +
+                                  std::to_string(fbt_map.precise_spawns.size() - precise_spawns_before));
     }
 }
 
@@ -787,13 +800,15 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
     }
 
     Map* map = tmj_map_loadf(resolved_path.string().c_str(), true);
-    if (!map) {
+    if (!map)
+    {
         LOG_ERROR("maploader", "Failed to load map file: " + path);
         return nullptr;
     }
 
     auto map_guard = std::unique_ptr<Map, decltype(&tmj_map_free)>(map, tmj_map_free);
-    std::string info_msg = "Map file loaded (" + resolved_path.string() + "): " + std::to_string(map->width) + "x" + std::to_string(map->height);
+    std::string info_msg = "Map file loaded (" + resolved_path.string() + "): " + std::to_string(map->width) + "x" +
+                           std::to_string(map->height);
     LOG_INFO("maploader", info_msg);
 
     auto fbt_map = std::make_unique<FlorrBtMap>(map->width, map->height, map->tilewidth, map->tileheight);
@@ -812,21 +827,25 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
 
             layer.tiles.resize(layer.width * layer.height);
 
-            if (!layer_ori.data_is_str && layer_ori.data_uint) {
-                for (int y = 0; y < map->height; ++y) {
-                    for (int x = 0; x < map->width; ++x) {
+            if (!layer_ori.data_is_str && layer_ori.data_uint)
+            {
+                for (int y = 0; y < map->height; ++y)
+                {
+                    for (int x = 0; x < map->width; ++x)
+                    {
                         size_t idx = y * map->width + x;
-                        if (idx < layer_ori.data_count) {
+                        if (idx < layer_ori.data_count)
+                        {
                             layer[y][x] = static_cast<int>(layer_ori.data_uint[idx]);
-                        } else {
+                        } else
+                        {
                             layer[y][x] = 0;
                         }
                     }
                 }
             }
             fbt_map->tile_layers.push_back(layer);
-        }
-        else if (layer_ori.type && strcmp(layer_ori.type, "objectgroup") == 0)
+        } else if (layer_ori.type && strcmp(layer_ori.type, "objectgroup") == 0)
         {
             for (size_t j = 0; j < layer_ori.object_count; ++j)
             {
@@ -847,41 +866,60 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
                     zone.difficulty = 0.0f;
                     zone.mobs = "";
 
-                    for (size_t p = 0; p < obj.property_count; ++p) {
+                    for (size_t p = 0; p < obj.property_count; ++p)
+                    {
                         const Property& prop = obj.properties[p];
-                        if (strcmp(prop.name, "density") == 0) {
+                        if (strcmp(prop.name, "density") == 0)
+                        {
                             MapPropertyFloat(prop, zone.density);
-                        } else if (strcmp(prop.name, "difficulty") == 0) {
+                        } else if (strcmp(prop.name, "difficulty") == 0)
+                        {
                             MapPropertyFloat(prop, zone.difficulty);
-                        } else if (strcmp(prop.name, "mobs") == 0) {
-                            if (prop.value_string) {
+                        } else if (strcmp(prop.name, "mobs") == 0)
+                        {
+                            if (prop.value_string)
+                            {
                                 zone.mobs = prop.value_string;
                             }
                         }
                     }
 
-                    if (obj.polygon_point_count > 0 && obj.polygon) {
-                        for (size_t v = 0; v < obj.polygon_point_count; ++v) {
+                    if (obj.polygon_point_count > 0 && obj.polygon)
+                    {
+                        for (size_t v = 0; v < obj.polygon_point_count; ++v)
+                        {
                             float vx = Scale512(static_cast<float>(obj.x + obj.polygon[v].x));
                             float vy = Scale512(static_cast<float>(obj.y + obj.polygon[v].y));
-                            zone.vertices.push_back({vx, vy});
+                            zone.vertices.push_back({ vx, vy });
                         }
-                    }
-                    else {
+                    } else
+                    {
                         float x1 = Scale512(static_cast<float>(obj.x));
                         float y1 = Scale512(static_cast<float>(obj.y));
                         float x2 = Scale512(static_cast<float>(obj.x + obj.width));
                         float y2 = Scale512(static_cast<float>(obj.y + obj.height));
 
-                        zone.vertices.push_back({x1, y1});
-                        zone.vertices.push_back({x2, y1});
-                        zone.vertices.push_back({x2, y2});
-                        zone.vertices.push_back({x1, y2});
+                        zone.vertices.push_back({ x1, y1 });
+                        zone.vertices.push_back({ x2, y1 });
+                        zone.vertices.push_back({ x2, y2 });
+                        zone.vertices.push_back({ x1, y2 });
                     }
                     fbt_map->zones.push_back(zone);
-                }
-                else if (object_type == "checkpoint" || object_type == "respawn_area" ||
-                         object_type == "new_players")
+                } else if (object_type == "precise_spawn")
+                {
+                    FlorrBtMap::PreciseSpawn spawn;
+                    spawn.x = Scale512(static_cast<float>(obj.x));
+                    spawn.y = Scale512(static_cast<float>(obj.y));
+                    for (size_t p = 0; p < obj.property_count; ++p)
+                    {
+                        const Property& prop = obj.properties[p];
+                        if (!prop.name || !prop.value_string) continue;
+                        if (strcmp(prop.name, "type") == 0) spawn.type = MapToLower(prop.value_string);
+                        else if (strcmp(prop.name, "rarity") == 0) spawn.rarity = MapToLower(prop.value_string);
+                    }
+                    if (!spawn.type.empty() && !spawn.rarity.empty() && !HasPreciseSpawn(*fbt_map, spawn))
+                        fbt_map->precise_spawns.push_back(std::move(spawn));
+                } else if (object_type == "checkpoint" || object_type == "respawn_area" || object_type == "new_players")
                 {
                     FlorrBtMap::Checkpoint cp;
                     cp.id = static_cast<uint32_t>(std::max(0, obj.id));
@@ -896,15 +934,16 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
                     cp.is_save = object_type == "checkpoint";
                     cp.is_respawn_area = object_type == "respawn_area";
 
-                    for (size_t p = 0; p < obj.property_count; ++p) {
+                    for (size_t p = 0; p < obj.property_count; ++p)
+                    {
                         const Property& prop = obj.properties[p];
-                        if (strcmp(prop.name, "level") == 0) {
+                        if (strcmp(prop.name, "level") == 0)
+                        {
                             MapPropertyInt(prop, cp.level);
                         }
                     }
                     fbt_map->checkpoints.push_back(cp);
-                }
-                else if (object_type == "warp" || object_type == "portal")
+                } else if (object_type == "warp" || object_type == "portal")
                 {
                     FlorrBtMap::Warp warp;
                     warp.x = Scale512(static_cast<float>(obj.x));
@@ -914,17 +953,22 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
                     warp.point = "";
                     warp.goal = "";
 
-                    for (size_t p = 0; p < obj.property_count; ++p) {
+                    for (size_t p = 0; p < obj.property_count; ++p)
+                    {
                         const Property& prop = obj.properties[p];
-                        if (strcmp(prop.name, "radius") == 0) {
+                        if (strcmp(prop.name, "radius") == 0)
+                        {
                             float radius = 0.f;
                             if (MapPropertyFloat(prop, radius)) warp.radius = Scale512(radius);
                         } else if ((strcmp(prop.name, "warp_point") == 0 || strcmp(prop.name, "from") == 0 ||
-                                    strcmp(prop.name, "point") == 0) && prop.value_string) {
+                                    strcmp(prop.name, "point") == 0) &&
+                                   prop.value_string)
+                        {
                             warp.point = prop.value_string;
                         } else if ((strcmp(prop.name, "world") == 0 || strcmp(prop.name, "world_name") == 0 ||
                                     strcmp(prop.name, "target") == 0 || strcmp(prop.name, "map") == 0) &&
-                                   prop.value_string) {
+                                   prop.value_string)
+                        {
                             warp.goal = prop.value_string;
                         }
                     }
@@ -936,8 +980,7 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
 
     size_t walls_before_tiles = fbt_map->walls.size();
     AddTileCollisionWalls(*map, *fbt_map);
-    if (fbt_map->walls.size() == walls_before_tiles)
-        AddJsonTileCollisionWalls(resolved_path, *fbt_map);
+    if (fbt_map->walls.size() == walls_before_tiles) AddJsonTileCollisionWalls(resolved_path, *fbt_map);
     AddJsonClassObjectLayers(resolved_path, *fbt_map);
     LOG_INFO("maploader", "Map collision walls registered: " + std::to_string(fbt_map->walls.size()));
     return fbt_map;

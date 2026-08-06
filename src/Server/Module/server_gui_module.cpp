@@ -1,58 +1,46 @@
 #include "server_gui_module.h"
-#include "../server.h"
-#include "../../Shared/game_config.h"
 #include "../../Shared/fonts.h"
+#include "../../Shared/game_config.h"
 #include "../Game/entities/mob.h"
 #include "../Game/entities/petals/petal.h"
+#include "../Game/gamecontext.h"
+#include "../Game/gameworld.h"
+#include "../Game/player.h"
+#include "../server.h"
 #include <SFML/Window/Clipboard.hpp>
 #include <algorithm>
-#include <cmath>
 #include <cctype>
+#include <charconv>
+#include <cmath>
 #include <cstdint>
 #include <sstream>
 #include <string_view>
 
 namespace
 {
-constexpr unsigned int window_width = 800;
-constexpr unsigned int window_height = 450;
-constexpr float padding = 12.f;
-constexpr float input_height = 44.f;
-constexpr float scrollbar_width = 10.f;
-constexpr unsigned int char_size = 16;
-constexpr size_t max_lines = 256;
 constexpr size_t prompt_prefix_size = 2;
 
-float LineHeight() { return static_cast<float>(char_size) + 5.f; }
+float LineHeight()
+{
+    return static_cast<float>(game_config::gui_console_character_size) + game_config::gui_console_line_spacing;
+}
 
 std::vector<std::string> RarityNames()
 {
     return {
-        "Common",
-        "Unusual",
-        "Rare",
-        "Epic",
-        "Legendary",
-        "Mythic",
-        "Ultra",
-        "Exotic",
-        "Super",
-        "Eternal",
-        "Unique",
-        "Primordial",
+        "Common", "Unusual", "Rare",  "Epic",    "Legendary", "Mythic",
+        "Ultra",  "Exotic",  "Super", "Eternal", "Unique",    "Primordial",
     };
 }
 
 std::vector<std::string> PetalNames()
 {
     std::vector<std::string> names;
-    names.reserve(g_petal_registry.size());
-    for (const auto& [type, proto] : g_petal_registry)
+    names.reserve(PetalRegistry().size());
+    for (const auto& [type, proto] : PetalRegistry())
     {
-        if (proto && !proto->m_name.empty())
-            names.push_back(proto->m_name);
-        else
-            names.emplace_back(GetPetalTypeName(type));
+        if (proto && !proto->m_name.empty()) names.push_back(proto->m_name);
+        else names.emplace_back(GetPetalTypeName(type));
     }
     std::sort(names.begin(), names.end());
     return names;
@@ -61,13 +49,11 @@ std::vector<std::string> PetalNames()
 std::vector<std::string> MobNames()
 {
     std::vector<std::string> names;
-    names.reserve(g_mob_registry.size());
-    for (const auto& [type, proto] : g_mob_registry)
+    names.reserve(MobRegistry().size());
+    for (const auto& [type, proto] : MobRegistry())
     {
-        if (proto && !proto->m_name.empty())
-            names.push_back(proto->m_name);
-        else
-            names.emplace_back(GetMobTypeName(type));
+        if (proto && !proto->m_name.empty()) names.push_back(proto->m_name);
+        else names.emplace_back(GetMobTypeName(type));
     }
     std::sort(names.begin(), names.end());
     return names;
@@ -88,7 +74,8 @@ size_t TokenIndexAt(const std::string& input, size_t replace_begin)
                 ++index;
                 in_token = false;
             }
-        } else {
+        } else
+        {
             in_token = true;
         }
     }
@@ -97,10 +84,143 @@ size_t TokenIndexAt(const std::string& input, size_t replace_begin)
 
 bool IsUnsignedInteger(std::string_view text)
 {
-    return !text.empty() && std::all_of(text.begin(), text.end(), [](char ch)
+    return !text.empty() &&
+           std::all_of(text.begin(), text.end(), [](char ch) { return std::isdigit(static_cast<unsigned char>(ch)); });
+}
+
+std::vector<std::string> SplitWhitespace(const std::string& input);
+
+std::vector<std::string> PlayerNames()
+{
+    std::vector<std::string> names;
+    CServer* server = CServer::GetInstance();
+    CGameContext* context = server ? server->GameContext() : nullptr;
+    if (!context) return names;
+
+    names.reserve(context->Players().size());
+    for (const auto& player : context->Players())
     {
-        return std::isdigit(static_cast<unsigned char>(ch));
+        if (player && !player->GetName().empty()) names.push_back(player->GetName());
+    }
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
+std::vector<std::string> WorldIds()
+{
+    std::vector<std::string> ids;
+    CServer* server = CServer::GetInstance();
+    if (!server) return ids;
+
+    const std::vector<CGameWorld*> worlds = server->GetWorlds();
+    ids.reserve(worlds.size());
+    for (const CGameWorld* world : worlds)
+    {
+        if (world) ids.push_back(std::to_string(world->GetId()));
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
+std::vector<std::string> WorldIdsAndMapNames()
+{
+    std::vector<std::string> values = WorldIds();
+    CServer* server = CServer::GetInstance();
+    if (!server) return values;
+
+    for (const CGameWorld* world : server->GetWorlds())
+    {
+        if (world && !world->GetMapName().empty()) values.push_back(world->GetMapName());
+    }
+    std::sort(values.begin(), values.end());
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+    return values;
+}
+
+std::vector<std::string> EntityRefs(std::string_view prefix)
+{
+    std::vector<std::string> refs;
+    CServer* server = CServer::GetInstance();
+    if (!server) return refs;
+
+    const size_t separator = prefix.find(':');
+    if (separator == std::string_view::npos)
+    {
+        for (const std::string& world_id : WorldIds())
+            refs.push_back(world_id + ":");
+        return refs;
+    }
+    const std::string world_prefix(prefix.substr(0, separator));
+    if (world_prefix.empty() || !IsUnsignedInteger(world_prefix)) return refs;
+
+    std::uint32_t world_id = 0;
+    const char* begin = world_prefix.data();
+    const char* end = begin + world_prefix.size();
+    const auto [ptr, error] = std::from_chars(begin, end, world_id);
+    if (error != std::errc{} || ptr != end) return refs;
+    CGameWorld* world = server->FindWorldById(world_id);
+    if (!world) return refs;
+
+    world->ForEachEntity([&](const CEntity* entity) {
+        if (entity) refs.push_back(std::to_string(world_id) + ":" + std::to_string(entity->m_id));
     });
+    std::sort(refs.begin(), refs.end());
+    return refs;
+}
+
+std::string CompletionKindAt(const CConsole& console, const std::string& command, const std::string& input,
+                             size_t argument_index)
+{
+    if (command == "equip")
+    {
+        const std::vector<std::string> tokens = SplitWhitespace(input);
+        const bool has_slot = tokens.size() > 2 && IsUnsignedInteger(tokens[2]);
+        if (argument_index == 0) return "target";
+        if (argument_index == (has_slot ? 2u : 1u)) return "petal";
+        if (argument_index == (has_slot ? 3u : 2u)) return "rarity";
+        return {};
+    }
+    if (command == "say")
+    {
+        const std::vector<std::string> tokens = SplitWhitespace(input);
+        if (argument_index == 0) return "channel";
+        if (tokens.size() < 2) return {};
+
+        std::string channel = tokens[1];
+        std::transform(channel.begin(), channel.end(), channel.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (channel == "local" && argument_index == 1) return "world";
+        if (channel == "whisper" && argument_index == 1) return "player";
+        if (channel == "server" && argument_index == 1) return "player";
+        return {};
+    }
+
+    const auto schema = console.CommandCompletionSchema(command);
+    if (!schema) return {};
+    const std::vector<std::string> kinds = SplitWhitespace(std::string(*schema));
+    return argument_index < kinds.size() ? kinds[argument_index] : std::string{};
+}
+
+std::vector<std::string> CompletionCandidates(std::string_view kind, std::string_view prefix, CConsole& console)
+{
+    if (kind == "command") return console.CommandNames();
+    if (kind == "config") return game_config::ConfigNames();
+    if (kind == "rarity") return RarityNames();
+    if (kind == "petal") return PetalNames();
+    if (kind == "mob") return MobNames();
+    if (kind == "player" || kind == "target")
+    {
+        std::vector<std::string> candidates = PlayerNames();
+        std::vector<std::string> refs = EntityRefs(prefix);
+        candidates.insert(candidates.end(), refs.begin(), refs.end());
+        return candidates;
+    }
+    if (kind == "entity") return EntityRefs(prefix);
+    if (kind == "world") return WorldIds();
+    if (kind == "world_or_map") return WorldIdsAndMapNames();
+    if (kind == "bool") return { "0", "1" };
+    if (kind == "channel") return { "global", "local", "server", "whisper" };
+    return {};
 }
 
 std::vector<std::string> SplitWhitespace(const std::string& input)
@@ -115,10 +235,7 @@ std::vector<std::string> SplitWhitespace(const std::string& input)
     return tokens;
 }
 
-sf::String FromUtf8(std::string_view str)
-{
-    return sf::String::fromUtf8(str.begin(), str.end());
-}
+sf::String FromUtf8(std::string_view str) { return sf::String::fromUtf8(str.begin(), str.end()); }
 
 std::string ToUtf8(const sf::String& str)
 {
@@ -129,10 +246,7 @@ std::string ToUtf8(const sf::String& str)
 float CharacterX(const sf::Text& text, size_t index)
 {
     const auto str_len = text.getString().getSize();
-    const auto to_global_x = [&text](float x)
-    {
-        return text.getTransform().transformPoint({x, 0.f}).x;
-    };
+    const auto to_global_x = [&text](float x) { return text.getTransform().transformPoint({ x, 0.f }).x; };
 
     if (str_len == 0) return to_global_x(0.f);
 
@@ -190,8 +304,7 @@ sf::String WrapText(const sf::String& str, const sf::Font& font, unsigned int ch
                 current_line.erase(current_line.getSize() - 1);
                 result += current_line + '\n';
                 current_line = ch;
-            }
-            else
+            } else
             {
                 result += current_line + '\n';
                 current_line.clear();
@@ -202,15 +315,13 @@ sf::String WrapText(const sf::String& str, const sf::Font& font, unsigned int ch
     result += current_line;
     return result;
 }
-}
+} // namespace
 
-IServerGuiModule::log_line::log_line(ELogPriority line_priority, sf::String line_text, const sf::Font& font) :
-    priority(line_priority),
-    text(std::move(line_text)),
-    render_text(font, text, char_size)
+IServerGuiModule::log_line::log_line(ELogPriority line_priority, sf::String line_text, const sf::Font& font)
+    : priority(line_priority), text(std::move(line_text)),
+      render_text(font, text, game_config::gui_console_character_size)
 {
 }
-
 
 bool IServerGuiModule::Init()
 {
@@ -222,8 +333,13 @@ bool IServerGuiModule::OpenGui()
 {
     if (m_window.isOpen()) return true;
 
-    m_window.create(sf::VideoMode({window_width, window_height}), "FlorrBt Server GUI Console");
-    m_window.setFramerateLimit(60);
+    m_window.create(sf::VideoMode({ game_config::gui_console_window_width, game_config::gui_console_window_height }),
+                    "FlorrBt Server GUI Console");
+    m_window.setFramerateLimit(0);
+    m_window.setVerticalSyncEnabled(false);
+
+    const float frame_rate = static_cast<float>(std::max(1u, game_config::gui_console_framerate_limit));
+    m_render_accumulator = 1.f / frame_rate;
 
     if (!LoadFont(m_font))
     {
@@ -240,7 +356,7 @@ bool IServerGuiModule::OpenGui()
     return true;
 }
 
-void IServerGuiModule::Tick(float)
+void IServerGuiModule::Tick(float dt)
 {
     if (!game_config::gui_console_enabled)
     {
@@ -265,7 +381,8 @@ void IServerGuiModule::Tick(float)
 
         if (const auto* resized = event->getIf<sf::Event::Resized>())
         {
-            sf::FloatRect visibleArea({0.f, 0.f}, {static_cast<float>(resized->size.x), static_cast<float>(resized->size.y)});
+            sf::FloatRect visibleArea({ 0.f, 0.f },
+                                      { static_cast<float>(resized->size.x), static_cast<float>(resized->size.y) });
             m_window.setView(sf::View(visibleArea));
         }
 
@@ -275,28 +392,32 @@ void IServerGuiModule::Tick(float)
             {
                 ResetCompletion();
                 SelectAllInput();
-            } else if (key->control && key->code == sf::Keyboard::Key::X) {
+            } else if (key->control && key->code == sf::Keyboard::Key::X)
+            {
                 ResetCompletion();
                 CutSelectedInput();
-            } else if (key->control && key->code == sf::Keyboard::Key::C) {
-                if (HasInputSelection())
-                    CopySelectedInput();
-                else
-                    CopySelectedLines();
-            } else if (key->control && key->code == sf::Keyboard::Key::V) {
+            } else if (key->control && key->code == sf::Keyboard::Key::C)
+            {
+                if (HasInputSelection()) CopySelectedInput();
+                else CopySelectedLines();
+            } else if (key->control && key->code == sf::Keyboard::Key::V)
+            {
                 ResetCompletion();
                 PasteInput();
-            } else if (key->control) {
+            } else if (key->control)
+            {
                 continue;
             } else if (key->code == sf::Keyboard::Key::Escape)
             {
                 game_config::gui_console_enabled = false;
                 CloseGui();
                 return;
-            } else if (key->code == sf::Keyboard::Key::Enter) {
+            } else if (key->code == sf::Keyboard::Key::Enter)
+            {
                 ResetCompletion();
                 ExecuteInput();
-            } else if (key->code == sf::Keyboard::Key::Backspace) {
+            } else if (key->code == sf::Keyboard::Key::Backspace)
+            {
                 ResetCompletion();
                 if (HasInputSelection())
                 {
@@ -306,50 +427,58 @@ void IServerGuiModule::Tick(float)
                     m_input.erase(m_cursor_index - 1);
                     --m_cursor_index;
                 }
-            } else if (key->code == sf::Keyboard::Key::Delete) {
+            } else if (key->code == sf::Keyboard::Key::Delete)
+            {
                 ResetCompletion();
-                if (HasInputSelection())
-                    DeleteInputSelection();
-                else if (m_cursor_index < m_input.getSize())
-                    m_input.erase(m_cursor_index);
-            } else if (key->code == sf::Keyboard::Key::Left) {
+                if (HasInputSelection()) DeleteInputSelection();
+                else if (m_cursor_index < m_input.getSize()) m_input.erase(m_cursor_index);
+            } else if (key->code == sf::Keyboard::Key::Left)
+            {
                 ResetCompletion();
                 if (m_cursor_index > 0) --m_cursor_index;
                 ClearInputSelection();
-            } else if (key->code == sf::Keyboard::Key::Right) {
+            } else if (key->code == sf::Keyboard::Key::Right)
+            {
                 ResetCompletion();
                 if (m_cursor_index < m_input.getSize()) ++m_cursor_index;
                 ClearInputSelection();
-            } else if (key->code == sf::Keyboard::Key::Home) {
+            } else if (key->code == sf::Keyboard::Key::Home)
+            {
                 ResetCompletion();
                 m_cursor_index = 0;
                 ClearInputSelection();
-            } else if (key->code == sf::Keyboard::Key::End) {
+            } else if (key->code == sf::Keyboard::Key::End)
+            {
                 ResetCompletion();
                 m_cursor_index = m_input.getSize();
                 ClearInputSelection();
-            } else if (key->code == sf::Keyboard::Key::Tab) {
+            } else if (key->code == sf::Keyboard::Key::Tab)
+            {
                 CompleteCommand();
             }
         }
         if (const auto* mouse = event->getIf<sf::Event::MouseButtonPressed>())
         {
             const float height = static_cast<float>(m_window.getSize().y);
-            const float input_top = height - input_height - padding;
-            const sf::Vector2f mouse_position(static_cast<float>(mouse->position.x), static_cast<float>(mouse->position.y));
+            const float input_top = height - game_config::gui_console_input_height - game_config::gui_console_padding;
+            const sf::Vector2f mouse_position(static_cast<float>(mouse->position.x),
+                                              static_cast<float>(mouse->position.y));
             if (mouse->button == sf::Mouse::Button::Left && mouse_position.y >= input_top &&
-                mouse_position.y <= input_top + input_height)
+                mouse_position.y <= input_top + game_config::gui_console_input_height)
             {
                 ResetCompletion();
                 m_has_output_selection = false;
                 m_is_selecting_output = false;
                 BeginInputSelection(mouse_position.x);
-            } else if (mouse->button == sf::Mouse::Button::Left && HasScrollBar() && ScrollBarThumbRect().contains(mouse_position)) {
+            } else if (mouse->button == sf::Mouse::Button::Left && HasScrollBar() &&
+                       ScrollBarThumbRect().contains(mouse_position))
+            {
                 m_is_dragging_scrollbar = true;
                 m_is_selecting_output = false;
                 m_is_selecting_input = false;
                 m_scrollbar_drag_offset = mouse_position.y - ScrollBarThumbRect().position.y;
-            } else if (mouse->button == sf::Mouse::Button::Left) {
+            } else if (mouse->button == sf::Mouse::Button::Left)
+            {
                 ClearInputSelection();
                 m_is_selecting_input = false;
                 BeginOutputSelection(sf::Vector2i(mouse_position));
@@ -357,19 +486,23 @@ void IServerGuiModule::Tick(float)
         }
         if (const auto* wheel = event->getIf<sf::Event::MouseWheelScrolled>())
         {
-            const sf::Vector2f mouse_position(static_cast<float>(wheel->position.x), static_cast<float>(wheel->position.y));
-            if (OutputRect().contains(mouse_position)) ScrollOutput(static_cast<int>(-wheel->delta * 3.f));
+            const sf::Vector2f mouse_position(static_cast<float>(wheel->position.x),
+                                              static_cast<float>(wheel->position.y));
+            if (OutputRect().contains(mouse_position))
+                ScrollOutput(static_cast<int>(-wheel->delta * game_config::gui_console_scroll_wheel_lines));
         }
         if (const auto* mouse = event->getIf<sf::Event::MouseMoved>())
         {
-            const sf::Vector2f mouse_position(static_cast<float>(mouse->position.x), static_cast<float>(mouse->position.y));
+            const sf::Vector2f mouse_position(static_cast<float>(mouse->position.x),
+                                              static_cast<float>(mouse->position.y));
             if (m_is_dragging_scrollbar) UpdateScrollBarDrag(mouse_position.y);
             if (m_is_selecting_input) UpdateInputSelection(mouse_position.x);
             if (m_is_selecting_output) UpdateOutputSelection(sf::Vector2i(mouse_position));
         }
         if (const auto* mouse = event->getIf<sf::Event::MouseButtonReleased>())
         {
-            const sf::Vector2f mouse_position(static_cast<float>(mouse->position.x), static_cast<float>(mouse->position.y));
+            const sf::Vector2f mouse_position(static_cast<float>(mouse->position.x),
+                                              static_cast<float>(mouse->position.y));
             if (mouse->button == sf::Mouse::Button::Left) m_is_dragging_scrollbar = false;
             if (mouse->button == sf::Mouse::Button::Left && m_is_selecting_input)
             {
@@ -393,13 +526,17 @@ void IServerGuiModule::Tick(float)
         }
     }
 
-    Render();
+    const float frame_rate = static_cast<float>(std::max(1u, game_config::gui_console_framerate_limit));
+    const float render_interval = 1.f / frame_rate;
+    m_render_accumulator = std::min(m_render_accumulator + std::max(0.f, dt), render_interval * 2.f);
+    if (m_render_accumulator >= render_interval)
+    {
+        m_render_accumulator -= render_interval;
+        Render();
+    }
 }
 
-void IServerGuiModule::ShutDown()
-{
-    CloseGui();
-}
+void IServerGuiModule::ShutDown() { CloseGui(); }
 
 void IServerGuiModule::CloseGui()
 {
@@ -409,15 +546,19 @@ void IServerGuiModule::CloseGui()
         m_log_sink_id = 0;
     }
     if (m_window.isOpen()) m_window.close();
+    m_render_accumulator = 0.f;
 }
 
 void IServerGuiModule::PushLine(std::string sender, ELogPriority priority, std::string text)
 {
     const bool was_at_bottom = m_first_visible_line >= MaxFirstVisibleLine();
-    const float max_text_width = OutputRect().size.x - padding * 3.f - scrollbar_width;
+    const float max_text_width =
+        OutputRect().size.x - game_config::gui_console_padding * game_config::gui_console_text_wrap_padding_multiplier -
+        game_config::gui_console_scrollbar_width;
 
     sf::String full_sf_text = FromUtf8(CLogger::FormatLine(sender, priority, text));
-    sf::String wrapped_sf_text = WrapText(full_sf_text, m_font, char_size, max_text_width);
+    sf::String wrapped_sf_text =
+        WrapText(full_sf_text, m_font, game_config::gui_console_character_size, max_text_width);
 
     std::string wrapped_str = ToUtf8(wrapped_sf_text);
     std::istringstream stream(wrapped_str);
@@ -428,7 +569,7 @@ void IServerGuiModule::PushLine(std::string sender, ELogPriority priority, std::
         m_lines.emplace_back(priority, FromUtf8(single_line), m_font);
         m_lines.back().render_text.setFillColor(PriorityColor(priority));
 
-        if (m_lines.size() > max_lines)
+        if (m_lines.size() > game_config::gui_console_max_lines)
         {
             m_lines.erase(m_lines.begin());
             m_has_output_selection = false;
@@ -436,10 +577,8 @@ void IServerGuiModule::PushLine(std::string sender, ELogPriority priority, std::
         }
     }
 
-    if (was_at_bottom)
-        ScrollToBottom();
-    else
-        ClampScroll();
+    if (was_at_bottom) ScrollToBottom();
+    else ClampScroll();
 }
 
 void IServerGuiModule::ExecuteInput()
@@ -468,30 +607,22 @@ void IServerGuiModule::CompleteCommand()
         std::vector<std::string> source;
         const std::string command = input.substr(0, input.find(' '));
         const size_t token_index = TokenIndexAt(input, replace_begin);
-        if (token_index == 0)
-            source = m_console.CommandNames();
-        else if ((command == "set" || command == "get") && token_index == 1)
-            source = game_config::ConfigNames();
-        else if (command == "equip" && token_index == 2)
-            source = RarityNames();
-        else if (command == "equip" && token_index == 3)
-        {
-            std::vector<std::string> tokens = SplitWhitespace(input);
-            source = tokens.size() > 2 && IsUnsignedInteger(tokens[2]) ? RarityNames() : PetalNames();
-        }
-        else if (command == "equip" && token_index == 4)
-            source = PetalNames();
-        else if (command == "spawn" && token_index == 1)
-            source = MobNames();
-        else if (command == "spawn" && token_index == 2)
-            source = RarityNames();
+        if (token_index == 0) source = m_console.CommandNames();
         else
-            return;
+            source =
+                CompletionCandidates(CompletionKindAt(m_console, command, input, token_index - 1), prefix, m_console);
+        if (source.empty()) return;
 
         m_completion_matches.clear();
+        std::string normalized_prefix = prefix;
+        std::transform(normalized_prefix.begin(), normalized_prefix.end(), normalized_prefix.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
         for (const std::string& candidate : source)
         {
-            if (candidate.rfind(prefix, 0) == 0) m_completion_matches.push_back(candidate);
+            std::string normalized_candidate = candidate;
+            std::transform(normalized_candidate.begin(), normalized_candidate.end(), normalized_candidate.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            if (normalized_candidate.rfind(normalized_prefix, 0) == 0) m_completion_matches.push_back(candidate);
         }
         std::sort(m_completion_matches.begin(), m_completion_matches.end());
         if (m_completion_matches.empty()) return;
@@ -499,7 +630,8 @@ void IServerGuiModule::CompleteCommand()
         m_completion_original_input = m_input;
         m_completion_index = 0;
         m_is_completing = true;
-    } else {
+    } else
+    {
         m_completion_index = (m_completion_index + 1) % m_completion_matches.size();
     }
 
@@ -530,13 +662,15 @@ void IServerGuiModule::Render()
     output_box.setPosition(output_rect.position);
     output_box.setFillColor(sf::Color(250, 252, 255));
     output_box.setOutlineColor(sf::Color(205, 214, 225));
-    output_box.setOutlineThickness(1.f);
+    output_box.setOutlineThickness(game_config::gui_console_box_outline_thickness);
 
-    sf::RectangleShape input_box({width - padding * 2.f, input_height});
-    input_box.setPosition({padding, height - input_height - padding});
+    sf::RectangleShape input_box(
+        { width - game_config::gui_console_padding * 2.f, game_config::gui_console_input_height });
+    input_box.setPosition({ game_config::gui_console_padding,
+                            height - game_config::gui_console_input_height - game_config::gui_console_padding });
     input_box.setFillColor(sf::Color(255, 255, 255));
     input_box.setOutlineColor(sf::Color(160, 176, 196));
-    input_box.setOutlineThickness(1.f);
+    input_box.setOutlineThickness(game_config::gui_console_box_outline_thickness);
 
     m_window.clear(sf::Color(238, 242, 247));
     m_window.draw(output_box);
@@ -547,18 +681,25 @@ void IServerGuiModule::Render()
     ClampScroll();
     size_t first_line = m_first_visible_line;
     size_t last_line = std::min(m_lines.size(), first_line + visible_count);
-    float y = padding * 1.5f;
+    float y = game_config::gui_console_padding * game_config::gui_console_output_first_line_y_padding_multiplier;
     for (size_t i = first_line; i < last_line; ++i)
     {
         if (IsLineSelected(i))
         {
-            sf::RectangleShape selection({output_rect.size.x - padding * 2.f - scrollbar_width, line_height});
-            selection.setPosition({padding * 1.25f, y - 1.f});
+            sf::RectangleShape selection(
+                { output_rect.size.x -
+                      game_config::gui_console_padding * game_config::gui_console_selection_width_padding_multiplier -
+                      game_config::gui_console_scrollbar_width,
+                  line_height });
+            selection.setPosition(
+                { game_config::gui_console_padding * game_config::gui_console_selection_x_padding_multiplier,
+                  y - game_config::gui_console_selection_y_offset });
             selection.setFillColor(sf::Color(202, 225, 255));
             m_window.draw(selection);
         }
 
-        m_lines[i].render_text.setPosition({padding * 1.5f, y});
+        m_lines[i].render_text.setPosition(
+            { game_config::gui_console_padding * game_config::gui_console_output_text_x_padding_multiplier, y });
         m_window.draw(m_lines[i].render_text);
         y += line_height;
     }
@@ -586,16 +727,25 @@ void IServerGuiModule::Render()
         const auto [selection_begin, selection_end] = InputSelectionRange();
         const float selection_x = CharacterX(prompt, selection_begin + prompt_prefix_size);
         const float selection_end_x = CharacterX(prompt, selection_end + prompt_prefix_size);
-        sf::RectangleShape selection({std::max(1.f, selection_end_x - selection_x), static_cast<float>(char_size) + 4.f});
-        selection.setPosition({selection_x, height - input_height - padding + 10.f});
+        sf::RectangleShape selection(
+            { std::max(game_config::gui_console_selection_min_width, selection_end_x - selection_x),
+              static_cast<float>(game_config::gui_console_character_size) +
+                  game_config::gui_console_text_height_padding });
+        selection.setPosition({ selection_x, height - game_config::gui_console_input_height -
+                                                 game_config::gui_console_padding +
+                                                 game_config::gui_console_input_text_y_offset });
         selection.setFillColor(sf::Color(190, 218, 255));
         m_window.draw(selection);
         m_window.draw(prompt);
     }
 
-    sf::RectangleShape cursor({1.5f, static_cast<float>(char_size) + 4.f});
+    sf::RectangleShape cursor(
+        { game_config::gui_console_cursor_width,
+          static_cast<float>(game_config::gui_console_character_size) + game_config::gui_console_text_height_padding });
     cursor.setFillColor(sf::Color(35, 45, 60));
-    cursor.setPosition({CharacterX(prompt, m_cursor_index + prompt_prefix_size), height - input_height - padding + 10.f});
+    cursor.setPosition({ CharacterX(prompt, m_cursor_index + prompt_prefix_size),
+                         height - game_config::gui_console_input_height - game_config::gui_console_padding +
+                             game_config::gui_console_input_text_y_offset });
     m_window.draw(cursor);
 
     m_window.display();
@@ -650,8 +800,8 @@ bool IServerGuiModule::HasInputSelection() const
 
 std::pair<size_t, size_t> IServerGuiModule::InputSelectionRange() const
 {
-    return {std::min(m_input_selection_anchor, m_input_selection_cursor),
-            std::max(m_input_selection_anchor, m_input_selection_cursor)};
+    return { std::min(m_input_selection_anchor, m_input_selection_cursor),
+             std::max(m_input_selection_anchor, m_input_selection_cursor) };
 }
 
 void IServerGuiModule::DeleteInputSelection()
@@ -680,10 +830,7 @@ void IServerGuiModule::CutSelectedInput()
     DeleteInputSelection();
 }
 
-void IServerGuiModule::PasteInput()
-{
-    InsertInputText(sf::Clipboard::getString());
-}
+void IServerGuiModule::PasteInput() { InsertInputText(sf::Clipboard::getString()); }
 
 void IServerGuiModule::SelectAllInput()
 {
@@ -752,15 +899,9 @@ void IServerGuiModule::ScrollOutput(int line_delta)
     m_first_visible_line = static_cast<size_t>(std::clamp(current + line_delta, 0, max_first));
 }
 
-void IServerGuiModule::ScrollToBottom()
-{
-    m_first_visible_line = MaxFirstVisibleLine();
-}
+void IServerGuiModule::ScrollToBottom() { m_first_visible_line = MaxFirstVisibleLine(); }
 
-void IServerGuiModule::ClampScroll()
-{
-    m_first_visible_line = std::min(m_first_visible_line, MaxFirstVisibleLine());
-}
+void IServerGuiModule::ClampScroll() { m_first_visible_line = std::min(m_first_visible_line, MaxFirstVisibleLine()); }
 
 void IServerGuiModule::UpdateScrollBarDrag(float y)
 {
@@ -800,10 +941,12 @@ sf::Color IServerGuiModule::PriorityColor(ELogPriority priority) const
 std::optional<size_t> IServerGuiModule::LineIndexFromMouseY(float y) const
 {
     const sf::FloatRect output_rect = OutputRect();
-    if (y < output_rect.position.y || y > output_rect.position.y + output_rect.size.y || m_lines.empty()) return std::nullopt;
+    if (y < output_rect.position.y || y > output_rect.position.y + output_rect.size.y || m_lines.empty())
+        return std::nullopt;
 
     const float line_height = LineHeight();
-    const float first_y = padding * 1.5f;
+    const float first_y =
+        game_config::gui_console_padding * game_config::gui_console_output_first_line_y_padding_multiplier;
     if (y < first_y) return m_first_visible_line;
 
     const size_t offset = static_cast<size_t>((y - first_y) / line_height);
@@ -821,14 +964,11 @@ bool IServerGuiModule::IsLineSelected(size_t index) const
     return index >= first && index <= last;
 }
 
-bool IServerGuiModule::HasScrollBar() const
-{
-    return m_lines.size() > VisibleLineCount();
-}
+bool IServerGuiModule::HasScrollBar() const { return m_lines.size() > VisibleLineCount(); }
 
 size_t IServerGuiModule::VisibleLineCount() const
 {
-    const float visible_height = OutputRect().size.y - padding;
+    const float visible_height = OutputRect().size.y - game_config::gui_console_padding;
     return std::max<size_t>(1, static_cast<size_t>(std::max(0.f, visible_height / LineHeight())));
 }
 
@@ -844,25 +984,34 @@ sf::FloatRect IServerGuiModule::OutputRect() const
     const sf::Vector2u size = m_window.getSize();
     const float width = static_cast<float>(size.x);
     const float height = static_cast<float>(size.y);
-    return {{padding, padding}, {width - padding * 2.f, height - input_height - padding * 3.f}};
+    return { { game_config::gui_console_padding, game_config::gui_console_padding },
+             { width - game_config::gui_console_padding * 2.f,
+               height - game_config::gui_console_input_height -
+                   game_config::gui_console_padding * game_config::gui_console_output_height_padding_multiplier } };
 }
 
 sf::FloatRect IServerGuiModule::ScrollBarTrackRect() const
 {
     const sf::FloatRect output_rect = OutputRect();
-    return {{output_rect.position.x + output_rect.size.x - scrollbar_width - 4.f, output_rect.position.y + 4.f},
-            {scrollbar_width, output_rect.size.y - 8.f}};
+    return { { output_rect.position.x + output_rect.size.x - game_config::gui_console_scrollbar_width -
+                   game_config::gui_console_scrollbar_edge_inset,
+               output_rect.position.y + game_config::gui_console_scrollbar_edge_inset },
+             { game_config::gui_console_scrollbar_width,
+               output_rect.size.y - game_config::gui_console_scrollbar_height_inset } };
 }
 
 sf::FloatRect IServerGuiModule::ScrollBarThumbRect() const
 {
     const sf::FloatRect track = ScrollBarTrackRect();
     const size_t visible_count = VisibleLineCount();
-    const float ratio = static_cast<float>(visible_count) / static_cast<float>(std::max<size_t>(visible_count, m_lines.size()));
-    const float thumb_height = std::max(28.f, track.size.y * ratio);
+    const float ratio =
+        static_cast<float>(visible_count) / static_cast<float>(std::max<size_t>(visible_count, m_lines.size()));
+    const float thumb_height = std::max(game_config::gui_console_min_scroll_thumb_height, track.size.y * ratio);
     const float movable_height = track.size.y - thumb_height;
-    const float scroll_ratio = MaxFirstVisibleLine() == 0 ? 0.f : static_cast<float>(m_first_visible_line) / static_cast<float>(MaxFirstVisibleLine());
-    return {{track.position.x, track.position.y + movable_height * scroll_ratio}, {track.size.x, thumb_height}};
+    const float scroll_ratio = MaxFirstVisibleLine() == 0 ? 0.f
+                                                          : static_cast<float>(m_first_visible_line) /
+                                                                static_cast<float>(MaxFirstVisibleLine());
+    return { { track.position.x, track.position.y + movable_height * scroll_ratio }, { track.size.x, thumb_height } };
 }
 
 sf::Text IServerGuiModule::CreatePromptText() const
@@ -871,8 +1020,10 @@ sf::Text IServerGuiModule::CreatePromptText() const
     prompt_text += m_input;
 
     const float height = static_cast<float>(m_window.getSize().y);
-    sf::Text prompt(m_font, prompt_text, char_size);
+    sf::Text prompt(m_font, prompt_text, game_config::gui_console_character_size);
     prompt.setFillColor(sf::Color(34, 40, 48));
-    prompt.setPosition({padding * 1.5f, height - input_height - padding + 12.f});
+    prompt.setPosition({ game_config::gui_console_padding * game_config::gui_console_output_text_x_padding_multiplier,
+                         height - game_config::gui_console_input_height - game_config::gui_console_padding +
+                             game_config::gui_console_prompt_y_offset });
     return prompt;
 }

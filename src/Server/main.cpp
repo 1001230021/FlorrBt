@@ -1,6 +1,7 @@
-#include "server.h"
 #include "../Engine/logger.h"
 #include "../Shared/game_config.h"
+#include "../Shared/version.h"
+#include "server.h"
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -100,8 +101,7 @@ std::string CrashTimestamp()
 #endif
 
     std::ostringstream oss;
-    oss << std::put_time(&local_time, "%Y-%m-%d %H:%M:%S") << '.'
-        << std::setw(3) << std::setfill('0') << ms.count();
+    oss << std::put_time(&local_time, "%Y-%m-%d %H:%M:%S") << '.' << std::setw(3) << std::setfill('0') << ms.count();
     return oss.str();
 }
 
@@ -120,20 +120,19 @@ void LogTerminate()
     {
         auto exception = std::current_exception();
         if (exception) std::rethrow_exception(exception);
-        AppendCrashRecord("Server terminated without an active exception; last_context={" + GetLastServerCrashContext() + "}");
+        AppendCrashRecord("Server terminated without an active exception; last_context={" +
+                          GetLastServerCrashContext() + "}");
         LOG_FATAL("server", "Server terminated without an active exception");
-    }
-    catch (const std::exception& e)
+    } catch (const std::exception& e)
     {
-        std::string message = std::string("Server terminated: ") + e.what() +
-                              "; last_context={" + GetLastServerCrashContext() + "}";
+        std::string message =
+            std::string("Server terminated: ") + e.what() + "; last_context={" + GetLastServerCrashContext() + "}";
         AppendCrashRecord(message);
         LOG_FATAL("server", message);
-    }
-    catch (...)
+    } catch (...)
     {
-        std::string message = "Server terminated with an unknown exception; last_context={" +
-                              GetLastServerCrashContext() + "}";
+        std::string message =
+            "Server terminated with an unknown exception; last_context={" + GetLastServerCrashContext() + "}";
         AppendCrashRecord(message);
         LOG_FATAL("server", message);
     }
@@ -175,18 +174,26 @@ LONG WINAPI LogUnhandledSehException(EXCEPTION_POINTERS* pointers)
     }
 
     std::ostringstream oss;
-    oss << "Unhandled SEH exception " << SehCodeName(code)
-        << " code=0x" << std::hex << std::uppercase << code
-        << " address=0x" << reinterpret_cast<std::uintptr_t>(address)
-        << std::dec << "; last_context={" << GetLastServerCrashContext() << "}";
+    oss << "Unhandled SEH exception " << SehCodeName(code) << " code=0x" << std::hex << std::uppercase << code
+        << " address=0x" << reinterpret_cast<std::uintptr_t>(address) << std::dec << "; last_context={"
+        << GetLastServerCrashContext() << "}";
     AppendCrashRecord(oss.str());
     return EXCEPTION_EXECUTE_HANDLER;
 }
 #endif
-}
+} // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    for (int i = 1; i < argc; ++i)
+    {
+        if (argv[i] && std::string_view(argv[i]) == "--version")
+        {
+            std::cout << florrbt::version_label << '\n';
+            return 0;
+        }
+    }
+
     NormalizeServerWorkingDirectory();
     std::set_terminate(LogTerminate);
 #ifdef _WIN32
@@ -195,15 +202,29 @@ int main()
     try
     {
         CServer server;
+        for (int i = 1; i < argc; ++i)
+        {
+            const std::string argument = argv[i] ? argv[i] : "";
+            if (argument == "--restore" && i + 1 < argc)
+            {
+                server.SetRestoreSnapshotPath(argv[++i]);
+                continue;
+            }
+            if (argument == "--ready-file" && i + 1 < argc)
+            {
+                server.SetReadyFilePath(argv[++i]);
+                continue;
+            }
+            LOG_WARN("server", "Ignoring unknown startup argument: " + argument);
+        }
         server.Init();
         server.Run();
-        return 0;
-    }
-    catch (const std::exception& e)
+        server.ShutDown();
+        return server.GetExitCode();
+    } catch (const std::exception& e)
     {
         LOG_FATAL("server", std::string("Unhandled server exception: ") + e.what());
-    }
-    catch (...)
+    } catch (...)
     {
         LOG_FATAL("server", "Unhandled unknown server exception");
     }

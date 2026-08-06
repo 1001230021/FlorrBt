@@ -1,7 +1,7 @@
 #pragma once
-#include "module.h"
 #include "../../Engine/console.h"
 #include "../../Engine/logger.h"
+#include "module.h"
 #include <SFML/Graphics.hpp>
 #include <optional>
 #include <string>
@@ -79,6 +79,7 @@ class IServerGuiModule : public IModule
     size_t m_selection_cursor = 0;
     size_t m_log_sink_id = 0;
     size_t m_first_visible_line = 0;
+    float m_render_accumulator = 0.f;
     float m_scrollbar_drag_offset = 0.f;
     bool m_is_selecting_input = false;
     bool m_is_selecting_output = false;

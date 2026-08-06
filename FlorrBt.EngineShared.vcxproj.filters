@@ -24,9 +24,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\Engine\account_data.h">
-      <Filter>src\Engine</Filter>
-    </ClInclude>
     <ClInclude Include="src\Engine\commands_registry.h">
       <Filter>src\Engine</Filter>
     </ClInclude>
@@ -46,6 +43,9 @@
       <Filter>src\Engine</Filter>
     </ClInclude>
     <ClInclude Include="src\Shared\damage_type.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Shared\entity_type.h">
       <Filter>src\Shared</Filter>
     </ClInclude>
     <ClInclude Include="src\Shared\game_config.h">
@@ -69,6 +69,9 @@
     <ClInclude Include="src\Shared\shared.h">
       <Filter>src\Shared</Filter>
     </ClInclude>
+    <ClInclude Include="src\Shared\state_type.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
     <ClInclude Include="src\Shared\stats.h">
       <Filter>src\Shared</Filter>
     </ClInclude>
@@ -78,14 +81,14 @@
     <ClInclude Include="src\Shared\tools.h">
       <Filter>src\Shared</Filter>
     </ClInclude>
+    <ClInclude Include="src\Shared\version.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
     <ClInclude Include="src\Shared\drop_rate.h">
       <Filter>src\Shared</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\Engine\account_data.cpp">
-      <Filter>src\Engine</Filter>
-    </ClCompile>
     <ClCompile Include="src\Engine\console.cpp">
       <Filter>src\Engine</Filter>
     </ClCompile>

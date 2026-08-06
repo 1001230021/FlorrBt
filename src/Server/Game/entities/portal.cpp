@@ -1,12 +1,12 @@
 #include "portal.h"
-#include "flower.h"
+#include "../../../Shared/game_config.h"
+#include "../../../Shared/tools.h"
+#include "../../server.h"
 #include "../gamecontext.h"
 #include "../gameworld.h"
 #include "../player.h"
 #include "../states/states.h"
-#include "../../server.h"
-#include "../../../Shared/game_config.h"
-#include "../../../Shared/tools.h"
+#include "flower.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -15,7 +15,9 @@
 #include <vector>
 
 CPortal::CPortal(CGameWorld* world, sf::Vector2f pos, float radius, std::string target_world)
-    : CEntity(world, pos.x, pos.y, std::max(1.f, radius)), m_target_world_name(std::move(target_world))
+    : CEntity(world, pos.x, pos.y, std::max(game_config::portal_min_radius, radius),
+              MakeEntityType(EEntityType::Portal, server_portal_entity_type)),
+      m_target_world_name(std::move(target_world))
 {
     m_health = std::numeric_limits<float>::infinity();
     m_mass = 0.f;
@@ -25,15 +27,19 @@ CPortal::CPortal(CGameWorld* world, sf::Vector2f pos, float radius, std::string 
 
 void CPortal::Tick(float dt)
 {
-    m_facing_angle += dt * 3.5f;
+    m_facing_angle += dt * game_config::portal_rotation_speed;
     if (m_facing_angle > game_config::pi * 2.f) m_facing_angle -= game_config::pi * 2.f;
 
     CGameContext* context = GameContext();
     if (!context) return;
 
+    CGameWorld* world = GameWorld();
     for (const auto& player : context->Players())
     {
-        if (player) AttractAndTransferPlayer(*player, dt);
+        if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
+        CEntity* entity = player->GetEntity();
+        if (!entity || entity->GameWorld() != world) continue;
+        AttractAndTransferPlayer(*player, dt);
     }
 }
 
@@ -48,7 +54,7 @@ void CPortal::AttractAndTransferPlayer(CPlayer& player, float dt)
 
     sf::Vector2f delta = m_pos - flower->m_pos;
     float dist_sq = LengthSq(delta);
-    float attract_radius = m_radius * 2.f;
+    float attract_radius = m_radius * game_config::portal_attraction_radius_multiplier;
     if (dist_sq > attract_radius * attract_radius) return;
 
     CServer* server = CServer::GetInstance();
@@ -59,7 +65,7 @@ void CPortal::AttractAndTransferPlayer(CPlayer& player, float dt)
     if (target_worlds.empty()) return;
 
     float dist = std::sqrt(std::max(0.f, dist_sq));
-    if (dist <= m_radius * 0.5f)
+    if (dist <= m_radius * game_config::portal_transfer_radius_multiplier)
     {
         std::uniform_int_distribution<size_t> target_dist(0, target_worlds.size() - 1);
         CGameWorld* target_world = target_worlds[target_dist(GetRng())];

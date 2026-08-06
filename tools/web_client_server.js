@@ -7,7 +7,9 @@ const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
 
-const root = path.resolve(process.env.FLORRBT_ROOT || path.resolve(__dirname, ".."));
+const root = path.resolve(
+  process.env.FLORRBT_ROOT || path.resolve(__dirname, ".."),
+);
 const webRoot = path.join(root, "web");
 const dataRoot = path.join(root, "data");
 const listenHost = process.env.WEB_HOST || "127.0.0.1";
@@ -16,7 +18,45 @@ const gameHost = process.env.GAME_HOST || "127.0.0.1";
 const gamePort = Number(process.env.GAME_PORT || 10012);
 const serverSnapshotType = 0x01;
 const snapshotFlushMs = Number(process.env.WEB_SNAPSHOT_FLUSH_MS || 0);
-const snapshotBacklogDropBytes = Number(process.env.WEB_SNAPSHOT_BACKLOG_DROP_BYTES || 128 * 1024);
+const snapshotBacklogDropBytes = Number(
+  process.env.WEB_SNAPSHOT_BACKLOG_DROP_BYTES || 128 * 1024,
+);
+
+function normalizeIpAddress(value) {
+  let address = String(value || "").trim();
+  const zoneOffset = address.indexOf("%");
+  if (zoneOffset >= 0) address = address.slice(0, zoneOffset);
+  if (address.toLowerCase().startsWith("::ffff:")) {
+    const mapped = address.slice(7);
+    if (net.isIP(mapped) === 4) return mapped;
+  }
+  return net.isIP(address) ? address : "";
+}
+
+function makeProxyV1Header(socket) {
+  const source = normalizeIpAddress(socket?.remoteAddress);
+  const family = net.isIP(source);
+  const sourcePort = Number(socket?.remotePort || 0);
+  if (
+    !family ||
+    !Number.isInteger(sourcePort) ||
+    sourcePort < 0 ||
+    sourcePort > 65535 ||
+    !Number.isInteger(gamePort) ||
+    gamePort < 1 ||
+    gamePort > 65535
+  )
+    return "";
+
+  const configuredDestination = normalizeIpAddress(gameHost);
+  const destination =
+    net.isIP(configuredDestination) === family
+      ? configuredDestination
+      : family === 4
+        ? "0.0.0.0"
+        : "::";
+  return `PROXY TCP${family} ${source} ${destination} ${sourcePort} ${gamePort}\r\n`;
+}
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -31,6 +71,7 @@ const mimeTypes = {
   ".gif": "image/gif",
   ".webp": "image/webp",
   ".svg": "image/svg+xml",
+  ".mp3": "audio/mpeg",
 };
 
 function sendFile(res, requestPath) {
@@ -39,7 +80,9 @@ function sendFile(res, requestPath) {
   const baseRoot = servingData ? dataRoot : webRoot;
   const relative = servingData
     ? cleanPath.replace(/^\/data\/?/, "")
-    : (cleanPath === "/" ? "index.html" : cleanPath.replace(/^\/+/, ""));
+    : cleanPath === "/"
+      ? "index.html"
+      : cleanPath.replace(/^\/+/, "");
   const filePath = path.resolve(baseRoot, relative);
 
   if (!filePath.startsWith(baseRoot)) {
@@ -55,7 +98,9 @@ function sendFile(res, requestPath) {
       return;
     }
     res.writeHead(200, {
-      "Content-Type": mimeTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream",
+      "Content-Type":
+        mimeTypes[path.extname(filePath).toLowerCase()] ||
+        "application/octet-stream",
       "Cache-Control": "no-store, max-age=0",
     });
     res.end(data);
@@ -242,21 +287,25 @@ server.on("upgrade", (req, socket) => {
   }
 
   const key = req.headers["sec-websocket-key"];
-  if (!key) {
+  const proxyHeader = makeProxyV1Header(socket);
+  if (!key || !proxyHeader) {
     socket.destroy();
     return;
   }
 
-  socket.write([
-    "HTTP/1.1 101 Switching Protocols",
-    "Upgrade: websocket",
-    "Connection: Upgrade",
-    `Sec-WebSocket-Accept: ${makeAcceptValue(key)}`,
-    "",
-    "",
-  ].join("\r\n"));
+  socket.write(
+    [
+      "HTTP/1.1 101 Switching Protocols",
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      `Sec-WebSocket-Accept: ${makeAcceptValue(key)}`,
+      "",
+      "",
+    ].join("\r\n"),
+  );
 
   const tcp = net.createConnection({ host: gameHost, port: gamePort });
+  tcp.write(proxyHeader);
   const forwardServerPackets = createServerPacketForwarder(socket);
   tcp.on("data", (data) => forwardServerPackets.push(data));
   tcp.on("close", () => {
@@ -274,7 +323,7 @@ server.on("upgrade", (req, socket) => {
       if (!tcp.destroyed) tcp.write(payload);
     },
     () => closePair(socket, tcp),
-    (payload) => writeWsFrame(socket, payload, 0xA),
+    (payload) => writeWsFrame(socket, payload, 0xa),
   );
 
   socket.on("data", parse);
@@ -290,13 +339,17 @@ server.on("upgrade", (req, socket) => {
 
 server.listen(listenPort, listenHost, () => {
   console.log(`FlorrBt web client: http://${listenHost}:${listenPort}`);
-  console.log(`WebSocket proxy: ws://${listenHost}:${listenPort}/ws -> ${gameHost}:${gamePort}`);
+  console.log(
+    `WebSocket proxy: ws://${listenHost}:${listenPort}/ws -> ${gameHost}:${gamePort}`,
+  );
 });
 
 server.on("error", (error) => {
   console.error(`Web server error: ${error.message}`);
   if (error.code === "EADDRINUSE") {
-    console.error(`Port ${listenPort} is already in use. Change WEB_PORT or stop the old web server.`);
+    console.error(
+      `Port ${listenPort} is already in use. Change WEB_PORT or stop the old web server.`,
+    );
   }
   process.exit(1);
 });
