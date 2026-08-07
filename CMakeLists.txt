@@ -36,3 +36,6 @@ target_link_libraries(${PROJECT_NAME}_Server PRIVATE SFML::Graphics SFML::Networ
 
 add_executable(${PROJECT_NAME}_Launcher src/Launcher/main.cpp src/Engine/json_value.cpp)
 target_include_directories(${PROJECT_NAME}_Launcher PRIVATE src)
+if(WIN32)
+    target_compile_definitions(${PROJECT_NAME}_Server PRIVATE NOMINMAX)
+endif()
