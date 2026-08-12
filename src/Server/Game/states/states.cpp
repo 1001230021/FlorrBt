@@ -3,6 +3,7 @@
 #include "../entities/projectile.h"
 #include "../gameworld.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -48,7 +49,255 @@ bool MobNullifiesTarget(const CMobBase* nullified, const CMobBase* target)
     int target_level = GetLevel(target->GetRarity());
     return target_level <= null_level - game_config::nullification_level_gap;
 }
+
+int CountHallucinogenicParameters(std::uint8_t mask)
+{
+    int count = 0;
+    for (size_t i = 0; i < CHallucinogenicState::parameter_capacity; ++i)
+        if ((mask & (1u << i)) != 0) ++count;
+    return count;
+}
+
+int PickHallucinogenicParameter(std::uint8_t mask, bool claimed)
+{
+    std::array<int, CHallucinogenicState::parameter_capacity> candidates{};
+    int count = 0;
+    for (size_t i = 0; i < CHallucinogenicState::parameter_capacity; ++i)
+    {
+        const bool is_claimed = (mask & (1u << i)) != 0;
+        if (is_claimed == claimed) candidates[count++] = static_cast<int>(i);
+    }
+    if (count <= 0) return -1;
+    const int index = std::min(count - 1, static_cast<int>(GetLimitedRng(0.f, static_cast<float>(count))));
+    return candidates[index];
+}
+
+std::uint8_t MutateHallucinogenicMask(std::uint8_t parent_mask)
+{
+    constexpr std::uint8_t valid_mask = (1u << CHallucinogenicState::parameter_capacity) - 1u;
+    parent_mask &= valid_mask;
+    const int parent_count = CountHallucinogenicParameters(parent_mask);
+    const int max_parameters =
+        std::clamp(game_config::hallucinogenic_max_parameters, 1,
+                   static_cast<int>(CHallucinogenicState::parameter_capacity));
+
+    if (parent_count <= 0)
+    {
+        const int parameter = PickHallucinogenicParameter(parent_mask, false);
+        return parameter >= 0 ? static_cast<std::uint8_t>(1u << parameter) : 0;
+    }
+
+    const float add_probability = std::pow(1.f / 3.f, static_cast<float>(parent_count));
+    const float remove_probability = static_cast<float>(parent_count - 1) / static_cast<float>(parent_count);
+    const float roll = GetLimitedRng(0.f, 1.f);
+
+    if (roll < add_probability && parent_count < max_parameters)
+    {
+        const int parameter = PickHallucinogenicParameter(parent_mask, false);
+        if (parameter >= 0) parent_mask |= static_cast<std::uint8_t>(1u << parameter);
+    } else if (roll < add_probability + remove_probability && parent_count > 1)
+    {
+        const int parameter = PickHallucinogenicParameter(parent_mask, true);
+        if (parameter >= 0) parent_mask &= static_cast<std::uint8_t>(~(1u << parameter));
+    }
+    return parent_mask;
+}
+
+CHallucinogenicState::parameter_array GenerateHallucinogenicParameters(std::uint8_t mask, float effect_depth)
+{
+    CHallucinogenicState::parameter_array parameters{};
+    double length_sq = 0.0;
+    int first_parameter = -1;
+    for (size_t i = 0; i < parameters.size(); ++i)
+    {
+        if ((mask & (1u << i)) == 0) continue;
+        if (first_parameter < 0) first_parameter = static_cast<int>(i);
+        parameters[i] = GetLimitedRng(-1.f, 1.f);
+        length_sq += static_cast<double>(parameters[i]) * static_cast<double>(parameters[i]);
+    }
+
+    if (first_parameter < 0) return parameters;
+    if (length_sq <= static_cast<double>(game_config::entity_collision_epsilon))
+    {
+        parameters[static_cast<size_t>(first_parameter)] = 1.f;
+        length_sq = 1.0;
+    }
+
+    const double scale = static_cast<double>(std::max(0.f, effect_depth)) / std::sqrt(length_sq);
+    for (float& parameter : parameters)
+        parameter = static_cast<float>(static_cast<double>(parameter) * scale);
+    return parameters;
+}
+
+ERarity GetHallucinogenicTargetRarity(const CMobBase& target)
+{
+    const auto* player_flower = dynamic_cast<const CPlayerFlower*>(&target);
+    if (!player_flower) return target.GetRarity();
+
+    ERarity highest_rarity = ERarity::Null;
+    for (const CPetalSlot& slot : player_flower->GetSlots())
+    {
+        if (!slot.m_p_proto || slot.m_stored_rarity == ERarity::Null) continue;
+        if (GetRaritySortRank(slot.m_stored_rarity) > GetRaritySortRank(highest_rarity))
+            highest_rarity = slot.m_stored_rarity;
+    }
+    return highest_rarity == ERarity::Null ? target.GetRarity() : highest_rarity;
+}
+
+float GetHallucinogenicDuration(const CMobBase& target, ERarity effect_rarity)
+{
+    const int rarity_difference = GetLevel(effect_rarity) - GetLevel(GetHallucinogenicTargetRarity(target));
+    const double base_duration = std::max(0.0, static_cast<double>(game_config::hallucinogenic_state_duration));
+    const double rarity_base =
+        std::max(1.0, static_cast<double>(game_config::hallucinogenic_rarity_duration_base));
+    const double duration = base_duration * std::pow(rarity_base, static_cast<double>(rarity_difference));
+    return static_cast<float>(std::clamp(duration, 0.0, static_cast<double>(std::numeric_limits<float>::max())));
+}
 } // namespace
+
+CHallucinogenicState::CHallucinogenicState(CMobBase* owner, float timer, ERarity rarity,
+                                           std::uint8_t parameter_mask, float effect_depth,
+                                           float evolution_progress, parameter_array parameters)
+    : CState(owner, timer, rarity, EStateType::Hallucinogenic),
+      m_parameter_mask(parameter_mask & ((1u << parameter_capacity) - 1u)),
+      m_effect_depth(std::max(0.f, effect_depth)), m_evolution_progress(std::max(0.f, evolution_progress)),
+      m_parameters(parameters)
+{
+    for (size_t i = 0; i < m_parameters.size(); ++i)
+    {
+        if ((m_parameter_mask & (1u << i)) == 0 || !std::isfinite(m_parameters[i])) m_parameters[i] = 0.f;
+    }
+}
+
+void CHallucinogenicState::Tick(float dt)
+{
+    if (m_timer != endless) m_timer -= dt;
+}
+
+int CHallucinogenicState::GetParameterCount() const
+{
+    return CountHallucinogenicParameters(m_parameter_mask);
+}
+
+void CHallucinogenicState::AddEvolution(float amount, float duration)
+{
+    m_evolution_progress = std::min(1000000.f, m_evolution_progress + std::max(0.f, amount));
+    if (m_timer != endless) m_timer = std::max(m_timer, std::max(0.f, duration));
+}
+
+float CHallucinogenicState::ConsumeSplitProgress(float threshold)
+{
+    m_evolution_progress = std::max(0.f, m_evolution_progress - std::max(0.f, threshold));
+    const float overflow = m_evolution_progress;
+    m_evolution_progress = 0.f;
+    return overflow;
+}
+
+// Effective parameters = raw parameters scaled by the rarity gap, then clamped to the same safe
+// ranges MoveTowards uses. Shared by the movement takeover and the owner-facing snapshot so the
+// client-side ghost preview always matches the server-side distortion exactly.
+bool CHallucinogenicState::ComputeEffectiveParameters(const CMobBase& owner, parameter_array& out) const
+{
+    out = {};
+    if (m_parameter_mask == 0) return false;
+
+    const int rarity_difference = GetLevel(m_rarity) - GetLevel(GetHallucinogenicTargetRarity(owner));
+    const double rarity_base = std::max(static_cast<double>(game_config::entity_collision_epsilon),
+                                        static_cast<double>(game_config::hallucinogenic_rarity_effect_base));
+    const double rarity_scale = std::pow(rarity_base, static_cast<double>(rarity_difference));
+    std::array<double, parameter_capacity> values{};
+    for (size_t i = 0; i < values.size(); ++i)
+        if ((m_parameter_mask & (1u << i)) != 0)
+            values[i] = static_cast<double>(m_parameters[i]) * rarity_scale;
+
+    out[0] = static_cast<float>(std::remainder(values[0], static_cast<double>(2.f * game_config::pi)));
+    out[1] = static_cast<float>(std::clamp(values[1], -4.0, 4.0));
+    out[2] = static_cast<float>(std::clamp(values[2], -4.0, 4.0));
+    out[3] = static_cast<float>(std::clamp(values[3], -8.0, 8.0));
+    out[4] = static_cast<float>(std::clamp(values[4], -8.0, 8.0));
+    out[5] = static_cast<float>(std::clamp(values[5], -8.0, 8.0));
+    for (float& value : out)
+        if (!std::isfinite(value)) value = 0.f;
+    return true;
+}
+
+sf::Vector2f CHallucinogenicState::ModifyMovementTarget(const CMobBase& owner,
+                                                        const sf::Vector2f& target_pos) const
+{
+    parameter_array effective{};
+    if (!ComputeEffectiveParameters(owner, effective)) return target_pos;
+
+    const double vx = static_cast<double>(target_pos.x) - static_cast<double>(owner.m_pos.x);
+    const double vy = static_cast<double>(target_pos.y) - static_cast<double>(owner.m_pos.y);
+    const double original_length = std::hypot(vx, vy);
+    if (original_length <= static_cast<double>(game_config::entity_collision_epsilon)) return target_pos;
+
+    const double angle = static_cast<double>(effective[0]);
+    const double scale_x = std::exp(static_cast<double>(effective[1]));
+    const double scale_y = std::exp(static_cast<double>(effective[2]));
+    const double shear = static_cast<double>(effective[3]);
+    const double translate_x = static_cast<double>(effective[4]) * original_length;
+    const double translate_y = static_cast<double>(effective[5]) * original_length;
+
+    const double local_x = scale_x * vx + shear * vy;
+    const double local_y = scale_y * vy;
+    const double cosine = std::cos(angle);
+    const double sine = std::sin(angle);
+    const double transformed_x = cosine * local_x - sine * local_y + translate_x;
+    const double transformed_y = sine * local_x + cosine * local_y + translate_y;
+    const double transformed_length = std::hypot(transformed_x, transformed_y);
+    if (!std::isfinite(transformed_length) ||
+        transformed_length <= static_cast<double>(game_config::entity_collision_epsilon))
+        return target_pos;
+
+    const double preserve_length = original_length / transformed_length;
+    return { owner.m_pos.x + static_cast<float>(transformed_x * preserve_length),
+             owner.m_pos.y + static_cast<float>(transformed_y * preserve_length) };
+}
+
+bool ApplyHallucinogenicExposure(CMobBase* mob, ERarity rarity, float evolution_amount)
+{
+    if (!mob || rarity == ERarity::Null || evolution_amount <= 0.f || mob->m_is_marked_for_des || mob->IsDead())
+        return false;
+
+    CHallucinogenicState* top = nullptr;
+    int stack_count = 0;
+    for (const auto& state : mob->GetStates())
+    {
+        auto* hallucinogenic = dynamic_cast<CHallucinogenicState*>(state.get());
+        if (!hallucinogenic || hallucinogenic->m_rarity != rarity) continue;
+        top = hallucinogenic;
+        ++stack_count;
+    }
+
+    const float duration = GetHallucinogenicDuration(*mob, rarity);
+    if (!top)
+    {
+        mob->AddState(std::make_unique<CHallucinogenicState>(mob, duration, rarity, 0, 0.f,
+                                                             evolution_amount));
+        return false;
+    }
+
+    top->AddEvolution(evolution_amount, duration);
+    const float threshold = std::max(game_config::entity_collision_epsilon,
+                                     game_config::hallucinogenic_split_threshold);
+    if (top->GetEvolutionProgress() < threshold ||
+        stack_count >= std::max(1, game_config::hallucinogenic_max_stacks_per_rarity))
+        return false;
+
+    const float overflow = top->ConsumeSplitProgress(threshold);
+    const std::uint8_t child_mask = MutateHallucinogenicMask(top->GetParameterMask());
+    const float child_depth =
+        top->GetParameterCount() == 0
+            ? std::max(0.f, game_config::hallucinogenic_base_effect_depth)
+            : std::min(std::max(0.f, game_config::hallucinogenic_max_effect_depth),
+                       top->GetEffectDepth() + std::max(0.f, game_config::hallucinogenic_effect_depth_growth));
+    CHallucinogenicState::parameter_array parameters =
+        GenerateHallucinogenicParameters(child_mask, child_depth);
+    mob->AddState(std::make_unique<CHallucinogenicState>(mob, duration, rarity, child_mask, child_depth, overflow,
+                                                         parameters));
+    return child_mask != 0;
+}
 
 CPoisonState::CPoisonState(CMobBase* owner, float timer, float basic_dmg, ERarity rarity, CEntity* applier)
     : CState(owner, timer, rarity, EStateType::Poison), m_basic_dmg(basic_dmg),

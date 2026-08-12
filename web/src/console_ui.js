@@ -6,6 +6,7 @@ export function createConsoleUi({
   beforeOpen = null,
   executeCommand = null,
   focusTarget = canvas,
+  panel = null,
 } = {}) {
   const setStatus = (text) => {
     authStatus.textContent = text;
@@ -22,9 +23,16 @@ export function createConsoleUi({
   };
 
   const toggle = (force) => {
-    state.consoleOpen = typeof force === "boolean" ? force : !state.consoleOpen;
-    consolePanel.classList.toggle("open", state.consoleOpen);
-    if (state.consoleOpen) {
+    const open = panel
+      ? panel.toggle(force)
+      : typeof force === "boolean"
+        ? force
+        : !state.consoleOpen;
+    if (!panel) {
+      state.consoleOpen = open;
+      consolePanel.classList.toggle("open", open);
+    }
+    if (open) {
       beforeOpen?.();
       consoleInput.focus();
       consoleInput.setSelectionRange(
@@ -35,6 +43,7 @@ export function createConsoleUi({
       consoleInput.blur();
       focusTarget?.focus?.();
     }
+    return open;
   };
 
   const submit = () => {

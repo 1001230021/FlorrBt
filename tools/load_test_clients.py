@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import select
 import socket
 import struct
@@ -30,20 +31,18 @@ INPUT_FRAME_PACKET_TYPE = 0xF8
 INPUT_PACKET = bytes((0x00, 0x00, 0x00))
 FULL_SNAPSHOT_BASE_ID = 0xFFFFFFFF
 SERVER_SNAPSHOT_HEADER_SIZE = 27
-SERVER_ENTITY_FULL_FORMAT = 0
-SERVER_ENTITY_COMPACT_FORMAT = 1
-SERVER_ENTITY_FULL_FIXED_SIZE = 21
-SERVER_ENTITY_COMPACT_REMAINDER_SIZE = 16
-DEFAULT_TICK_RATE = 60
+DEFAULT_TICK_RATE = 20
 INPUT_LEAD_TICKS = 2
 MAX_AUTH_NAME_BYTES = 32
 MAX_AUTH_PASSWORD_BYTES = 64
+MAX_AUTH_EMAIL_BYTES = 254
 MAX_CHAT_MESSAGE_BYTES = 180
 MAX_RECEIVE_BUFFER_BYTES = 8 * 1024 * 1024
 
 
 @dataclass
 class LoadClient:
+    index: int
     name: str
     password: str
     socket: socket.socket
@@ -67,14 +66,19 @@ class LoadClient:
     def send(self, payload: bytes) -> None:
         self.socket.sendall(payload)
 
-    def send_auth(self, register: bool) -> None:
+    def send_auth(self, register: bool, email: str = "", code: str = "") -> None:
         name = self.name.encode("utf-8")
         password = self.password.encode("utf-8")
+        encoded_email = email.encode("utf-8")
+        encoded_code = code.encode("utf-8")
         if not name or len(name) > MAX_AUTH_NAME_BYTES:
             raise ValueError(f"account name must be 1-{MAX_AUTH_NAME_BYTES} UTF-8 bytes: {self.name!r}")
         if len(password) > MAX_AUTH_PASSWORD_BYTES:
             raise ValueError(f"password must be at most {MAX_AUTH_PASSWORD_BYTES} UTF-8 bytes")
-        self.send(bytes((AUTH_PACKET_TYPE, int(register), len(name), len(password))) + name + password)
+        if len(encoded_email) > MAX_AUTH_EMAIL_BYTES or len(encoded_code) > 32:
+            raise ValueError("email or verification code is too long")
+        self.send(bytes((AUTH_PACKET_TYPE, int(register), len(name), len(password), len(encoded_email),
+                         len(encoded_code))) + name + password + encoded_email + encoded_code)
 
     def send_chat(self, text: str) -> None:
         message = text.encode("utf-8")
@@ -93,19 +97,28 @@ class LoadClient:
         estimated_tick = self.server_tick + int(elapsed * max(1, self.tick_rate)) + INPUT_LEAD_TICKS
         return min(estimated_tick, 0xFFFFFFFFFFFFFFFF)
 
-    def send_input(self) -> None:
+    def send_input(self, elapsed: float, attack: bool, move: bool) -> None:
         if not self.supports_input_frames:
             self.send(INPUT_PACKET)
             return
+
+        move_x = 0
+        move_y = 0
+        if move:
+            # Alternate direction every two seconds so clients exercise movement without
+            # permanently leaving their assigned farming area.
+            direction = (self.index * 2.399963229728653 + math.pi * int(elapsed / 2.0))
+            move_x = round(math.cos(direction) * 127)
+            move_y = round(math.sin(direction) * 127)
 
         self.send(struct.pack(
             "<BIQbbB",
             INPUT_FRAME_PACKET_TYPE,
             self.input_sequence,
             self.estimate_target_tick(),
-            0,
-            0,
-            0,
+            move_x,
+            move_y,
+            1 if attack else 0,
         ))
         self.input_sequence = (self.input_sequence + 1) & 0xFFFFFFFF
 
@@ -120,18 +133,22 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create persistent FlorrBt load-test clients.")
     parser.add_argument("--host", default="127.0.0.1", help="game TCP host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=10012, help="game TCP port (default: 10012)")
-    parser.add_argument("--count", type=int, default=32, help="number of clients (default: 32)")
+    parser.add_argument("--count", type=int, default=100, help="number of clients (default: 100)")
     parser.add_argument("--prefix", default="loadbot", help="account name prefix (default: loadbot)")
     parser.add_argument("--account-password", default="FlorrBtLoadTest", help="test account password")
     parser.add_argument("--rcon-password", default="1DnjLE", help="RCON password")
-    parser.add_argument("--portal-wait", type=float, default=4.0,
-                        help="seconds to wait for spawn protection before portal transfer (default: 4)")
-    parser.add_argument("--transfer-wait", type=float, default=1.0,
-                        help="seconds to wait for the Anthell portal transfer (default: 1)")
+    parser.add_argument("--world-layout", default="garden,ant_hel,garden,ant_hel",
+                        help="comma-separated map name for each world ID")
     parser.add_argument("--command-interval", type=float, default=0.04,
                         help="minimum spacing between RCON commands in seconds (default: 0.04)")
-    parser.add_argument("--input-interval", type=float, default=1.0,
-                        help="seconds between no-op input packets; 0 disables them (default: 1)")
+    parser.add_argument("--equip-petal", default="",
+                        help="petal to equip in every requested test slot (disabled by default)")
+    parser.add_argument("--equip-rarity", default="primordial", help="rarity used by --equip-petal")
+    parser.add_argument("--equip-slots", type=int, default=5, help="slots per client used by --equip-petal")
+    parser.add_argument("--input-interval", type=float, default=0.05,
+                        help="seconds between input packets; 0 disables them (default: 0.05)")
+    parser.add_argument("--no-attack", action="store_true", help="do not hold attack during the load test")
+    parser.add_argument("--no-move", action="store_true", help="do not move clients during the load test")
     parser.add_argument("--duration", type=float, default=0.0,
                         help="run duration in seconds; 0 runs until Ctrl+C (default: 0)")
     return parser.parse_args()
@@ -187,18 +204,6 @@ def spawn_zone_positions(map_path: Path) -> list[tuple[float, float]]:
     return positions
 
 
-def portal_position(map_path: Path, target_map: str) -> tuple[float, float]:
-    map_json = load_json(map_path)
-    target_map = target_map.lower()
-    for obj in iter_map_objects(map_json):
-        if obj.get("class") != "warp":
-            continue
-        goal = str(property_value(obj, "map", "")).lower()
-        if goal == target_map:
-            return float(obj.get("x", 0.0)), float(obj.get("y", 0.0))
-    raise RuntimeError(f"no warp from {map_path.name} to {target_map}")
-
-
 def distribute_positions(positions: list[tuple[float, float]], count: int) -> list[tuple[float, float]]:
     if count <= 0:
         return []
@@ -214,10 +219,10 @@ def distribute_positions(positions: list[tuple[float, float]], count: int) -> li
     return selected
 
 
-def make_client(host: str, port: int, name: str, password: str) -> LoadClient:
+def make_client(host: str, port: int, index: int, name: str, password: str) -> LoadClient:
     client_socket = socket.create_connection((host, port), timeout=10.0)
     client_socket.setblocking(False)
-    return LoadClient(name=name, password=password, socket=client_socket)
+    return LoadClient(index=index, name=name, password=password, socket=client_socket)
 
 
 def parse_snapshot_header(payload: bytes) -> tuple[int, int, int] | None:
@@ -225,34 +230,6 @@ def parse_snapshot_header(payload: bytes) -> tuple[int, int, int] | None:
         return None
 
     snapshot_id, base_snapshot_id, server_tick = struct.unpack_from("<IIQ", payload, 1)
-    changed_count, removed_count = struct.unpack_from("<HH", payload, 23)
-    offset = SERVER_SNAPSHOT_HEADER_SIZE
-
-    for _ in range(changed_count):
-        if offset >= len(payload):
-            return None
-        entity_format = payload[offset]
-        offset += 1
-        if entity_format == SERVER_ENTITY_COMPACT_FORMAT:
-            offset += SERVER_ENTITY_COMPACT_REMAINDER_SIZE
-            if offset > len(payload):
-                return None
-            continue
-        if entity_format != SERVER_ENTITY_FULL_FORMAT or offset + SERVER_ENTITY_FULL_FIXED_SIZE > len(payload):
-            return None
-
-        name_length = payload[offset + SERVER_ENTITY_FULL_FIXED_SIZE - 1]
-        offset += SERVER_ENTITY_FULL_FIXED_SIZE
-        if offset + name_length + 1 > len(payload):
-            return None
-        offset += name_length
-        slot_count = payload[offset]
-        offset += 1 + slot_count * 2
-        if offset > len(payload):
-            return None
-
-    if offset + removed_count * 2 != len(payload):
-        return None
     return snapshot_id, base_snapshot_id, server_tick
 
 
@@ -291,10 +268,10 @@ def process_frames(client: LoadClient) -> None:
         if len(payload) < 3 or payload[0] != AUTH_RESULT_TYPE:
             continue
 
-        success = payload[1] != 0
+        result_code = payload[1]
         message_length = payload[2]
         message = payload[3:3 + message_length].decode("utf-8", errors="replace")
-        if success:
+        if result_code == 1:
             client.authenticated = True
             client.auth_error = None
         else:
@@ -366,38 +343,36 @@ def set_positions(leader: LoadClient, targets: list[LoadClient], world_id: int,
 
 
 def setup_world_distribution(clients: list[LoadClient], root: Path, args: argparse.Namespace) -> None:
-    garden_map = root / "data" / "maps" / "garden.tmj"
-    anthell_map = root / "data" / "maps" / "ant_hel.tmj"
-    garden_zones = spawn_zone_positions(garden_map)
-    anthell_zones = spawn_zone_positions(anthell_map)
-    garden_portal = portal_position(garden_map, "ant_hel")
-
-    garden_count = (len(clients) + 1) // 2
-    garden_clients = clients[:garden_count]
-    anthell_clients = clients[garden_count:]
-    leader = garden_clients[0]
+    world_maps = [name.strip() for name in args.world_layout.split(",") if name.strip()]
+    if not world_maps:
+        raise ValueError("--world-layout must contain at least one map")
+    world_zones = [spawn_zone_positions(root / "data" / "maps" / f"{name}.tmj") for name in world_maps]
+    world_clients = [[] for _ in world_maps]
+    for index, client in enumerate(clients):
+        world_clients[index % len(world_maps)].append(client)
+    leader = clients[0]
 
     print(f"RCON: authorizing {leader.name}", flush=True)
     send_rcon(leader, args.rcon_password, args.command_interval, clients)
     send_rcon(leader, f"add null primordial {leader.name}", args.command_interval, clients)
+    if args.equip_petal:
+        slot_count = max(0, args.equip_slots)
+        print(f"Equipping {slot_count} {args.equip_rarity} {args.equip_petal} slots per client", flush=True)
+        for target in clients:
+            for slot in range(slot_count):
+                send_rcon(leader, f"equip {target.name} {slot} {args.equip_petal} {args.equip_rarity}",
+                          args.command_interval, clients)
 
-    print(f"Garden: distributing {len(garden_clients)} clients across {len(garden_zones)} spawn zones", flush=True)
-    set_positions(leader, garden_clients, 0, distribute_positions(garden_zones, len(garden_clients)),
-                  args.command_interval, clients)
-    if not anthell_clients:
-        return
-
-    print(f"Waiting {args.portal_wait:g}s for spawn protection before Anthell transfer", flush=True)
-    wait_while_pumping(clients, args.portal_wait)
-    print(f"Anthell: moving {len(anthell_clients)} clients through Garden portal at {garden_portal[0]:.0f},{garden_portal[1]:.0f}", flush=True)
-    set_positions(leader, anthell_clients, 0, [garden_portal] * len(anthell_clients), args.command_interval, clients)
-    wait_while_pumping(clients, args.transfer_wait)
-    print(f"Anthell: distributing clients across {len(anthell_zones)} spawn zones", flush=True)
-    set_positions(leader, anthell_clients, 1, distribute_positions(anthell_zones, len(anthell_clients)),
-                  args.command_interval, clients)
+    for world_id, (map_name, targets, zones) in enumerate(zip(world_maps, world_clients, world_zones)):
+        print(f"World {world_id} ({map_name}): distributing {len(targets)} clients across "
+              f"{len(zones)} spawn zones", flush=True)
+        set_positions(leader, targets, world_id, distribute_positions(zones, len(targets)),
+                      args.command_interval, clients)
 
 
-def run_clients(clients: list[LoadClient], duration: float, input_interval: float) -> None:
+def run_clients(clients: list[LoadClient], duration: float, input_interval: float,
+                attack: bool, move: bool) -> None:
+    started = time.monotonic()
     deadline = time.monotonic() + duration if duration > 0.0 else None
     next_input = time.monotonic()
     next_status = time.monotonic() + 10.0
@@ -408,7 +383,7 @@ def run_clients(clients: list[LoadClient], duration: float, input_interval: floa
         now = time.monotonic()
         if input_interval > 0.0 and now >= next_input:
             for client in clients:
-                client.send_input()
+                client.send_input(now - started, attack, move)
             next_input = now + input_interval
 
         wait_timeout = 0.1
@@ -428,6 +403,7 @@ def run_clients(clients: list[LoadClient], duration: float, input_interval: floa
                 f"received={received_bytes / 1024 / 1024:.1f} MiB",
                 flush=True,
             )
+            clients[0].send_chat("/rcon perf")
             next_status = now + 10.0
 
 
@@ -444,14 +420,14 @@ def main() -> int:
         print(f"Connecting {args.count} clients to {args.host}:{args.port}", flush=True)
         for index in range(args.count):
             name = f"{args.prefix}{index:02d}"
-            client = make_client(args.host, args.port, name, args.account_password)
+            client = make_client(args.host, args.port, index, name, args.account_password)
             clients.append(client)
-            client.send_auth(register=True)
+            client.send_auth(register=False)
 
         wait_for_auth(clients, timeout=max(30.0, args.count * 2.0))
         print("All clients authenticated.", flush=True)
         setup_world_distribution(clients, root, args)
-        run_clients(clients, args.duration, args.input_interval)
+        run_clients(clients, args.duration, args.input_interval, not args.no_attack, not args.no_move)
         return 0
     finally:
         for client in clients:

@@ -116,7 +116,7 @@ registerClientConfig("dummy_sprite_scale", {
 
 registerClientConfig("titan_sprite_scale", {
   prop: "titanSpriteScale",
-  defaultValue: 2,
+  defaultValue: 1,
   min: 0.5,
   max: 4,
   aliases: ["titan_scale"],
@@ -192,12 +192,13 @@ const minimapMaterialColors = Object.freeze({
 });
 
 export const clientRuntimeConfig = Object.freeze({
-  serverTickInterval: 0.016,
-  expectedSnapshotInterval: 0.048,
+  serverTickInterval: 0.05,
+  expectedSnapshotInterval: 0.05,
   packetInterval: 1 / 30,
   deathFadeDuration: 0.25,
   deathScaleBoost: 0.72,
   hurtFlashDuration: 0.14,
+  hurtFlashInterval: 0.25,
   hurtFlashMinDelta: 0.002,
   hurtFlashFilterEntityLimit: 32,
   missingEntityViewEdgeGrace: 48,
@@ -245,7 +246,7 @@ export const clientRuntimeConfig = Object.freeze({
   entityAngleLerpRate: 28,
   renderSnapBaseDistance: 220,
   ownerRenderSnapBaseDistance: 120,
-  serverFixedDt: 0.016,
+  serverFixedDt: 0.05,
   ownerBaseMaxVelocity: 150 * 1.25,
   ownerBaseAcceleration: 300 * 1.25,
   ownerDiggingSpeedMultiplier: 0.5,
@@ -266,7 +267,7 @@ export const clientRuntimeConfig = Object.freeze({
   entityExtrapolateMaxDistance: 32,
   petalRenderLerpRate: 18,
   petalAngleLerpRate: 16,
-  petalExtrapolateMaxSeconds: 0.016,
+  petalExtrapolateMaxSeconds: 0.05,
   petalExtrapolateMaxDistance: 10,
   slotTransactionTimeoutMs: 3500,
   bossBarBandTopRatio: 1 / 32,

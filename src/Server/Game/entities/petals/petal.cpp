@@ -6,49 +6,9 @@
 #include "petal_slot.h"
 #include <algorithm>
 #include <cmath>
-#include <optional>
 
 namespace
 {
-std::optional<sf::Vector2f> CalculateSpawnGlobal(CPetal* petal, CFlower* flower)
-{
-    if (!petal || !flower || !flower->GetFinalStats()) return std::nullopt;
-
-    int total_copies = flower->m_total_copies;
-    int start_index = flower->GetStartCopyIndex(petal->m_slot_index);
-    if (start_index < 0 || total_copies <= 0) return std::nullopt;
-
-    sf::Vector2f orbit_center = flower->m_pos;
-    if (petal->GetPetalType() != EPetalType::Moon)
-    {
-        if (CPetal* moon = flower->GetMoonPetal()) orbit_center = moon->m_pos;
-    }
-
-    float base_radius = petal->GetPetalType() == EPetalType::Moon ? flower->GetFinalStats()->radius
-                                                          : (flower->GetMoonPetal() && flower->GetMoonPetal() != petal
-                                                                 ? flower->GetMoonPetal()->m_radius
-                                                                 : flower->GetFinalStats()->radius);
-    float reach = game_config::default_petal_neutral_reach;
-    if (PetalUsesBaseAndDefenseReach(petal->GetPetalType()))
-    {
-        if (flower->m_defending) reach += game_config::default_petal_defend_offset;
-    } else if (!PetalIgnoresReachBonus(petal->GetPetalType()))
-    {
-        if (flower->m_attacking)
-        {
-            reach += flower->GetFinalStats()->reach + game_config::default_petal_attack_offset;
-        } else if (flower->m_defending)
-        {
-            reach += game_config::default_petal_defend_offset;
-        }
-    }
-
-    float orbit_distance = base_radius + game_config::default_petal_orbit_radius + reach;
-    float angle = flower->GetPetalRotationAngle() +
-                  (2.0f * game_config::pi * (start_index + petal->m_copy_index)) / static_cast<float>(total_copies);
-    return orbit_center + sf::Vector2f(std::cos(angle), std::sin(angle)) * orbit_distance;
-}
-
 bool IsLiveSlotPetal(const CPetal* petal, const CFlower* flower)
 {
     if (!petal || !flower) return false;
@@ -340,22 +300,12 @@ void CPetalSlot::SpawnCopy(int copy_index, CFlower* flower)
     std::unique_ptr<CPetal> petal = runtime_proto->m_factory(flower, m_slot_index, m_stored_rarity);
     if (!petal) return;
 
-    if (runtime_proto->m_type != EPetalType::Moon)
-    {
-        if (CPetal* moon = flower->GetMoonPetal()) petal->m_pos = moon->m_pos;
-    }
-
     petal->m_copy_index = copy_index;
     petal->m_max_slot_num = static_cast<int>(m_p_petals.size());
     ApplyPetalStatsForSlot(petal.get(), PetalStatsForSlot(this, flower), flower, true);
-    if (std::optional<sf::Vector2f> global = CalculateSpawnGlobal(petal.get(), flower))
-    {
-        sf::Vector2f center = (runtime_proto->m_type == EPetalType::Moon)
-                                  ? flower->m_pos
-                                  : (flower->GetMoonPetal() ? flower->GetMoonPetal()->m_pos : flower->m_pos);
-        petal->m_pos = center + (*global - center) * game_config::default_petal_spawn_position_progress;
-        petal->m_spawn_flight_boost = true;
-    }
+    petal->m_pos = flower->m_pos;
+    petal->m_prev_pos = flower->m_pos;
+    petal->m_spawn_flight_boost = true;
 
     CPetal* p_petal = static_cast<CPetal*>(flower->GameWorld()->InsertEntity(std::move(petal)));
     if (!p_petal) return;

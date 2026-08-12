@@ -18,12 +18,17 @@ class CMeleeController : public IController
     void PickRandomTargetPos(CMobBase* mob, const SMobStats& stats);
     void PickRandomTargetPosNear(CMobBase* mob, const sf::Vector2f& center, float half_range);
     bool IsRandomIdleDone(float dt);
+    bool ShouldSwitchRandomWanderTarget(float dt) const;
     bool ReachedOrStalledRandomTarget(CMobBase* mob, float dt);
     void ResetWanderProgress();
     void SetTarget(CEntity* target);
     void ClearTarget();
     void LoseTarget(CMobBase* mob);
     CEntity* ResolveTarget(CMobBase* mob);
+    virtual CEntity* FindTargetCandidate(CMobBase* mob, float search_range, int ignored_id = -1,
+                                         int ignored_owner_id = -1);
+    virtual bool IsTargetUnavailable(CMobBase* mob, const CEntity* target, float search_range, float dt,
+                                     float& los_check_timer, int ignored_id = -1, int ignored_owner_id = -1);
     bool ShouldRunTargetScan(CMobBase* mob);
     bool TryAcquireWanderTarget(CMobBase* mob, float search_range, int ignored_id = -1, int ignored_owner_id = -1);
     bool TryAcquireHoneyTarget(CMobBase* mob, float search_range, int ignored_id = -1, int ignored_owner_id = -1);
@@ -62,14 +67,17 @@ class CLeafcutterSoldierController : public CMeleeController
                                        std::uint64_t generation) const;
     CEntity* ResolveLeafPieceTarget(const CMobBase* mob) const;
     CEntity* ResolveCarriedLeafPiece(const CMobBase* mob) const;
+    CEntity* FindTargetCandidate(CMobBase* mob, float search_range, int ignored_id,
+                                 int ignored_owner_id) override;
+    bool IsTargetUnavailable(CMobBase* mob, const CEntity* target, float search_range, float dt,
+                             float& los_check_timer, int ignored_id, int ignored_owner_id) override;
     bool IsEligibleLeafPiece(const CMobBase* mob, const CEntity* entity, bool reject_carried = true) const;
     bool IsLeafPieceCarried(const CMobBase* mob, const CEntity* leaf_piece) const;
-    bool TryAcquireLeafPieceTarget(CMobBase* mob, float search_range);
     bool TryCarryLeafPiece(CMobBase* mob);
     void ClearLeafPieceTarget();
     void SetLeafPieceTarget(CEntity* leaf_piece);
-    void ClearCarriedLeafPiece();
-    void SetCarriedLeafPiece(CEntity* leaf_piece);
+    void ClearCarriedLeafPiece(CMobBase* mob);
+    bool SetCarriedLeafPiece(CMobBase* mob, CEntity* leaf_piece);
     void ApplyCarryingTurn(CMobBase* mob, float previous_angle, bool had_facing, float dt) const;
 
     std::uint32_t m_leaf_piece_target_world_id = 0;
@@ -79,7 +87,6 @@ class CLeafcutterSoldierController : public CMeleeController
     int m_carried_leaf_piece_id = -1;
     std::uint64_t m_carried_leaf_piece_generation = 0;
     float m_leaf_piece_attack_timer = 0.f;
-    int m_leaf_piece_target_scan_cooldown = -1;
 };
 
 class CSummonedMeleeController : public CMeleeController

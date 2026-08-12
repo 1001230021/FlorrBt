@@ -129,6 +129,9 @@
     <ClInclude Include="src\Server\Game\gamecontrollers\open_spawn_director.h">
       <Filter>src\Server\Game\gamecontrollers</Filter>
     </ClInclude>
+    <ClInclude Include="src\Server\Game\gamecontrollers\spawn_rules.h">
+      <Filter>src\Server\Game\gamecontrollers</Filter>
+    </ClInclude>
     <ClInclude Include="src\Server\Game\entities\drop.h">
       <Filter>src\Server\Game\entities</Filter>
     </ClInclude>
@@ -161,6 +164,14 @@
     </ClInclude>
     <ClInclude Include="src\Server\Persistence\unique_petal_registry.h">
       <Filter>src\Server\Persistence</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server\HotReload\hot_reload_snapshot.h" />
+    <ClInclude Include="src\Server\HotReload\snapshot_archive.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\weather_diurnal_open_controller.h">
+      <Filter>src\Server\Game\gamecontrollers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server\Game\systems\weather_diurnal_system.h">
+      <Filter>src\Server\Game\systems</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -248,7 +259,13 @@
     <ClCompile Include="src\Server\Game\gamecontrollers\open_spawn_director.cpp">
       <Filter>src\Server\Game\gamecontrollers</Filter>
     </ClCompile>
+    <ClCompile Include="src\Server\Game\gamecontrollers\spawn_rules.cpp">
+      <Filter>src\Server\Game\gamecontrollers</Filter>
+    </ClCompile>
     <ClCompile Include="src\Server\Game\gamecontrollers\waitingcontroller.cpp">
+      <Filter>src\Server\Game\gamecontrollers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Game\gamecontrollers\weather_diurnal_open_controller.cpp">
       <Filter>src\Server\Game\gamecontrollers</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Game\gamecontrollers\world_controller_factory.cpp">
@@ -263,6 +280,9 @@
     <ClCompile Include="src\Server\Game\systems\snapshot_service.cpp">
       <Filter>src\Server\Game\systems</Filter>
     </ClCompile>
+    <ClCompile Include="src\Server\Game\systems\weather_diurnal_system.cpp">
+      <Filter>src\Server\Game\systems</Filter>
+    </ClCompile>
     <ClCompile Include="src\Server\Game\systems\player_lifecycle_service.cpp">
       <Filter>src\Server\Game\systems</Filter>
     </ClCompile>
@@ -275,5 +295,7 @@
     <ClCompile Include="src\Server\Persistence\unique_petal_registry.cpp">
       <Filter>src\Server\Persistence</Filter>
     </ClCompile>
+    <ClCompile Include="src\Server\HotReload\hot_reload_snapshot.cpp" />
+    <ClCompile Include="src\Server\HotReload\snapshot_archive.cpp" />
   </ItemGroup>
 </Project>

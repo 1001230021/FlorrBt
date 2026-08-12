@@ -7,11 +7,13 @@ class CEntity;
 class CGameWorld;
 class CPlayer;
 class INetworkModule;
+class IWeatherDiurnalView;
 
 class CGameContext
 {
   public:
-    CGameContext(CGameWorld& world, INetworkModule& network, IGameEventSink& events, IGameWorldResolver& worlds);
+    CGameContext(CGameWorld& world, INetworkModule& network, IGameEventSink& events, IGameWorldResolver& worlds,
+                 IWeatherDiurnalView& weather_diurnal);
 
     CGameWorld& World() { return m_world; }
     const CGameWorld& World() const { return m_world; }
@@ -25,6 +27,9 @@ class CGameContext
     IGameWorldResolver& Worlds() { return m_worlds; }
     const IGameWorldResolver& Worlds() const { return m_worlds; }
 
+    IWeatherDiurnalView& WeatherDiurnal() { return m_weather_diurnal; }
+    const IWeatherDiurnalView& WeatherDiurnal() const { return m_weather_diurnal; }
+
     const std::vector<std::unique_ptr<CPlayer>>& Players() const;
     CPlayer* FindPlayerFromEntity(CEntity* entity) const;
 
@@ -33,4 +38,5 @@ class CGameContext
     INetworkModule& m_network;
     IGameEventSink& m_events;
     IGameWorldResolver& m_worlds;
+    IWeatherDiurnalView& m_weather_diurnal;
 };

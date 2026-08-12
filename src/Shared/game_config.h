@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -28,7 +29,21 @@ inline std::string startup_commands_path = "data/server.cfg";
 inline std::string hot_reload_directory = "data/hot_reload";
 inline std::string hot_reload_request_path = "data/hot_reload/reload_request.json";
 inline std::string hot_reload_default_candidate = "FlorrBt.Server.next.exe";
-inline bool email_enabled = true;
+enum class EEmailPolicy : std::uint8_t
+{
+    Disabled = 0,
+    Optional = 1,
+    Required = 2,
+};
+
+inline int email_enabled = static_cast<int>(EEmailPolicy::Required);
+inline EEmailPolicy GetEmailPolicy()
+{
+    return static_cast<EEmailPolicy>(std::clamp(email_enabled, static_cast<int>(EEmailPolicy::Disabled),
+                                                static_cast<int>(EEmailPolicy::Required)));
+}
+inline bool IsEmailBindingEnabled() { return GetEmailPolicy() != EEmailPolicy::Disabled; }
+inline bool IsEmailBindingRequired() { return GetEmailPolicy() == EEmailPolicy::Required; }
 inline std::string email_username = "";
 inline std::string email_password = "";
 inline std::string email_from_address = "";
@@ -100,7 +115,7 @@ inline float default_black_fungus_compression_damage_bonus_max = 0.5f;
 inline float default_black_fungus_compression_half_power = 8.0f;
 inline float default_black_fungus_copy = 1.0f;
 inline float default_black_fungus_mass = 2.0f;
-inline float default_black_fungus_reload = 1.0f;
+inline float default_black_fungus_reload = 1.5f;
 inline float default_broccoli_base_damage = 2.5f;
 inline float default_broccoli_base_health = 20.0f;
 inline float default_broccoli_base_radius = WorldUnits(10.0f);
@@ -243,7 +258,7 @@ inline float default_heavy_base_damage = 10.0f;
 inline float default_heavy_base_health = 150.0f;
 inline float default_heavy_base_radius = WorldUnits(22.5f);
 inline float default_heavy_copy = 1.0f;
-inline float default_heavy_mass_multiplier = 120.0f;
+inline float default_heavy_mass_multiplier = 360.0f;
 inline float default_heavy_reload = 10.0f;
 inline float default_heavy_rotation_speed = -0.33f;
 inline float default_iris_base_damage = 5.0f;
@@ -489,6 +504,22 @@ inline float default_tomato_max_damage_multiplier = 14.0f;
 inline float default_tomato_max_health_multiplier = 7.0f;
 inline float default_tomato_max_radius_multiplier = 10.0f / 3.0f;
 inline float default_tomato_reload = 2.5f;
+inline float default_hallucinogenic_mushroom_base_damage = 4.0f;
+inline float default_hallucinogenic_mushroom_base_health = 8.0f;
+inline float default_hallucinogenic_mushroom_base_radius = WorldUnits(10.0f);
+inline float default_hallucinogenic_mushroom_copy = 1.0f;
+inline float default_hallucinogenic_mushroom_mass = 2.0f;
+inline float default_hallucinogenic_mushroom_reload = 1.5f;
+inline float hallucinogenic_state_duration = 12.0f;
+inline float hallucinogenic_rarity_duration_base = 5.0f;
+inline float hallucinogenic_evolution_per_hit = 1.0f;
+inline float hallucinogenic_split_threshold = 3.0f;
+inline float hallucinogenic_base_effect_depth = 0.5f;
+inline float hallucinogenic_effect_depth_growth = 0.125f;
+inline float hallucinogenic_max_effect_depth = 2.0f;
+inline float hallucinogenic_rarity_effect_base = 8.0f;
+inline int hallucinogenic_max_parameters = 6;
+inline int hallucinogenic_max_stacks_per_rarity = 6;
 inline float default_white_fungus_base_damage = 8.0f;
 inline float default_white_fungus_base_health = 10.0f;
 inline float default_white_fungus_base_radius = WorldUnits(10.0f);
@@ -506,7 +537,7 @@ inline int default_white_fungus_petal_extra_hits_eternal = 18;
 inline int default_white_fungus_petal_extra_hits_unique = 18;
 inline int default_white_fungus_petal_extra_hits_primordial = 20;
 inline float default_white_fungus_petal_extra_hits_multiplier = 0.5f;
-inline float default_white_fungus_reload = 1.0f;
+inline float default_white_fungus_reload = 1.5f;
 inline float default_yucca_base_damage = 16.0f;
 inline float default_yucca_base_health = 12.0f;
 inline float default_yucca_base_radius = WorldUnits(10.0f);
@@ -620,7 +651,6 @@ inline float default_petal_target_orbit_tether = 0.35f;
 inline float default_petal_throw_initial_deceleration = 0.25f;
 inline float default_petal_throw_min_deceleration = 0.001f;
 inline float default_petal_swap_min_reload = 2.5f;
-inline float default_petal_spawn_position_progress = 0.5f;
 inline int default_pollen_copy_common = 1;
 inline int default_pollen_copy_rare = 2;
 inline int default_pollen_copy_high = 3;
@@ -681,7 +711,7 @@ inline float melee_random_idle_time = 2.0f;
 inline int melee_random_wander_candidate_attempts = 12;
 inline float melee_random_wander_divisor = 4.0f;
 inline float melee_retarget_chance_multiplier = 2.0f;
-inline float melee_target_time = 80.0f;
+inline float melee_target_time = 8.0f;
 inline int melee_target_scan_ticks = 10;
 inline float melee_wander_progress_radius_multiplier = 0.25f;
 inline float melee_wander_stuck_time = 1.5f;
@@ -760,7 +790,8 @@ inline float mob_queen_ant_max_health = 250.0f;
 inline float mob_queen_ant_radius = WorldUnits(26.0f);
 inline int mob_queen_ant_team = 2;
 inline float mob_termite_overmind_radius_multiplier = 2.5f;
-inline float mob_termite_overmind_velocity_multiplier = 0.33333334f;
+inline float mob_termite_overmind_mass_multiplier = 8.0f;
+inline float mob_termite_overmind_velocity_multiplier = 0.25f;
 inline float mob_termite_overmind_ban_interval_super = 10.0f;
 inline float mob_termite_overmind_ban_interval_eternal = 3.0f;
 inline float mob_termite_overmind_ban_interval_primordial = 1.0f;
@@ -867,6 +898,7 @@ inline size_t max_lootable_players = 5;
 inline size_t max_lootable_player_above_ultra = 25;
 inline float mob_mass_scale_base = 2.5f;
 inline float mob_mass_scale_exp_multiplier = 0.6f;
+inline float mob_base_mass_multiplier = 10.0f;
 inline float mob_velocity_multiplier = 1.25f;
 inline float mob_normal_flower_armor = 0.0f;
 inline float mob_normal_flower_damage = 8.0f;
@@ -978,9 +1010,12 @@ inline size_t network_snapshot_mob_reserve_cap = 128;
 inline size_t network_snapshot_projectile_reserve_cap = 256;
 inline float network_snapshot_query_radius_cap = WorldUnits(4096.0f);
 inline float network_snapshot_interval = 1.0f / 30.0f;
+inline size_t network_snapshot_worker_count = 0;
+inline bool network_parallel_snapshot_build = true;
 inline float network_snapshot_view_radius_multiplier = 2.0f;
 inline uint8_t network_petal_type_offset = 100;
 inline size_t open_active_spawn_zones_per_tick = 8;
+inline size_t open_world_instances_per_map = 2;
 inline int open_active_spawn_near_player_attempts = 16;
 inline float open_active_spawn_near_player_radius = WorldUnits(512.0f);
 inline float open_drop_spread_radius = WorldUnits(32.0f);
@@ -990,6 +1025,7 @@ inline int open_idle_spawn_zones_per_tick = 2;
 inline int open_max_spawn_per_zone_tick = 8;
 inline size_t open_max_spawn_num = 12;
 inline int open_max_zone_spawn_target = 512;
+inline int open_max_zone_population = 2048;
 inline float open_min_spawn_distance = WorldUnits(128.0f);
 inline float open_rarity_difficulty_scale = 10.0f;
 inline float open_rarity_gaussian_sigma = 0.36f;
@@ -1024,7 +1060,13 @@ inline float report_keyword_base_mute_seconds = 60.0f;
 inline float report_scan_window_seconds = 60.0f;
 inline std::string rcon_password = "";
 inline size_t rcon_generated_password_length = 6;
-inline float server_fixed_dt = 0.016f;
+inline float server_fixed_dt = 0.05f;
+inline bool weather_diurnal_enabled = true;
+// Simulation seconds required for one complete 24-hour virtual day.
+inline float weather_diurnal_day_duration = 6.0f * 60.0f * 60.0f;
+inline float weather_diurnal_start_time = 0.25f;
+// Seconds required for weather intensities to go from 0 to 1 (transition rate = 1 / duration).
+inline float weather_diurnal_transition_duration = 20.0f;
 inline float slow_tick_profile_ms = 24.0f;
 inline float simulation_active_view_radius_cap = WorldUnits(2048.0f);
 inline bool world_tick_phase_profile_enabled = false;
@@ -1047,6 +1089,7 @@ inline float timeout_protection_seconds = 30.0f;
 inline float titan_forge_cooldown_seconds = 12.0f * 60.0f * 60.0f;
 inline float titan_forge_range = WorldUnits(1024.0f);
 inline int titan_petal_slot_count = 10;
+inline float titan_speed_multiplier = 0.1f;
 inline float titan_stats_multiplier = 10.0f;
 inline int titan_team = 1;
 inline float titan_unique_refresh_seconds = 24.0f * 60.0f * 60.0f;
@@ -1075,6 +1118,8 @@ inline float checkpoint_respawn_search_step_min = 16.0f;
 inline float checkpoint_respawn_search_step_radius_multiplier = 0.5f;
 inline int entity_max_hits_per_tick = 64;
 inline int entity_max_physical_hits_per_tick = 8;
+inline int entity_mob_mob_hits_per_tick = 3;
+inline int entity_petal_mob_hit_multiplier = 3;
 inline float entity_hit_spacing_min = 1.0f;
 inline float entity_hit_spacing_radius_multiplier = 0.5f;
 inline float entity_projectile_contact_skin = 0.02f;
@@ -1252,6 +1297,9 @@ inline float MobProjectileMassForLevel(int level)
 }
 inline float mob_stop_damping_ticks_per_second = 60.0f;
 inline float mob_summoned_rarity_linear_scale = 0.2f;
+inline float mob_summoned_mass_multiplier = 2.0f;
+inline float mob_summoned_mass_bonus_multiplier = 20.0f;
+inline float mob_summoned_radius_bonus_multiplier = 1.5f;
 inline size_t network_rcon_max_reply_lines = 12;
 inline float open_loot_min_damage_rate_above_ultra = 0.01f;
 inline float open_loot_min_damage_rate_normal = 0.05f;
@@ -1279,6 +1327,15 @@ template <typename T> inline void SetConfigValue(T& variable, const std::string&
         int parsed = 0;
         stream >> parsed;
         if (!stream.fail()) variable = static_cast<uint8_t>(parsed);
+    } else if constexpr (std::is_same_v<T, bool>)
+    {
+        std::string normalized = value;
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on")
+            variable = true;
+        else if (normalized == "0" || normalized == "false" || normalized == "no" || normalized == "off")
+            variable = false;
     } else if constexpr (std::is_same_v<T, std::string>)
     {
         variable = value;
@@ -1305,6 +1362,38 @@ template <typename T> inline config_entry MakeConfigEntry(T& variable)
                 if (variable != old_value) AdvanceConfigRevision();
             },
              [&variable]() -> std::string { return GetConfigValue(variable); } };
+}
+
+inline config_entry MakeEmailPolicyConfigEntry()
+{
+    return { [](const std::string& value) {
+                std::string normalized = value;
+                std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                               [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+
+                int parsed = email_enabled;
+                if (normalized == "disabled" || normalized == "false" || normalized == "no" ||
+                    normalized == "off")
+                    parsed = static_cast<int>(EEmailPolicy::Disabled);
+                else if (normalized == "optional")
+                    parsed = static_cast<int>(EEmailPolicy::Optional);
+                else if (normalized == "required" || normalized == "true" || normalized == "yes" ||
+                         normalized == "on")
+                    parsed = static_cast<int>(EEmailPolicy::Required);
+                else
+                {
+                    std::stringstream stream(value);
+                    stream >> parsed;
+                    if (stream.fail()) return;
+                }
+
+                parsed = std::clamp(parsed, static_cast<int>(EEmailPolicy::Disabled),
+                                    static_cast<int>(EEmailPolicy::Required));
+                if (email_enabled == parsed) return;
+                email_enabled = parsed;
+                AdvanceConfigRevision();
+            },
+             []() -> std::string { return std::to_string(email_enabled); } };
 }
 
 inline config_entry MakeSecretConfigEntry(std::string& variable)
@@ -1334,7 +1423,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("hot_reload_directory", hot_reload_directory),
         REGISTER_CONFIG("hot_reload_request_path", hot_reload_request_path),
         REGISTER_CONFIG("hot_reload_default_candidate", hot_reload_default_candidate),
-        REGISTER_CONFIG("email_enabled", email_enabled),
+        { "email_enabled", game_config::MakeEmailPolicyConfigEntry() },
         REGISTER_CONFIG("email_username", email_username),
         REGISTER_SECRET_CONFIG("email_password", email_password),
         REGISTER_CONFIG("email_from_address", email_from_address),
@@ -1709,6 +1798,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_queen_ant_radius", mob_queen_ant_radius),
         REGISTER_CONFIG("mob_queen_ant_team", mob_queen_ant_team),
         REGISTER_CONFIG("mob_termite_overmind_radius_multiplier", mob_termite_overmind_radius_multiplier),
+        REGISTER_CONFIG("mob_termite_overmind_mass_multiplier", mob_termite_overmind_mass_multiplier),
         REGISTER_CONFIG("mob_termite_overmind_velocity_multiplier", mob_termite_overmind_velocity_multiplier),
         REGISTER_CONFIG("mob_termite_overmind_ban_interval_super", mob_termite_overmind_ban_interval_super),
         REGISTER_CONFIG("mob_termite_overmind_ban_interval_eternal", mob_termite_overmind_ban_interval_eternal),
@@ -1817,6 +1907,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("server_log_path", server_log_path),
         REGISTER_CONFIG("mob_mass_scale_base", mob_mass_scale_base),
         REGISTER_CONFIG("mob_mass_scale_exp_multiplier", mob_mass_scale_exp_multiplier),
+        REGISTER_CONFIG("mob_base_mass_multiplier", mob_base_mass_multiplier),
         REGISTER_CONFIG("mob_velocity_multiplier", mob_velocity_multiplier),
         REGISTER_CONFIG("mob_normal_flower_armor", mob_normal_flower_armor),
         REGISTER_CONFIG("mob_normal_flower_damage", mob_normal_flower_damage),
@@ -1921,8 +2012,11 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("network_snapshot_projectile_reserve_cap", network_snapshot_projectile_reserve_cap),
         REGISTER_CONFIG("network_snapshot_query_radius_cap", network_snapshot_query_radius_cap),
         REGISTER_CONFIG("network_snapshot_interval", network_snapshot_interval),
+        REGISTER_CONFIG("network_snapshot_worker_count", network_snapshot_worker_count),
+        REGISTER_CONFIG("network_parallel_snapshot_build", network_parallel_snapshot_build),
         REGISTER_CONFIG("network_snapshot_view_radius_multiplier", network_snapshot_view_radius_multiplier),
         REGISTER_CONFIG("open_active_spawn_zones_per_tick", open_active_spawn_zones_per_tick),
+        REGISTER_CONFIG("open_world_instances_per_map", open_world_instances_per_map),
         REGISTER_CONFIG("open_active_spawn_near_player_attempts", open_active_spawn_near_player_attempts),
         REGISTER_CONFIG("open_active_spawn_near_player_radius", open_active_spawn_near_player_radius),
         REGISTER_CONFIG("open_drop_spread_radius", open_drop_spread_radius),
@@ -1933,6 +2027,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("open_max_spawn_per_zone_tick", open_max_spawn_per_zone_tick),
         REGISTER_CONFIG("open_max_spawn_num", open_max_spawn_num),
         REGISTER_CONFIG("open_max_zone_spawn_target", open_max_zone_spawn_target),
+        REGISTER_CONFIG("open_max_zone_population", open_max_zone_population),
         REGISTER_CONFIG("open_min_spawn_distance", open_min_spawn_distance),
         REGISTER_CONFIG("open_rarity_difficulty_scale", open_rarity_difficulty_scale),
         REGISTER_CONFIG("open_rarity_gaussian_sigma", open_rarity_gaussian_sigma),
@@ -2070,6 +2165,10 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("soil_mass", default_soil_mass),
         REGISTER_CONFIG("soil_reload", default_soil_reload),
         REGISTER_CONFIG("server_fixed_dt", server_fixed_dt),
+        REGISTER_CONFIG("weather_diurnal_enabled", weather_diurnal_enabled),
+        REGISTER_CONFIG("weather_diurnal_day_duration", weather_diurnal_day_duration),
+        REGISTER_CONFIG("weather_diurnal_start_time", weather_diurnal_start_time),
+        REGISTER_CONFIG("weather_diurnal_transition_duration", weather_diurnal_transition_duration),
         REGISTER_CONFIG("slow_tick_profile_ms", slow_tick_profile_ms),
         REGISTER_CONFIG("simulation_active_view_radius_cap", simulation_active_view_radius_cap),
         REGISTER_CONFIG("world_tick_phase_profile_enabled", world_tick_phase_profile_enabled),
@@ -2184,10 +2283,27 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("tomato_max_health_multiplier", default_tomato_max_health_multiplier),
         REGISTER_CONFIG("tomato_max_radius_multiplier", default_tomato_max_radius_multiplier),
         REGISTER_CONFIG("tomato_reload", default_tomato_reload),
+        REGISTER_CONFIG("hallucinogenic_mushroom_base_damage", default_hallucinogenic_mushroom_base_damage),
+        REGISTER_CONFIG("hallucinogenic_mushroom_base_health", default_hallucinogenic_mushroom_base_health),
+        REGISTER_CONFIG("hallucinogenic_mushroom_base_radius", default_hallucinogenic_mushroom_base_radius),
+        REGISTER_CONFIG("hallucinogenic_mushroom_copy", default_hallucinogenic_mushroom_copy),
+        REGISTER_CONFIG("hallucinogenic_mushroom_mass", default_hallucinogenic_mushroom_mass),
+        REGISTER_CONFIG("hallucinogenic_mushroom_reload", default_hallucinogenic_mushroom_reload),
+        REGISTER_CONFIG("hallucinogenic_state_duration", hallucinogenic_state_duration),
+        REGISTER_CONFIG("hallucinogenic_rarity_duration_base", hallucinogenic_rarity_duration_base),
+        REGISTER_CONFIG("hallucinogenic_evolution_per_hit", hallucinogenic_evolution_per_hit),
+        REGISTER_CONFIG("hallucinogenic_split_threshold", hallucinogenic_split_threshold),
+        REGISTER_CONFIG("hallucinogenic_base_effect_depth", hallucinogenic_base_effect_depth),
+        REGISTER_CONFIG("hallucinogenic_effect_depth_growth", hallucinogenic_effect_depth_growth),
+        REGISTER_CONFIG("hallucinogenic_max_effect_depth", hallucinogenic_max_effect_depth),
+        REGISTER_CONFIG("hallucinogenic_rarity_effect_base", hallucinogenic_rarity_effect_base),
+        REGISTER_CONFIG("hallucinogenic_max_parameters", hallucinogenic_max_parameters),
+        REGISTER_CONFIG("hallucinogenic_max_stacks_per_rarity", hallucinogenic_max_stacks_per_rarity),
         REGISTER_CONFIG("timeout_protection_seconds", timeout_protection_seconds),
         REGISTER_CONFIG("titan_forge_cooldown_seconds", titan_forge_cooldown_seconds),
         REGISTER_CONFIG("titan_forge_range", titan_forge_range),
         REGISTER_CONFIG("titan_petal_slot_count", titan_petal_slot_count),
+        REGISTER_CONFIG("titan_speed_multiplier", titan_speed_multiplier),
         REGISTER_CONFIG("titan_stats_multiplier", titan_stats_multiplier),
         REGISTER_CONFIG("titan_team", titan_team),
         REGISTER_CONFIG("titan_unique_refresh_seconds", titan_unique_refresh_seconds),
@@ -2304,7 +2420,6 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("petal_throw_initial_deceleration", default_petal_throw_initial_deceleration),
         REGISTER_CONFIG("petal_throw_min_deceleration", default_petal_throw_min_deceleration),
         REGISTER_CONFIG("petal_swap_min_reload", default_petal_swap_min_reload),
-        REGISTER_CONFIG("petal_spawn_position_progress", default_petal_spawn_position_progress),
         REGISTER_CONFIG("pollen_copy_common", default_pollen_copy_common),
         REGISTER_CONFIG("pollen_copy_rare", default_pollen_copy_rare),
         REGISTER_CONFIG("pollen_copy_high", default_pollen_copy_high),
@@ -2374,6 +2489,8 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
                         checkpoint_respawn_search_step_radius_multiplier),
         REGISTER_CONFIG("entity_max_hits_per_tick", entity_max_hits_per_tick),
         REGISTER_CONFIG("entity_max_physical_hits_per_tick", entity_max_physical_hits_per_tick),
+        REGISTER_CONFIG("entity_mob_mob_hits_per_tick", entity_mob_mob_hits_per_tick),
+        REGISTER_CONFIG("entity_petal_mob_hit_multiplier", entity_petal_mob_hit_multiplier),
         REGISTER_CONFIG("entity_hit_spacing_min", entity_hit_spacing_min),
         REGISTER_CONFIG("entity_hit_spacing_radius_multiplier", entity_hit_spacing_radius_multiplier),
         REGISTER_CONFIG("entity_projectile_contact_skin", entity_projectile_contact_skin),
@@ -2522,6 +2639,9 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_projectile_base_mass", mob_projectile_base_mass),
         REGISTER_CONFIG("mob_stop_damping_ticks_per_second", mob_stop_damping_ticks_per_second),
         REGISTER_CONFIG("mob_summoned_rarity_linear_scale", mob_summoned_rarity_linear_scale),
+        REGISTER_CONFIG("mob_summoned_mass_multiplier", mob_summoned_mass_multiplier),
+        REGISTER_CONFIG("mob_summoned_mass_bonus_multiplier", mob_summoned_mass_bonus_multiplier),
+        REGISTER_CONFIG("mob_summoned_radius_bonus_multiplier", mob_summoned_radius_bonus_multiplier),
         REGISTER_CONFIG("network_rcon_max_reply_lines", network_rcon_max_reply_lines),
         REGISTER_CONFIG("open_loot_min_damage_rate_above_ultra", open_loot_min_damage_rate_above_ultra),
         REGISTER_CONFIG("open_loot_min_damage_rate_normal", open_loot_min_damage_rate_normal),
@@ -2546,6 +2666,19 @@ inline bool SetConfig(const std::string& name, const std::string& value)
     auto& entries = GetConfigEntries();
     auto it = entries.find(name);
     if (it == entries.end()) return false;
+
+    if (name == "weather_diurnal_day_duration" || name == "weather_diurnal_transition_duration")
+    {
+        std::stringstream stream(value);
+        double parsed = 0.0;
+        if (!(stream >> parsed) || !std::isfinite(parsed)) return false;
+        std::string trailing;
+        if (stream >> trailing) return false;
+        const bool allows_zero = name == "weather_diurnal_transition_duration";
+        if (allows_zero ? parsed < 0.0
+                        : name == "weather_diurnal_day_duration" ? parsed < 0.001 : parsed <= 0.0)
+            return false;
+    }
 
     it->second.setter(value);
     return true;

@@ -180,13 +180,15 @@ void COpenController::OnTick(CGameWorld& world, float dt)
     InitializePreciseSpawns(world);
     PruneSquads(world);
     UpdateSpawnWave(dt);
-    m_spawn_director.Tick(world, dt, m_spawn_density_multiplier, &COpenRewardService::OnMobSpawned);
+    m_spawn_director.Tick(world, dt, m_spawn_density_multiplier, &COpenRewardService::OnMobSpawned,
+                          SpawnEnvironment());
 }
 
 void COpenController::SpawnMobs(CGameWorld& world)
 {
     UpdateSpawnWave(0.f);
-    m_spawn_director.SpawnMobs(world, m_spawn_density_multiplier, &COpenRewardService::OnMobSpawned);
+    m_spawn_director.SpawnMobs(world, m_spawn_density_multiplier, &COpenRewardService::OnMobSpawned,
+                               SpawnEnvironment());
 }
 
 std::optional<sf::Vector2f> COpenController::SelectPlayerSpawn(CGameWorld& world, CPlayer& player,

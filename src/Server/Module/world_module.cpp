@@ -12,10 +12,11 @@ namespace
 
 constexpr const char* ant_hel_map_path = "data/maps/ant_hel.tmj";
 
-std::unique_ptr<CGameWorld> CreateOpenWorld(std::uint32_t world_id, const std::string& map_path)
+std::unique_ptr<CGameWorld> CreateOpenWorld(std::uint32_t world_id, const std::string& map_path,
+                                            std::string_view controller_key)
 {
     auto world = std::make_unique<CGameWorld>(map_path, world_id);
-    world->SetController(CreateWorldController(world_controller_keys::open));
+    world->SetController(CreateWorldController(controller_key));
     return world;
 }
 
@@ -35,8 +36,16 @@ std::string NormalizeMapName(std::string name)
 
 IWorldModule::IWorldModule()
 {
-    m_worlds.emplace_back(CreateOpenWorld(0, game_config::lobby_map_path));
-    m_worlds.emplace_back(CreateOpenWorld(1, ant_hel_map_path));
+    const size_t instance_count = std::clamp<size_t>(game_config::open_world_instances_per_map, 1, 64);
+    m_worlds.reserve(instance_count * 2);
+    for (size_t instance = 0; instance < instance_count; ++instance)
+    {
+        m_worlds.emplace_back(CreateOpenWorld(static_cast<std::uint32_t>(m_worlds.size()),
+                                             game_config::lobby_map_path,
+                                             world_controller_keys::weather_diurnal_open));
+        m_worlds.emplace_back(CreateOpenWorld(static_cast<std::uint32_t>(m_worlds.size()), ant_hel_map_path,
+                                             world_controller_keys::open));
+    }
 }
 
 bool IWorldModule::Init() { return true; }

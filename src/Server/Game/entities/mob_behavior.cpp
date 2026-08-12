@@ -61,10 +61,12 @@ SMobStats ScaleSummonedMobStats(SMobStats stats, ERarity rarity)
 {
     const float base_radius = stats.radius;
     const float base_mass = stats.mass;
-    const float linear_scale = 1.f + game_config::mob_summoned_rarity_linear_scale * GetRarityValueLevel(rarity);
+    const float rarity_bonus = game_config::mob_summoned_rarity_linear_scale * GetRarityValueLevel(rarity);
     stats = ScaleMobStats(stats, rarity);
-    stats.radius = base_radius * linear_scale;
-    stats.mass = base_mass * linear_scale;
+    stats.radius = base_radius *
+                   (1.f + rarity_bonus * std::max(0.f, game_config::mob_summoned_radius_bonus_multiplier));
+    stats.mass = base_mass * (1.f + rarity_bonus * std::max(0.f, game_config::mob_summoned_mass_bonus_multiplier)) *
+                 std::max(0.f, game_config::mob_summoned_mass_multiplier);
     return stats;
 }
 
@@ -2447,7 +2449,7 @@ bool RegisterMobs(std::string& error)
         proto.m_base_stats.radius =
             game_config::mob_soldier_ant_radius * game_config::mob_termite_overmind_radius_multiplier;
         proto.m_base_stats.mass =
-            game_config::mob_soldier_ant_mass * game_config::mob_termite_overmind_radius_multiplier;
+            game_config::mob_soldier_ant_mass * game_config::mob_termite_overmind_mass_multiplier;
         proto.m_base_stats.horizon = game_config::default_horizon;
         proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
         proto.m_base_stats.max_velocity =
@@ -2661,8 +2663,8 @@ bool RegisterMobs(std::string& error)
             stats.mass *= multiplier;
             stats.horizon *= multiplier;
             stats.max_absorb_range *= multiplier;
-            stats.max_velocity *= multiplier;
-            stats.acceleration *= multiplier;
+            stats.max_velocity *= multiplier * std::max(0.f, game_config::titan_speed_multiplier);
+            stats.acceleration *= multiplier * std::max(0.f, game_config::titan_speed_multiplier);
             stats.turn_speed *= multiplier;
             return stats;
         };

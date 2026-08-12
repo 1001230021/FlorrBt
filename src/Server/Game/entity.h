@@ -93,6 +93,7 @@ class CEntity
     size_t m_conditional_tick_index = std::numeric_limits<size_t>::max();
     size_t m_large_spatial_index = std::numeric_limits<size_t>::max();
     std::uint64_t m_active_tick_marker = 0;
+    std::uint64_t m_collision_sync_marker = 0;
     bool m_is_marked_for_des = false;
     std::uint32_t m_tags = 0;
 

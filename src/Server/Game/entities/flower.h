@@ -34,6 +34,10 @@ class CFlower : public CAttackableMob<SFlowerStats>
 
     const SFlowerStats* GetBaseStats() const override { return &m_base_stats; }
     const SFlowerStats* GetFinalStats() const override { return &m_final_stats; }
+    float WallCollisionRadius() const override
+    {
+        return std::max(0.f, m_radius * game_config::mob_wall_collision_radius_multiplier);
+    }
 
     int GetStartCopyIndex(int slot_index) const;
     CPetal* GetMoonPetal() const;

@@ -86,6 +86,8 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\Server\Auth\email_verification_service.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\weather_diurnal_open_controller.h" />
+    <ClInclude Include="src\Server\Game\systems\weather_diurnal_system.h" />
     <ClInclude Include="src\Server\HotReload\hot_reload_snapshot.h" />
     <ClInclude Include="src\Server\HotReload\snapshot_archive.h" />
     <ClInclude Include="src\Server\Game\controller.h" />
@@ -106,6 +108,7 @@
     <ClInclude Include="src\Server\Game\game_services.h" />
     <ClInclude Include="src\Server\Game\gamecontrollers\open_reward_service.h" />
     <ClInclude Include="src\Server\Game\gamecontrollers\open_spawn_director.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\spawn_rules.h" />
     <ClInclude Include="src\Server\Game\gamecontrollers\opencontroller.h" />
     <ClInclude Include="src\Server\Game\gamecontrollers\waitingcontroller.h" />
     <ClInclude Include="src\Server\Game\gamecontrollers\world_controller_factory.h" />
@@ -150,8 +153,10 @@
     <ClCompile Include="src\Server\Game\gamecontext.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\open_reward_service.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\open_spawn_director.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\spawn_rules.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\opencontroller.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\waitingcontroller.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\weather_diurnal_open_controller.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\world_controller_factory.cpp" />
     <ClCompile Include="src\Server\Game\gameworld.cpp" />
     <ClCompile Include="src\Server\Game\player.cpp" />
@@ -159,6 +164,7 @@
     <ClCompile Include="src\Server\Game\states\states.cpp" />
     <ClCompile Include="src\Server\Game\systems\player_lifecycle_service.cpp" />
     <ClCompile Include="src\Server\Game\systems\snapshot_service.cpp" />
+    <ClCompile Include="src\Server\Game\systems\weather_diurnal_system.cpp" />
     <ClCompile Include="src\Server\main.cpp" />
     <ClCompile Include="src\Server\Module\console_module.cpp" />
     <ClCompile Include="src\Server\Module\network_module.cpp" />

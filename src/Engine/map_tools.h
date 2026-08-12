@@ -51,6 +51,7 @@ struct FlorrBtMap
     int tile_width = 512;
     int tile_height = 512;
     std::string source_path;
+    std::string spawn_rules_path;
 
     FlorrBtMap(int w, int h, int tw = 512, int th = 512) : width(w), height(h), tile_width(tw), tile_height(th) {}
 
@@ -109,6 +110,7 @@ struct FlorrBtMap
         float difficulty;
         std::vector<Point> vertices;
         std::string mobs;
+        std::string spawn_profile;
     };
     std::vector<Zone> zones;
 
@@ -613,6 +615,7 @@ inline bool BuildZoneFromJsonObject(const CJsonValue& obj, FlorrBtMap::Zone& zon
     zone.density = JsonPropertyFloat(obj, "density", 0.f);
     zone.difficulty = JsonPropertyFloat(obj, "difficulty", 0.f);
     zone.mobs = JsonPropertyString(obj, "mobs");
+    zone.spawn_profile = JsonPropertyString(obj, "spawn_profile");
 
     if (const CJsonValue* polygon = obj.Find("polygon"); polygon && polygon->IsArray())
     {
@@ -711,6 +714,14 @@ inline void AddJsonClassObjectLayers(const std::filesystem::path& map_path, Flor
 
     const CJsonValue* layers = map_json->Find("layers");
     if (!layers || !layers->IsArray()) return;
+
+    const std::string spawn_rules = JsonPropertyString(*map_json, "spawn_rules");
+    if (!spawn_rules.empty())
+    {
+        std::filesystem::path rules_path(spawn_rules);
+        if (rules_path.is_relative()) rules_path = map_path.parent_path() / rules_path;
+        fbt_map.spawn_rules_path = rules_path.lexically_normal().generic_string();
+    }
 
     size_t zones_before = fbt_map.zones.size();
     size_t warps_before = fbt_map.warps.size();
@@ -865,6 +876,7 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
                     zone.density = 0.0f;
                     zone.difficulty = 0.0f;
                     zone.mobs = "";
+                    zone.spawn_profile = "";
 
                     for (size_t p = 0; p < obj.property_count; ++p)
                     {
@@ -881,6 +893,9 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
                             {
                                 zone.mobs = prop.value_string;
                             }
+                        } else if (strcmp(prop.name, "spawn_profile") == 0)
+                        {
+                            if (prop.value_string) zone.spawn_profile = prop.value_string;
                         }
                     }
 

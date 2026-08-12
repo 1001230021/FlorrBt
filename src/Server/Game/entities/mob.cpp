@@ -23,6 +23,7 @@ void CMobBase::ClearStatesForRestore()
     for (auto& state : m_states)
         if (state) state->m_p_owner = nullptr;
     m_states.clear();
+    m_movement_target_states.clear();
 }
 
 template <typename TStats> CMob<TStats>::~CMob() = default;
@@ -74,7 +75,26 @@ bool ShouldBlockDiggingDamage(CMobBase* receiver, CEntity* attacker, EDamageType
 
 void CMobBase::AddState(std::unique_ptr<CState> state)
 {
-    if (state) m_states.push_back(std::move(state));
+    if (!state) return;
+    CState* raw = state.get();
+    m_states.push_back(std::move(state));
+    if (raw->AffectsMovementTarget()) m_movement_target_states.push_back(raw);
+}
+
+void CMobBase::UnregisterMovementTargetState(CState* state)
+{
+    if (!state) return;
+    m_movement_target_states.erase(
+        std::remove(m_movement_target_states.begin(), m_movement_target_states.end(), state),
+        m_movement_target_states.end());
+}
+
+sf::Vector2f CMobBase::ApplyMovementTargetStates(const sf::Vector2f& target_pos) const
+{
+    sf::Vector2f result = target_pos;
+    for (const CState* state : m_movement_target_states)
+        if (state) result = state->ModifyMovementTarget(*this, result);
+    return result;
 }
 
 void CMobBase::TickStates(float dt)
@@ -94,6 +114,7 @@ void CMobBase::TickStates(float dt)
 
         if (state->m_timer != endless && state->m_timer <= 0.0f)
         {
+            UnregisterMovementTargetState(state);
             std::unique_ptr<CState> expired = std::move(m_states[index]);
             m_states.erase(m_states.begin() + static_cast<std::ptrdiff_t>(index));
             expired.reset();
@@ -167,6 +188,7 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
 {
     const SMobStats* stats = GetFinalStats();
     if (!stats) return;
+    const sf::Vector2f effective_target_pos = ApplyMovementTargetStates(target_pos);
 
     float speed_multiplier = GetPincerSpeedMultiplier(this) * game_config::mob_velocity_multiplier;
     if (HasState<CDiggingState>()) speed_multiplier *= game_config::mob_digging_speed_multiplier;
@@ -183,7 +205,7 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
         m_vel *= next_speed / current_speed;
     }
 
-    sf::Vector2f delta = target_pos - m_pos;
+    sf::Vector2f delta = effective_target_pos - m_pos;
     float len = Length(delta);
     if (len <= m_radius)
     {
@@ -247,6 +269,7 @@ bool CMobBase::RemoveState(CState* state)
     {
         if (it->get() == state)
         {
+            UnregisterMovementTargetState(state);
             std::unique_ptr<CState> removed = std::move(*it);
             m_states.erase(it);
             removed.reset();

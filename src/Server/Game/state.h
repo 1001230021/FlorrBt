@@ -15,6 +15,11 @@ class CState
     virtual ~CState() = default;
 
     virtual void Tick(float dt) = 0;
+    virtual bool AffectsMovementTarget() const { return false; }
+    virtual sf::Vector2f ModifyMovementTarget(const CMobBase&, const sf::Vector2f& target_pos) const
+    {
+        return target_pos;
+    }
     EStateType GetType() const { return m_type; }
 
     CMobBase* m_p_owner = nullptr;

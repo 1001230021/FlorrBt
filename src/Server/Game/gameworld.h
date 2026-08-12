@@ -97,6 +97,10 @@ class CGameWorld
 
     CEntity* GetEntity(int id) const;
     CEntity* GetEntity(int id, std::uint64_t generation) const;
+    bool TryRegisterCarriedLeafPiece(const CEntity& leaf_piece, const CEntity& carrier);
+    void UnregisterCarriedLeafPiece(int leaf_piece_id, std::uint64_t leaf_piece_generation,
+                                    int carrier_id, std::uint64_t carrier_generation);
+    bool IsLeafPieceCarried(const CEntity& leaf_piece);
     void QueueEntityForCleanup(CEntity* entity);
     void QueuePsionicDamage(CMobBase* receiver, float damage, CEntity* attacker, EDamageType damage_type);
     CEntity* FindClosestEntity(const sf::Vector2f& center, float max_range,
@@ -245,6 +249,7 @@ class CGameWorld
     void ResolveWallCollisions(const std::vector<CEntity*>& entities);
     void ResolveCollisions(const std::vector<CEntity*>& entities, float dt);
     void SyncSpatialPositions(const std::vector<CEntity*>& entities);
+    void SyncSpatialPositionsAndLargeMemberships(const std::vector<CEntity*>& entities);
     void SyncSpatialPositionsAndMemberships(const std::vector<CEntity*>& entities);
     void Cleanup();
 
@@ -279,8 +284,16 @@ class CGameWorld
     std::vector<std::pair<int, std::uint64_t>> m_clear_summon_owner_keys;
     std::unordered_map<SPsionicReceiverKey, SPendingPsionicDamage, SPsionicReceiverKeyHash>
         m_pending_psionic_damage;
+    struct SCarriedLeafPieceRecord
+    {
+        std::uint64_t leaf_piece_generation = 0;
+        int carrier_id = -1;
+        std::uint64_t carrier_generation = 0;
+    };
+    std::unordered_map<int, SCarriedLeafPieceRecord> m_carried_leaf_pieces;
     std::unordered_set<int> m_wall_query_visited;
     std::uint64_t m_active_tick_marker = 1;
+    std::uint64_t m_collision_sync_marker = 1;
     float m_normal_entity_radius_limit = 1.f;
     STickPhaseTelemetry m_tick_phase_telemetry;
 };

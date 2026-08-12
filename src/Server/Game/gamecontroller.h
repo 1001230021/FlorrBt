@@ -41,6 +41,7 @@ class IGameController
     virtual void OnEntityRemoved(CGameWorld&, CEntity&, EEntityRemovalReason) {}
     virtual void OnMobDefeated(CGameWorld&, CMobBase&) {}
     virtual std::string_view SnapshotKey() const = 0;
+    virtual bool CanRestoreSnapshotKey(std::string_view key) const { return SnapshotKey() == key; }
     virtual std::uint32_t SnapshotVersion() const { return 1; }
     virtual void CaptureSnapshot(CSnapshotWriter&) const {}
     virtual bool RestoreSnapshot(const CSnapshotReader&, std::uint32_t version, std::string& error)

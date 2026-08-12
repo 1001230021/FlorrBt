@@ -24,6 +24,7 @@ class INetworkModule;
 class IWorldModule;
 class IServerDataStore;
 class IUniquePetalRegistry;
+class CWeatherDiurnalSystem;
 
 class CServer : public IGameEventSink, public IGameWorldResolver
 {
@@ -82,6 +83,7 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     bool IsRunning() const { return m_running; }
     int GetExitCode() const { return m_exit_code; }
     std::uint64_t GetTick() const { return m_tick; }
+    float GetFixedDtSeconds() const { return m_fixed_dt_seconds; }
     const SPerformanceTelemetry& GetPerformanceTelemetry() const { return m_performance_telemetry; }
     void SetTickForRestore(std::uint64_t tick) { m_tick = tick; }
     CConsole& GetConsole() { return m_console; }
@@ -93,6 +95,7 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     INetworkModule* GetNetworkModule() const { return m_p_network_module; }
     IServerDataStore* GetDataStore() const { return m_p_data_store.get(); }
     IUniquePetalRegistry* GetUniquePetalRegistry() const;
+    CWeatherDiurnalSystem* GetWeatherDiurnalSystem() const { return m_p_weather_diurnal_system; }
     bool CanTitanForgePetal(EPetalType type) const;
     void StartTitanForgeCooldown(EPetalType type);
     const TTitanForgeCooldowns& GetTitanForgeCooldowns() const { return m_titan_forge_cooldowns; }
@@ -116,6 +119,7 @@ class CServer : public IGameEventSink, public IGameWorldResolver
 
   private:
     void ExecuteStartupCommands();
+    void ExecuteStartupConfigCommands();
     void InstallLogSink();
     bool RestoreConfiguredSnapshot();
     bool PublishReadyFile();
@@ -126,6 +130,7 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     CGameWorld* m_p_main_world = nullptr;
     IWorldModule* m_p_world_module = nullptr;
     INetworkModule* m_p_network_module = nullptr;
+    CWeatherDiurnalSystem* m_p_weather_diurnal_system = nullptr;
     std::unique_ptr<IServerDataStore> m_p_data_store;
     std::unique_ptr<CGameContext> m_p_game_context;
     std::vector<SChatEntry> m_chats;
@@ -139,6 +144,7 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     bool m_hot_reload_requested = false;
     int m_exit_code = 0;
     std::uint64_t m_tick = 0;
+    float m_fixed_dt_seconds = 0.05f;
     TTitanForgeCooldowns m_titan_forge_cooldowns{};
     std::string m_hot_reload_candidate;
     std::filesystem::path m_restore_snapshot_path;

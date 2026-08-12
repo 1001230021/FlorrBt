@@ -12,6 +12,7 @@ class CMobBase;
 class CSnapshotReader;
 class CSnapshotWriter;
 enum class EPlayerSpawnReason : std::uint8_t;
+struct SWeatherDiurnalSnapshot;
 
 class COpenSpawnDirector
 {
@@ -24,8 +25,10 @@ class COpenSpawnDirector
     COpenSpawnDirector(const COpenSpawnDirector&) = delete;
     COpenSpawnDirector& operator=(const COpenSpawnDirector&) = delete;
 
-    void Tick(CGameWorld& world, float dt, float density_multiplier, spawn_callback on_spawn);
-    void SpawnMobs(CGameWorld& world, float density_multiplier, spawn_callback on_spawn);
+    void Tick(CGameWorld& world, float dt, float density_multiplier, spawn_callback on_spawn,
+              const SWeatherDiurnalSnapshot* environment = nullptr);
+    void SpawnMobs(CGameWorld& world, float density_multiplier, spawn_callback on_spawn,
+                   const SWeatherDiurnalSnapshot* environment = nullptr);
     std::optional<sf::Vector2f> SelectPlayerSpawn(CGameWorld& world, bool use_new_player_spawn,
                                                   EPlayerSpawnReason reason);
     void OnEntityRemoved(const CEntity& entity);
@@ -34,6 +37,6 @@ class COpenSpawnDirector
     bool RestoreSnapshot(const CSnapshotReader& reader, std::string& error);
 
   private:
-    struct implementation;
-    std::unique_ptr<implementation> m_impl;
+    struct CImplementation;
+    std::unique_ptr<CImplementation> m_impl;
 };

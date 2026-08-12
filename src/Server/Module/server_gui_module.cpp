@@ -1,6 +1,7 @@
 #include "server_gui_module.h"
 #include "../../Shared/fonts.h"
 #include "../../Shared/game_config.h"
+#include "../../Shared/rarity.h"
 #include "../Game/entities/mob.h"
 #include "../Game/entities/petals/petal.h"
 #include "../Game/gamecontext.h"
@@ -27,10 +28,14 @@ float LineHeight()
 
 std::vector<std::string> RarityNames()
 {
-    return {
-        "Common", "Unusual", "Rare",  "Epic",    "Legendary", "Mythic",
-        "Ultra",  "Exotic",  "Super", "Eternal", "Unique",    "Primordial",
-    };
+    std::vector<std::string> names;
+    names.reserve(rarity_names.size() - 1);
+    for (const std::string_view name : rarity_names)
+    {
+        if (name == "Null") continue;
+        names.emplace_back(name);
+    }
+    return names;
 }
 
 std::vector<std::string> PetalNames()
@@ -194,6 +199,19 @@ std::string CompletionKindAt(const CConsole& console, const std::string& command
         if (channel == "server" && argument_index == 1) return "player";
         return {};
     }
+    if (command == "weather")
+    {
+        const std::vector<std::string> tokens = SplitWhitespace(input);
+        if (argument_index == 0) return "weather_action";
+        if (argument_index == 1 && tokens.size() > 1)
+        {
+            std::string action = tokens[1];
+            std::transform(action.begin(), action.end(), action.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            if (action == "set") return "weather_type";
+        }
+        return {};
+    }
 
     const auto schema = console.CommandCompletionSchema(command);
     if (!schema) return {};
@@ -220,6 +238,8 @@ std::vector<std::string> CompletionCandidates(std::string_view kind, std::string
     if (kind == "world_or_map") return WorldIdsAndMapNames();
     if (kind == "bool") return { "0", "1" };
     if (kind == "channel") return { "global", "local", "server", "whisper" };
+    if (kind == "weather_action") return { "status", "set", "env", "derive", "auto", "time" };
+    if (kind == "weather_type") return { "clear", "cloudy", "rain", "storm", "fog" };
     return {};
 }
 

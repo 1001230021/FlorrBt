@@ -3,8 +3,8 @@
 #include "../Module/network_module.h"
 
 CGameContext::CGameContext(CGameWorld& world, INetworkModule& network, IGameEventSink& events,
-                           IGameWorldResolver& worlds)
-    : m_world(world), m_network(network), m_events(events), m_worlds(worlds)
+                           IGameWorldResolver& worlds, IWeatherDiurnalView& weather_diurnal)
+    : m_world(world), m_network(network), m_events(events), m_worlds(worlds), m_weather_diurnal(weather_diurnal)
 {
 }
 

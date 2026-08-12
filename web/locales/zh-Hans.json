@@ -15,7 +15,11 @@
       "code": "验证码",
       "sendCode": "发送验证码",
       "bindingNotice": "绑定并验证邮箱后即可完成登录。",
+      "emailBindingTitle": "邮箱绑定",
+      "bindingRequiredNotice": "绑定并验证邮箱后即可完成登录。",
+      "bindingOptionalNotice": "绑定并验证邮箱以保护此账号。",
       "bindEmail": "绑定邮箱",
+      "cancelBinding": "取消",
       "completeRegistration": "完成注册",
       "register": "注册",
       "connect": "连接",
@@ -39,7 +43,9 @@
       "talentsTitle": "天赋 [X]",
       "talentsWithPointsTitle": "天赋 [X] - {count} TP",
       "craft": "合成",
-      "craftTitle": "合成 [C]"
+      "craftTitle": "合成 [C]",
+      "settings": "设置",
+      "settingsTitle": "设置 [V]"
     },
     "chat": {
       "ariaLabel": "聊天",
@@ -60,6 +66,22 @@
       "close": "关闭滑块"
     },
     "console": { "placeholder": "控制台" },
+    "settings": {
+      "title": "设置",
+      "close": "关闭设置",
+      "language": "语言",
+      "movement": "移动方式",
+      "movementModes": {
+        "keyboard": "键盘",
+        "mouse": "鼠标",
+        "none": "不移动"
+      },
+      "holdAttack": "保持攻击",
+      "holdDefense": "保持防御",
+      "email": "邮箱",
+      "emailBound": "已绑定",
+      "emailNotBound": "未绑定"
+    },
     "inventory": {
       "title": "背包",
       "close": "关闭背包",
@@ -152,7 +174,9 @@
         "growthTime": "生长时间",
         "maxDamage": "最大伤害",
         "maxDurability": "最大耐久",
-        "maxRadius": "最大半径"
+        "maxRadius": "最大半径",
+        "hallucination": "致幻时长",
+        "evolveHits": "进化所需命中"
       },
       "values": {
         "corrupted": "腐化",
@@ -169,6 +193,8 @@
       "talentLabel": "赋",
       "talents": "天赋",
       "craft": "合成",
+      "settingsLabel": "设",
+      "settings": "设置",
       "chat": "聊天",
       "attackLabel": "A",
       "attack": "攻击",
@@ -339,7 +365,8 @@
       "trapper": "陷阱炮",
       "amulet": "护身符",
       "plank": "木板",
-      "tomato": "番茄"
+      "tomato": "番茄",
+      "hallucinogenic_mushroom": "致幻菇"
     },
     "mobs": {
       "none": "无",

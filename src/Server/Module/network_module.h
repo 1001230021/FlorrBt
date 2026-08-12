@@ -20,6 +20,7 @@ class CEntity;
 class CPlayer;
 class CAccountAuthWorker;
 class CEmailVerificationService;
+class CSnapshotBuildWorkerPool;
 struct ClientAuthRequest;
 struct ClientChatRequest;
 struct ClientCraftRequest;
@@ -46,6 +47,10 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
         double last_build_ms = 0.0;
         double average_build_ms = 0.0;
         double max_build_ms = 0.0;
+        std::uint64_t batch_count = 0;
+        double last_batch_ms = 0.0;
+        double average_batch_ms = 0.0;
+        double max_batch_ms = 0.0;
     };
 
     INetworkModule(CServer& server, CGameWorld& lobby);
@@ -67,6 +72,7 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
     void BroadcastChat(const CServer::SChatEntry& chat);
     bool SendChatToPlayer(CPlayer& player, const CServer::SChatEntry& chat);
     bool QueueWelcome(CPlayer& player) override;
+    bool QueueEnvironment(CPlayer& player);
     bool QueueOwnerStateUpdate(CPlayer& player) override;
     bool QueueInventoryUpdate(CPlayer& player);
     void NotifyPlayerWorldChanged(CPlayer& player);
@@ -97,6 +103,7 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
     {
         std::string account_name;
         std::string trusted_ip_to_commit;
+        bool register_mode = false;
         std::chrono::steady_clock::time_point expires_at{};
     };
 
@@ -144,6 +151,7 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
     void RecordLoginFailure(const CPlayer& player, const std::string& account_name);
     void ClearLoginFailures(const CPlayer& player, const std::string& account_name);
     void SendSnapshots();
+    void BroadcastEnvironmentIfChanged();
     void TickTimeouts(float dt);
     void TickBans(float dt);
     bool IsIpBanned(const std::string& ip) const;
@@ -157,6 +165,7 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
                                                  size_t& actual_size);
     void RecordSentSnapshot(CPlayer& player, SSnapshotHistoryEntry entry);
     void RecordSnapshotBuildTime(double elapsed_ms);
+    void RecordSnapshotBatchTime(double elapsed_ms);
     void RecordQueuedSnapshot(const ServerMessage& msg, size_t full_size, size_t actual_size);
     void ResetSnapshotState(CPlayer& player);
     bool QueueAuthResult(CPlayer& player, EAuthResultCode code, const std::string& message);
@@ -200,6 +209,7 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
     float m_snapshot_timer = 0.f;
     std::unique_ptr<CAccountAuthWorker> m_auth_worker;
     std::unique_ptr<CEmailVerificationService> m_email_verification_service;
+    std::unique_ptr<CSnapshotBuildWorkerPool> m_snapshot_workers;
     std::deque<SPendingAuthRequest> m_pending_auth_requests;
     std::unordered_map<std::uint32_t, std::uint64_t> m_player_auth_requests;
     std::set<std::string> m_active_auth_accounts;
@@ -207,10 +217,12 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
     std::unordered_map<std::uint32_t, std::uint64_t> m_email_delivery_requests;
     std::unordered_map<std::string, SAuthFailureState> m_auth_failures;
     std::uint64_t m_next_auth_request_id = 1;
+    std::uint64_t m_last_environment_revision = 0;
     CPlayerLifecycleService m_player_lifecycle_service;
     CSnapshotService m_snapshot_service;
     SSnapshotTelemetry m_snapshot_telemetry;
     double m_snapshot_build_total_ms = 0.0;
+    double m_snapshot_batch_total_ms = 0.0;
     std::unordered_map<std::uint32_t, SClientSnapshotState> m_client_snapshot_states;
     std::vector<std::pair<std::string, float>> m_ip_bans;
     std::vector<std::pair<std::string, float>> m_name_bans;

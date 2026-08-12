@@ -6,9 +6,10 @@ import {
 } from "./client_config.js";
 
 const settingsKey = "florrbt.web.settings";
-const settingsVersion = 13;
+const settingsVersion = 14;
 const dandelionRightFacingConfigVersion = 7;
 const loginMapViewDefaultsVersion = 10;
+const titanHalfScaleConfigVersion = 14;
 const {
   loginMapDefaultName,
   loginMapDefaultX,
@@ -25,6 +26,14 @@ export function normalizeMobileControlMode(value) {
   if (text === "0" || text === "false" || text === "no" || text === "off")
     return "off";
   return "auto";
+}
+
+export function normalizeMovementMode(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (text === "keyboard" || text === "keys") return "keyboard";
+  if (text === "none" || text === "off" || text === "disabled")
+    return "none";
+  return "mouse";
 }
 
 function normalizeLoadoutSlot(value) {
@@ -82,7 +91,9 @@ export function loadClientSettings() {
   accountInput.value = saved.account || "";
   passwordInput.value = "";
   state.locale = String(saved.locale || "en");
-  state.keyboardControl = saved.keyboardControl === true;
+  state.movementMode = normalizeMovementMode(
+    saved.movementMode || (saved.keyboardControl === true ? "keyboard" : "mouse"),
+  );
   state.mobileControlMode = normalizeMobileControlMode(
     saved.mobileControlMode || "auto",
   );
@@ -109,6 +120,14 @@ export function loadClientSettings() {
       )
     : loginMapDefaultHorizon;
   state.clientConfig = normalizeClientConfig(saved.clientConfig);
+  state.holdAttack = saved.holdAttack === true;
+  state.holdDefense = saved.holdDefense === true;
+  if ((saved.version || 0) < titanHalfScaleConfigVersion) {
+    state.clientConfig = {
+      ...state.clientConfig,
+      titanSpriteScale: defaultClientConfig.titanSpriteScale,
+    };
+  }
   if ((saved.version || 0) < dandelionRightFacingConfigVersion) {
     state.clientConfig = {
       ...state.clientConfig,
@@ -134,8 +153,10 @@ export function saveClientSettings() {
       wsUrl: wsUrlInput.value.trim(),
       account: accountInput.value,
       locale: state.locale,
-      keyboardControl: state.keyboardControl,
+      movementMode: normalizeMovementMode(state.movementMode),
       mobileControlMode: state.mobileControlMode,
+      holdAttack: state.holdAttack,
+      holdDefense: state.holdDefense,
       loadoutPresets: normalizeLoadoutPresets(state.loadoutPresets),
       activeLoadoutPreset: state.activeLoadoutPreset,
       loginMapName: state.loginMapName,

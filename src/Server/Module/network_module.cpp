@@ -10,6 +10,7 @@
 #include "../Game/gamecontext.h"
 #include "../Game/gameworld.h"
 #include "../Game/player.h"
+#include "../Game/systems/weather_diurnal_system.h"
 #include "../Game/talent.h"
 #include "../report.h"
 #include <SFML/Network.hpp>
@@ -23,6 +24,7 @@
 #include <cstdint>
 #include <condition_variable>
 #include <exception>
+#include <functional>
 #include <limits>
 #include <mutex>
 #include <sstream>
@@ -169,6 +171,111 @@ class CAccountAuthWorker
     bool m_stop = false;
 };
 
+class CSnapshotBuildWorkerPool
+{
+  public:
+    explicit CSnapshotBuildWorkerPool(size_t worker_count)
+    {
+        m_workers.reserve(worker_count);
+        try
+        {
+            for (size_t i = 0; i < worker_count; ++i)
+                m_workers.emplace_back(&CSnapshotBuildWorkerPool::WorkerMain, this);
+        } catch (...)
+        {
+            ShutDown();
+            throw;
+        }
+    }
+
+    ~CSnapshotBuildWorkerPool() { ShutDown(); }
+
+    size_t WorkerCount() const { return m_workers.size(); }
+
+    void Run(size_t job_count, std::function<void(size_t)> job)
+    {
+        if (job_count == 0) return;
+        if (m_workers.empty())
+        {
+            for (size_t i = 0; i < job_count; ++i)
+                job(i);
+            return;
+        }
+
+        std::unique_lock lock(m_mutex);
+        m_job = std::move(job);
+        m_job_count = job_count;
+        m_next_job = 0;
+        m_workers_pending = m_workers.size();
+        m_exception = nullptr;
+        ++m_generation;
+        m_start_condition.notify_all();
+        m_done_condition.wait(lock, [this]() { return m_workers_pending == 0; });
+        m_job = {};
+        if (m_exception) std::rethrow_exception(m_exception);
+    }
+
+  private:
+    void ShutDown()
+    {
+        {
+            std::lock_guard lock(m_mutex);
+            m_stopping = true;
+            ++m_generation;
+        }
+        m_start_condition.notify_all();
+        for (std::thread& worker : m_workers)
+            if (worker.joinable()) worker.join();
+        m_workers.clear();
+    }
+
+    void WorkerMain()
+    {
+        std::unique_lock lock(m_mutex);
+        std::uint64_t observed_generation = 0;
+        while (true)
+        {
+            m_start_condition.wait(lock,
+                                   [this, &observed_generation]() {
+                                       return m_stopping || m_generation != observed_generation;
+                                   });
+            if (m_stopping) return;
+            observed_generation = m_generation;
+
+            while (m_next_job < m_job_count)
+            {
+                const size_t job_index = m_next_job++;
+                const auto job = m_job;
+                lock.unlock();
+                try
+                {
+                    job(job_index);
+                } catch (...)
+                {
+                    lock.lock();
+                    if (!m_exception) m_exception = std::current_exception();
+                    continue;
+                }
+                lock.lock();
+            }
+
+            if (--m_workers_pending == 0) m_done_condition.notify_one();
+        }
+    }
+
+    std::mutex m_mutex;
+    std::condition_variable m_start_condition;
+    std::condition_variable m_done_condition;
+    std::vector<std::thread> m_workers;
+    std::function<void(size_t)> m_job;
+    std::exception_ptr m_exception;
+    size_t m_job_count = 0;
+    size_t m_next_job = 0;
+    size_t m_workers_pending = 0;
+    std::uint64_t m_generation = 0;
+    bool m_stopping = false;
+};
+
 namespace
 {
 constexpr std::string_view proxy_v1_prefix = "PROXY ";
@@ -288,7 +395,8 @@ bool SameSnapshotEntity(const ServerEntitySnap& lhs, const ServerEntitySnap& rhs
         PackRadius(lhs.radius) != PackRadius(rhs.radius) || PackPercent(lhs.hp_percent) != PackPercent(rhs.hp_percent) ||
         PackPercent(lhs.shield_percent) != PackPercent(rhs.shield_percent) || lhs.flags != rhs.flags ||
         lhs.angle != rhs.angle || lhs.rarity != rhs.rarity || lhs.name != rhs.name ||
-        lhs.primary_slots.size() != rhs.primary_slots.size() || lhs.states.size() != rhs.states.size())
+        lhs.primary_slots.size() != rhs.primary_slots.size() || lhs.states.size() != rhs.states.size() ||
+        lhs.hallucinations != rhs.hallucinations)
         return false;
 
     for (size_t i = 0; i < lhs.primary_slots.size(); ++i)
@@ -309,7 +417,9 @@ bool SameSnapshotEntity(const ServerEntitySnap& lhs, const ServerEntitySnap& rhs
     }
     for (size_t i = 0; i < lhs.states.size(); ++i)
     {
-        if (lhs.states[i].type != rhs.states[i].type || lhs.states[i].rarity != rhs.states[i].rarity) return false;
+        if (lhs.states[i].type != rhs.states[i].type || lhs.states[i].rarity != rhs.states[i].rarity ||
+            lhs.states[i].value != rhs.states[i].value)
+            return false;
     }
     return true;
 }
@@ -519,6 +629,28 @@ bool INetworkModule::Init()
         return false;
     }
     LOG_INFO("email", "Email verification worker started");
+
+    if (game_config::network_parallel_snapshot_build)
+    {
+        const size_t world_count = m_server.GetWorlds().size();
+        const size_t hardware_threads = std::max(1u, std::thread::hardware_concurrency());
+        const size_t automatic_workers = std::min(world_count, std::max<size_t>(1, hardware_threads - 1));
+        const size_t configured_workers = game_config::network_snapshot_worker_count;
+        const size_t worker_count = std::min(world_count, configured_workers > 0 ? configured_workers
+                                                                                : automatic_workers);
+        if (worker_count > 1)
+        {
+            try
+            {
+                m_snapshot_workers = std::make_unique<CSnapshotBuildWorkerPool>(worker_count);
+                LOG_INFO("network", "Snapshot builder started with " + std::to_string(worker_count) + " workers");
+            } catch (const std::exception& exception)
+            {
+                m_snapshot_workers.reset();
+                LOG_WARN("network", "Parallel snapshot builder unavailable: " + std::string(exception.what()));
+            }
+        }
+    }
     return true;
 }
 
@@ -529,6 +661,7 @@ void INetworkModule::Tick(float dt)
     AcceptConnections();
     ProcessMessages();
     DispatchAuthenticationRequests();
+    BroadcastEnvironmentIfChanged();
     m_player_lifecycle_service.RespawnDeadControlledEntities(m_players, m_lobby_world, *this);
     m_player_lifecycle_service.ProcessDropPickups(m_players, *this);
     TickBans(dt);
@@ -552,11 +685,28 @@ void INetworkModule::Tick(float dt)
 
 void INetworkModule::SendSnapshots()
 {
-    for (auto& player : m_players)
+    struct SSnapshotBuildItem
     {
-        if (!player) continue;
-        if (!player->IsConnected()) continue;
-        if (!player->IsAuthenticated()) continue;
+        CPlayer* player = nullptr;
+        CSnapshotService::SBuildResult snapshot;
+        double build_ms = 0.0;
+        bool built = false;
+    };
+    struct SSnapshotWorldGroup
+    {
+        CGameWorld* world = nullptr;
+        std::vector<size_t> item_indices;
+    };
+
+    std::vector<SSnapshotBuildItem> build_items;
+    std::vector<SSnapshotWorldGroup> world_groups;
+    build_items.reserve(m_players.size());
+    world_groups.reserve(m_server.GetWorlds().size());
+
+    for (auto& player_ptr : m_players)
+    {
+        CPlayer* player = player_ptr.get();
+        if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
 
         CEntity* owner = player->GetEntity();
         if (!owner)
@@ -591,17 +741,53 @@ void INetworkModule::SendSnapshots()
             continue;
         }
 
-        const auto build_started = std::chrono::steady_clock::now();
-        CSnapshotService::SBuildResult snapshot;
-        if (!m_snapshot_service.BuildSnapshot(*player, m_snapshot_id, snapshot)) continue;
-        snapshot.message.server_tick = m_server.GetTick();
+        CGameWorld* world = owner->GameWorld();
+        if (!world) continue;
+        const size_t item_index = build_items.size();
+        build_items.push_back({ player });
+        auto group = std::find_if(world_groups.begin(), world_groups.end(),
+                                  [world](const SSnapshotWorldGroup& candidate) {
+                                      return candidate.world == world;
+                                  });
+        if (group == world_groups.end())
+        {
+            world_groups.push_back({ world, {} });
+            group = std::prev(world_groups.end());
+        }
+        group->item_indices.push_back(item_index);
+    }
+
+    const auto batch_started = std::chrono::steady_clock::now();
+    auto build_group = [this, &build_items, &world_groups](size_t group_index) {
+        SSnapshotWorldGroup& group = world_groups[group_index];
+        for (size_t item_index : group.item_indices)
+        {
+            SSnapshotBuildItem& item = build_items[item_index];
+            const auto build_started = std::chrono::steady_clock::now();
+            item.built = item.player && m_snapshot_service.BuildSnapshot(*item.player, m_snapshot_id, item.snapshot);
+            item.build_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - build_started)
+                                .count();
+            if (item.built) item.snapshot.message.server_tick = m_server.GetTick();
+        }
+    };
+    if (m_snapshot_workers && world_groups.size() > 1)
+        m_snapshot_workers->Run(world_groups.size(), build_group);
+    else
+        for (size_t i = 0; i < world_groups.size(); ++i)
+            build_group(i);
+    RecordSnapshotBatchTime(
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - batch_started).count());
+
+    for (SSnapshotBuildItem& item : build_items)
+    {
+        CPlayer* player = item.player;
+        if (!player || !item.built) continue;
+        RecordSnapshotBuildTime(item.build_ms);
+        CSnapshotService::SBuildResult& snapshot = item.snapshot;
         const size_t full_snapshot_size = snapshot.packed_size;
         size_t actual_snapshot_size = full_snapshot_size;
         SSnapshotHistoryEntry history_entry =
             PrepareSnapshotForSend(*player, snapshot.message, full_snapshot_size, actual_snapshot_size);
-        const double build_elapsed_ms =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - build_started).count();
-        RecordSnapshotBuildTime(build_elapsed_ms);
 
         if (!QueueMessage(*player, snapshot.message, actual_snapshot_size))
         {
@@ -625,6 +811,7 @@ void INetworkModule::SendSnapshots()
 
 void INetworkModule::ShutDown()
 {
+    m_snapshot_workers.reset();
     m_listener_v6.close();
     m_listener_v4.close();
     m_listening_v4 = false;
@@ -763,7 +950,7 @@ void INetworkModule::ProcessEmailDeliveryResults()
         m_email_delivery_requests.erase(pending);
 
         CPlayer* player = FindPlayerById(result.player_id);
-        if (!player || !player->IsConnected() || player->IsAuthenticated()) continue;
+        if (!player || !player->IsConnected()) continue;
         if (result.success)
             QueueAuthResult(*player, EAuthResultCode::VerificationCodeSent, "Verification code sent");
         else
@@ -839,18 +1026,15 @@ void INetworkModule::ProcessAuthenticationResults()
         }
 
         std::string commit_error;
+        std::string trusted_ip_to_commit;
         if (completion.register_mode)
         {
-            if (!CAccountDataStore::CommitVerifiedRegistration(completion.result, &commit_error))
+            if (!CAccountDataStore::CommitRegistration(completion.result, &commit_error))
             {
                 QueueAuthResult(*player, EAuthResultCode::Failed,
                                 commit_error.empty() ? "Auth failed" : commit_error);
                 continue;
             }
-            if (m_email_verification_service)
-                m_email_verification_service->ForgetChallenge(
-                    completion.result.account_name, completion.result.email,
-                    CEmailVerificationService::EPurpose::Registration);
         } else
         {
             if (!CAccountDataStore::CommitLogin(completion.result, &commit_error))
@@ -861,33 +1045,31 @@ void INetworkModule::ProcessAuthenticationResults()
                 continue;
             }
             ClearLoginFailures(*player, completion.account_name);
-            if (completion.result.email_verification_required)
-            {
-                ClearPendingEmailAuthentication(player->GetId());
-                const auto expires_at = std::chrono::steady_clock::now() +
-                                        std::chrono::seconds(
-                                            std::max(1, game_config::email_verification_ttl_seconds));
-                m_pending_verified_logins.insert_or_assign(
-                    player->GetId(),
-                    SPendingVerifiedLogin{ completion.account_name,
-                                           completion.result.password_verified ? completion.result.client_ip
-                                                                               : std::string{},
-                                           expires_at });
-                m_auth_deadlines.insert_or_assign(
-                    player->GetId(), expires_at + std::chrono::seconds(auth_verification_grace_seconds));
-                QueueAuthResult(*player, EAuthResultCode::EmailBindingRequired,
-                                completion.result.email.empty() ? "Bind and verify an email address"
-                                                                : "Verify the bound email address");
-                continue;
-            }
+            if (completion.result.password_verified) trusted_ip_to_commit = completion.result.client_ip;
+        }
+
+        if (game_config::IsEmailBindingRequired() && completion.result.email_verification_required)
+        {
+            ClearPendingEmailAuthentication(player->GetId());
+            const auto expires_at = std::chrono::steady_clock::now() +
+                                    std::chrono::seconds(
+                                        std::max(1, game_config::email_verification_ttl_seconds));
+            m_pending_verified_logins.insert_or_assign(
+                player->GetId(), SPendingVerifiedLogin{ completion.account_name, trusted_ip_to_commit,
+                                                        completion.register_mode, expires_at });
+            m_auth_deadlines.insert_or_assign(
+                player->GetId(), expires_at + std::chrono::seconds(auth_verification_grace_seconds));
+            QueueAuthResult(*player, EAuthResultCode::EmailBindingRequired,
+                            completion.result.email.empty() ? "Bind and verify an email address"
+                                                            : "Verify the bound email address");
+            continue;
         }
         if (!commit_error.empty()) LOG_WARN("account", commit_error);
 
         ClearPendingEmailAuthentication(player->GetId());
         EPlayerBufferResult result = ApplyAuthentication(
             *player, completion.account_name, completion.register_mode, EAuthResultCode::Authenticated, {},
-            !completion.register_mode && completion.result.password_verified ? completion.result.client_ip
-                                                                              : std::string{});
+            trusted_ip_to_commit);
         if (result == EPlayerBufferResult::Continue) continue;
 
         for (size_t i = 0; i < m_players.size(); ++i)
@@ -1252,6 +1434,16 @@ void INetworkModule::RecordSnapshotBuildTime(double elapsed_ms)
     telemetry.max_build_ms = std::max(telemetry.max_build_ms, elapsed_ms);
 }
 
+void INetworkModule::RecordSnapshotBatchTime(double elapsed_ms)
+{
+    SSnapshotTelemetry& telemetry = m_snapshot_telemetry;
+    telemetry.batch_count++;
+    telemetry.last_batch_ms = elapsed_ms;
+    m_snapshot_batch_total_ms += elapsed_ms;
+    telemetry.average_batch_ms = m_snapshot_batch_total_ms / static_cast<double>(telemetry.batch_count);
+    telemetry.max_batch_ms = std::max(telemetry.max_batch_ms, elapsed_ms);
+}
+
 void INetworkModule::RecordQueuedSnapshot(const ServerMessage& msg, size_t full_size, size_t actual_size)
 {
     SSnapshotTelemetry& telemetry = m_snapshot_telemetry;
@@ -1273,6 +1465,14 @@ bool INetworkModule::QueueAuthResult(CPlayer& player, EAuthResultCode code, cons
     msg.type = ServerMessage::Type::AuthResult;
     msg.auth_result_code = code;
     msg.auth_message = message;
+    msg.email_policy = static_cast<EEmailPolicy>(game_config::GetEmailPolicy());
+    msg.email_bound = false;
+    if (player.IsAuthenticated())
+    {
+        SAccountEmailState email_state;
+        if (CAccountDataStore::GetEmailState(player.GetAccountName(), email_state))
+            msg.email_bound = email_state.verified;
+    }
     return QueueMessage(player, msg);
 }
 
@@ -1294,9 +1494,48 @@ bool INetworkModule::QueueWelcome(CPlayer& player)
         msg.map_name = m_lobby_world.GetMapPath();
     }
 
-    const bool queued = QueueMessage(player, msg);
-    if (queued) report::SyncSquadMetadata(player);
-    return queued;
+    if (!QueueMessage(player, msg)) return false;
+    const bool environment_queued = QueueEnvironment(player);
+    if (environment_queued) report::SyncSquadMetadata(player);
+    return environment_queued;
+}
+
+bool INetworkModule::QueueEnvironment(CPlayer& player)
+{
+    const CWeatherDiurnalSystem* system = m_server.GetWeatherDiurnalSystem();
+    if (!system) return false;
+
+    const SWeatherDiurnalClientState environment = system->GetClientState();
+    ServerMessage msg;
+    msg.type = ServerMessage::Type::Environment;
+    msg.environment_anchor_tick = m_server.GetTick();
+    msg.time_of_day = static_cast<std::uint16_t>(
+        std::llround(std::clamp(environment.time_of_day, 0.0, 1.0) * static_cast<double>(UINT16_MAX)));
+    msg.day_duration_seconds = static_cast<float>(system->DayDurationSeconds());
+    msg.fixed_dt_seconds = m_server.GetFixedDtSeconds();
+    for (std::size_t index = 0; index < server_environment_weather_count; ++index)
+    {
+        const float intensity =
+            index < static_cast<std::size_t>(EWeatherType::Count) ? environment.weather_intensity[index] : 0.f;
+        msg.weather_intensity[index] =
+            static_cast<std::uint8_t>(std::llround(std::clamp(intensity, 0.f, 1.f) * 255.f));
+    }
+    return QueueMessage(player, msg);
+}
+
+void INetworkModule::BroadcastEnvironmentIfChanged()
+{
+    const CWeatherDiurnalSystem* system = m_server.GetWeatherDiurnalSystem();
+    if (!system) return;
+    const SWeatherDiurnalClientState environment = system->GetClientState();
+    if (environment.revision == m_last_environment_revision) return;
+    m_last_environment_revision = environment.revision;
+
+    for (const auto& player : m_players)
+    {
+        if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
+        if (!QueueEnvironment(*player) || !FlushSendBuffer(*player)) player->DetachSocket();
+    }
 }
 
 bool INetworkModule::QueueOwnerState(CPlayer& player)
@@ -1860,9 +2099,16 @@ void INetworkModule::HandleTalentRequest(CPlayer& player, const ClientTalentRequ
 
 INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& player, const ClientAuthRequest& request)
 {
-    if (player.IsAuthenticated())
+    const bool binding_request = request.mode == ClientAuthRequest::Mode::RequestBindingCode ||
+                                 request.mode == ClientAuthRequest::Mode::ConfirmBinding;
+    if (player.IsAuthenticated() && !binding_request)
     {
         QueueAuthResult(player, EAuthResultCode::Failed, "Already authenticated");
+        return EPlayerBufferResult::Continue;
+    }
+    if (binding_request && !game_config::IsEmailBindingEnabled())
+    {
+        QueueAuthResult(player, EAuthResultCode::Failed, "Email binding is disabled");
         return EPlayerBufferResult::Continue;
     }
 
@@ -1893,22 +2139,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
 
     if (request.mode == ClientAuthRequest::Mode::RequestRegistrationCode)
     {
-        if (m_active_auth_accounts.contains(request.name))
-        {
-            QueueAuthResult(player, EAuthResultCode::Failed, "Authentication already in progress");
-            return EPlayerBufferResult::Continue;
-        }
-
-        SAccountAuthWork validation;
-        std::string error;
-        if (!CAccountDataStore::PrepareAuthentication(request.name, request.password, request.email,
-                                                       player.GetRemoteAddress(), true, validation, &error))
-        {
-            QueueAuthResult(player, EAuthResultCode::Failed,
-                            error.empty() ? "Invalid registration request" : error);
-            return EPlayerBufferResult::Continue;
-        }
-        RequestVerificationCode(player, request.name, request.email, true);
+        QueueAuthResult(player, EAuthResultCode::Failed, "Registration no longer requires an email code");
         return EPlayerBufferResult::Continue;
     }
 
@@ -1919,9 +2150,14 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
         ClearPendingEmailAuthentication(player.GetId());
         pending_login = m_pending_verified_logins.end();
     }
+    const std::string binding_account_name = player.IsAuthenticated()
+                                                 ? player.GetAccountName()
+                                                 : pending_login != m_pending_verified_logins.end()
+                                                       ? pending_login->second.account_name
+                                                       : std::string{};
     if (request.mode == ClientAuthRequest::Mode::RequestBindingCode)
     {
-        if (pending_login == m_pending_verified_logins.end() || pending_login->second.account_name != request.name)
+        if (binding_account_name.empty() || binding_account_name != request.name)
         {
             QueueAuthResult(player, EAuthResultCode::Failed, "Login again before binding an email address");
             return EPlayerBufferResult::Continue;
@@ -1940,7 +2176,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
 
     if (request.mode == ClientAuthRequest::Mode::ConfirmBinding)
     {
-        if (pending_login == m_pending_verified_logins.end() || pending_login->second.account_name != request.name)
+        if (binding_account_name.empty() || binding_account_name != request.name)
         {
             QueueAuthResult(player, EAuthResultCode::Failed, "Login again before binding an email address");
             return EPlayerBufferResult::Continue;
@@ -1969,10 +2205,18 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
         m_email_verification_service->ForgetChallenge(request.name, request.email,
                                                       CEmailVerificationService::EPurpose::Binding);
 
+        if (player.IsAuthenticated())
+        {
+            ClearPendingEmailAuthentication(player.GetId());
+            QueueAuthResult(player, EAuthResultCode::EmailBound, "Email bound");
+            return EPlayerBufferResult::Continue;
+        }
+
         const std::string account_name = pending_login->second.account_name;
         const std::string trusted_ip_to_commit = pending_login->second.trusted_ip_to_commit;
+        const bool register_mode = pending_login->second.register_mode;
         ClearPendingEmailAuthentication(player.GetId());
-        return ApplyAuthentication(player, account_name, false, EAuthResultCode::EmailBound, "Email bound",
+        return ApplyAuthentication(player, account_name, register_mode, EAuthResultCode::EmailBound, "Email bound",
                                    trusted_ip_to_commit);
     }
 
@@ -1992,15 +2236,6 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
         {
             QueueAuthResult(player, EAuthResultCode::Failed,
                             error.empty() ? "Invalid registration request" : error);
-            return EPlayerBufferResult::Continue;
-        }
-        if (!m_email_verification_service ||
-            !m_email_verification_service->VerifyCode(request.name, request.email,
-                                                       CEmailVerificationService::EPurpose::Registration,
-                                                       request.code, error))
-        {
-            QueueAuthResult(player, EAuthResultCode::Failed,
-                            error.empty() ? "Registration email verification failed" : error);
             return EPlayerBufferResult::Continue;
         }
     } else if (request.mode != ClientAuthRequest::Mode::Login)

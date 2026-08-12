@@ -39,6 +39,7 @@ export function createMobileControls({
   onBackpack,
   onTalent,
   onCraft,
+  onSettings,
   onChat,
 } = {}) {
   const root = document.createElement("section");
@@ -73,7 +74,18 @@ export function createMobileControls({
     "mobile-panel-button",
     "ui.mobile.chat",
   );
-  actionGroup.append(backpackButton, talentButton, craftButton, chatButton);
+  const settingsButton = createButton(
+    "ui.mobile.settingsLabel",
+    "mobile-panel-button",
+    "ui.mobile.settings",
+  );
+  actionGroup.append(
+    backpackButton,
+    talentButton,
+    craftButton,
+    settingsButton,
+    chatButton,
+  );
 
   const attackButton = createButton(
     "ui.mobile.attackLabel",
@@ -201,6 +213,7 @@ export function createMobileControls({
   bindTapButton(backpackButton, onBackpack);
   bindTapButton(talentButton, onTalent);
   bindTapButton(craftButton, onCraft);
+  bindTapButton(settingsButton, onSettings);
   bindTapButton(chatButton, onChat);
 
   window.addEventListener("pointerdown", beginMovement, {

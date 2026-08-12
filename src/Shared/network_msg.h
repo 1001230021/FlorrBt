@@ -5,7 +5,9 @@
 #include "talent_type.h"
 #include <SFML/System/Vector2.hpp>
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -42,7 +44,13 @@ constexpr size_t talent_packet_item_size = 4;
 constexpr size_t max_client_talent_items = 64;
 constexpr size_t inventory_item_packet_size = 6;
 constexpr size_t owner_slot_packet_size = 2;
-constexpr size_t entity_state_packet_size = 2;
+constexpr size_t legacy_entity_state_packet_size = 2;
+constexpr size_t entity_state_packet_size = 3;
+constexpr size_t entity_hallucination_parameter_count = 6;
+// Effective hallucinogenic parameters are clamped server-side to at most +-8, so a 1/1024
+// fixed-point int16 (range +-32) covers them with plenty of headroom.
+constexpr float net_hallucination_param_scale = 1024.f;
+constexpr size_t entity_hallucination_packet_size = entity_hallucination_parameter_count * 2;
 constexpr size_t max_auth_name_size = 32;
 constexpr size_t max_auth_password_size = 64;
 constexpr size_t max_auth_email_size = 254;
@@ -696,9 +704,13 @@ struct ClientInputFrame
 // bytes][rarity:1 byte][name_len:1
 // byte][name][primary_slot_count:1 byte][petal_type:1 byte][rarity:1 byte][visual_type:1 byte]
 // [copy_count:1 byte][copy_state:1 byte][copy_progress:1 byte][copy_visual_value:0/2 bytes]......[state_count:1 byte]
-// [state_type:1 byte][rarity:1 byte]... EntitySnap compact: [format:1
+// [state_type:1 byte][rarity:1 byte]... EntitySnap full states: EntitySnap full with each state followed by
+// [value:1 byte], then [hallucination_count:1 byte][parameter_0:i16]...[parameter_5:i16]...
+// EntitySnap compact: [format:1
 // byte][entity_id:2 bytes][entity_type:1 byte][team:1 byte][rel_x:2 bytes][rel_y:2 bytes][radius:2 bytes][hp_percent:1
 // byte][shield_percent:1 byte][flags:2 bytes][angle:2 bytes][rarity:1 byte]
+// EntitySnap compact states: EntitySnap compact followed by [state_count:1 byte]
+// [state_type:1 byte][rarity:1 byte][value:1 byte]...
 //             live petal entity_type = 100 + petal_type, drop entity_type = 180 + petal_type.
 // OwnerState: [type:1 byte][level:1 byte][flags:1 byte][petal_slots:1 byte][secondary_slots:1 byte][exp_progress_bps:2
 // bytes][petal_type:1 byte][rarity:1 byte]...[talent_points:2 bytes][talent_count:1 byte][talent_id:2 bytes][rarity:1
@@ -707,6 +719,8 @@ struct ClientInputFrame
 // Chat:       [type:1 byte][flag:1 byte][player_id:2 bytes][time:4 bytes][name_len:1 byte][message_len:1
 // byte][name][message] CraftResult:[type:1 byte][success:1 byte][petal_type:1 byte][rarity:1 byte][consumed:4
 // bytes][count:2 bytes][item...]
+// Environment: [type:1 byte][anchor_server_tick:8 bytes][time_of_day_u16:2 bytes]
+// [day_duration_seconds:f32][fixed_dt_seconds:f32][weather_intensity:5 bytes]
 
 using net_coord = int32_t;
 using net_relative_coord = int16_t;
@@ -714,6 +728,8 @@ using net_entity_id = uint16_t;
 
 constexpr uint8_t server_entity_snap_full = 0;
 constexpr uint8_t server_entity_snap_compact = 1;
+constexpr uint8_t server_entity_snap_compact_states = 2;
+constexpr uint8_t server_entity_snap_full_states = 3;
 constexpr float net_coord_scale = 64.f;
 constexpr float net_relative_coord_scale = 1.f;
 constexpr float net_radius_scale = 1.f;
@@ -724,6 +740,8 @@ constexpr size_t server_entity_format_size = 1;
 constexpr size_t server_entity_compact_size = 18;
 constexpr uint32_t full_snapshot_base_id = std::numeric_limits<uint32_t>::max();
 constexpr size_t server_snapshot_header_size = 27;
+// Environment weather intensities, one u8 per EWeatherType in enum order.
+constexpr size_t server_environment_weather_count = 5;
 
 inline net_coord PackCoord(float value) { return static_cast<net_coord>(std::round(value * net_coord_scale)); }
 
@@ -827,6 +845,21 @@ inline int32_t ReadI32(const uint8_t* data, size_t& offset)
                      (static_cast<uint32_t>(data[offset + 2]) << 16) | (static_cast<uint32_t>(data[offset + 3]) << 24);
     offset += 4;
     return static_cast<int32_t>(value);
+}
+
+inline void WriteF32(uint8_t* out, size_t& offset, float value)
+{
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    WriteU32(out, offset, bits);
+}
+
+inline float ReadF32(const uint8_t* data, size_t& offset)
+{
+    const std::uint32_t bits = ReadU32(data, offset);
+    float value = 0.f;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
 }
 
 enum class ServerEntityFlag : uint16_t
@@ -959,6 +992,7 @@ struct SEntityStateSnap
 {
     EStateType type = EStateType::None;
     uint8_t rarity = 0;
+    uint8_t value = 0;
 };
 
 struct ServerEntitySnap
@@ -976,12 +1010,16 @@ struct ServerEntitySnap
     std::string name;
     std::vector<SOwnerPetalSlot> primary_slots;
     std::vector<SEntityStateSnap> states;
+    // Owner-only: clamped effective hallucinogenic affine parameters per active state (stack
+    // order), so the afflicted client can preview distorted movement and render scene ghosts.
+    std::vector<std::array<float, entity_hallucination_parameter_count>> hallucinations;
 
     static bool CanPackCompact(const ServerEntitySnap& snap, sf::Vector2f origin, net_entity_id owner_entity_id)
     {
         if (snap.entity_id == owner_entity_id) return false;
         if ((snap.flags & static_cast<uint16_t>(ServerEntityFlag::Owner)) != 0) return false;
-        if (!snap.name.empty() || !snap.primary_slots.empty() || !snap.states.empty()) return false;
+        if (!snap.name.empty() || !snap.primary_slots.empty()) return false;
+        if (!snap.hallucinations.empty()) return false;
         return CanPackRelativeCoord(snap.pos.x - origin.x) && CanPackRelativeCoord(snap.pos.y - origin.y);
     }
 
@@ -993,9 +1031,10 @@ struct ServerEntitySnap
         snap.name.clear();
         snap.primary_slots.clear();
         snap.states.clear();
+        snap.hallucinations.clear();
 
         uint8_t format = data[offset++];
-        if (format == server_entity_snap_compact)
+        if (format == server_entity_snap_compact || format == server_entity_snap_compact_states)
         {
             if (!has_origin || offset + (server_entity_compact_size - server_entity_format_size) > len) return false;
 
@@ -1011,10 +1050,27 @@ struct ServerEntitySnap
             snap.flags = ReadU16(data, offset);
             snap.angle = static_cast<int16_t>(ReadU16(data, offset));
             snap.rarity = data[offset++];
+
+            if (format == server_entity_snap_compact_states)
+            {
+                if (offset + 1 > len) return false;
+                const uint8_t state_count = data[offset++];
+                if (offset + static_cast<size_t>(state_count) * entity_state_packet_size > len) return false;
+                snap.states.reserve(state_count);
+                for (uint8_t i = 0; i < state_count; ++i)
+                {
+                    SEntityStateSnap state;
+                    state.type = static_cast<EStateType>(data[offset++]);
+                    state.rarity = data[offset++];
+                    state.value = data[offset++];
+                    if (!IsKnownStateType(state.type)) return false;
+                    snap.states.push_back(state);
+                }
+            }
             return true;
         }
 
-        if (format != server_entity_snap_full) return false;
+        if (format != server_entity_snap_full && format != server_entity_snap_full_states) return false;
         if (offset + server_entity_fixed_size > len) return false;
 
         snap.entity_id = ReadU16(data, offset);
@@ -1046,15 +1102,36 @@ struct ServerEntitySnap
 
         if (offset + 1 > len) return false;
         uint8_t state_count = data[offset++];
-        if (offset + static_cast<size_t>(state_count) * entity_state_packet_size > len) return false;
+        const size_t state_packet_size = format == server_entity_snap_full_states
+                                             ? entity_state_packet_size
+                                             : legacy_entity_state_packet_size;
+        if (offset + static_cast<size_t>(state_count) * state_packet_size > len) return false;
         snap.states.reserve(state_count);
         for (uint8_t i = 0; i < state_count; ++i)
         {
             SEntityStateSnap state;
             state.type = static_cast<EStateType>(data[offset++]);
             state.rarity = data[offset++];
+            if (format == server_entity_snap_full_states) state.value = data[offset++];
             if (!IsKnownStateType(state.type)) return false;
             snap.states.push_back(state);
+        }
+
+        if (format == server_entity_snap_full_states)
+        {
+            if (offset + 1 > len) return false;
+            const uint8_t hallucination_count = data[offset++];
+            if (offset + static_cast<size_t>(hallucination_count) * entity_hallucination_packet_size > len)
+                return false;
+            snap.hallucinations.reserve(hallucination_count);
+            for (uint8_t i = 0; i < hallucination_count; ++i)
+            {
+                std::array<float, entity_hallucination_parameter_count> parameters{};
+                for (float& parameter : parameters)
+                    parameter = static_cast<float>(static_cast<int16_t>(ReadU16(data, offset))) /
+                                net_hallucination_param_scale;
+                snap.hallucinations.push_back(parameters);
+            }
         }
         return true;
     }
@@ -1064,7 +1141,7 @@ struct ServerEntitySnap
     {
         if (has_origin && CanPackCompact(snap, origin, owner_entity_id))
         {
-            out[offset++] = server_entity_snap_compact;
+            out[offset++] = snap.states.empty() ? server_entity_snap_compact : server_entity_snap_compact_states;
             WriteU16(out, offset, snap.entity_id);
             out[offset++] = snap.entity_type;
             out[offset++] = snap.team;
@@ -1076,10 +1153,22 @@ struct ServerEntitySnap
             WriteU16(out, offset, snap.flags);
             WriteU16(out, offset, static_cast<uint16_t>(snap.angle));
             out[offset++] = snap.rarity;
+            if (!snap.states.empty())
+            {
+                const uint8_t state_count =
+                    static_cast<uint8_t>(std::min<size_t>(snap.states.size(), UINT8_MAX));
+                out[offset++] = state_count;
+                for (uint8_t i = 0; i < state_count; ++i)
+                {
+                    out[offset++] = static_cast<uint8_t>(snap.states[i].type);
+                    out[offset++] = snap.states[i].rarity;
+                    out[offset++] = snap.states[i].value;
+                }
+            }
             return;
         }
 
-        out[offset++] = server_entity_snap_full;
+        out[offset++] = server_entity_snap_full_states;
         WriteU16(out, offset, snap.entity_id);
         out[offset++] = snap.entity_type;
         out[offset++] = snap.team;
@@ -1105,6 +1194,19 @@ struct ServerEntitySnap
         {
             out[offset++] = static_cast<uint8_t>(snap.states[i].type);
             out[offset++] = snap.states[i].rarity;
+            out[offset++] = snap.states[i].value;
+        }
+        uint8_t hallucination_count =
+            static_cast<uint8_t>(std::min<size_t>(snap.hallucinations.size(), UINT8_MAX));
+        out[offset++] = hallucination_count;
+        for (uint8_t i = 0; i < hallucination_count; ++i)
+        {
+            for (float parameter : snap.hallucinations[i])
+            {
+                const float packed = std::clamp(std::round(parameter * net_hallucination_param_scale),
+                                                -32768.f, 32767.f);
+                WriteU16(out, offset, static_cast<uint16_t>(static_cast<int16_t>(packed)));
+            }
         }
     }
 
@@ -1112,7 +1214,8 @@ struct ServerEntitySnap
     {
         size_t size = server_entity_format_size + server_entity_fixed_size +
                       std::min<size_t>(snap.name.size(), UINT8_MAX) + 1 + 1 +
-                      std::min<size_t>(snap.states.size(), UINT8_MAX) * entity_state_packet_size;
+                      std::min<size_t>(snap.states.size(), UINT8_MAX) * entity_state_packet_size + 1 +
+                      std::min<size_t>(snap.hallucinations.size(), UINT8_MAX) * entity_hallucination_packet_size;
         const size_t slot_count = std::min<size_t>(snap.primary_slots.size(), UINT8_MAX);
         for (size_t i = 0; i < slot_count; ++i) size += GetEntityOwnerPetalSlotPackedSize(snap.primary_slots[i]);
         return size;
@@ -1121,8 +1224,11 @@ struct ServerEntitySnap
     static size_t GetPackedSize(const ServerEntitySnap& snap, sf::Vector2f origin, net_entity_id owner_entity_id,
                                 bool has_origin)
     {
-        return has_origin && CanPackCompact(snap, origin, owner_entity_id) ? server_entity_compact_size
-                                                                           : GetPackedSize(snap);
+        if (!has_origin || !CanPackCompact(snap, origin, owner_entity_id)) return GetPackedSize(snap);
+        return server_entity_compact_size +
+               (snap.states.empty()
+                    ? 0
+                    : 1 + std::min<size_t>(snap.states.size(), UINT8_MAX) * entity_state_packet_size);
     }
 };
 
@@ -1145,6 +1251,18 @@ enum class EAuthResultCode : uint8_t
     EmailBound = 5,
 };
 
+enum class EEmailPolicy : uint8_t
+{
+    Disabled = 0,
+    Optional = 1,
+    Required = 2,
+};
+
+inline bool IsKnownEmailPolicy(uint8_t value)
+{
+    return value <= static_cast<uint8_t>(EEmailPolicy::Required);
+}
+
 inline bool IsKnownAuthResultCode(uint8_t value)
 {
     return value <= static_cast<uint8_t>(EAuthResultCode::EmailBound);
@@ -1161,6 +1279,7 @@ struct ServerMessage
         Inventory = 0x11,
         Chat = 0x12,
         CraftResult = 0x13,
+        Environment = 0x14,
         Unknown = 0xff,
     } type = Type::Unknown;
 
@@ -1176,6 +1295,12 @@ struct ServerMessage
     std::vector<ServerEntitySnap> entities;
     std::vector<net_entity_id> removed_entity_ids;
 
+    std::optional<std::uint64_t> environment_anchor_tick;
+    std::optional<std::uint16_t> time_of_day;
+    std::optional<float> day_duration_seconds;
+    std::optional<float> fixed_dt_seconds;
+    std::uint8_t weather_intensity[server_environment_weather_count] = {};
+
     std::optional<uint8_t> flags;
 
     std::optional<uint8_t> level;
@@ -1188,6 +1313,8 @@ struct ServerMessage
     std::vector<STalentPacketItem> talents;
     std::optional<EAuthResultCode> auth_result_code;
     std::string auth_message;
+    std::optional<EEmailPolicy> email_policy;
+    std::optional<bool> email_bound;
     std::vector<SInventoryItem> inventory;
     SChatMessage chat;
     std::optional<bool> craft_success;
@@ -1295,6 +1422,17 @@ struct ServerMessage
             msg.auth_message.assign(reinterpret_cast<const char*>(data + offset),
                                     reinterpret_cast<const char*>(data + offset + message_len));
             offset += message_len;
+            if (offset < len)
+            {
+                const uint8_t email_policy = data[offset++];
+                if (!IsKnownEmailPolicy(email_policy))
+                {
+                    msg.type = Type::Unknown;
+                    break;
+                }
+                msg.email_policy = static_cast<EEmailPolicy>(email_policy);
+            }
+            if (offset < len) msg.email_bound = data[offset++] != 0;
             break;
         }
         case Type::OwnerState:
@@ -1449,6 +1587,19 @@ struct ServerMessage
             }
             break;
         }
+        case Type::Environment:
+            if (len != 24)
+            {
+                msg.type = Type::Unknown;
+                break;
+            }
+            msg.environment_anchor_tick = ReadU64(data, offset);
+            msg.time_of_day = ReadU16(data, offset);
+            msg.day_duration_seconds = ReadF32(data, offset);
+            msg.fixed_dt_seconds = ReadF32(data, offset);
+            for (size_t i = 0; i < server_environment_weather_count; ++i)
+                msg.weather_intensity[i] = data[offset++];
+            break;
         default:
             msg.type = Type::Unknown;
             break;
@@ -1508,6 +1659,8 @@ struct ServerMessage
             out[offset++] = message_len;
             std::copy_n(msg.auth_message.data(), message_len, out + offset);
             offset += message_len;
+            out[offset++] = static_cast<uint8_t>(msg.email_policy.value_or(EEmailPolicy::Disabled));
+            out[offset++] = msg.email_bound.value_or(false) ? 1 : 0;
             return offset;
         }
         case Type::OwnerState: {
@@ -1585,6 +1738,14 @@ struct ServerMessage
                 }
             }
             return offset;
+        case Type::Environment:
+            WriteU64(out, offset, msg.environment_anchor_tick.value_or(0));
+            WriteU16(out, offset, msg.time_of_day.value_or(0));
+            WriteF32(out, offset, msg.day_duration_seconds.value_or(1.f));
+            WriteF32(out, offset, msg.fixed_dt_seconds.value_or(0.05f));
+            for (size_t i = 0; i < server_environment_weather_count; ++i)
+                out[offset++] = msg.weather_intensity[i];
+            return offset;
         default:
             return 0;
         }
@@ -1616,7 +1777,7 @@ struct ServerMessage
             return size;
         }
         case Type::AuthResult:
-            return 3 + std::min<size_t>(msg.auth_message.size(), UINT8_MAX);
+            return 5 + std::min<size_t>(msg.auth_message.size(), UINT8_MAX);
         case Type::OwnerState:
             return 10 +
                    (std::min<size_t>(msg.owner_slots.size(), UINT8_MAX) +
@@ -1630,6 +1791,8 @@ struct ServerMessage
                    std::min<size_t>(msg.chat.message.size(), max_chat_message_size);
         case Type::CraftResult:
             return 10 + std::min<size_t>(msg.craft_items.size(), UINT16_MAX) * inventory_item_packet_size;
+        case Type::Environment:
+            return 23;
         default:
             return 0;
         }

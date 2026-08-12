@@ -17,6 +17,7 @@
 #include "../Game/player.h"
 #include "../Game/state_zone.h"
 #include "../Game/states/states.h"
+#include "../Game/systems/weather_diurnal_system.h"
 #include "../Game/zone_mob_tools.h"
 #include "../Module/network_module.h"
 #include "../server.h"
@@ -253,6 +254,15 @@ CJsonOwner CaptureState(const CState& state, std::string& error)
         writer.Field("type", "state.digging");
     else if (dynamic_cast<const CPsionicConnectionState*>(&state))
         writer.Field("type", "state.psionic_connection");
+    else if (const auto* hallucinogenic = dynamic_cast<const CHallucinogenicState*>(&state))
+    {
+        writer.Field("type", "state.hallucinogenic");
+        writer.Field("parameter_mask", static_cast<int>(hallucinogenic->GetParameterMask()));
+        writer.Field("effect_depth", hallucinogenic->GetEffectDepth());
+        writer.Field("evolution_progress", hallucinogenic->GetEvolutionProgress());
+        const auto& parameters = hallucinogenic->GetParameters();
+        writer.Node("parameters", FloatArray(std::vector<float>(parameters.begin(), parameters.end())).release());
+    }
     else
     {
         error = "Unregistered runtime state encountered while capturing snapshot";
@@ -306,6 +316,16 @@ std::unique_ptr<CState> RestoreState(CMobBase& owner, const json_t* value, std::
     if (type == "state.digging") return std::make_unique<CDiggingState>(&owner, timer, rarity);
     if (type == "state.psionic_connection")
         return std::make_unique<CPsionicConnectionState>(&owner, timer, rarity);
+    if (type == "state.hallucinogenic")
+    {
+        const std::vector<float> parameters = ReadFloatArray(reader.Node("parameters"));
+        CHallucinogenicState::parameter_array parameter_values{};
+        for (size_t i = 0; i < parameter_values.size() && i < parameters.size(); ++i)
+            parameter_values[i] = parameters[i];
+        return std::make_unique<CHallucinogenicState>(
+            &owner, timer, rarity, static_cast<std::uint8_t>(std::clamp(reader.Int("parameter_mask"), 0, 255)),
+            reader.Float("effect_depth"), reader.Float("evolution_progress"), parameter_values);
+    }
 
     error = "No state factory registered for " + type;
     return {};
@@ -1046,7 +1066,7 @@ bool RestoreWorldController(CGameWorld& world, const json_t* value, std::string&
     }
 
     IGameController* controller = world.GetController();
-    if (!controller || controller->SnapshotKey() != key)
+    if (!controller || !controller->CanRestoreSnapshotKey(key))
     {
         std::unique_ptr<IGameController> replacement = CreateWorldController(key);
         if (!replacement)
@@ -1427,6 +1447,161 @@ CJsonOwner CaptureRng(CServer&, std::string&)
     return result;
 }
 
+CJsonOwner CaptureWeatherDiurnal(CServer& server, std::string& error)
+{
+    CWeatherDiurnalSystem* system = server.GetWeatherDiurnalSystem();
+    if (!system)
+    {
+        error = "Weather-diurnal system is unavailable";
+        return {};
+    }
+
+    const SWeatherDiurnalPersistentState state = system->CaptureState();
+    const SWeatherDiurnalSnapshot& snapshot = state.snapshot;
+    CJsonOwner result = MakeJsonObject();
+    CSnapshotWriter writer(result.get());
+    writer.UInt64("revision", snapshot.revision);
+    writer.UInt64("simulation_tick", snapshot.simulation_tick);
+    writer.UInt64("day_index", snapshot.day_index);
+    writer.Field("simulation_seconds", snapshot.simulation_seconds);
+    writer.Field("time_of_day", snapshot.time_of_day);
+    for (int value = 0; value < static_cast<int>(EWeatherType::Count); ++value)
+        writer.Field("weather_intensity_" + std::to_string(value), snapshot.weather_intensity[value]);
+    writer.Field("day_duration_seconds", state.day_duration_seconds);
+    writer.UInt64("environment_revision", snapshot.environment_revision);
+    writer.Field("humidity", snapshot.meteorology.humidity);
+    writer.Field("wind_direction_degrees", snapshot.meteorology.wind_direction_degrees);
+    writer.Field("wind_speed", snapshot.meteorology.wind_speed);
+    writer.Field("temperature_celsius", snapshot.meteorology.temperature_celsius);
+    writer.Field("has_forced_weather", state.forced_weather.has_value());
+    if (state.forced_weather)
+        writer.Field("forced_weather", static_cast<int>(*state.forced_weather));
+    writer.Field("has_forced_intensity", state.forced_intensity.has_value());
+    if (state.forced_intensity)
+        writer.Field("forced_intensity", *state.forced_intensity);
+    writer.Field("has_meteorology_override", state.meteorology_override.has_value());
+    if (state.meteorology_override)
+    {
+        writer.Field("override_humidity", state.meteorology_override->humidity);
+        writer.Field("override_wind_direction_degrees", state.meteorology_override->wind_direction_degrees);
+        writer.Field("override_wind_speed", state.meteorology_override->wind_speed);
+        writer.Field("override_temperature_celsius", state.meteorology_override->temperature_celsius);
+    }
+    (void)error;
+    return result;
+}
+
+bool RestoreWeatherDiurnal(CServer& server, const json_t* data, std::uint32_t version,
+                           ESnapshotRestorePhase phase, std::string& error)
+{
+    if (version < 1 || version > 4)
+    {
+        error = "Unsupported weather-diurnal section version " + std::to_string(version);
+        return false;
+    }
+    if (phase != ESnapshotRestorePhase::RestoreState) return true;
+
+    CWeatherDiurnalSystem* system = server.GetWeatherDiurnalSystem();
+    if (!system)
+    {
+        error = "Weather-diurnal system is unavailable while restoring";
+        return false;
+    }
+
+    CSnapshotReader reader(data);
+    if (!reader.IsValid())
+    {
+        error = "Weather-diurnal section must be an object";
+        return false;
+    }
+
+    SWeatherDiurnalPersistentState state;
+    state.snapshot.revision = reader.UInt64("revision");
+    state.snapshot.simulation_tick = reader.UInt64("simulation_tick");
+    state.snapshot.day_index = reader.UInt64("day_index");
+    state.snapshot.simulation_seconds = reader.Double("simulation_seconds");
+    state.snapshot.time_of_day = reader.Double("time_of_day");
+    if (version >= 4)
+    {
+        for (int value = 0; value < static_cast<int>(EWeatherType::Count); ++value)
+            state.snapshot.weather_intensity[value] =
+                reader.Float("weather_intensity_" + std::to_string(value), 0.f);
+    }
+    state.day_duration_seconds = reader.Double(
+        "day_duration_seconds", static_cast<double>(game_config::weather_diurnal_day_duration));
+    if (version >= 2)
+    {
+        state.snapshot.environment_revision = reader.UInt64("environment_revision", 1);
+        state.snapshot.meteorology.humidity = reader.Float("humidity", state.snapshot.meteorology.humidity);
+        state.snapshot.meteorology.wind_direction_degrees =
+            reader.Float("wind_direction_degrees", state.snapshot.meteorology.wind_direction_degrees);
+        state.snapshot.meteorology.wind_speed = reader.Float("wind_speed", state.snapshot.meteorology.wind_speed);
+        state.snapshot.meteorology.temperature_celsius =
+            reader.Float("temperature_celsius", state.snapshot.meteorology.temperature_celsius);
+        if (reader.Bool("has_forced_weather"))
+            state.forced_weather = static_cast<EWeatherType>(reader.Int("forced_weather", -1));
+        if (version >= 4 && reader.Bool("has_forced_intensity"))
+            state.forced_intensity = reader.Float("forced_intensity", 1.f);
+        if (reader.Bool("has_meteorology_override"))
+        {
+            SMeteorology override;
+            override.humidity = reader.Float("override_humidity", override.humidity);
+            override.wind_direction_degrees =
+                reader.Float("override_wind_direction_degrees", override.wind_direction_degrees);
+            override.wind_speed = reader.Float("override_wind_speed", override.wind_speed);
+            override.temperature_celsius =
+                reader.Float("override_temperature_celsius", override.temperature_celsius);
+            state.meteorology_override = override;
+        }
+    } else
+    {
+        state.snapshot.environment_revision = 1;
+    }
+    return system->RestoreState(state, error);
+}
+
+bool MigrateWeatherDiurnal(std::uint32_t from_version, json_t* data, std::string& error)
+{
+    if (from_version < 1 || from_version > 3 || !json_is_object(data))
+    {
+        error = "Cannot migrate weather-diurnal section from version " + std::to_string(from_version);
+        return false;
+    }
+
+    CSnapshotWriter writer(data);
+    if (from_version == 1)
+    {
+        writer.UInt64("environment_revision", 1);
+        const SMeteorology defaults;
+        writer.Field("humidity", defaults.humidity);
+        writer.Field("wind_direction_degrees", defaults.wind_direction_degrees);
+        writer.Field("wind_speed", defaults.wind_speed);
+        writer.Field("temperature_celsius", defaults.temperature_celsius);
+        writer.Field("has_forced_weather", false);
+        writer.Field("has_meteorology_override", false);
+    }
+
+    // Versions 1..3 store a discrete from/to weather plus a transition factor; convert it
+    // to the per-type intensity model used by version 4.
+    {
+        CSnapshotReader reader(data);
+        const int weather_from = reader.Int("weather_from", static_cast<int>(EWeatherType::Clear));
+        const int weather_to = reader.Int("weather_to", static_cast<int>(EWeatherType::Clear));
+        const float transition = reader.Float("weather_transition", 1.f);
+        float intensity[weather_type_count] = {};
+        if (IsKnownWeatherType(static_cast<EWeatherType>(weather_from)))
+            intensity[weather_from] = 1.f - transition;
+        if (IsKnownWeatherType(static_cast<EWeatherType>(weather_to)))
+            intensity[weather_to] = transition;
+        for (int value = 0; value < static_cast<int>(EWeatherType::Count); ++value)
+            writer.Field("weather_intensity_" + std::to_string(value), intensity[value]);
+        writer.Field("has_forced_intensity", false);
+    }
+
+    writer.Field("day_duration_seconds", static_cast<double>(game_config::weather_diurnal_day_duration));
+    return true;
+}
+
 CJsonOwner CaptureTitanForgeCooldowns(CServer& server, std::string& error)
 {
     CJsonOwner entries = MakeJsonArray();
@@ -1529,6 +1704,8 @@ void EnsureBuiltinSections()
         RegisterSnapshotSection({ "rng", 1, true, CaptureRng, RestoreRng, {} });
         RegisterSnapshotSection(
             { "titan_forge_cooldowns", 1, false, CaptureTitanForgeCooldowns, RestoreTitanForgeCooldowns, {} });
+        RegisterSnapshotSection(
+            { "weather_diurnal", 4, false, CaptureWeatherDiurnal, RestoreWeatherDiurnal, MigrateWeatherDiurnal });
         RegisterSnapshotSection({ "worlds", 1, true, CaptureWorlds, RestoreWorlds, {} });
         RegisterSnapshotSection({ "players", 1, true, CapturePlayers, RestorePlayers, {} });
     });

@@ -11,7 +11,6 @@
 #include <limits>
 #include <memory>
 #include <random>
-#include <unordered_set>
 #include <vector>
 
 namespace
@@ -48,7 +47,6 @@ struct melee_scan_scratch
     std::vector<hornet_aim_target> hornet_aim_targets;
     std::vector<hornet_aim_event> hornet_aim_events;
     std::vector<hornet_aim_candidate> hornet_aim_candidates;
-    std::unordered_set<const CEntity*> carried_leaf_pieces;
 };
 
 thread_local melee_scan_scratch g_melee_scan_scratch;
@@ -257,7 +255,9 @@ CEntity* FindClosestHoneyTarget(CMobBase* mob, float search_range, int ignored_i
     return FirstVisibleMeleeTarget(mob, candidates);
 }
 
-CEntity* FindClosestMeleeTarget(CMobBase* mob, float search_range, int ignored_id = -1, int ignored_owner_id = -1)
+template <typename TAdditionalTargetFilter>
+CEntity* FindClosestMeleeTarget(CMobBase* mob, float search_range, int ignored_id, int ignored_owner_id,
+                                TAdditionalTargetFilter&& additional_target_filter)
 {
     if (!mob || !mob->GameWorld() || search_range <= 0.f) return nullptr;
 
@@ -280,6 +280,12 @@ CEntity* FindClosestMeleeTarget(CMobBase* mob, float search_range, int ignored_i
             return;
         }
 
+        if (additional_target_filter(candidate))
+        {
+            AddMeleeTargetCandidate(target_candidates, candidate, dist_sq, candidate_limit);
+            return;
+        }
+
         if (IsInvalidMeleeTarget(mob, candidate, ignored_id, ignored_owner_id)) return;
 
         float detection_multiplier = 1.f;
@@ -292,6 +298,12 @@ CEntity* FindClosestMeleeTarget(CMobBase* mob, float search_range, int ignored_i
     });
     if (CEntity* honey = FirstVisibleMeleeTarget(mob, honey_candidates)) return honey;
     return FirstVisibleMeleeTarget(mob, target_candidates);
+}
+
+CEntity* FindClosestMeleeTarget(CMobBase* mob, float search_range, int ignored_id = -1, int ignored_owner_id = -1)
+{
+    return FindClosestMeleeTarget(mob, search_range, ignored_id, ignored_owner_id,
+                                  [](const CEntity*) { return false; });
 }
 
 float NormalizeAimAngle(float angle)
@@ -503,7 +515,6 @@ void CLeafcutterSoldierController::CaptureSnapshot(CSnapshotWriter& writer) cons
     writer.Field("carried_leaf_piece_id", m_carried_leaf_piece_id);
     writer.UInt64("carried_leaf_piece_generation", m_carried_leaf_piece_generation);
     writer.Field("leaf_piece_attack_timer", m_leaf_piece_attack_timer);
-    writer.Field("leaf_piece_target_scan_cooldown", m_leaf_piece_target_scan_cooldown);
 }
 
 bool CLeafcutterSoldierController::RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version,
@@ -517,7 +528,6 @@ bool CLeafcutterSoldierController::RestoreSnapshot(const CSnapshotReader& reader
     m_carried_leaf_piece_id = reader.Int("carried_leaf_piece_id", -1);
     m_carried_leaf_piece_generation = reader.UInt64("carried_leaf_piece_generation");
     m_leaf_piece_attack_timer = reader.Float("leaf_piece_attack_timer");
-    m_leaf_piece_target_scan_cooldown = reader.Int("leaf_piece_target_scan_cooldown", -1);
     return true;
 }
 
@@ -701,6 +711,20 @@ bool CMeleeController::IsRandomIdleDone(float dt)
     return m_random_idle_timer >= game_config::melee_random_idle_time;
 }
 
+bool CMeleeController::ShouldSwitchRandomWanderTarget(float dt) const
+{
+    if (!m_has_random_target_pos || m_random_idle || dt <= 0.f) return false;
+
+    const float target_time =
+        std::max(game_config::entity_collision_epsilon,
+                 std::max(game_config::server_fixed_dt, game_config::melee_target_time));
+    if (m_change_target_count >= target_time) return true;
+
+    const float retarget_chance = game_config::melee_retarget_chance_multiplier *
+                                  std::max(0.f, m_change_target_count) * dt / (target_time * target_time);
+    return CheckChance(std::clamp(retarget_chance, 0.f, 1.f));
+}
+
 void CMeleeController::ResetWanderProgress()
 {
     m_wander_progress_anchor = { 0.f, 0.f };
@@ -792,6 +816,19 @@ CEntity* CMeleeController::ResolveTarget(CMobBase* mob)
     return m_p_target;
 }
 
+CEntity* CMeleeController::FindTargetCandidate(CMobBase* mob, float search_range, int ignored_id,
+                                                int ignored_owner_id)
+{
+    return FindClosestMeleeTarget(mob, search_range, ignored_id, ignored_owner_id);
+}
+
+bool CMeleeController::IsTargetUnavailable(CMobBase* mob, const CEntity* target, float search_range, float dt,
+                                            float& los_check_timer, int ignored_id, int ignored_owner_id)
+{
+    return IsCurrentMeleeTargetUnavailable(mob, target, search_range, dt, los_check_timer, ignored_id,
+                                           ignored_owner_id);
+}
+
 bool CMeleeController::ShouldRunTargetScan(CMobBase* mob)
 {
     return ShouldRunEntityTargetScan(m_target_scan_cooldown, mob);
@@ -801,7 +838,7 @@ bool CMeleeController::TryAcquireWanderTarget(CMobBase* mob, float search_range,
 {
     if (!ShouldRunTargetScan(mob)) return false;
 
-    CEntity* target = FindClosestMeleeTarget(mob, search_range, ignored_id, ignored_owner_id);
+    CEntity* target = FindTargetCandidate(mob, search_range, ignored_id, ignored_owner_id);
     if (!target) return false;
 
     SetTarget(target);
@@ -849,8 +886,7 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
     m_change_target_count += dt;
     CEntity* target = ResolveTarget(mob);
 
-    bool target_invalid =
-        target && IsCurrentMeleeTargetUnavailable(mob, target, stats->horizon, dt, m_target_los_check_timer);
+    bool target_invalid = target && IsTargetUnavailable(mob, target, stats->horizon, dt, m_target_los_check_timer);
     if (target_invalid)
     {
         LoseTarget(mob);
@@ -864,12 +900,10 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
     if (!target && m_has_random_target_pos && !reached_random_target && TryAcquireWanderTarget(mob, stats->horizon))
         target = ResolveTarget(mob);
 
-    bool can_random_retarget = !target && m_change_target_count >= game_config::melee_target_time;
-    float retarget_chance = game_config::melee_retarget_chance_multiplier * m_change_target_count * dt /
-                            (game_config::melee_target_time * game_config::melee_target_time);
-    retarget_chance = std::clamp(retarget_chance, 0.f, 1.f);
+    const bool switch_random_target =
+        !target && !reached_random_target && ShouldSwitchRandomWanderTarget(dt);
     bool should_retarget = target_invalid || !m_has_random_target_pos || reached_random_target ||
-                           (can_random_retarget && CheckChance(retarget_chance));
+                           switch_random_target;
     if (should_retarget)
     {
         m_change_target_count = 0.f;
@@ -916,6 +950,42 @@ CEntity* CLeafcutterSoldierController::ResolveCarriedLeafPiece(const CMobBase* m
                                      m_carried_leaf_piece_generation);
 }
 
+CEntity* CLeafcutterSoldierController::FindTargetCandidate(CMobBase* mob, float search_range, int ignored_id,
+                                                            int ignored_owner_id)
+{
+    if (!mob || !mob->GameWorld() || search_range <= 0.f) return nullptr;
+
+    const int carried_id = m_carried_leaf_piece_id;
+    const std::uint64_t carried_generation = m_carried_leaf_piece_generation;
+    return FindClosestMeleeTarget(
+        mob, search_range, ignored_id, ignored_owner_id,
+        [this, mob, ignored_id, ignored_owner_id, carried_id, carried_generation](const CEntity* entity) {
+            if (!IsEligibleLeafPiece(mob, entity, false)) return false;
+            if (entity->m_id == ignored_id || entity->m_id == ignored_owner_id) return false;
+            if (entity->m_id == carried_id && entity->m_generation == carried_generation) return false;
+            return !mob->GameWorld()->IsLeafPieceCarried(*entity);
+        });
+}
+
+bool CLeafcutterSoldierController::IsTargetUnavailable(CMobBase* mob, const CEntity* target, float search_range,
+                                                        float dt, float& los_check_timer, int ignored_id,
+                                                        int ignored_owner_id)
+{
+    const auto* target_mob = dynamic_cast<const CMobBase*>(target);
+    if (!target_mob || target_mob->GetMobType() != EMobType::LeafPiece)
+        return CMeleeController::IsTargetUnavailable(mob, target, search_range, dt, los_check_timer, ignored_id,
+                                                     ignored_owner_id);
+
+    if (!IsEligibleLeafPiece(mob, target)) return true;
+    const float retention_range = std::max(0.f, search_range);
+    if (TargetEdgeDistanceSq(mob, target) > retention_range * retention_range) return true;
+
+    los_check_timer += dt;
+    if (los_check_timer < game_config::melee_target_los_recheck_interval) return false;
+    los_check_timer = 0.f;
+    return IsMeleeTargetBlockedByWall(mob, target);
+}
+
 bool CLeafcutterSoldierController::IsEligibleLeafPiece(const CMobBase* mob, const CEntity* entity,
                                                        bool reject_carried) const
 {
@@ -938,18 +1008,7 @@ bool CLeafcutterSoldierController::IsLeafPieceCarried(const CMobBase* mob, const
 {
     if (!mob || !leaf_piece || !mob->GameWorld() || leaf_piece->GameWorld() != mob->GameWorld()) return false;
 
-    bool carried = false;
-    mob->GameWorld()->ForEachEntity([&](CEntity* entity) {
-        if (carried) return;
-        const auto* soldier = dynamic_cast<const CMobBase*>(entity);
-        if (!soldier || soldier->GetMobType() != EMobType::LeafcutterSoldier || soldier->m_is_marked_for_des ||
-            soldier->IsDead())
-            return;
-
-        const auto* controller = dynamic_cast<const CLeafcutterSoldierController*>(soldier->GetController());
-        carried = controller && controller->IsCarryingLeafPiece(soldier, leaf_piece);
-    });
-    return carried;
+    return mob->GameWorld()->IsLeafPieceCarried(*leaf_piece);
 }
 
 void CLeafcutterSoldierController::ClearLeafPieceTarget()
@@ -972,57 +1031,28 @@ void CLeafcutterSoldierController::SetLeafPieceTarget(CEntity* leaf_piece)
     m_leaf_piece_target_generation = leaf_piece->m_generation;
 }
 
-void CLeafcutterSoldierController::ClearCarriedLeafPiece()
+void CLeafcutterSoldierController::ClearCarriedLeafPiece(CMobBase* mob)
 {
+    if (mob && mob->GameWorld())
+        mob->GameWorld()->UnregisterCarriedLeafPiece(m_carried_leaf_piece_id, m_carried_leaf_piece_generation,
+                                                     mob->m_id, mob->m_generation);
     m_carried_leaf_piece_world_id = 0;
     m_carried_leaf_piece_id = -1;
     m_carried_leaf_piece_generation = 0;
 }
 
-void CLeafcutterSoldierController::SetCarriedLeafPiece(CEntity* leaf_piece)
+bool CLeafcutterSoldierController::SetCarriedLeafPiece(CMobBase* mob, CEntity* leaf_piece)
 {
-    if (!leaf_piece || !leaf_piece->GameWorld())
+    if (!mob || !mob->GameWorld() || !leaf_piece || leaf_piece->GameWorld() != mob->GameWorld() ||
+        !mob->GameWorld()->TryRegisterCarriedLeafPiece(*leaf_piece, *mob))
     {
-        ClearCarriedLeafPiece();
-        return;
+        ClearCarriedLeafPiece(mob);
+        return false;
     }
 
     m_carried_leaf_piece_world_id = leaf_piece->GameWorld()->GetId();
     m_carried_leaf_piece_id = leaf_piece->m_id;
     m_carried_leaf_piece_generation = leaf_piece->m_generation;
-}
-
-bool CLeafcutterSoldierController::TryAcquireLeafPieceTarget(CMobBase* mob, float search_range)
-{
-    if (!mob || !mob->GameWorld() || search_range <= 0.f) return false;
-    if (!ShouldRunEntityTargetScan(m_leaf_piece_target_scan_cooldown, mob)) return false;
-
-    auto& carried_leaf_pieces = g_melee_scan_scratch.carried_leaf_pieces;
-    carried_leaf_pieces.clear();
-    mob->GameWorld()->ForEachEntity([&](CEntity* entity) {
-        const auto* soldier = dynamic_cast<const CMobBase*>(entity);
-        if (!soldier || soldier->GetMobType() != EMobType::LeafcutterSoldier || soldier->m_is_marked_for_des ||
-            soldier->IsDead())
-            return;
-
-        const auto* controller = dynamic_cast<const CLeafcutterSoldierController*>(soldier->GetController());
-        if (!controller) return;
-        if (const CEntity* carried = controller->ResolveCarriedLeafPiece(soldier)) carried_leaf_pieces.insert(carried);
-    });
-
-    const int carried_id = m_carried_leaf_piece_id;
-    const std::uint64_t carried_generation = m_carried_leaf_piece_generation;
-    CEntity* leaf_piece = mob->GameWorld()->FindClosestEntity(
-        mob->m_pos, search_range,
-        [this, mob, carried_id, carried_generation, &carried_leaf_pieces](const CEntity* entity) {
-            if (!IsEligibleLeafPiece(mob, entity, false)) return false;
-            if (carried_leaf_pieces.find(entity) != carried_leaf_pieces.end()) return false;
-            if (entity->m_id == carried_id && entity->m_generation == carried_generation) return false;
-            return !IsMeleeTargetBlockedByWall(mob, entity);
-        });
-    if (!leaf_piece) return false;
-
-    SetLeafPieceTarget(leaf_piece);
     return true;
 }
 
@@ -1030,8 +1060,8 @@ bool CLeafcutterSoldierController::TryCarryLeafPiece(CMobBase* mob)
 {
     if (!mob || m_leaf_piece_attack_timer > 0.f) return false;
 
-    CEntity* leaf_piece = ResolveLeafPieceTarget(mob);
-    if (!leaf_piece) return false;
+    CEntity* leaf_piece = ResolveTarget(mob);
+    if (!IsEligibleLeafPiece(mob, leaf_piece)) return false;
 
     const float configured_attack_radius =
         std::max(0.f, mob->m_radius * game_config::mob_leafcutter_soldier_leaf_piece_attack_radius_multiplier);
@@ -1040,7 +1070,8 @@ bool CLeafcutterSoldierController::TryCarryLeafPiece(CMobBase* mob)
     const float attack_radius = std::max(configured_attack_radius, contact_radius);
     if (DistanceSq(mob->m_pos, leaf_piece->m_pos) > attack_radius * attack_radius) return false;
 
-    SetCarriedLeafPiece(leaf_piece);
+    if (!SetCarriedLeafPiece(mob, leaf_piece)) return false;
+    ClearTarget();
     ClearLeafPieceTarget();
     m_leaf_piece_attack_timer = std::max(0.f, game_config::mob_leafcutter_soldier_leaf_piece_attack_interval);
     m_has_random_target_pos = false;
@@ -1069,40 +1100,23 @@ void CLeafcutterSoldierController::OnTick(CMobBase* mob, float dt)
 {
     if (!mob || !mob->GameWorld()) return;
 
-    const SMobStats* stats = mob->GetFinalStats();
-    if (!stats) return;
-
     m_leaf_piece_attack_timer = std::max(0.f, m_leaf_piece_attack_timer - std::max(0.f, dt));
     CEntity* carried_leaf_piece = ResolveCarriedLeafPiece(mob);
-    if (!carried_leaf_piece) ClearCarriedLeafPiece();
+    if (!carried_leaf_piece) ClearCarriedLeafPiece(mob);
+    else if (!mob->GameWorld()->TryRegisterCarriedLeafPiece(*carried_leaf_piece, *mob))
+    {
+        ClearCarriedLeafPiece(mob);
+        carried_leaf_piece = nullptr;
+    }
 
+    CEntity* target = ResolveTarget(mob);
     CEntity* leaf_piece_target = ResolveLeafPieceTarget(mob);
-    const float leaf_piece_search_range = std::max(0.f, stats->horizon);
-    if (leaf_piece_target &&
-        DistanceSq(mob->m_pos, leaf_piece_target->m_pos) > leaf_piece_search_range * leaf_piece_search_range)
+    if (!carried_leaf_piece && !target && leaf_piece_target)
     {
-        ClearLeafPieceTarget();
-        leaf_piece_target = nullptr;
-    } else if (!leaf_piece_target)
-    {
-        ClearLeafPieceTarget();
+        SetTarget(leaf_piece_target);
+        target = ResolveTarget(mob);
     }
-
-    CEntity* combat_target = ResolveTarget(mob);
-
-    if (!carried_leaf_piece && !combat_target)
-    {
-        if (!leaf_piece_target && TryAcquireLeafPieceTarget(mob, leaf_piece_search_range))
-            leaf_piece_target = ResolveLeafPieceTarget(mob);
-        if (leaf_piece_target)
-        {
-            m_target_pos = leaf_piece_target->m_pos;
-            m_change_target_count = 0.f;
-            m_has_random_target_pos = true;
-            m_random_idle = false;
-            m_random_idle_timer = 0.f;
-        }
-    }
+    if (carried_leaf_piece || !leaf_piece_target) ClearLeafPieceTarget();
 
     const bool was_carrying = carried_leaf_piece != nullptr;
     const float previous_angle = mob->m_facing_angle;
@@ -1110,7 +1124,13 @@ void CLeafcutterSoldierController::OnTick(CMobBase* mob, float dt)
     CMeleeController::OnTick(mob, dt);
     if (was_carrying) ApplyCarryingTurn(mob, previous_angle, had_facing, dt);
 
-    if (!ResolveTarget(mob) && !ResolveCarriedLeafPiece(mob)) TryCarryLeafPiece(mob);
+    target = ResolveTarget(mob);
+    const auto* target_mob = dynamic_cast<const CMobBase*>(target);
+    const bool targeting_leaf_piece = target_mob && target_mob->GetMobType() == EMobType::LeafPiece;
+    if (targeting_leaf_piece) SetLeafPieceTarget(target);
+    else ClearLeafPieceTarget();
+
+    if (targeting_leaf_piece && !ResolveCarriedLeafPiece(mob)) TryCarryLeafPiece(mob);
 }
 
 bool CLeafcutterSoldierController::IsCarryingLeafPiece(const CMobBase* mob) const
@@ -1127,14 +1147,14 @@ void CLeafcutterSoldierController::SyncCarriedLeafPiece(CMobBase* mob)
 {
     if (!mob || mob->m_is_marked_for_des || mob->IsDead())
     {
-        ClearCarriedLeafPiece();
+        ClearCarriedLeafPiece(mob);
         return;
     }
 
     CEntity* leaf_piece = ResolveCarriedLeafPiece(mob);
     if (!leaf_piece)
     {
-        ClearCarriedLeafPiece();
+        ClearCarriedLeafPiece(mob);
         return;
     }
 
@@ -1149,7 +1169,7 @@ void CLeafcutterSoldierController::ResolveCarriedLeafPieceConstraint(CMobBase* m
 {
     if (!mob || mob->m_is_marked_for_des || mob->IsDead() || !mob->GameWorld())
     {
-        ClearCarriedLeafPiece();
+        ClearCarriedLeafPiece(mob);
         return;
     }
 
@@ -1157,7 +1177,7 @@ void CLeafcutterSoldierController::ResolveCarriedLeafPieceConstraint(CMobBase* m
     auto* leaf_piece_mob = dynamic_cast<CMobBase*>(leaf_piece);
     if (!leaf_piece || !leaf_piece_mob)
     {
-        ClearCarriedLeafPiece();
+        ClearCarriedLeafPiece(mob);
         return;
     }
 
@@ -1326,13 +1346,11 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
         TryAcquireWanderTarget(mob, search_range, owner->m_id, owner_owner_id))
         target = ResolveTarget(mob);
 
-    bool can_random_retarget = !target && m_change_target_count >= game_config::melee_target_time;
-    float retarget_chance = game_config::melee_retarget_chance_multiplier * m_change_target_count * dt /
-                            (game_config::melee_target_time * game_config::melee_target_time);
-    retarget_chance = std::clamp(retarget_chance, 0.f, 1.f);
+    const bool switch_random_target =
+        !target && !reached_random_target && ShouldSwitchRandomWanderTarget(dt);
 
     if (target_invalid || !m_has_random_target_pos || reached_random_target ||
-        (can_random_retarget && CheckChance(retarget_chance)))
+        switch_random_target)
     {
         m_change_target_count = 0.f;
         m_target_los_check_timer = 0.f;
@@ -1397,9 +1415,11 @@ void CNeutralMeleeController::OnTick(CMobBase* mob, float dt)
     set_attack_state(nullptr);
 
     bool reached_random_target = ReachedOrStalledRandomTarget(mob, dt);
+    const bool switch_random_target =
+        !reached_random_target &&
+        (m_change_target_count >= game_config::melee_target_time || ShouldSwitchRandomWanderTarget(dt));
 
-    if (!target &&
-        (!m_has_random_target_pos || reached_random_target || m_change_target_count >= game_config::melee_target_time))
+    if (!m_has_random_target_pos || reached_random_target || switch_random_target)
     {
         m_change_target_count = 0.f;
         PickRandomTargetPos(mob, *stats);
@@ -1573,9 +1593,11 @@ void CRandomWanderController::OnTick(CMobBase* mob, float dt)
     }
 
     bool reached_random_target = ReachedOrStalledRandomTarget(mob, dt);
+    const bool switch_random_target =
+        !reached_random_target &&
+        (m_change_target_count >= game_config::melee_target_time || ShouldSwitchRandomWanderTarget(dt));
 
-    if (!target &&
-        (!m_has_random_target_pos || reached_random_target || m_change_target_count >= game_config::melee_target_time))
+    if (!m_has_random_target_pos || reached_random_target || switch_random_target)
     {
         m_change_target_count = 0.f;
         PickRandomTargetPos(mob, *stats);
@@ -1653,13 +1675,11 @@ void CHornetRangedController::OnTick(CMobBase* mob, float dt)
     if (!target && m_has_random_target_pos && !reached_random_target && TryAcquireWanderTarget(mob, stats->horizon))
         target = ResolveTarget(mob);
 
-    bool can_random_retarget = !target && m_change_target_count >= game_config::melee_target_time;
-    float retarget_chance = game_config::melee_retarget_chance_multiplier * m_change_target_count * dt /
-                            (game_config::melee_target_time * game_config::melee_target_time);
-    retarget_chance = std::clamp(retarget_chance, 0.f, 1.f);
+    const bool switch_random_target =
+        !target && !reached_random_target && ShouldSwitchRandomWanderTarget(dt);
 
     bool should_retarget = target_invalid || !m_has_random_target_pos || reached_random_target ||
-                           (can_random_retarget && CheckChance(retarget_chance));
+                           switch_random_target;
     if (should_retarget)
     {
         m_change_target_count = 0.f;
@@ -1725,13 +1745,11 @@ void CMechaFlowerRangedController::OnTick(CMobBase* mob, float dt)
     if (!target && m_has_random_target_pos && !reached_random_target && TryAcquireWanderTarget(mob, stats->horizon))
         target = ResolveTarget(mob);
 
-    bool can_random_retarget = !target && m_change_target_count >= game_config::melee_target_time;
-    float retarget_chance = game_config::melee_retarget_chance_multiplier * m_change_target_count * dt /
-                            (game_config::melee_target_time * game_config::melee_target_time);
-    retarget_chance = std::clamp(retarget_chance, 0.f, 1.f);
+    const bool switch_random_target =
+        !target && !reached_random_target && ShouldSwitchRandomWanderTarget(dt);
 
     bool should_retarget = target_invalid || !m_has_random_target_pos || reached_random_target ||
-                           (can_random_retarget && CheckChance(retarget_chance));
+                           switch_random_target;
     if (should_retarget)
     {
         m_change_target_count = 0.f;
@@ -2135,13 +2153,11 @@ void CSpecialHornetController::TickMovementAndTarget(CMobBase* mob, float dt)
     if (!target && m_has_random_target_pos && !reached_random_target && TryAcquireWanderTarget(mob, stats->horizon))
         target = ResolveTarget(mob);
 
-    bool can_random_retarget = !target && m_change_target_count >= game_config::melee_target_time;
-    float retarget_chance = game_config::melee_retarget_chance_multiplier * m_change_target_count * dt /
-                            (game_config::melee_target_time * game_config::melee_target_time);
-    retarget_chance = std::clamp(retarget_chance, 0.f, 1.f);
+    const bool switch_random_target =
+        !target && !reached_random_target && ShouldSwitchRandomWanderTarget(dt);
 
     bool should_retarget = target_invalid || !m_has_random_target_pos || reached_random_target ||
-                           (can_random_retarget && CheckChance(retarget_chance));
+                           switch_random_target;
     if (should_retarget)
     {
         m_change_target_count = 0.f;

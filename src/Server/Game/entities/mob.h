@@ -7,6 +7,7 @@
 #include "../state.h"
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -62,10 +63,7 @@ class CMobBase : public CEntity
     }
     virtual ERarity GetRarity() const = 0;
     virtual bool IsFacingLocked() const { return false; }
-    float WallCollisionRadius() const override
-    {
-        return std::max(0.f, m_radius * game_config::mob_wall_collision_radius_multiplier);
-    }
+    float WallCollisionRadius() const override { return 0.f; }
     virtual std::uint32_t RuntimeSnapshotVersion() const { return 1; }
     virtual void CaptureRuntimeSnapshot(CSnapshotWriter&) const {}
     virtual bool RestoreRuntimeSnapshot(const CSnapshotReader&, std::uint32_t version, std::string& error)
@@ -140,8 +138,12 @@ class CMobBase : public CEntity
     sf::Vector2f m_vel = { 0.f, 0.f };
 
   protected:
+    sf::Vector2f ApplyMovementTargetStates(const sf::Vector2f& target_pos) const;
+    void UnregisterMovementTargetState(CState* state);
+
     std::vector<CDamageData> m_damage_data;
     std::vector<std::unique_ptr<CState>> m_states;
+    std::vector<CState*> m_movement_target_states;
     std::unique_ptr<IController> m_p_controller;
 };
 
@@ -273,13 +275,28 @@ class CMobPrototype
     CMobPrototype(CMobPrototype&&) = default;
     CMobPrototype& operator=(CMobPrototype&&) = default;
 
-    SMobStats BuildStats(ERarity rarity) const { return m_stats_factory ? m_stats_factory(rarity) : m_base_stats; }
+    static void ApplyBaseMassMultiplier(SMobStats& stats)
+    {
+        const float multiplier = std::max(0.f, game_config::mob_base_mass_multiplier);
+        const float max_mass = std::numeric_limits<float>::max();
+        if (stats.mass >= max_mass / std::max(1.f, multiplier))
+            stats.mass = max_mass;
+        else
+            stats.mass *= multiplier;
+    }
+
+    SMobStats BuildStats(ERarity rarity) const
+    {
+        SMobStats stats = m_stats_factory ? m_stats_factory(rarity) : m_base_stats;
+        ApplyBaseMassMultiplier(stats);
+        return stats;
+    }
     SFlowerStats BuildFlowerStats(ERarity rarity) const
     {
-        if (m_flower_stats_factory) return m_flower_stats_factory(rarity);
-
-        SFlowerStats stats = m_base_flower_stats;
-        if (m_stats_factory) static_cast<SMobStats&>(stats) = BuildStats(rarity);
+        SFlowerStats stats = m_flower_stats_factory ? m_flower_stats_factory(rarity) : m_base_flower_stats;
+        if (!m_flower_stats_factory && m_stats_factory)
+            static_cast<SMobStats&>(stats) = m_stats_factory(rarity);
+        ApplyBaseMassMultiplier(stats);
         return stats;
     }
 

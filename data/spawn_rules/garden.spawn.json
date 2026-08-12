@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "modifiers": [
+    {
+      "id": "night",
+      "when": {
+        "time": {
+          "from": "18:00",
+          "until": "06:00",
+          "fade_minutes": 30
+        }
+      },
+      "density_multiplier": 1.08,
+      "weight_multipliers": {
+        "spider": 1.75,
+        "bee": 0.5,
+        "bumble_bee": 0.6,
+        "hornet": 1.2
+      }
+    },
+    {
+      "id": "rain",
+      "when": {
+        "weather": ["rain"]
+      },
+      "weight_multipliers": {
+        "bee": 0.35,
+        "bumble_bee": 0.45,
+        "hornet": 0.65,
+        "spider": 1.35,
+        "ant_hole": 1.15
+      }
+    },
+    {
+      "id": "storm",
+      "when": {
+        "weather": ["storm"]
+      },
+      "density_multiplier": 0.9,
+      "difficulty_offset": 2,
+      "weight_multipliers": {
+        "bee": 0.1,
+        "bumble_bee": 0.2,
+        "hornet": 0.45,
+        "spider": 1.55
+      }
+    },
+    {
+      "id": "fog",
+      "when": {
+        "weather": ["fog"]
+      },
+      "difficulty_offset": 1,
+      "weight_multipliers": {
+        "spider": 1.25,
+        "hornet": 1.15
+      }
+    }
+  ],
+  "profiles": {
+    "garden_mixed_no_hornet": {
+      "base_pool": [
+        {"mob": "normal_ladybug", "weight": 0.15},
+        {"mob": "spider", "weight": 0.15},
+        {"mob": "bee", "weight": 0.15},
+        {"mob": "bumble_bee", "weight": 0.15},
+        {"mob": "soldier_ant", "weight": 0.1},
+        {"mob": "worker_ant", "weight": 0.1},
+        {"mob": "baby_ant", "weight": 0.1},
+        {"mob": "rock", "weight": 0.034},
+        {"mob": "ant_hole", "weight": 0.033},
+        {"mob": "dandelion", "weight": 0.033}
+      ]
+    },
+    "garden_hornet_flight": {
+      "base_pool": [
+        {"mob": "hornet", "weight": 0.5},
+        {"mob": "bee", "weight": 0.3},
+        {"mob": "bumble_bee", "weight": 0.2}
+      ]
+    },
+    "garden_mixed": {
+      "base_pool": [
+        {"mob": "normal_ladybug", "weight": 0.12},
+        {"mob": "spider", "weight": 0.12},
+        {"mob": "bee", "weight": 0.12},
+        {"mob": "bumble_bee", "weight": 0.12},
+        {"mob": "hornet", "weight": 0.12},
+        {"mob": "soldier_ant", "weight": 0.1},
+        {"mob": "worker_ant", "weight": 0.1},
+        {"mob": "baby_ant", "weight": 0.1},
+        {"mob": "rock", "weight": 0.034},
+        {"mob": "ant_hole", "weight": 0.033},
+        {"mob": "dandelion", "weight": 0.033}
+      ]
+    },
+    "garden_rock_nest": {
+      "base_pool": [
+        {"mob": "rock", "weight": 0.9},
+        {"mob": "ant_hole", "weight": 0.1}
+      ]
+    },
+    "garden_rocky_mixed": {
+      "base_pool": [
+        {"mob": "normal_ladybug", "weight": 0.12},
+        {"mob": "spider", "weight": 0.12},
+        {"mob": "bee", "weight": 0.12},
+        {"mob": "bumble_bee", "weight": 0.12},
+        {"mob": "hornet", "weight": 0.12},
+        {"mob": "soldier_ant", "weight": 0.05},
+        {"mob": "worker_ant", "weight": 0.05},
+        {"mob": "baby_ant", "weight": 0.05},
+        {"mob": "rock", "weight": 0.2},
+        {"mob": "ant_hole", "weight": 0.05}
+      ]
+    },
+    "garden_meadow": {
+      "base_pool": [
+        {"mob": "dandelion", "weight": 0.4},
+        {"mob": "bee", "weight": 0.2},
+        {"mob": "bumble_bee", "weight": 0.2},
+        {"mob": "hornet", "weight": 0.1},
+        {"mob": "rock", "weight": 0.1}
+      ]
+    },
+    "garden_ant_hole_colony": {
+      "base_pool": [
+        {"mob": "soldier_ant", "weight": 0.4},
+        {"mob": "baby_ant", "weight": 0.05},
+        {"mob": "worker_ant", "weight": 0.05},
+        {"mob": "ant_hole", "weight": 0.5}
+      ]
+    },
+    "garden_ant_colony": {
+      "base_pool": [
+        {"mob": "soldier_ant", "weight": 0.5},
+        {"mob": "baby_ant", "weight": 0.1},
+        {"mob": "worker_ant", "weight": 0.1},
+        {"mob": "ant_hole", "weight": 0.3}
+      ]
+    },
+    "garden_rock_dandelion": {
+      "base_pool": [
+        {"mob": "rock", "weight": 0.6},
+        {"mob": "dandelion", "weight": 0.4}
+      ]
+    },
+    "garden_pollinator": {
+      "base_pool": [
+        {"mob": "bee", "weight": 0.35},
+        {"mob": "bumble_bee", "weight": 0.35},
+        {"mob": "hornet", "weight": 0.1},
+        {"mob": "rock", "weight": 0.1},
+        {"mob": "dandelion", "weight": 0.1}
+      ]
+    },
+    "garden_spider_den": {
+      "base_pool": [
+        {"mob": "normal_ladybug", "weight": 0.06},
+        {"mob": "spider", "weight": 0.55},
+        {"mob": "bee", "weight": 0.06},
+        {"mob": "bumble_bee", "weight": 0.06},
+        {"mob": "hornet", "weight": 0.06},
+        {"mob": "soldier_ant", "weight": 0.04},
+        {"mob": "worker_ant", "weight": 0.04},
+        {"mob": "baby_ant", "weight": 0.04},
+        {"mob": "rock", "weight": 0.03},
+        {"mob": "ant_hole", "weight": 0.03},
+        {"mob": "dandelion", "weight": 0.03}
+      ]
+    }
+  }
+}

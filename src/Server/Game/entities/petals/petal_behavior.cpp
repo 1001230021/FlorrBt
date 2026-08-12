@@ -72,6 +72,7 @@ bool RegisterPetals(std::string& error)
     RegisterPetalDefinition<EPetalType::Amulet, CAmuletBehavior>();
     RegisterPetalDefinition<EPetalType::Plank, CPlankBehavior>();
     RegisterPetalDefinition<EPetalType::Tomato, CTomatoBehavior>();
+    RegisterPetalDefinition<EPetalType::HallucinogenicMushroom, CHallucinogenicMushroomBehavior>();
 
     return registry.Finalize(error);
 }

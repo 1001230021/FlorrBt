@@ -6,6 +6,7 @@
 #include <vector>
 
 class CPlayer;
+struct SWeatherDiurnalSnapshot;
 
 class COpenController : public IGameController
 {
@@ -27,6 +28,9 @@ class COpenController : public IGameController
     bool TryLeaveSquad(CGameWorld& world, CPlayer& player);
     std::vector<CPlayer*> GetSquadPlayerList(CGameWorld& world, CPlayer& player);
     std::uint32_t GetSquadRootId(CGameWorld& world, CPlayer& player);
+
+  protected:
+    virtual const SWeatherDiurnalSnapshot* SpawnEnvironment() const { return nullptr; }
 
   private:
     void InitializePreciseSpawns(CGameWorld& world);

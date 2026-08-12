@@ -514,21 +514,35 @@ int CollisionDamageHitCount(const CEntity* source, int base_hit_count)
     return CollisionDamageHitCount(dynamic_cast<const CPetal*>(source), base_hit_count);
 }
 
+int ScaleCollisionHitCount(int hit_count, int multiplier)
+{
+    const std::int64_t hits = std::max(1, hit_count);
+    const std::int64_t scale = std::max(1, multiplier);
+    return static_cast<int>(
+        std::min(hits * scale, static_cast<std::int64_t>(std::numeric_limits<int>::max())));
+}
+
 void DamageYggdrasilOnEnemyContact(CPetal* petal, CMobBase* mob)
 {
     if (!petal || !mob || petal->GetPetalType() != EPetalType::Yggdrasil) return;
     const SMobStats* stats = mob->GetFinalStats();
     if (!stats) return;
-    ApplyPhysicalDamageHits(petal, stats->damage, mob, 1);
+    ApplyPhysicalDamageHits(petal, stats->damage, mob,
+                            std::max(1, game_config::entity_petal_mob_hit_multiplier));
 }
 
 bool IsHealPetalType(EPetalType type) { return type == EPetalType::Rose || type == EPetalType::Dahlia; }
 
-bool EntityNeedsHealing(const CMobBase* mob)
+bool EntityNeedsMedicRecovery(const CMobBase* mob)
 {
     const SMobStats* stats = mob ? mob->GetFinalStats() : nullptr;
-    return stats && stats->max_health > 0.f &&
-           mob->m_health < stats->max_health - game_config::entity_collision_epsilon;
+    if (!stats || stats->max_health <= 0.f) return false;
+    if (mob->m_health < stats->max_health - game_config::entity_collision_epsilon) return true;
+
+    const auto* flower = dynamic_cast<const CFlower*>(mob);
+    const SFlowerStats* flower_stats = flower ? flower->GetFinalStats() : nullptr;
+    return flower_stats && flower_stats->overheal_to_shield > game_config::entity_collision_epsilon &&
+           flower->GetShield() < flower_stats->max_health - game_config::entity_collision_epsilon;
 }
 
 bool IsRoseTeamHealCollision(const collision_entity_view& lhs, const collision_entity_view& rhs)
@@ -539,7 +553,7 @@ bool IsRoseTeamHealCollision(const collision_entity_view& lhs, const collision_e
         lhs.petal->m_target_entity_id == rhs.entity->m_id &&
         (lhs.petal->m_target_entity_generation == 0 ||
          lhs.petal->m_target_entity_generation == rhs.entity->m_generation) &&
-        EntityNeedsHealing(rhs.mob) &&
+        EntityNeedsMedicRecovery(rhs.mob) &&
         CheckTeam(GetPreCorruptionTeam(lhs.entity, lhs.InteractionMob()),
                   GetPreCorruptionTeam(rhs.entity, rhs.InteractionMob())))
         return true;
@@ -547,7 +561,7 @@ bool IsRoseTeamHealCollision(const collision_entity_view& lhs, const collision_e
         rhs.petal->m_target_entity_id == lhs.entity->m_id &&
         (rhs.petal->m_target_entity_generation == 0 ||
          rhs.petal->m_target_entity_generation == lhs.entity->m_generation) &&
-        EntityNeedsHealing(lhs.mob) &&
+        EntityNeedsMedicRecovery(lhs.mob) &&
         CheckTeam(GetPreCorruptionTeam(lhs.entity, lhs.InteractionMob()),
                   GetPreCorruptionTeam(rhs.entity, rhs.InteractionMob())))
         return true;
@@ -863,9 +877,10 @@ void ApplyPetalMobContact(CPetal* petal, CMobBase* mob, float dt)
 {
     if (!petal || !mob) return;
 
-    const int petal_hit_count =
-        CollisionDamageHitCount(petal, PetalPhysicalHitCountForTick(petal, mob, dt));
-    const int mob_hit_count = PhysicalHitCountForTick(mob, petal);
+    const int hit_multiplier = std::max(1, game_config::entity_petal_mob_hit_multiplier);
+    const int petal_hit_count = ScaleCollisionHitCount(
+        CollisionDamageHitCount(petal, PetalPhysicalHitCountForTick(petal, mob, dt)), hit_multiplier);
+    const int mob_hit_count = ScaleCollisionHitCount(PhysicalHitCountForTick(mob, petal), hit_multiplier);
     const int exchange_count = std::max(petal_hit_count, mob_hit_count);
     const SMobStats* mob_stats = mob->GetFinalStats();
     bool petal_can_deal_damage = true;
@@ -1167,8 +1182,9 @@ void ResolveOverlappingEntityPair(CEntity* entity, CEntity* other, float dt, boo
     {
         const SMobStats* entity_stats = entity_mob->GetFinalStats();
         const SMobStats* other_stats = other_mob->GetFinalStats();
-        const int entity_hit_count = PhysicalHitCountForTick(entity, other);
-        const int other_hit_count = PhysicalHitCountForTick(other, entity);
+        const int mob_hits_per_tick = std::max(1, game_config::entity_mob_mob_hits_per_tick);
+        const int entity_hit_count = std::max(PhysicalHitCountForTick(entity, other), mob_hits_per_tick);
+        const int other_hit_count = std::max(PhysicalHitCountForTick(other, entity), mob_hits_per_tick);
 
         // Snapshot both attacks first so ID/order cannot suppress a lethal counter-hit.
         if (entity_stats && entity_stats->damage > 0.f)
@@ -1869,6 +1885,7 @@ void CGameWorld::ClearEntitiesForRestore()
     m_collision_large_entities.clear();
     m_collision_inactive_entities.clear();
     m_pending_psionic_damage.clear();
+    m_carried_leaf_pieces.clear();
     m_live_entities.clear();
     m_spatial_grid.Clear();
     m_p_entity_refs.clear();
@@ -1878,6 +1895,7 @@ void CGameWorld::ClearEntitiesForRestore()
     m_next_id = 0;
     m_next_generation = 1;
     m_active_tick_marker = 1;
+    m_collision_sync_marker = 1;
 }
 
 void CGameWorld::QueuePsionicDamage(CMobBase* receiver, float damage, CEntity* attacker, EDamageType damage_type)
@@ -2194,7 +2212,7 @@ void CGameWorld::Tick(float dt)
         FlushPendingPsionicDamage();
         phase_done(ETickPhase::EntityUpdate);
 
-        SyncSpatialPositionsAndMemberships(m_active_entities);
+        SyncSpatialPositionsAndLargeMemberships(m_active_entities);
         if (m_p_controller) m_p_controller->OnTick(*this, dt);
         RemoveTransferredActiveEntities();
         FlushPendingPsionicDamage();
@@ -2324,6 +2342,74 @@ CEntity* CGameWorld::GetEntity(int id, std::uint64_t generation) const
     return entity;
 }
 
+bool CGameWorld::TryRegisterCarriedLeafPiece(const CEntity& leaf_piece, const CEntity& carrier)
+{
+    if (leaf_piece.GameWorld() != this || carrier.GameWorld() != this || leaf_piece.m_id < 0 || carrier.m_id < 0 ||
+        leaf_piece.m_is_marked_for_des || carrier.m_is_marked_for_des || leaf_piece.IsDead() || carrier.IsDead())
+        return false;
+
+    const auto* leaf_mob = dynamic_cast<const CMobBase*>(&leaf_piece);
+    const auto* carrier_mob = dynamic_cast<const CMobBase*>(&carrier);
+    if (!leaf_mob || leaf_mob->GetMobType() != EMobType::LeafPiece || !carrier_mob ||
+        carrier_mob->GetMobType() != EMobType::LeafcutterSoldier)
+        return false;
+
+    auto existing = m_carried_leaf_pieces.find(leaf_piece.m_id);
+    if (existing != m_carried_leaf_pieces.end())
+    {
+        const SCarriedLeafPieceRecord& record = existing->second;
+        if (record.leaf_piece_generation == leaf_piece.m_generation && record.carrier_id == carrier.m_id &&
+            record.carrier_generation == carrier.m_generation)
+            return true;
+        if (record.leaf_piece_generation == leaf_piece.m_generation && IsLeafPieceCarried(leaf_piece)) return false;
+    }
+
+    m_carried_leaf_pieces[leaf_piece.m_id] = {
+        leaf_piece.m_generation,
+        carrier.m_id,
+        carrier.m_generation,
+    };
+    return true;
+}
+
+void CGameWorld::UnregisterCarriedLeafPiece(int leaf_piece_id, std::uint64_t leaf_piece_generation,
+                                            int carrier_id, std::uint64_t carrier_generation)
+{
+    auto existing = m_carried_leaf_pieces.find(leaf_piece_id);
+    if (existing == m_carried_leaf_pieces.end()) return;
+
+    const SCarriedLeafPieceRecord& record = existing->second;
+    if (record.leaf_piece_generation != leaf_piece_generation || record.carrier_id != carrier_id ||
+        record.carrier_generation != carrier_generation)
+        return;
+    m_carried_leaf_pieces.erase(existing);
+}
+
+bool CGameWorld::IsLeafPieceCarried(const CEntity& leaf_piece)
+{
+    auto existing = m_carried_leaf_pieces.find(leaf_piece.m_id);
+    if (existing == m_carried_leaf_pieces.end()) return false;
+
+    const SCarriedLeafPieceRecord record = existing->second;
+    if (leaf_piece.GameWorld() != this || record.leaf_piece_generation != leaf_piece.m_generation)
+    {
+        m_carried_leaf_pieces.erase(existing);
+        return false;
+    }
+
+    const auto* carrier = dynamic_cast<const CMobBase*>(GetEntity(record.carrier_id, record.carrier_generation));
+    const auto* controller = carrier
+                                 ? dynamic_cast<const CLeafcutterSoldierController*>(carrier->GetController())
+                                 : nullptr;
+    if (!carrier || carrier->m_is_marked_for_des || carrier->IsDead() || !controller ||
+        !controller->IsCarryingLeafPiece(carrier, &leaf_piece))
+    {
+        m_carried_leaf_pieces.erase(existing);
+        return false;
+    }
+    return true;
+}
+
 CEntity* CGameWorld::FindClosestEntity(const sf::Vector2f& center, float max_range,
                                        std::function<bool(const CEntity*)> filter) const
 {
@@ -2361,6 +2447,16 @@ void CGameWorld::SyncSpatialPositions(const std::vector<CEntity*>& entities)
     {
         if (!entity || entity->GameWorld() != this) continue;
         m_spatial_grid.UpdateTracked(entity);
+    }
+}
+
+void CGameWorld::SyncSpatialPositionsAndLargeMemberships(const std::vector<CEntity*>& entities)
+{
+    for (CEntity* entity : entities)
+    {
+        if (!entity || entity->GameWorld() != this) continue;
+        m_spatial_grid.UpdateTracked(entity);
+        SyncLargeEntityMembership(entity);
     }
 }
 
@@ -2638,6 +2734,14 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
     large_entities.reserve(m_large_entities.size());
     inactive_collision_entities.reserve(entities.size());
 
+    ++m_collision_sync_marker;
+    if (m_collision_sync_marker == 0)
+    {
+        m_collision_sync_marker = 1;
+        for (CEntity* entity : m_live_entities)
+            if (entity) entity->m_collision_sync_marker = 0;
+    }
+
     for (const CEntity* entity : entities)
     {
         if (!entity || entity->GameWorld() != this || !entity->CanCollide()) continue;
@@ -2668,7 +2772,11 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
         if (!overlapping) return;
         const bool unloaded_mob = !is_active(other) && other->IsEntityType(EEntityType::Mob);
         ResolveOverlappingEntityPair(entity, other, dt, !unloaded_mob);
-        if (overlapping && !is_active(other)) inactive_collision_entities.push_back(other);
+        if (overlapping && !is_active(other) && other->m_collision_sync_marker != m_collision_sync_marker)
+        {
+            other->m_collision_sync_marker = m_collision_sync_marker;
+            inactive_collision_entities.push_back(other);
+        }
     };
 
     auto process_normal_candidates = [&](CEntity* entity) {
@@ -2713,11 +2821,6 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
         process_large_candidates(entity);
     }
 
-    std::sort(inactive_collision_entities.begin(), inactive_collision_entities.end(),
-              [](const CEntity* lhs, const CEntity* rhs) { return lhs->m_id < rhs->m_id; });
-    inactive_collision_entities.erase(
-        std::unique(inactive_collision_entities.begin(), inactive_collision_entities.end()),
-        inactive_collision_entities.end());
     for (CEntity* entity : inactive_collision_entities)
     {
         if (!entity || entity->GameWorld() != this || entity->m_is_marked_for_des) continue;

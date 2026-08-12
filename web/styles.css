@@ -182,6 +182,13 @@ body.mobile-mode-forced .quick-actions {
   letter-spacing: 0;
 }
 
+.email-binding-panel h2 {
+  margin: 0 0 8px;
+  font-size: 21px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
 .auth-panel .auth-version {
   margin-left: 6px;
   color: var(--muted);
@@ -232,6 +239,24 @@ body.mobile-mode-forced .quick-actions {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.email-binding-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.email-binding-actions button {
+  min-width: 0;
+}
+
+.email-binding-panel.binding-required .email-binding-actions {
+  grid-template-columns: 1fr;
+}
+
+#cancelEmailBindingBtn {
+  background: #5b6065;
 }
 
 .auth-panel.hidden + .auth-health-notice {
@@ -535,6 +560,30 @@ body.mobile-mode-forced .quick-actions {
 
 .quick-action-craft.forge-mode {
   background-color: #5a6065;
+}
+
+.quick-action-settings {
+  background-color: #666b70;
+}
+
+.quick-action-settings .quick-action-icon {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+}
+
+.quick-action-settings .quick-action-icon::before {
+  content: "\2699";
+  color: #e2e2e2;
+  font-size: 36px;
+  font-weight: 900;
+  line-height: 1;
+  text-shadow:
+    -1px -1px 0 #35393d,
+    1px -1px 0 #35393d,
+    -1px 1px 0 #35393d,
+    1px 1px 0 #35393d;
 }
 
 .chat-panel {
@@ -1125,46 +1174,45 @@ body.mobile-mode-forced .quick-actions {
   background: transparent;
 }
 
-.backpack-panel {
-  left: calc(-1 * min(430px, calc(100vw - 24px)) - 12px);
+.game-panel {
+  --game-panel-width: 430px;
+  --game-panel-max-height: min(620px, calc(100vh - 132px));
+  --game-panel-gap: 9px;
+  --game-panel-padding: 10px 12px 12px;
+  --game-panel-border: #347cae;
+  --game-panel-background: #5ba7de;
+  left: calc(-1 * min(var(--game-panel-width), calc(100vw - 24px)) - 12px);
   bottom: 12px;
-  z-index: 40;
-  width: min(430px, calc(100vw - 24px));
-  max-height: min(620px, calc(100vh - 132px));
+  z-index: 60;
+  width: min(var(--game-panel-width), calc(100vw - 24px));
+  max-height: var(--game-panel-max-height);
   display: grid;
-  grid-template-rows: auto auto 1fr;
-  gap: 9px;
-  padding: 10px 12px 12px;
-  border: 5px solid #347cae;
+  gap: var(--game-panel-gap);
+  padding: var(--game-panel-padding);
+  border: 5px solid var(--game-panel-border);
   border-radius: 5px;
-  background: #5ba7de;
+  background: var(--game-panel-background);
   box-shadow: none;
   transition: left 160ms ease;
+  font-family: "Florr UI", "Segoe UI", sans-serif;
 }
 
-.backpack-panel.open {
+.game-panel.open {
   left: 12px;
+}
+
+.backpack-panel {
+  grid-template-rows: auto auto 1fr;
 }
 
 .craft-panel {
-  left: calc(-1 * min(640px, calc(100vw - 24px)) - 12px);
-  bottom: 12px;
-  z-index: 40;
-  width: min(602px, calc(100vw - 24px));
-  max-height: min(720px, calc(100vh - 72px));
-  display: grid;
+  --game-panel-width: 602px;
+  --game-panel-max-height: min(720px, calc(100vh - 72px));
+  --game-panel-gap: 7px;
+  --game-panel-padding: 10px 14px 14px;
+  --game-panel-border: #a06e38;
+  --game-panel-background: #dfa25a;
   grid-template-rows: auto auto auto 1fr;
-  gap: 7px;
-  padding: 10px 14px 14px;
-  border: 5px solid #a06e38;
-  border-radius: 5px;
-  background: #dfa25a;
-  box-shadow: none;
-  transition: left 160ms ease;
-}
-
-.craft-panel.open {
-  left: 12px;
 }
 
 .craft-panel.forge-mode {
@@ -1173,30 +1221,128 @@ body.mobile-mode-forced .quick-actions {
 }
 
 .talent-panel {
-  left: calc(-1 * min(720px, calc(100vw - 24px)) - 12px);
-  bottom: 12px;
-  z-index: 40;
-  width: min(720px, calc(100vw - 24px));
-  max-height: min(720px, calc(100vh - 72px));
-  display: grid;
+  --game-panel-width: 720px;
+  --game-panel-max-height: min(720px, calc(100vh - 72px));
+  --game-panel-gap: 10px;
+  --game-panel-padding: 12px 16px 14px;
+  --game-panel-border: #4b617d;
+  --game-panel-background: #6f8caf;
   grid-template-rows: auto auto 1fr;
+}
+
+.settings-panel {
+  --game-panel-width: 440px;
+  --game-panel-max-height: min(580px, calc(100vh - 72px));
+  --game-panel-gap: 12px;
+  --game-panel-padding: 12px 16px 16px;
+  --game-panel-border: #45494d;
+  --game-panel-background: #696e72;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.settings-panel .panel-title {
+  text-shadow:
+    -2px -2px 0 #414549,
+    2px -2px 0 #414549,
+    -2px 2px 0 #414549,
+    2px 2px 0 #414549;
+}
+
+.settings-list {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+}
+
+.settings-row {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(136px, auto);
+  gap: 18px;
+  align-items: center;
+  padding: 9px 4px;
+  border-bottom: 2px solid rgba(49, 52, 55, 0.42);
+}
+
+.settings-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-label {
+  min-width: 0;
+  color: #f5f5f5;
+  font-size: 16px;
+  font-weight: 850;
+  line-height: 1.2;
+  text-shadow:
+    -1px -1px 0 #3c4043,
+    1px -1px 0 #3c4043,
+    -1px 1px 0 #3c4043,
+    1px 1px 0 #3c4043;
+}
+
+.settings-email-control {
+  min-width: 136px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   gap: 10px;
-  padding: 12px 16px 14px;
-  border: 5px solid #4b617d;
-  border-radius: 5px;
-  background: #6f8caf;
-  box-shadow: none;
-  transition: left 160ms ease;
 }
 
-.talent-panel.open {
-  left: 12px;
+.settings-email-state {
+  color: #eef0f1;
+  font-size: 13px;
+  font-weight: 750;
 }
 
-.backpack-panel,
-.craft-panel,
-.talent-panel {
-  font-family: "Florr UI", "Segoe UI", sans-serif;
+.settings-action {
+  min-width: 104px;
+  min-height: 34px;
+  padding: 5px 10px;
+  font-weight: 800;
+}
+
+.settings-choice {
+  width: 100%;
+  min-width: 136px;
+  height: 34px;
+  padding: 2px 28px 2px 9px;
+  border: 3px solid #4b4f52;
+  border-radius: 4px;
+  background: #d0d2d3;
+  color: #292c2e;
+  font: 800 14px/1 "Florr UI", "Segoe UI", sans-serif;
+}
+
+.settings-square-toggle {
+  justify-self: end;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 3px solid #8a8d90;
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-square-toggle-fill {
+  width: 18px;
+  height: 18px;
+  background: #424548;
+}
+
+.settings-square-toggle.enabled .settings-square-toggle-fill {
+  background: #c8cbcd;
+}
+
+.settings-square-toggle:focus-visible,
+.settings-choice:focus-visible {
+  outline: 3px solid #eceeef;
+  outline-offset: 2px;
 }
 
 .talent-points {
@@ -1839,6 +1985,31 @@ body.mobile-mode-forced .quick-actions {
   transform-origin: top center;
 }
 
+.slot-ban-mark {
+  position: absolute;
+  inset: 8%;
+  z-index: 4;
+  pointer-events: none;
+  filter: drop-shadow(0 0 1px rgba(64, 0, 0, 0.9));
+}
+
+.slot-ban-mark::before,
+.slot-ban-mark::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -3%;
+  width: 12%;
+  height: 106%;
+  border-radius: 2px;
+  background: #ff1010;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.slot-ban-mark::after {
+  transform: translateX(-50%) rotate(-45deg);
+}
+
 .slot.selected {
   filter: none;
 }
@@ -2242,19 +2413,24 @@ body.mobile-mode-forced .quick-actions {
     width: min(330px, calc(100vw - 24px));
   }
 
-  .backpack-panel,
-  .craft-panel,
-  .talent-panel {
+  .game-panel {
     left: calc(-1 * (100vw - 24px) - 12px);
     bottom: max(8px, env(safe-area-inset-bottom));
     width: calc(100vw - 24px);
     max-height: calc(100vh - 72px);
   }
 
-  .backpack-panel.open,
-  .craft-panel.open,
-  .talent-panel.open {
+  .game-panel.open {
     left: 12px;
+  }
+
+  .settings-row {
+    grid-template-columns: minmax(0, 1fr) minmax(116px, 42%);
+    gap: 10px;
+  }
+
+  .settings-choice {
+    min-width: 0;
   }
 
   .inventory-grid {

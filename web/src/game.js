@@ -2,6 +2,7 @@ import {
   AuthMode,
   AuthResultCode,
   ChatFlag,
+  EmailPolicy,
   FULL_SNAPSHOT_BASE_ID,
   NETWORK_PETAL_TYPE_OFFSET,
   PetalNames,
@@ -76,6 +77,7 @@ import {
 import { createChatUi } from "./chat_ui.js";
 import {
   loadClientSettings,
+  normalizeMovementMode,
   normalizeMobileControlMode,
   saveClientSettings,
 } from "./client_settings.js";
@@ -92,6 +94,8 @@ import { createConsoleUi } from "./console_ui.js";
 import { createMapRenderer } from "./map_renderer.js";
 import { createMobileControls } from "./mobile_controls.js";
 import { createMysteryAudio } from "./mystery_audio.js";
+import { SettingsPanel } from "./settings_ui.js";
+import { UiPanel, UiPanelManager } from "./ui_panel.js";
 import {
   drawSolidProgressBar,
   traceSolidProgressBarPath,
@@ -128,6 +132,8 @@ import {
   dummyType,
   fireAntEggType,
   fireQueenAntType,
+  hallucinogenicMushroomLiveViewBox,
+  hallucinogenicMushroomLiveVisualScale,
   flagAntennae,
   flagAttacking,
   flagCarryingLeafPiece,
@@ -144,6 +150,7 @@ import {
   leafPieceType,
   maxBossBars,
   mechaFlowerType,
+  normalFlowerType,
   mobSpriteCoverScale,
   mobSpriteEffectiveBox,
   mobSpriteViewBox,
@@ -179,6 +186,7 @@ import {
   petalFragmentType,
   petalGlassType,
   petalGoldenLeafType,
+  petalHallucinogenicMushroomType,
   petalHeavyType,
   petalHoneyType,
   petalIrisType,
@@ -235,7 +243,9 @@ import {
   spiderType,
   stateCorruption,
   stateDigging,
+  stateHallucinogenic,
   stateInvincible,
+  stateBanSlot,
   statePoison,
   statePsionicConnection,
   stateUndead,
@@ -271,18 +281,20 @@ const {
   loadingScreen,
   ctx,
   authPanel,
+  emailBindingPanel,
   wsUrlInput,
   accountInput,
   passwordInput,
   emailInput,
   verificationCodeInput,
   authPasswordRow,
-  authEmailRow,
-  authCodeRow,
   bindingNotice,
   registerModeRow,
   registerModeInput,
   sendCodeBtn,
+  bindEmailBtn,
+  cancelEmailBindingBtn,
+  emailBindingStatus,
   connectBtn,
   deathOverlay,
   deathSource,
@@ -293,6 +305,7 @@ const {
   quickBackpackBtn,
   quickTalentBtn,
   quickCraftBtn,
+  quickSettingsBtn,
   quickTalentPoints,
   chatChannels,
   chatHint,
@@ -320,6 +333,12 @@ const {
   talentCloseBtn,
   talentPointsLabel,
   talentTree,
+  settingsPanel,
+  settingsCloseBtn,
+  settingsList,
+  emailSettingsRow,
+  emailBindingState,
+  openEmailBindingBtn,
   primarySlots,
   secondarySlots,
   inventoryList,
@@ -337,13 +356,117 @@ const passwordField = createTextInput(passwordInput, {
   onSubmit: () => connectAndAuth(),
 });
 const emailField = createTextInput(emailInput, {
-  onSubmit: () => connectAndAuth(),
+  onSubmit: () => confirmEmailBinding(),
 });
 const verificationCodeField = createTextInput(verificationCodeInput, {
-  onSubmit: () => connectAndAuth(),
+  onSubmit: () => confirmEmailBinding(),
 });
 
 let mobileControls = null;
+const panelManager = new UiPanelManager();
+const backpackUiPanel = new UiPanel({
+  id: "backpack",
+  root: backpackPanel,
+  state,
+  stateKey: "backpackOpen",
+  manager: panelManager,
+  trigger: quickBackpackBtn,
+  focusTarget: canvas,
+  onOpen: () => renderInventoryPanel({ forceInventory: true }),
+  onChange: () => updateQuickActionButtons(),
+});
+const craftUiPanel = new UiPanel({
+  id: "craft",
+  root: craftPanel,
+  state,
+  stateKey: "craftOpen",
+  manager: panelManager,
+  trigger: quickCraftBtn,
+  focusTarget: canvas,
+  onOpen: () => renderCraftPanel(),
+  onClose: () => clearCraftDisplay(),
+  onChange: () => updateQuickActionButtons(),
+});
+const talentUiPanel = new UiPanel({
+  id: "talent",
+  root: talentPanel,
+  state,
+  stateKey: "talentOpen",
+  manager: panelManager,
+  trigger: quickTalentBtn,
+  focusTarget: canvas,
+  onOpen: () => renderTalentPanel(),
+  onChange: () => updateQuickActionButtons(),
+});
+const settingsUi = new SettingsPanel({
+  id: "settings",
+  root: settingsPanel,
+  list: settingsList,
+  state,
+  stateKey: "settingsOpen",
+  manager: panelManager,
+  trigger: quickSettingsBtn,
+  focusTarget: canvas,
+  translate: (key) => t(key),
+  onError: (error, definition) =>
+    addConsoleLine(
+      `${t(definition.labelKey)}: ${String(error?.message || error || "Unable to update setting")}`,
+      "error",
+    ),
+  onChange: () => updateQuickActionButtons(),
+  definitions: [
+    {
+      id: "language",
+      type: "choice",
+      labelKey: "ui.settings.language",
+      getValue: () => getLocale(),
+      options: () =>
+        getAvailableLocales().map((entry) => ({
+          value: entry.id,
+          label: entry.label,
+        })),
+      setValue: (value) => executeLanguageCommand([String(value)]),
+    },
+    {
+      id: "movement",
+      type: "choice",
+      labelKey: "ui.settings.movement",
+      getValue: () => state.movementMode,
+      options: () => [
+        {
+          value: "keyboard",
+          labelKey: "ui.settings.movementModes.keyboard",
+        },
+        { value: "mouse", labelKey: "ui.settings.movementModes.mouse" },
+        { value: "none", labelKey: "ui.settings.movementModes.none" },
+      ],
+      setValue: (value) => setMovementMode(value),
+    },
+    {
+      id: "hold-attack",
+      type: "toggle",
+      labelKey: "ui.settings.holdAttack",
+      getValue: () => state.holdAttack,
+      setValue: (value) => setHeldAction("attack", value),
+    },
+    {
+      id: "hold-defense",
+      type: "toggle",
+      labelKey: "ui.settings.holdDefense",
+      getValue: () => state.holdDefense,
+      setValue: (value) => setHeldAction("defense", value),
+    },
+  ],
+});
+const consoleUiPanel = new UiPanel({
+  id: "console",
+  root: dom.consolePanel,
+  state,
+  stateKey: "consoleOpen",
+  manager: panelManager,
+  group: "utility",
+  exclusive: false,
+});
 const chatUi = createChatUi({
   beforeOpen: () => {
     if (state.consoleOpen) toggleConsole(false);
@@ -357,6 +480,7 @@ const chatUi = createChatUi({
   focusTarget: canvas,
 });
 const consoleUi = createConsoleUi({
+  panel: consoleUiPanel,
   beforeOpen: () => closeChat(),
   executeCommand: (line) =>
     executeClientCommand(line.startsWith("/") ? line.slice(1) : line),
@@ -397,7 +521,6 @@ let pageUnloading = false;
 const AuthUiMode = Object.freeze({
   Login: "login",
   Register: "register",
-  Binding: "binding",
 });
 let authUiMode = AuthUiMode.Login;
 let pendingAuthMode = null;
@@ -407,6 +530,7 @@ const {
   deathFadeDuration,
   deathScaleBoost,
   hurtFlashDuration,
+  hurtFlashInterval,
   hurtFlashMinDelta,
   hurtFlashFilterEntityLimit,
   missingEntityViewEdgeGrace,
@@ -525,7 +649,14 @@ let currentRenderTimeSeconds = 0;
 let currentVisibleEntityCount = 0;
 let currentRenderLoad = 0;
 let currentHurtFlashFilterCount = 0;
+let entityVisualOnlyRenderDepth = 0;
 let currentHornetSkill2WindupOwners = [];
+let diurnalMaskCanvas = null;
+let diurnalMaskContext = null;
+let diurnalLightCanvas = null;
+let diurnalLightContext = null;
+let rainDrops = [];
+let lastWeatherEffectsAt = 0;
 let minimapHitRect = null;
 let minimapCache = null;
 const PetalNameToType = new Map(
@@ -561,8 +692,32 @@ function setMobileControlMode(value, announce = true) {
     );
 }
 
+function setMovementMode(value, announce = false) {
+  state.movementMode = normalizeMovementMode(value);
+  state.keys.clear();
+  state.localMoveInput = { x: 0, y: 0 };
+  saveSettings();
+  if (announce)
+    addConsoleLine(
+      t("commands.toggle.movement", {
+        value: t(`ui.settings.movementModes.${state.movementMode}`),
+      }),
+    );
+}
+
+function setHeldAction(action, value) {
+  const enabled = !!value;
+  if (action === "attack") state.holdAttack = enabled;
+  else if (action === "defense") state.holdDefense = enabled;
+  saveSettings();
+}
+
 function setStatus(text, good = false) {
   consoleUi.setStatus(text, good);
+  if (emailBindingStatus) {
+    emailBindingStatus.textContent = text;
+    emailBindingStatus.classList.toggle("good", good);
+  }
 }
 
 function addConsoleLine(text, kind = "") {
@@ -610,6 +765,7 @@ function updateQuickActionButtons() {
   quickCraftBtn?.classList.toggle("active", state.craftOpen);
   quickCraftBtn?.classList.toggle("forge-mode", state.forgeMode);
   quickTalentBtn?.classList.toggle("active", state.talentOpen);
+  quickSettingsBtn?.classList.toggle("active", state.settingsOpen);
   if (talentPointsLabel)
     talentPointsLabel.textContent = t("ui.talents.points", { count: points });
   if (quickTalentPoints) {
@@ -630,6 +786,7 @@ function updatePlayUiVisibility() {
   chatUi.setVisible(visible);
   mobileControls?.setMode(state.mobileControlMode);
   mobileControls?.setEnabled(visible);
+  renderEmailSettingsRow();
 }
 
 function setLoadingScreenVisible(visible) {
@@ -655,6 +812,8 @@ function refreshLocalizedUi() {
   setAuthUiMode(authUiMode);
   chatUi.refreshTranslations();
   mobileControls?.refreshTranslations();
+  settingsUi.refreshTranslations();
+  renderEmailSettingsRow();
   updateQuickActionButtons();
   hidePetalInfoTooltip();
   renderInventoryPanel({ forceInventory: true });
@@ -670,38 +829,21 @@ function refreshLocalizedUi() {
 }
 
 function toggleBackpack(force) {
-  state.backpackOpen = typeof force === "boolean" ? force : !state.backpackOpen;
-  if (state.backpackOpen) {
-    toggleCraft(false);
-    toggleTalent(false);
-  }
-  backpackPanel.classList.toggle("open", state.backpackOpen);
-  updateQuickActionButtons();
-  if (state.backpackOpen) renderInventoryPanel({ forceInventory: true });
+  backpackUiPanel.toggle(force);
 }
 
 function toggleCraft(force) {
-  state.craftOpen = typeof force === "boolean" ? force : !state.craftOpen;
-  if (state.craftOpen) {
-    toggleBackpack(false);
-    toggleTalent(false);
-    renderCraftPanel();
-  } else {
-    clearCraftDisplay();
-  }
-  craftPanel.classList.toggle("open", state.craftOpen);
-  updateQuickActionButtons();
+  craftUiPanel.toggle(force);
 }
 
 function toggleTalent(force) {
-  state.talentOpen = typeof force === "boolean" ? force : !state.talentOpen;
-  if (state.talentOpen) {
-    toggleBackpack(false);
-    toggleCraft(false);
-    renderTalentPanel();
-  }
-  talentPanel.classList.toggle("open", state.talentOpen);
-  updateQuickActionButtons();
+  talentUiPanel.toggle(force);
+}
+
+function toggleSettings(force) {
+  if (!state.authenticated && force !== false) return false;
+  settingsUi.toggle(force);
+  return state.settingsOpen;
 }
 
 function submitConsole() {
@@ -730,23 +872,88 @@ function scheduleReconnect() {
 
 function setAuthUiMode(mode) {
   authUiMode = mode;
-  const needsEmail = mode !== AuthUiMode.Login;
-  const binding = mode === AuthUiMode.Binding;
-
-  authPasswordRow.classList.toggle("hidden", binding);
-  authEmailRow.classList.toggle("hidden", !needsEmail);
-  authCodeRow.classList.toggle("hidden", !needsEmail);
-  bindingNotice.classList.toggle("hidden", !binding);
-  registerModeRow.classList.toggle("hidden", binding);
-  accountField.setDisabled(binding);
+  authPasswordRow.classList.remove("hidden");
+  registerModeRow.classList.remove("hidden");
+  accountField.setDisabled(false);
   registerModeInput.checked = mode === AuthUiMode.Register;
-
-  const buttonKey = binding
-    ? "ui.auth.bindEmail"
-    : mode === AuthUiMode.Register
-      ? "ui.auth.completeRegistration"
-      : "ui.auth.connect";
+  const buttonKey =
+    mode === AuthUiMode.Register ? "ui.auth.register" : "ui.auth.connect";
   connectBtn.textContent = t(buttonKey);
+}
+
+function isEmailBindingMode(mode) {
+  return (
+    mode === AuthMode.RequestBindingCode || mode === AuthMode.ConfirmBinding
+  );
+}
+
+function bindingAccountName() {
+  return state.accountName || accountField.getValue({ trim: true });
+}
+
+function renderEmailSettingsRow() {
+  if (!emailSettingsRow) return;
+  const visible =
+    state.authenticated && state.emailPolicy !== EmailPolicy.Disabled;
+  emailSettingsRow.classList.toggle("hidden", !visible);
+  if (!visible) return;
+
+  emailBindingState.textContent = t(
+    state.emailBound
+      ? "ui.settings.emailBound"
+      : "ui.settings.emailNotBound",
+  );
+  openEmailBindingBtn.classList.toggle("hidden", state.emailBound);
+}
+
+function setEmailBindingPanel(open, { required = false } = {}) {
+  const wasOpen = !emailBindingPanel.classList.contains("hidden");
+  state.emailBindingRequired = open && required;
+  emailBindingPanel.classList.toggle("hidden", !open);
+  emailBindingPanel.classList.toggle("binding-required", open && required);
+  cancelEmailBindingBtn.classList.toggle("hidden", open && required);
+  bindingNotice.textContent = t(
+    required
+      ? "ui.auth.bindingRequiredNotice"
+      : "ui.auth.bindingOptionalNotice",
+  );
+  if (open) {
+    authPanel.classList.add("hidden");
+    state.keys.clear();
+    state.localMoveInput = { x: 0, y: 0 };
+    state.attacking = false;
+    state.defending = false;
+    state.digging = false;
+    if (state.authenticated)
+      sendNeutralGameplayState({ includeInput: true });
+    if (!wasOpen) {
+      verificationCodeField.clear();
+      emailBindingStatus.textContent = "";
+    }
+    emailField.focus();
+  } else if (wasOpen) {
+    emailField.blur();
+    verificationCodeField.blur();
+    canvas.focus();
+  }
+  renderEmailSettingsRow();
+}
+
+function openEmailBinding() {
+  if (
+    !state.authenticated ||
+    state.emailBound ||
+    state.emailPolicy === EmailPolicy.Disabled
+  )
+    return;
+  settingsUi.setOpen(false);
+  setEmailBindingPanel(true);
+}
+
+function cancelEmailBinding() {
+  if (state.emailBindingRequired) return;
+  clearAuthRequestPending();
+  setEmailBindingPanel(false);
 }
 
 function setAuthRequestPending(mode) {
@@ -754,6 +961,8 @@ function setAuthRequestPending(mode) {
   const busy = mode !== null;
   connectBtn.disabled = busy;
   sendCodeBtn.disabled = busy;
+  bindEmailBtn.disabled = busy;
+  cancelEmailBindingBtn.disabled = busy;
 }
 
 function clearAuthRequestPending() {
@@ -763,34 +972,30 @@ function clearAuthRequestPending() {
 
 function selectedAuthMode() {
   if (authUiMode === AuthUiMode.Register) return AuthMode.Register;
-  if (authUiMode === AuthUiMode.Binding) return AuthMode.ConfirmBinding;
   return AuthMode.Login;
 }
 
 function validateAuthFields(mode) {
-  if (!accountField.getValue({ trim: true })) {
+  const binding = isEmailBindingMode(mode);
+  if (!(binding ? bindingAccountName() : accountField.getValue({ trim: true }))) {
     setStatus(t("status.accountEmpty"));
-    accountField.focus();
+    if (!binding) accountField.focus();
     return false;
   }
 
-  const registration =
-    mode === AuthMode.Register ||
-    mode === AuthMode.RequestRegistrationCode;
-  const binding =
-    mode === AuthMode.RequestBindingCode || mode === AuthMode.ConfirmBinding;
+  const registration = mode === AuthMode.Register;
   if (registration && !passwordField.getValue()) {
     setStatus(t("status.passwordEmpty"));
     passwordField.focus();
     return false;
   }
-  if ((registration || binding) && !emailField.getValue({ trim: true })) {
+  if (binding && !emailField.getValue({ trim: true })) {
     setStatus(t("status.emailEmpty"));
     emailField.focus();
     return false;
   }
   if (
-    (mode === AuthMode.Register || mode === AuthMode.ConfirmBinding) &&
+    mode === AuthMode.ConfirmBinding &&
     !verificationCodeField.getValue({ trim: true })
   ) {
     setStatus(t("status.verificationCodeEmpty"));
@@ -806,10 +1011,11 @@ function queueAuthRequest(mode) {
   const socketOpen =
     state.ws && state.ws.readyState === WebSocket.OPEN && state.connected;
   if (
-    (mode === AuthMode.RequestBindingCode || mode === AuthMode.ConfirmBinding) &&
-    !socketOpen
+    isEmailBindingMode(mode) && !socketOpen
   ) {
+    setEmailBindingPanel(false);
     setAuthUiMode(AuthUiMode.Login);
+    authPanel.classList.remove("hidden");
     setStatus(t("status.bindingSessionExpired"));
     return;
   }
@@ -829,11 +1035,11 @@ function connectAndAuth() {
 }
 
 function requestVerificationCode() {
-  const mode =
-    authUiMode === AuthUiMode.Binding
-      ? AuthMode.RequestBindingCode
-      : AuthMode.RequestRegistrationCode;
-  return queueAuthRequest(mode);
+  return queueAuthRequest(AuthMode.RequestBindingCode);
+}
+
+function confirmEmailBinding() {
+  return queueAuthRequest(AuthMode.ConfirmBinding);
 }
 
 async function startConnection(automatic) {
@@ -914,7 +1120,9 @@ function openConnection(wsUrl, automatic, generation) {
     state.ws = null;
     state.connected = false;
     state.authenticated = false;
+    state.emailBindingRequired = false;
     clearAuthRequestPending();
+    setEmailBindingPanel(false);
     setAuthUiMode(AuthUiMode.Login);
     resetNetworkScene({ resetRunCollection: !reconnectArmed });
     updatePlayUiVisibility();
@@ -953,6 +1161,8 @@ function closeSocket(sendDisconnect = true) {
   if (ws) ws.close();
   state.connected = false;
   state.authenticated = false;
+  state.emailBindingRequired = false;
+  setEmailBindingPanel(false);
   resetNetworkScene();
   updatePlayUiVisibility();
   loadLoginMap();
@@ -991,19 +1201,21 @@ function sendAuth(mode = AuthMode.Login) {
     clearAuthRequestPending();
     return;
   }
+  const binding = isEmailBindingMode(mode);
+  const accountName = binding
+    ? bindingAccountName()
+    : accountField.getValue({ trim: true });
+  if (!binding) state.accountName = accountName;
   const packet = packAuth({
     mode,
-    name: accountField.getValue({ trim: true }),
+    name: accountName,
     password:
-      mode === AuthMode.Login ||
-      mode === AuthMode.Register ||
-      mode === AuthMode.RequestRegistrationCode
+      mode === AuthMode.Login || mode === AuthMode.Register
         ? passwordField.getValue()
         : "",
-    email:
-      mode === AuthMode.Login ? "" : emailField.getValue({ trim: true }),
+    email: binding ? emailField.getValue({ trim: true }) : "",
     code:
-      mode === AuthMode.Register || mode === AuthMode.ConfirmBinding
+      mode === AuthMode.ConfirmBinding
         ? verificationCodeField.getValue({ trim: true })
         : "",
   });
@@ -1082,25 +1294,44 @@ function handleServerMessage(msg) {
 
   if (msg.type === ServerType.AuthResult) {
     const resultCode = msg.resultCode ?? AuthResultCode.Failed;
-    const authenticated =
+    const completesAuthentication =
       resultCode === AuthResultCode.Authenticated ||
       resultCode === AuthResultCode.EmailBound;
     const informational =
       resultCode === AuthResultCode.VerificationCodeSending ||
       resultCode === AuthResultCode.VerificationCodeSent;
+    const wasAuthenticated = state.authenticated;
+    const bindingPanelOpen = !emailBindingPanel.classList.contains("hidden");
+    if (
+      Number.isInteger(msg.emailPolicy) &&
+      msg.emailPolicy >= EmailPolicy.Disabled &&
+      msg.emailPolicy <= EmailPolicy.Required
+    )
+      state.emailPolicy = msg.emailPolicy;
+    if (typeof msg.emailBound === "boolean")
+      state.emailBound = msg.emailBound;
     if (resultCode !== AuthResultCode.VerificationCodeSending)
       clearAuthRequestPending();
 
-    state.authenticated = authenticated;
+    const bindingCompletedWhilePlaying =
+      wasAuthenticated && resultCode === AuthResultCode.EmailBound;
+    state.authenticated =
+      completesAuthentication ||
+      (wasAuthenticated && (bindingPanelOpen || informational));
     setStatus(
       msg.message ||
-        t(authenticated ? "status.authenticated" : "status.authFailed"),
-      authenticated || informational,
+        t(completesAuthentication ? "status.authenticated" : "status.authFailed"),
+      completesAuthentication || informational,
     );
-    if (authenticated) {
+    if (bindingCompletedWhilePlaying) {
+      state.emailBound = true;
+      verificationCodeField.clear();
+      setEmailBindingPanel(false);
+    } else if (completesAuthentication) {
       passwordField.clear();
       verificationCodeField.clear();
       setAuthUiMode(AuthUiMode.Login);
+      setEmailBindingPanel(false);
       const resumed = resumingConnection;
       reconnectArmed = true;
       reconnectAttempt = 0;
@@ -1118,30 +1349,40 @@ function handleServerMessage(msg) {
       sendBytes(packStateRequest());
       authPanel.classList.add("hidden");
     } else if (resultCode === AuthResultCode.EmailBindingRequired) {
+      state.authenticated = false;
+      state.emailBound = false;
       reconnectArmed = false;
       resumingConnection = false;
       passwordField.clear();
       verificationCodeField.clear();
-      setAuthUiMode(AuthUiMode.Binding);
-      authPanel.classList.remove("hidden");
-      emailField.focus();
+      setEmailBindingPanel(true, { required: true });
       loadLoginMap();
     } else if (informational) {
-      reconnectArmed = false;
-      resumingConnection = false;
-      authPanel.classList.remove("hidden");
+      if (!wasAuthenticated) {
+        reconnectArmed = false;
+        resumingConnection = false;
+      }
       if (resultCode === AuthResultCode.VerificationCodeSent)
         verificationCodeField.focus();
+    } else if (
+      bindingPanelOpen &&
+      (wasAuthenticated || state.emailBindingRequired)
+    ) {
+      state.authenticated = wasAuthenticated;
+      if (state.emailPolicy === EmailPolicy.Disabled)
+        setEmailBindingPanel(false);
     } else {
+      state.authenticated = false;
       reconnectArmed = false;
       resumingConnection = false;
+      setEmailBindingPanel(false);
       authPanel.classList.remove("hidden");
       loadLoginMap();
     }
     updatePlayUiVisibility();
     addConsoleLine(
       msg.message ||
-        t(authenticated ? "status.authenticated" : "status.authFailed"),
+        t(completesAuthentication ? "status.authenticated" : "status.authFailed"),
       resultCode === AuthResultCode.Failed ? "error" : "",
     );
     return;
@@ -1152,6 +1393,23 @@ function handleServerMessage(msg) {
     if (resolved) applySnapshotAndAck(resolved);
     else requestFullSnapshot();
     pendingSnapshot = null;
+    return;
+  }
+
+  if (msg.type === ServerType.Environment) {
+    state.environment = {
+      received: true,
+      anchorServerTick: Number.isSafeInteger(msg.anchorServerTick)
+        ? msg.anchorServerTick
+        : 0,
+      timeOfDay: clamp(msg.timeOfDay || 0, 0, 1),
+      dayDurationSeconds: Math.max(0.001, msg.dayDurationSeconds || 21600),
+      fixedDtSeconds: Math.max(0.000001, msg.fixedDtSeconds || serverFixedDt),
+      weatherIntensity: Array.isArray(msg.weatherIntensity)
+        ? msg.weatherIntensity.map((value) => clamp(value / 255, 0, 1))
+        : [1, 0, 0, 0, 0],
+      receivedAt: performance.now(),
+    };
     return;
   }
 
@@ -1227,6 +1485,15 @@ function resetNetworkScene({ resetRunCollection = true } = {}) {
   state.serverTick = -1;
   state.serverTickReceivedAt = 0;
   state.serverTickInterval = serverFixedDt;
+  state.environment = {
+    received: false,
+    anchorServerTick: 0,
+    timeOfDay: 0.25,
+    dayDurationSeconds: 21600,
+    fixedDtSeconds: serverFixedDt,
+    weather: 0,
+    receivedAt: 0,
+  };
   state.lastInput = {
     x: 99,
     y: 99,
@@ -1781,8 +2048,18 @@ function applySnapshot(msg) {
       existing.dying = false;
       existing.deathAge = 0;
       existing.missingSnapshotCount = 0;
-      if (!isDead && snap.hpPercent < previousHp - hurtFlashMinDelta)
+      const hurtFlashReadyAt = Number.isFinite(existing.hurtFlashReadyAt)
+        ? existing.hurtFlashReadyAt
+        : 0;
+      if (
+        !isDead &&
+        snap.hpPercent < previousHp - hurtFlashMinDelta &&
+        snapshotNow >= hurtFlashReadyAt
+      ) {
         existing.hurtFlashAge = 0;
+        existing.hurtFlashReadyAt =
+          snapshotNow + Math.max(0, hurtFlashInterval);
+      }
       if (isDead && !wasDead) existing.deathAngle = Math.random() * Math.PI * 2;
       if (!isDead) existing.deathAngle = null;
     } else {
@@ -1804,6 +2081,7 @@ function applySnapshot(msg) {
         dying: false,
         deathAge: 0,
         hurtFlashAge: hurtFlashDuration,
+        hurtFlashReadyAt: 0,
         deathAngle: isDead ? Math.random() * Math.PI * 2 : null,
         particleBurstNextAt: null,
         bloodSacrificeAngle:
@@ -1906,9 +2184,15 @@ function syncOwnerSlotsFromSnapshot(ownerSnap) {
 function syncOwnerSlotRuntimeFromSnapshot(ownerSnap) {
   if (!ownerSnap || !Array.isArray(ownerSnap.primarySlots)) return;
 
-  state.ownerSlotRuntime = ownerSnap.primarySlots.map((slot) => ({
+  const bannedSlots = new Set(
+    (ownerSnap.states || [])
+      .filter((entityState) => entityState?.type === stateBanSlot)
+      .map((entityState) => entityState.value),
+  );
+  state.ownerSlotRuntime = ownerSnap.primarySlots.map((slot, index) => ({
     petalType: slot?.petalType || 0,
     rarity: slot?.rarity || 0,
+    banned: bannedSlots.has(index),
     visualType: slot?.visualType || PetalSlotVisualType.None,
     copies: (slot?.copies || []).map((copy) => ({
       loading: copy?.state === PetalSlotCopyState.Loading,
@@ -2145,7 +2429,10 @@ function stepOwnerPrediction(entity, dt) {
     vel = { x: vel.x * scale, y: vel.y * scale };
   }
 
-  const move = state.localMoveInput || { x: 0, y: 0 };
+  const move = transformOwnerHallucinationVector(
+    snap,
+    state.localMoveInput || { x: 0, y: 0 },
+  );
   const moveLength = Math.hypot(move.x, move.y);
   if (moveLength > 0.0001 && maxVelocity > 0 && acceleration > 0) {
     const desired = {
@@ -2404,14 +2691,17 @@ function readMouseMoveInput() {
 }
 
 function isMainPanelOpen() {
-  return !!(state.backpackOpen || state.craftOpen || state.talentOpen);
+  return panelManager.isAnyOpen("main");
 }
 
 function readMoveInput() {
   if (isMainPanelOpen()) return { x: 0, y: 0 };
+  if (state.movementMode === "none") return { x: 0, y: 0 };
   if (mobileControls?.hasMovement()) return mobileControls.getMove();
   if (mobileControls?.isMobileMode()) return { x: 0, y: 0 };
-  return state.keyboardControl ? readKeyboardMoveInput() : readMouseMoveInput();
+  return state.movementMode === "keyboard"
+    ? readKeyboardMoveInput()
+    : readMouseMoveInput();
 }
 
 function updateMousePointer(event) {
@@ -2454,10 +2744,12 @@ function flushInput(dt) {
   const py = Math.round(clamp(packetMoveY, -1, 1) * 127);
   const moveChanged = px !== state.lastInput.x || py !== state.lastInput.y;
   const attacking =
+    state.holdAttack ||
     state.attacking ||
     state.keys.has("space") ||
     !!mobileControls?.isAttacking();
   const defending =
+    state.holdDefense ||
     state.defending ||
     state.keys.has("shift") ||
     !!mobileControls?.isDefending();
@@ -2672,17 +2964,19 @@ function executeClientCommand(line) {
   if (name === "keyboard_control") {
     if (args.length) {
       const value = String(args[0]).toLowerCase();
-      state.keyboardControl = !(
+      const enabled = !(
         value === "0" ||
         value === "off" ||
         value === "false"
       );
-      saveSettings();
+      setMovementMode(enabled ? "keyboard" : "mouse");
     }
     addConsoleLine(
       t("commands.toggle.keyboard", {
         value: t(
-          state.keyboardControl ? "commands.toggle.on" : "commands.toggle.off",
+          state.movementMode === "keyboard"
+            ? "commands.toggle.on"
+            : "commands.toggle.off",
         ),
       }),
     );
@@ -3165,6 +3459,7 @@ function updateSlotDurabilityOverlay(button, slot, index, kind) {
   if (!button) return;
 
   const runtime = kind === "primary" ? state.ownerSlotRuntime[index] : null;
+  updateSlotBanOverlay(button, !!runtime?.banned);
   const copies =
     runtime &&
     runtime.petalType === (slot?.petalType || 0) &&
@@ -3198,6 +3493,20 @@ function updateSlotDurabilityOverlay(button, slot, index, kind) {
     layer.style.height = `${(1 - clamp(copy.progress || 0, 0, 1)) * 100}%`;
     layer.style.opacity = String(layerOpacity);
   });
+}
+
+function updateSlotBanOverlay(button, banned) {
+  let mark = button.querySelector(":scope > .slot-ban-mark");
+  if (!banned) {
+    mark?.remove();
+    return;
+  }
+  if (mark) return;
+
+  mark = document.createElement("span");
+  mark.className = "slot-ban-mark";
+  mark.setAttribute("aria-hidden", "true");
+  button.appendChild(mark);
 }
 
 function updateSlotLiveVisual(button, runtime, copies) {
@@ -4427,6 +4736,8 @@ const petalInfoStatKeys = Object.freeze({
   "Max damage": "maxDamage",
   "Max durability": "maxDurability",
   "Max radius": "maxRadius",
+  Hallucination: "hallucination",
+  "Evolve hits": "evolveHits",
 });
 
 const petalInfoValueKeys = Object.freeze({
@@ -4544,13 +4855,13 @@ function buildPetalInfo(petalType, rarity) {
       break;
     case petalWhiteFungusType: {
       const hitBonus = Math.round(2 * rarityValueLevel(rarity));
-      addCombat(8 * scale, 10 * scale, 1);
+      addCombat(8 * scale, 10 * scale, 1.5);
       addRow("Petal hits/tick", `+${hitBonus}`);
       break;
     }
     case petalBlackFungusType: {
       const compressionPower = Math.round(2 * rarityValueLevel(rarity));
-      addCombat(8 * scale, 10 * scale, 1);
+      addCombat(8 * scale, 10 * scale, 1.5);
       addRow("Compression power", `+${compressionPower}`);
       break;
     }
@@ -4658,6 +4969,11 @@ function buildPetalInfo(petalType, rarity) {
       addNumber("Max damage", 70 * scale);
       addNumber("Max durability", 70 * scale);
       addRow("Max radius", "x3.33");
+      break;
+    case petalHallucinogenicMushroomType:
+      addCombat(4 * scale, 8 * scale, 1.5);
+      addSeconds("Hallucination", 12);
+      addNumber("Evolve hits", 3);
       break;
     case petalAntEggType:
       addRow("Petals", "x4");
@@ -6208,7 +6524,7 @@ function updateDebugInfo() {
   const chunkQueue = map?.chunkBuildQueue?.length || 0;
   const visibleChunks = map?.visibleChunkKeys?.size || 0;
   const chunkProfile = map?.chunkProfileLabel || "-";
-  const inputMode = state.keyboardControl ? "keyboard" : "mouse";
+  const inputMode = state.movementMode;
   const socketState = state.ws
     ? ["connecting", "open", "closing", "closed"][state.ws.readyState] ||
       state.ws.readyState
@@ -6900,9 +7216,166 @@ function flowerMobCullScale(entityType) {
   return Math.max(1, flowerMobVisualScale(entityType) * 1.35);
 }
 
-function drawEntity(entity) {
+function transformHallucinationVector(vector, parameters) {
+  const vx = Number(vector?.x) || 0;
+  const vy = Number(vector?.y) || 0;
+  const originalLength = Math.hypot(vx, vy);
+  if (originalLength <= 0.000001 || !Array.isArray(parameters)) return vector;
+
+  const value = (index) => {
+    const parameter = Number(parameters[index]);
+    return Number.isFinite(parameter) ? parameter : 0;
+  };
+  const angle = value(0);
+  const scaleX = Math.exp(clamp(value(1), -4, 4));
+  const scaleY = Math.exp(clamp(value(2), -4, 4));
+  const shear = clamp(value(3), -8, 8);
+  const localX = scaleX * vx + shear * vy;
+  const localY = scaleY * vy;
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  const transformedX =
+    cosine * localX - sine * localY + clamp(value(4), -8, 8) * originalLength;
+  const transformedY =
+    sine * localX + cosine * localY + clamp(value(5), -8, 8) * originalLength;
+  const transformedLength = Math.hypot(transformedX, transformedY);
+  if (!Number.isFinite(transformedLength) || transformedLength <= 0.000001)
+    return vector;
+
+  const preserveLength = originalLength / transformedLength;
+  return {
+    x: transformedX * preserveLength,
+    y: transformedY * preserveLength,
+  };
+}
+
+function transformOwnerHallucinationVector(snap, vector) {
+  if (
+    !entityHasState(snap, stateHallucinogenic) ||
+    !Array.isArray(snap?.hallucinations)
+  )
+    return vector;
+
+  let transformed = vector;
+  for (const parameters of snap.hallucinations)
+    transformed = transformHallucinationVector(transformed, parameters);
+  return transformed;
+}
+
+function activeOwnerHallucinationEntity() {
+  const owner = state.entities.get(state.ownerEntityId);
+  const snap = owner?.snapshot;
+  if (
+    !owner ||
+    !snap ||
+    !owner.renderPos ||
+    owner.dying ||
+    (snap.flags & flagDead) !== 0 ||
+    !entityHasState(snap, stateHallucinogenic) ||
+    !Array.isArray(snap.hallucinations) ||
+    snap.hallucinations.length === 0
+  )
+    return null;
+  return owner;
+}
+
+function ownerHallucinationGhostOffset(owner) {
+  const snap = owner?.snapshot;
+  if (!snap) return null;
+
+  let direction = state.localMoveInput || { x: 0, y: 0 };
+  let directionLength = Math.hypot(direction.x || 0, direction.y || 0);
+  let directionAlreadyTransformed = false;
+  if (directionLength <= 0.0001) {
+    direction = owner.ownerPrediction?.vel || owner.snapshotVelocity || {
+      x: 0,
+      y: 0,
+    };
+    directionLength = Math.hypot(direction.x || 0, direction.y || 0);
+    directionAlreadyTransformed = directionLength > 0.0001;
+  }
+  if (directionLength <= 0.0001) {
+    const angle = Number.isFinite(owner.renderAngle)
+      ? owner.renderAngle
+      : Number(snap.angle) || 0;
+    direction = { x: Math.cos(angle), y: Math.sin(angle) };
+    directionLength = 1;
+    directionAlreadyTransformed = true;
+  }
+
+  const distance = Math.max(1, Number(snap.radius) || 0) * 3;
+  let transformed = {
+    x: (direction.x / directionLength) * distance,
+    y: (direction.y / directionLength) * distance,
+  };
+  if (!directionAlreadyTransformed)
+    transformed = transformOwnerHallucinationVector(snap, transformed);
+  return transformed;
+}
+
+function entityHallucinationGhostPositions(entity, hallucinationOwner) {
+  const snap = entity?.snapshot;
+  const actual = entity?.renderPos;
+  const ownerSnap = hallucinationOwner?.snapshot;
+  const ownerPos = hallucinationOwner?.renderPos;
+  if (
+    !snap ||
+    !actual ||
+    !ownerSnap ||
+    !ownerPos
+  )
+    return [];
+
+  let ghost = null;
+  if (snap.entityId === ownerSnap.entityId) {
+    const offset = ownerHallucinationGhostOffset(hallucinationOwner);
+    if (!offset) return [];
+    ghost = { x: actual.x + offset.x, y: actual.y + offset.y };
+  } else {
+    const relative = { x: actual.x - ownerPos.x, y: actual.y - ownerPos.y };
+    const transformed = transformOwnerHallucinationVector(ownerSnap, relative);
+    ghost = { x: ownerPos.x + transformed.x, y: ownerPos.y + transformed.y };
+  }
+
+  return [
+    { x: (actual.x + ghost.x) * 0.5, y: (actual.y + ghost.y) * 0.5 },
+    ghost,
+  ];
+}
+
+function drawEntityHallucinationGhosts(entity, hallucinationOwner) {
+  const positions = entityHallucinationGhostPositions(
+    entity,
+    hallucinationOwner,
+  );
+  if (positions.length === 0) return;
+
+  for (let i = positions.length - 1; i >= 0; i -= 1)
+    drawEntity(entity, {
+      renderPos: positions[i],
+      alpha: 0.5,
+      visualOnly: true,
+    });
+}
+
+function drawEntity(entity, options = {}) {
+  const visualOnly = options.visualOnly === true;
+  if (!visualOnly) {
+    drawEntityVisual(entity, options);
+    return;
+  }
+
+  entityVisualOnlyRenderDepth += 1;
+  try {
+    drawEntityVisual(entity, options);
+  } finally {
+    entityVisualOnlyRenderDepth -= 1;
+  }
+}
+
+function drawEntityVisual(entity, options = {}) {
   const snap = entity.snapshot;
-  const pos = worldToScreen(entity.renderPos);
+  const pos = worldToScreen(options.renderPos || entity.renderPos);
   const radius = Math.max(0, worldLengthToScreen(snap.radius));
   const isOwner =
     (snap.flags & flagOwner) !== 0 || snap.entityId === state.ownerEntityId;
@@ -6918,13 +7391,19 @@ function drawEntity(entity) {
   const hurtFlash = entity.dying ? 0 : hurtFlashAmount(entity);
   const spriteScale = flowerMobVisualScale(snap.entityType);
 
-  if (isPetal) emitPetalParticleBurst(entity, snap);
-  else if (snap.entityType === playerFlowerType)
-    emitZeroCopyFlowerParticleBurst(entity, snap);
+  if (!options.visualOnly) {
+    if (isPetal) emitPetalParticleBurst(entity, snap);
+    else if (snap.entityType === playerFlowerType)
+      emitZeroCopyFlowerParticleBurst(entity, snap);
+  }
 
   ctx.save();
-  ctx.globalAlpha *= deathAlpha;
-  if (hurtFlash > 0) {
+  const requestedAlpha = Number(options.alpha);
+  const renderAlpha = Number.isFinite(requestedAlpha)
+    ? clamp(requestedAlpha, 0, 1)
+    : 1;
+  ctx.globalAlpha *= deathAlpha * renderAlpha;
+  if (!options.visualOnly && hurtFlash > 0) {
     const filterLimit = Math.max(0, Number(hurtFlashFilterEntityLimit) || 0);
     const priorityEntity = isOwner || shouldAlwaysDrawDetailed(snap);
     const usePreciseFilter =
@@ -6934,8 +7413,6 @@ function drawEntity(entity) {
       currentHurtFlashFilterCount += 1;
       ctx.filter = `brightness(${1 + hurtFlash * 3.5}) saturate(${1 - hurtFlash * 0.92})`;
     } else {
-      // Canvas filters are expensive for large batches. A single blend pass keeps
-      // the hit feedback visible without forcing an offscreen filter operation.
       ctx.globalCompositeOperation = "screen";
     }
   }
@@ -7229,7 +7706,7 @@ function drawEntity(entity) {
   }
 
   if (!isPetal && !isDrop && snap.entityType === portalType) {
-    emitPortalParticleBurst(entity, snap);
+    if (!options.visualOnly) emitPortalParticleBurst(entity, snap);
     drawPortal(
       ctx,
       pos,
@@ -8038,18 +8515,27 @@ function drawLivePetal(petalType, rarity, pos, radius, angle, entityId = 0) {
       extractTrapperLiveSvg,
       "trapper-petal-centered",
     );
+  } else if (petalType === petalHallucinogenicMushroomType) {
+    icon = livePetalIconImage(
+      petalType,
+      rarity,
+      extractHallucinogenicMushroomLiveSvg,
+      "hallucinogenic-mushroom-centered",
+    );
   } else {
     icon = livePetalIconImage(petalType, rarity);
   }
 
+  const visualScale =
+    petalType === petalWaxType
+      ? waxLivePetalVisualScale
+      : petalType === petalHallucinogenicMushroomType
+        ? hallucinogenicMushroomLiveVisualScale
+        : 1;
   if (imageReady(icon)) {
-    drawCenteredImage(
-      icon,
-      size,
-      petalType === petalWaxType ? waxLivePetalVisualScale : 1,
-    );
+    drawCenteredImage(icon, size, visualScale);
   } else {
-    drawPetalSilhouette(size, rarity);
+    drawPetalSilhouette(size * visualScale, rarity);
   }
 
   ctx.restore();
@@ -8434,6 +8920,14 @@ function extractDandelionLiveSvg(svgText) {
 }
 
 function extractTrapperLiveSvg(svgText) {
+  return cropLivePetalSvg(svgText, trapperLivePetalViewBox);
+}
+
+function extractHallucinogenicMushroomLiveSvg(svgText) {
+  return cropLivePetalSvg(svgText, hallucinogenicMushroomLiveViewBox);
+}
+
+function cropLivePetalSvg(svgText, viewBox) {
   if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
     return stripLivePetalLabel(svgText);
 
@@ -8445,7 +8939,7 @@ function extractTrapperLiveSvg(svgText) {
   if (!root || root.tagName.toLowerCase() !== "svg")
     return stripLivePetalLabel(svgText);
 
-  root.setAttribute("viewBox", trapperLivePetalViewBox);
+  root.setAttribute("viewBox", viewBox);
   return new XMLSerializer().serializeToString(root);
 }
 
@@ -8763,18 +9257,6 @@ function isMobHitboxSnap(snap) {
   );
 }
 
-function hasHealthFrame(snap) {
-  return (
-    snap &&
-    snap.entityType > 0 &&
-    !isPetalEntity(snap.entityType) &&
-    !isDropEntity(snap.entityType) &&
-    snap.entityType !== portalType &&
-    !isBloodSacrificeEffectSnap(snap) &&
-    !isProjectileSnap(snap)
-  );
-}
-
 function mobDisplayName(snap) {
   return snap.name || mobTypeName(snap.entityType);
 }
@@ -8999,10 +9481,11 @@ function drawCollisionHitbox(pos, radius, style = hitboxStyleForSnap(null)) {
 }
 
 function drawMobFrame(snap, pos, radius) {
+  if (entityVisualOnlyRenderDepth > 0) return;
   if (radius < entityFrameMinScreenRadius) return;
   if (shouldSkipMobFrame(snap, radius)) return;
 
-  if (!hasHealthFrame(snap)) {
+  if (!isMobHitboxSnap(snap)) {
     drawEntityLabel(snap, pos, radius);
     return;
   }
@@ -9980,8 +10463,15 @@ function isEntityInRenderView(entity, scale) {
   );
 }
 
-function drawEntityPass(entities) {
-  for (const entity of entities) drawEntity(entity);
+function drawEntityWithHallucinationGhosts(entity, hallucinationOwner) {
+  if (hallucinationOwner)
+    drawEntityHallucinationGhosts(entity, hallucinationOwner);
+  drawEntity(entity);
+}
+
+function drawEntityPass(entities, hallucinationOwner = null) {
+  for (const entity of entities)
+    drawEntityWithHallucinationGhosts(entity, hallucinationOwner);
 }
 
 function drawCheckpointZoneOutlines() {
@@ -10149,6 +10639,264 @@ function drawBloodSacrificeVisionDarkness() {
   ctx.restore();
 }
 
+function estimatedServerTick(
+  now = performance.now(),
+  fixedDtSeconds = state.serverTickInterval || serverFixedDt,
+) {
+  if (!Number.isSafeInteger(state.serverTick) || state.serverTick < 0)
+    return null;
+  const interval = Math.max(0.000001, fixedDtSeconds);
+  const elapsed = Math.max(0, (now - state.serverTickReceivedAt) / 1000);
+  return state.serverTick + elapsed / interval;
+}
+
+function currentTimeOfDay(now = performance.now()) {
+  const environment = state.environment;
+  if (!environment?.received) return 0.25;
+  const dayDuration = Math.max(0.001, environment.dayDurationSeconds || 21600);
+  const fixedDt = Math.max(
+    0.000001,
+    environment.fixedDtSeconds || serverFixedDt,
+  );
+  const tick = estimatedServerTick(now, fixedDt);
+  const elapsed = Number.isFinite(tick)
+    ? (tick - environment.anchorServerTick) *
+      fixedDt
+    : Math.max(0, (now - environment.receivedAt) / 1000);
+  const time = environment.timeOfDay + elapsed / dayDuration;
+  return ((time % 1) + 1) % 1;
+}
+
+function darknessAt(timeOfDay) {
+  const t = ((timeOfDay % 1) + 1) % 1;
+  const dawnStart = 6 / 24;
+  const dayStart = 8 / 24;
+  const duskStart = 18 / 24;
+  const nightStart = 20 / 24;
+  if (t >= dayStart && t < duskStart) return 0;
+  if (t >= dawnStart && t < dayStart)
+    return 0.6 * (1 - (t - dawnStart) / (dayStart - dawnStart));
+  if (t >= duskStart && t < nightStart)
+    return 0.6 * ((t - duskStart) / (nightStart - duskStart));
+  return 0.6;
+}
+
+function duskFilterStrength(timeOfDay) {
+  const t = ((timeOfDay % 1) + 1) % 1;
+  const start = 17 / 24;
+  const peak = 19 / 24;
+  const end = 21 / 24;
+  if (t < start || t >= end) return 0;
+  if (t < peak) return (t - start) / (peak - start);
+  return 1 - (t - peak) / (end - peak);
+}
+
+function isLightFlower(entity) {
+  const type = entity?.snapshot?.entityType;
+  return (
+    type === playerFlowerType ||
+    type === normalFlowerType ||
+    type === mechaFlowerType ||
+    type === titanType
+  );
+}
+
+function ensureDiurnalMask() {
+  const width = Math.max(1, Math.round(state.canvasWidth * state.dpr));
+  const height = Math.max(1, Math.round(state.canvasHeight * state.dpr));
+  if (!diurnalMaskCanvas) {
+    diurnalMaskCanvas = document.createElement("canvas");
+    diurnalMaskContext = diurnalMaskCanvas.getContext("2d");
+  }
+  if (!diurnalLightCanvas) {
+    diurnalLightCanvas = document.createElement("canvas");
+    diurnalLightContext = diurnalLightCanvas.getContext("2d");
+  }
+  if (!diurnalMaskContext || !diurnalLightContext) return null;
+  if (diurnalMaskCanvas.width !== width) diurnalMaskCanvas.width = width;
+  if (diurnalMaskCanvas.height !== height) diurnalMaskCanvas.height = height;
+  if (diurnalLightCanvas.width !== width) diurnalLightCanvas.width = width;
+  if (diurnalLightCanvas.height !== height) diurnalLightCanvas.height = height;
+  return {
+    canvas: diurnalMaskCanvas,
+    context: diurnalMaskContext,
+    lightCanvas: diurnalLightCanvas,
+    lightContext: diurnalLightContext,
+  };
+}
+
+function drawFlowerLightMask(lightContext, darknessAlpha) {
+  if (darknessAlpha <= 0 || !state.map) return;
+  const tileRadius = Math.max(
+    1,
+    worldLengthToScreen(
+      Math.max(state.map.tileWidth || 512, state.map.tileHeight || 512),
+    ),
+  );
+  const innerRadius = tileRadius * (8 / 9);
+  const eraseAlpha = 0.125;
+
+  lightContext.save();
+  lightContext.filter = "none";
+  lightContext.globalCompositeOperation = "lighter";
+  for (const entity of state.entities.values()) {
+    if (!isLightFlower(entity) || entity.dying) continue;
+    const worldPos = entity.renderPos || entity.snapshot?.pos;
+    if (!worldPos) continue;
+    const pos = worldToScreen(worldPos);
+    if (
+      pos.x + tileRadius < 0 ||
+      pos.y + tileRadius < 0 ||
+      pos.x - tileRadius > state.canvasWidth ||
+      pos.y - tileRadius > state.canvasHeight
+    )
+      continue;
+    lightContext.fillStyle = `rgba(0, 0, 0, ${eraseAlpha})`;
+    lightContext.beginPath();
+    lightContext.arc(pos.x, pos.y, innerRadius, 0, Math.PI * 2);
+    lightContext.fill();
+    lightContext.beginPath();
+    lightContext.arc(pos.x, pos.y, tileRadius, 0, Math.PI * 2);
+    lightContext.fill();
+  }
+  lightContext.restore();
+}
+
+function drawDiurnalLighting(now = performance.now()) {
+  if (!state.environment?.received) return;
+  const timeOfDay = currentTimeOfDay(now);
+  const intensities = Array.isArray(state.environment.weatherIntensity)
+    ? state.environment.weatherIntensity
+    : [1, 0, 0, 0, 0];
+  const cloudy = clamp(intensities[1] || 0, 0, 1);
+  const darknessAlpha = clamp(
+    darknessAt(timeOfDay) + cloudy * 0.05,
+    0,
+    0.6,
+  );
+  const duskAlpha = duskFilterStrength(timeOfDay) * 0.08;
+  if (darknessAlpha > 0.001) {
+    const mask = ensureDiurnalMask();
+    if (!mask) return;
+    const maskContext = mask.context;
+    maskContext.save();
+    maskContext.setTransform(1, 0, 0, 1, 0, 0);
+    maskContext.clearRect(0, 0, mask.canvas.width, mask.canvas.height);
+    maskContext.restore();
+    const lightContext = mask.lightContext;
+    lightContext.save();
+    lightContext.setTransform(1, 0, 0, 1, 0, 0);
+    lightContext.clearRect(0, 0, mask.lightCanvas.width, mask.lightCanvas.height);
+    lightContext.restore();
+
+    maskContext.save();
+    maskContext.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+    maskContext.filter = "none";
+    maskContext.globalAlpha = 1;
+    maskContext.globalCompositeOperation = "source-over";
+    maskContext.fillStyle = `rgba(0, 0, 0, ${darknessAlpha})`;
+    maskContext.fillRect(0, 0, state.canvasWidth, state.canvasHeight);
+    maskContext.restore();
+
+    lightContext.save();
+    lightContext.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+    drawFlowerLightMask(lightContext, darknessAlpha);
+    lightContext.restore();
+
+    maskContext.save();
+    maskContext.setTransform(1, 0, 0, 1, 0, 0);
+    maskContext.globalCompositeOperation = "destination-out";
+    maskContext.drawImage(mask.lightCanvas, 0, 0);
+    maskContext.restore();
+
+    ctx.save();
+    ctx.filter = "none";
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.drawImage(
+      mask.canvas,
+      0,
+      0,
+      mask.canvas.width,
+      mask.canvas.height,
+      0,
+      0,
+      state.canvasWidth,
+      state.canvasHeight,
+    );
+    ctx.restore();
+  }
+
+  if (duskAlpha > 0.001) {
+    ctx.save();
+    ctx.filter = "none";
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = `rgba(255, 138, 70, ${duskAlpha})`;
+    ctx.fillRect(0, 0, state.canvasWidth, state.canvasHeight);
+    ctx.restore();
+  }
+}
+
+function drawWeatherEffects(now = performance.now()) {
+  if (!state.environment?.received) return;
+  const intensities = Array.isArray(state.environment.weatherIntensity)
+    ? state.environment.weatherIntensity
+    : [1, 0, 0, 0, 0];
+  const rain = clamp(intensities[2] || 0, 0, 1);
+  const storm = clamp(intensities[3] || 0, 0, 1);
+  const fog = clamp(intensities[4] || 0, 0, 1);
+  const dt = Math.min(0.1, Math.max(0, (now - lastWeatherEffectsAt) / 1000));
+  lastWeatherEffectsAt = now;
+  if (dt <= 0) return;
+
+  ctx.save();
+  ctx.filter = "none";
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
+
+  if (fog > 0.005) {
+    ctx.fillStyle = `rgba(208, 216, 226, ${fog * 0.3})`;
+    ctx.fillRect(0, 0, state.canvasWidth, state.canvasHeight);
+  }
+
+  const rainIntensity = Math.min(1, rain + storm * 1.4);
+  if (rainIntensity > 0.005) {
+    const spawnPerSecond = 50 + 330 * rainIntensity;
+    const spawnCount = Math.round(
+      spawnPerSecond * dt * (0.7 + Math.random() * 0.6),
+    );
+    for (let i = 0; i < spawnCount; i += 1) {
+      rainDrops.push({
+        x: Math.random() * (state.canvasWidth + 240) - 120,
+        y: -Math.random() * 500,
+        speed: 950 + Math.random() * 650 + storm * 550,
+        length: 14 + Math.random() * 10 + storm * 8,
+        drift: (0.35 + Math.random() * 0.3) * (storm >= 0.5 ? 1.6 : 1),
+      });
+    }
+    const cap = Math.floor(150 + 420 * rainIntensity);
+    if (rainDrops.length > cap) rainDrops.splice(0, rainDrops.length - cap);
+    ctx.strokeStyle = `rgba(168, 192, 232, ${0.1 + 0.22 * rainIntensity})`;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (let i = rainDrops.length - 1; i >= 0; i -= 1) {
+      const drop = rainDrops[i];
+      drop.y += drop.speed * dt;
+      drop.x += drop.speed * drop.drift * dt;
+      if (drop.y - drop.length > state.canvasHeight + 60) {
+        rainDrops.splice(i, 1);
+        continue;
+      }
+      ctx.moveTo(drop.x, drop.y - drop.length);
+      ctx.lineTo(drop.x - drop.drift * drop.length, drop.y);
+    }
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
 function drawScene(now = performance.now()) {
   currentRenderTimeSeconds = now / 1000;
   updateBloodSacrificeScreenShake(now);
@@ -10163,14 +10911,18 @@ function drawScene(now = performance.now()) {
   currentRenderLoad = renderLoadForVisibleCount(currentVisibleEntityCount);
   currentHurtFlashFilterCount = 0;
   prepareFrameRenderCaches(passes);
+  const hallucinationOwner = activeOwnerHallucinationEntity();
 
-  drawEntityPass(passes.ground);
-  drawEntityPass(passes.underlay);
-  drawEntityPass(passes.world);
-  drawEntityPass(passes.petals);
-  if (passes.owner) drawEntity(passes.owner);
-  drawEntityPass(passes.overlays);
+  drawEntityPass(passes.ground, hallucinationOwner);
+  drawEntityPass(passes.underlay, hallucinationOwner);
+  drawEntityPass(passes.world, hallucinationOwner);
+  drawEntityPass(passes.petals, hallucinationOwner);
+  if (passes.owner)
+    drawEntityWithHallucinationGhosts(passes.owner, hallucinationOwner);
+  drawEntityPass(passes.overlays, hallucinationOwner);
   drawParticlePass();
+  drawDiurnalLighting(now);
+  drawWeatherEffects(now);
   drawBloodSacrificeVisionDarkness();
   drawCheckpointZoneOutlines();
   drawSceneHitboxes(passes);
@@ -10225,9 +10977,10 @@ function setupEvents() {
   window.addEventListener("resize", resizeCanvas);
   connectBtn.addEventListener("click", connectAndAuth);
   sendCodeBtn.addEventListener("click", requestVerificationCode);
+  bindEmailBtn.addEventListener("click", confirmEmailBinding);
+  cancelEmailBindingBtn.addEventListener("click", cancelEmailBinding);
+  openEmailBindingBtn.addEventListener("click", openEmailBinding);
   registerModeInput.addEventListener("change", () => {
-    if (authUiMode === AuthUiMode.Binding) return;
-    verificationCodeField.clear();
     setAuthUiMode(
       registerModeInput.checked ? AuthUiMode.Register : AuthUiMode.Login,
     );
@@ -10247,10 +11000,12 @@ function setupEvents() {
   });
   craftCloseBtn.addEventListener("click", () => toggleCraft(false));
   talentCloseBtn.addEventListener("click", () => toggleTalent(false));
+  settingsCloseBtn.addEventListener("click", () => toggleSettings(false));
   craftOnceBtn.addEventListener("click", () => submitCraft());
   quickBackpackBtn?.addEventListener("click", () => toggleBackpack());
   quickTalentBtn?.addEventListener("click", () => toggleTalent());
   quickCraftBtn?.addEventListener("click", () => toggleCraft());
+  quickSettingsBtn?.addEventListener("click", () => toggleSettings());
   chatHint?.addEventListener("click", () => openChat(""));
   chatChannels?.addEventListener("change", chatUi.handleFilterChange);
   window.addEventListener(
@@ -10274,6 +11029,7 @@ function setupEvents() {
     onBackpack: () => toggleBackpack(),
     onTalent: () => toggleTalent(),
     onCraft: () => toggleCraft(),
+    onSettings: () => toggleSettings(),
     onChat: () => openChat(""),
   });
   mobileControls.setMode(state.mobileControlMode);
@@ -10318,6 +11074,13 @@ function setupEvents() {
   }
 
   window.addEventListener("keydown", (event) => {
+    if (!emailBindingPanel.classList.contains("hidden")) {
+      if (event.key === "Escape" && !state.emailBindingRequired) {
+        event.preventDefault();
+        cancelEmailBinding();
+      }
+      return;
+    }
     if (event.key === "F1") {
       event.preventDefault();
       toggleConsole();
@@ -10338,6 +11101,11 @@ function setupEvents() {
     if (key === "x") {
       event.preventDefault();
       toggleTalent();
+      return;
+    }
+    if (key === "v") {
+      event.preventDefault();
+      toggleSettings();
       return;
     }
     if (key === "m") {

@@ -11,6 +11,7 @@
 #include "Game/gamecontext.h"
 #include "Game/gameworld.h"
 #include "Game/player.h"
+#include "Game/systems/weather_diurnal_system.h"
 #include "Module/network_module.h"
 #include "Persistence/account_store.h"
 #include "server.h"
@@ -265,6 +266,76 @@ void LogWorldInfo(const CGameWorld& world)
                             ", players: " + std::to_string(world.GetPlayerCount()));
 }
 
+std::optional<double> ParseVirtualTime(std::string_view text)
+{
+    if ((text.size() != 5 && text.size() != 8) || text[2] != ':' || (text.size() == 8 && text[5] != ':'))
+        return std::nullopt;
+    for (size_t i = 0; i < text.size(); ++i)
+    {
+        if (i == 2 || i == 5) continue;
+        if (!std::isdigit(static_cast<unsigned char>(text[i]))) return std::nullopt;
+    }
+
+    std::array<int, 3> parts{};
+    size_t part_count = 0;
+    size_t begin = 0;
+    while (begin <= text.size() && part_count < parts.size())
+    {
+        const size_t separator = text.find(':', begin);
+        const size_t end = separator == std::string_view::npos ? text.size() : separator;
+        if (end == begin) return std::nullopt;
+
+        auto value = ParseInt(text.substr(begin, end - begin));
+        if (!value) return std::nullopt;
+        parts[part_count++] = *value;
+
+        if (separator == std::string_view::npos)
+        {
+            begin = text.size() + 1;
+            break;
+        }
+        begin = separator + 1;
+    }
+
+    if (begin <= text.size() || (part_count != 2 && part_count != 3) || parts[0] < 0 || parts[0] > 23 ||
+        parts[1] < 0 || parts[1] > 59 || parts[2] < 0 || parts[2] > 59)
+        return std::nullopt;
+
+    constexpr double seconds_per_day = 24.0 * 60.0 * 60.0;
+    const double seconds = static_cast<double>(parts[0] * 60 * 60 + parts[1] * 60 + parts[2]);
+    return seconds / seconds_per_day;
+}
+
+void LogWeatherStatus(const CWeatherDiurnalSystem& system)
+{
+    const SWeatherDiurnalSnapshot snapshot = system.GetWeatherDiurnalSnapshot();
+    const char* mode = system.IsWeatherForced() ? "forced" : system.HasMeteorologyOverride() ? "derive" : "auto";
+
+    std::ostringstream line;
+    line << "day=" << snapshot.day_index << " time=" << std::setfill('0') << std::setw(2)
+         << snapshot.VirtualHourOfDay() << ':' << std::setw(2) << snapshot.VirtualMinuteOfHour() << ':' << std::setw(2)
+         << snapshot.VirtualSecondOfMinute() << std::setfill(' ') << " mode=" << mode << " weather=";
+    for (int value = 0; value < static_cast<int>(EWeatherType::Count); ++value)
+    {
+        if (value > 0) line << ',';
+        line << WeatherTypeName(static_cast<EWeatherType>(value)) << '=' << std::fixed << std::setprecision(2)
+             << snapshot.weather_intensity[value];
+    }
+    line << std::fixed << std::setprecision(2) << " humidity=" << snapshot.meteorology.humidity
+         << " wind_direction=" << snapshot.meteorology.wind_direction_degrees
+         << "deg wind_speed=" << snapshot.meteorology.wind_speed << " temperature="
+         << snapshot.meteorology.temperature_celsius << "C";
+    LOG_INFO("weather", line.str());
+}
+
+void LogWeatherUsage()
+{
+    LOG_INFO("console",
+             "Usage: weather [status] | weather set <clear|cloudy|rain|storm|fog> [intensity_0..1] | "
+             "weather env <humidity_0..1> <wind_direction_deg_0..359> <wind_speed> <temperature_c> | "
+             "weather derive | weather auto | weather time <HH:MM[:SS]>");
+}
+
 int TalentPointGainForCommandLevel(int level)
 {
     if (level <= 1) return 0;
@@ -284,6 +355,157 @@ REGISTER_CONSOLE_COMMAND_USAGE(quit, "quit", {}, {
 })
 
 REGISTER_CONSOLE_COMMAND_USAGE(version, "version", {}, { LOG_INFO("console", std::string(florrbt::version_label)); })
+
+REGISTER_CONSOLE_COMMAND_USAGE(
+    weather,
+    "weather [status] | weather set <clear|cloudy|rain|storm|fog> [intensity_0..1] | weather env "
+    "<humidity_0..1> <wind_direction_deg_0..359> <wind_speed> <temperature_c> | weather derive | weather auto | "
+    "weather time <HH:MM[:SS]>",
+    {}, {
+        CServer* server = CServer::GetInstance();
+        CWeatherDiurnalSystem* system = server ? server->GetWeatherDiurnalSystem() : nullptr;
+        if (!system)
+        {
+            LOG_WARN("weather", "Weather-diurnal system is unavailable.");
+            return;
+        }
+
+        if (args.empty() || (args.size() == 1 && ToLower(args[0]) == "status"))
+        {
+            LogWeatherStatus(*system);
+            return;
+        }
+
+        const std::string action = ToLower(args[0]);
+        std::string error;
+        if (action == "set")
+        {
+            if (args.size() != 2 && args.size() != 3)
+            {
+                LogWeatherUsage();
+                return;
+            }
+
+            EWeatherType weather_type = EWeatherType::Clear;
+            if (!TryParseWeatherType(args[1], weather_type))
+            {
+                LOG_WARN("weather", "Unknown weather type: " + args[1]);
+                return;
+            }
+
+            float intensity = 1.f;
+            if (args.size() == 3)
+            {
+                auto parsed = ParseFloat(args[2]);
+                if (!parsed || !std::isfinite(*parsed) || *parsed < 0.f || *parsed > 1.f)
+                {
+                    LOG_WARN("weather", "Intensity must be in [0, 1].");
+                    return;
+                }
+                intensity = *parsed;
+            }
+
+            if (!system->ForceWeather(weather_type, intensity, error))
+            {
+                LOG_WARN("weather", error.empty() ? "Failed to force weather." : error);
+                return;
+            }
+        } else if (action == "env")
+        {
+            if (args.size() != 5)
+            {
+                LogWeatherUsage();
+                return;
+            }
+
+            auto humidity = ParseFloat(args[1]);
+            auto wind_direction = ParseFloat(args[2]);
+            auto wind_speed = ParseFloat(args[3]);
+            auto temperature = ParseFloat(args[4]);
+            if (!humidity || !wind_direction || !wind_speed || !temperature || !std::isfinite(*humidity) ||
+                !std::isfinite(*wind_direction) || !std::isfinite(*wind_speed) || !std::isfinite(*temperature))
+            {
+                LOG_WARN("weather", "Meteorology values must be finite numbers.");
+                return;
+            }
+            if (*humidity < 0.f || *humidity > 1.f)
+            {
+                LOG_WARN("weather", "Humidity must be in [0, 1].");
+                return;
+            }
+            if (*wind_direction < 0.f || *wind_direction >= 360.f)
+            {
+                LOG_WARN("weather", "Wind direction must be in [0, 360) degrees.");
+                return;
+            }
+            if (*wind_speed < 0.f)
+            {
+                LOG_WARN("weather", "Wind speed must be non-negative.");
+                return;
+            }
+
+            const SMeteorology meteorology{ *humidity, *wind_direction, *wind_speed, *temperature };
+            if (!system->SetMeteorologyOverride(meteorology, error))
+            {
+                LOG_WARN("weather", error.empty() ? "Failed to set meteorology." : error);
+                return;
+            }
+            if (!system->ResumeDerivedWeather(error))
+            {
+                LOG_WARN("weather", error.empty() ? "Failed to derive weather." : error);
+                return;
+            }
+        } else if (action == "derive")
+        {
+            if (args.size() != 1)
+            {
+                LogWeatherUsage();
+                return;
+            }
+            if (!system->ResumeDerivedWeather(error))
+            {
+                LOG_WARN("weather", error.empty() ? "Failed to derive weather." : error);
+                return;
+            }
+        } else if (action == "auto")
+        {
+            if (args.size() != 1)
+            {
+                LogWeatherUsage();
+                return;
+            }
+            if (!system->ResumeAutomaticWeather(error))
+            {
+                LOG_WARN("weather", error.empty() ? "Failed to restore automatic weather." : error);
+                return;
+            }
+        } else if (action == "time")
+        {
+            if (args.size() != 2)
+            {
+                LogWeatherUsage();
+                return;
+            }
+            auto normalized_time = ParseVirtualTime(args[1]);
+            if (!normalized_time)
+            {
+                LOG_WARN("weather", "Virtual time must use 24-hour HH:MM or HH:MM:SS format.");
+                return;
+            }
+            if (!system->SetVirtualTime(*normalized_time, error))
+            {
+                LOG_WARN("weather", error.empty() ? "Failed to set virtual time." : error);
+                return;
+            }
+        } else
+        {
+            LOG_WARN("weather", "Unknown action: " + args[0]);
+            LogWeatherUsage();
+            return;
+        }
+
+        LogWeatherStatus(*system);
+    })
 
 REGISTER_CONSOLE_COMMAND_USAGE(perf, "perf", {}, {
     const auto* server = CServer::GetInstance();
@@ -319,7 +541,10 @@ REGISTER_CONSOLE_COMMAND_USAGE(perf, "perf", {}, {
                 << snapshot.changed_entities << "/" << snapshot.removed_entities
                 << " snapshot_build_ms(last/avg/max)=" << snapshot.last_build_ms << "/"
                 << snapshot.average_build_ms << "/" << snapshot.max_build_ms
-                << " snapshot_builds=" << snapshot.build_count;
+                << " snapshot_builds=" << snapshot.build_count
+                << " snapshot_batch_ms(last/avg/max)=" << snapshot.last_batch_ms << "/"
+                << snapshot.average_batch_ms << "/" << snapshot.max_batch_ms
+                << " snapshot_batches=" << snapshot.batch_count;
     }
     if (game_config::world_tick_phase_profile_enabled)
     {
@@ -676,7 +901,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(set, "set <config> <value>", "config", {
     if (game_config::SetConfig(args[0], value))
         LOG_INFO("console", "Set " + args[0] + " to " +
                                 (game_config::IsSensitiveConfig(args[0]) ? "<redacted>" : value));
-    else LOG_WARN("console", "Unknown config: " + args[0]);
+    else LOG_WARN("console", "Unknown config or invalid value: " + args[0]);
 })
 
 REGISTER_CONSOLE_COMMAND_USAGE(get, "get <config>", "config", {

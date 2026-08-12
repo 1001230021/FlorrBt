@@ -126,6 +126,23 @@ void PopulateOwnerPetalRuntime(const CEntity& owner, ServerEntitySnap& snap)
     }
 }
 
+void PopulateOwnerHallucinations(const CEntity& owner, ServerEntitySnap& snap)
+{
+    const auto* mob = dynamic_cast<const CMobBase*>(&owner);
+    if (!mob) return;
+
+    snap.hallucinations.clear();
+    for (const auto& state : mob->GetStates())
+    {
+        const auto* hallucinogenic = dynamic_cast<const CHallucinogenicState*>(state.get());
+        if (!hallucinogenic) continue;
+
+        CHallucinogenicState::parameter_array parameters{};
+        if (hallucinogenic->ComputeEffectiveParameters(*mob, parameters))
+            snap.hallucinations.push_back(parameters);
+    }
+}
+
 enum class snapshot_pool : std::uint8_t
 {
     Mob,
@@ -424,6 +441,7 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
     ServerEntitySnap owner_snap = owner_cached.snap;
     owner_snap.flags |= static_cast<std::uint16_t>(ServerEntityFlag::Owner);
     PopulateOwnerPetalRuntime(*owner, owner_snap);
+    PopulateOwnerHallucinations(*owner, owner_snap);
     size_t packed_size = snapshot_header_size + ServerEntitySnap::GetPackedSize(owner_snap);
     msg.entities.push_back(std::move(owner_snap));
     sf::Vector2f snapshot_origin = msg.entities.front().pos;
@@ -541,13 +559,21 @@ ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const 
         for (const auto& state : states)
         {
             if (!state || !IsKnownStateType(state->GetType())) continue;
-            snap.states.push_back(
-                { state->GetType(), static_cast<uint8_t>(std::clamp(static_cast<int>(state->m_rarity), 0,
-                                                                   static_cast<int>(UINT8_MAX))) });
+            SEntityStateSnap state_snap{
+                state->GetType(),
+                static_cast<uint8_t>(std::clamp(static_cast<int>(state->m_rarity), 0,
+                                                static_cast<int>(UINT8_MAX))),
+            };
+            if (const auto* ban_slot = dynamic_cast<const CBanSlotState*>(state.get()))
+                state_snap.value = static_cast<uint8_t>(
+                    std::clamp(ban_slot->GetSlotIndex(), 0, static_cast<int>(UINT8_MAX)));
+            else if (const auto* hallucinogenic = dynamic_cast<const CHallucinogenicState*>(state.get()))
+                state_snap.value = static_cast<uint8_t>(
+                    std::clamp(hallucinogenic->GetParameterCount(), 0, static_cast<int>(UINT8_MAX)));
+            snap.states.push_back(state_snap);
         }
 
-        auto& mutable_mob = *const_cast<CMobBase*>(mob);
-        if (dynamic_cast<CSummonedMeleeController*>(mutable_mob.GetController()))
+        if (dynamic_cast<const CSummonedMeleeController*>(mob->GetController()))
             snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Summoned);
         if (const auto* controller = dynamic_cast<const CLeafcutterSoldierController*>(mob->GetController());
             controller && controller->IsCarryingLeafPiece(mob))

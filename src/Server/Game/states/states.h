@@ -2,6 +2,7 @@
 #include "../../../Shared/shared.h"
 #include "../entities/flower.h"
 #include "../state.h"
+#include <array>
 #include <cstdint>
 
 class CPoisonState : public CState
@@ -175,6 +176,36 @@ class CPsionicConnectionState : public CState
     bool m_is_valid = false;
 };
 
+class CHallucinogenicState final : public CState
+{
+  public:
+    static constexpr size_t parameter_capacity = 6;
+    using parameter_array = std::array<float, parameter_capacity>;
+
+    CHallucinogenicState(CMobBase* owner, float timer, ERarity rarity, std::uint8_t parameter_mask = 0,
+                         float effect_depth = 0.f, float evolution_progress = 0.f,
+                         parameter_array parameters = {});
+
+    void Tick(float dt) override;
+    bool AffectsMovementTarget() const override { return m_parameter_mask != 0; }
+    sf::Vector2f ModifyMovementTarget(const CMobBase& owner, const sf::Vector2f& target_pos) const override;
+    bool ComputeEffectiveParameters(const CMobBase& owner, parameter_array& out) const;
+
+    std::uint8_t GetParameterMask() const { return m_parameter_mask; }
+    int GetParameterCount() const;
+    float GetEffectDepth() const { return m_effect_depth; }
+    float GetEvolutionProgress() const { return m_evolution_progress; }
+    const parameter_array& GetParameters() const { return m_parameters; }
+    void AddEvolution(float amount, float duration);
+    float ConsumeSplitProgress(float threshold);
+
+  private:
+    std::uint8_t m_parameter_mask = 0;
+    float m_effect_depth = 0.f;
+    float m_evolution_progress = 0.f;
+    parameter_array m_parameters{};
+};
+
 bool HasActivePsionicConnection(const CMobBase* mob);
 
 bool BlocksNullifiedInteraction(const CEntity* lhs, const CEntity* rhs);
@@ -189,3 +220,4 @@ float GetMedicMultiplier(const CMobBase* mob);
 void ApplyDandelionAntiHeal(CMobBase* mob, ERarity rarity);
 bool TrySharePsionicDamage(CMobBase* receiver, float dmg, CEntity* attacker, EDamageType dmg_type);
 float GetBandageUndeadDuration(ERarity rarity);
+bool ApplyHallucinogenicExposure(CMobBase* mob, ERarity rarity, float evolution_amount);

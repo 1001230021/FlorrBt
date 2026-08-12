@@ -1,6 +1,12 @@
 { "compressionlevel":-1,
  "height":256,
  "infinite":false,
+ "properties":[
+        {
+         "name":"spawn_rules",
+         "type":"file",
+         "value":"..\/spawn_rules\/garden.spawn.json"
+        }],
  "layers":[
         {
          "data":[6, 7, 7, 7, 7, 6, 7, 7, 7, 6, 6, 6, 7, 7, 7, 6, 7, 6, 6, 6, 7, 7, 7, 6, 7, 6, 6, 6, 7, 6, 7, 6, 6, 6, 6, 7, 6, 7, 6, 7, 7, 7, 6, 7, 7, 7, 6, 7, 7, 6, 6, 6, 6, 7, 6, 6, 7, 7, 7, 7, 6, 6, 7, 6, 7, 7, 6, 7, 7, 7, 6, 7, 7, 7, 7, 6, 6, 6, 7, 7, 6, 6, 6, 7, 6, 7, 6, 6, 6, 7, 7, 7, 6, 6, 7, 6, 6, 6, 6, 7, 6, 6, 6, 7, 7, 7, 7, 6, 7, 7, 6, 7, 6, 7, 7, 6, 7, 7, 6, 7, 7, 7, 7, 6, 6, 6, 6, 6, 7, 6, 6, 6, 6, 6, 7, 7, 7, 6, 6, 7, 6, 6, 6, 6, 6, 7, 7, 7, 6, 6, 6, 7, 6, 7, 6, 7, 7, 7, 6, 6, 6, 6, 7, 7, 6, 7, 6, 6, 6, 6, 6, 7, 6, 6, 6, 6, 6, 7, 6, 7, 6, 7, 6, 6, 6, 6, 6, 6, 6, 7, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 6, 7, 6, 7, 7, 6, 7, 6, 6, 6, 7, 6, 6, 6, 7, 7, 6, 7, 7, 6, 7, 7, 6, 7, 6, 7, 6, 7, 7, 6, 6, 6, 7, 6, 6, 7, 7, 6, 7, 6, 7, 6, 6, 7, 7, 7, 7, 7, 7, 7, 6, 7, 7, 7, 7, 7,
@@ -2036,6 +2042,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.15,spider:0.15,bee:0.15,bbb:0.15,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed_no_hornet"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -2236,6 +2247,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.15,spider:0.15,bee:0.15,bbb:0.15,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed_no_hornet"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -2468,6 +2484,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.15,spider:0.15,bee:0.15,bbb:0.15,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed_no_hornet"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -2544,6 +2565,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"hornet:0.5,bee:0.3,bbb:0.2"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_hornet_flight"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -2664,6 +2690,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -2780,6 +2811,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -2944,6 +2980,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.15,spider:0.15,bee:0.15,bbb:0.15,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed_no_hornet"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -3476,6 +3517,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"rock:0.9,ah:0.1"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_rock_nest"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -3996,6 +4042,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.05,wa:0.05,ba:0.05,rock:0.2,ah:0.05"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_rocky_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -4152,6 +4203,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -4324,6 +4380,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -4488,6 +4549,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"dandelion:0.4,bee:0.2,bbb:0.2,hornet:0.1,rock:0.1"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_meadow"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -4680,6 +4746,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"dandelion:0.4,bee:0.2,bbb:0.2,hornet:0.1,rock:0.1"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_meadow"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -4848,6 +4919,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"sa:0.4,ba:0.05,wa:0.05,ah:0.5"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_ant_hole_colony"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -4956,6 +5032,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"sa:0.4,ba:0.05,wa:0.05,ah:0.5"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_ant_hole_colony"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -5112,6 +5193,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"sa:0.5,ba:0.1,wa:0.1,ah:0.3"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_ant_colony"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -5196,6 +5282,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -5388,6 +5479,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -5612,6 +5708,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -5820,6 +5921,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -5936,6 +6042,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -6064,6 +6175,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -6164,6 +6280,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"rock:0.6,dandelion:0.4"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_rock_dandelion"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -6472,6 +6593,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"bee:0.35,bbb:0.35,hornet:0.1,rock:0.1,dandelion:0.1"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_pollinator"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -6752,6 +6878,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"bee:0.35,bbb:0.35,hornet:0.1,rock:0.1,dandelion:0.1"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_pollinator"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -6912,6 +7043,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -7308,6 +7444,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -7576,6 +7717,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -7740,6 +7886,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -7964,6 +8115,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -8100,6 +8256,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -8200,6 +8361,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -8444,6 +8610,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -8944,6 +9115,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -9076,6 +9252,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -9344,6 +9525,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -9668,6 +9854,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -9900,6 +10091,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -10116,6 +10312,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -10436,6 +10637,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -11188,6 +11394,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -11984,6 +12195,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -12144,6 +12360,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -12360,6 +12581,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -12560,6 +12786,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -12712,6 +12943,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -12924,6 +13160,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.06,spider:0.55,bee:0.06,bbb:0.06,hornet:0.06,sa:0.04,wa:0.04,ba:0.04,rock:0.03,ah:0.03,dandelion:0.03"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_spider_den"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -13168,6 +13409,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.06,spider:0.55,bee:0.06,bbb:0.06,hornet:0.06,sa:0.04,wa:0.04,ba:0.04,rock:0.03,ah:0.03,dandelion:0.03"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_spider_den"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -13464,6 +13710,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.06,spider:0.55,bee:0.06,bbb:0.06,hornet:0.06,sa:0.04,wa:0.04,ba:0.04,rock:0.03,ah:0.03,dandelion:0.03"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_spider_den"
                         }],
                  "rotation":0,
                  "visible":true,
@@ -13700,6 +13951,11 @@
                          "name":"mobs",
                          "type":"string",
                          "value":"lady:0.12,spider:0.12,bee:0.12,bbb:0.12,hornet:0.12,sa:0.1,wa:0.1,ba:0.1,rock:0.034,ah:0.033,dandelion:0.033"
+                        },
+                        {
+                         "name":"spawn_profile",
+                         "type":"string",
+                         "value":"garden_mixed"
                         }],
                  "rotation":0,
                  "visible":true,

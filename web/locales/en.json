@@ -17,7 +17,11 @@
       "code": "Verification code",
       "sendCode": "Send code",
       "bindingNotice": "Bind and verify an email address to finish signing in.",
+      "emailBindingTitle": "Email binding",
+      "bindingRequiredNotice": "Bind and verify an email address to finish signing in.",
+      "bindingOptionalNotice": "Bind and verify an email address to secure this account.",
       "bindEmail": "Bind email",
+      "cancelBinding": "Cancel",
       "completeRegistration": "Complete registration",
       "register": "Register",
       "connect": "Connect",
@@ -41,7 +45,9 @@
       "talentsTitle": "Talents [X]",
       "talentsWithPointsTitle": "Talents [X] - {count} TP",
       "craft": "Craft",
-      "craftTitle": "Craft [C]"
+      "craftTitle": "Craft [C]",
+      "settings": "Settings",
+      "settingsTitle": "Settings [V]"
     },
     "chat": {
       "ariaLabel": "Chat",
@@ -63,6 +69,22 @@
     },
     "console": {
       "placeholder": "Console"
+    },
+    "settings": {
+      "title": "Settings",
+      "close": "Close settings",
+      "language": "Language",
+      "movement": "Movement",
+      "movementModes": {
+        "keyboard": "Keyboard",
+        "mouse": "Mouse",
+        "none": "Do not move"
+      },
+      "holdAttack": "Hold attack",
+      "holdDefense": "Hold defense",
+      "email": "Email",
+      "emailBound": "Bound",
+      "emailNotBound": "Not bound"
     },
     "inventory": {
       "title": "Inventory",
@@ -156,7 +178,9 @@
         "growthTime": "Growth time",
         "maxDamage": "Max damage",
         "maxDurability": "Max durability",
-        "maxRadius": "Max radius"
+        "maxRadius": "Max radius",
+        "hallucination": "Hallucination",
+        "evolveHits": "Evolve hits"
       },
       "values": {
         "corrupted": "Corrupted",
@@ -173,6 +197,8 @@
       "talentLabel": "Tal",
       "talents": "Talents",
       "craft": "Craft",
+      "settingsLabel": "Set",
+      "settings": "Settings",
       "chat": "Chat",
       "attackLabel": "A",
       "attack": "Attack",
@@ -343,7 +369,8 @@
       "trapper": "Trapper",
       "amulet": "Amulet",
       "plank": "Plank",
-      "tomato": "Tomato"
+      "tomato": "Tomato",
+      "hallucinogenic_mushroom": "Hallucinogenic Mushroom"
     },
     "mobs": {
       "none": "None",

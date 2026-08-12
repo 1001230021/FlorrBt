@@ -4217,6 +4217,46 @@ class CTomatoBehavior final : public CPetalBehavior
     void OnPetalDestroyed(CPetal*, ERarity, CFlower*) override {}
 };
 
+class CHallucinogenicMushroomBehavior final : public CPetalBehavior
+{
+  public:
+    bool IsOpen() const override { return true; }
+
+    SFlowerStats GetStats(ERarity) const override { return EmptyFlowerStats(); }
+
+    SPetalStats GetPetalStats(ERarity rarity) const override
+    {
+        SPetalStats stats;
+        stats.damage = game_config::default_hallucinogenic_mushroom_base_damage * PetalRarityScale(rarity);
+        stats.health = game_config::default_hallucinogenic_mushroom_base_health * PetalRarityScale(rarity);
+        stats.reload = game_config::default_hallucinogenic_mushroom_reload;
+        stats.preload = game_config::default_hallucinogenic_mushroom_reload;
+        stats.copy = static_cast<int>(game_config::default_hallucinogenic_mushroom_copy);
+        stats.mass = game_config::default_hallucinogenic_mushroom_mass;
+        stats.radius = game_config::default_hallucinogenic_mushroom_base_radius;
+        return stats;
+    }
+
+    void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
+    {
+        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+                                 true, dt);
+    }
+
+    void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
+    void OnPetalSpawned(CPetal*, ERarity, CFlower*) override {}
+    void OnPetalDestroyed(CPetal*, ERarity, CFlower*) override {}
+
+    void OnPetalHit(CPetal* owner, ERarity rarity, CEntity* target, float& damage) override
+    {
+        damage = 0.f;
+        auto* mob = dynamic_cast<CMobBase*>(target);
+        if (!owner || !mob || mob == owner->GetOwner()) return;
+
+        ApplyHallucinogenicExposure(mob, rarity, std::max(0.f, game_config::hallucinogenic_evolution_per_hit));
+    }
+};
+
 class CYinYangBehavior : public CPetalBehavior
 {
   public:

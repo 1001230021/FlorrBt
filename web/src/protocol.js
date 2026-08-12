@@ -19,9 +19,12 @@ export const NET_RADIUS_SCALE = 1;
 export const NET_ANGLE_SCALE = 1000;
 export const NET_PERCENT_SCALE = 255;
 export const NET_SLOT_SIZE_SCALE = 65535;
+export const NET_HALLUCINATION_PARAM_SCALE = 1024;
 export const FULL_SNAPSHOT_BASE_ID = 0xffffffff;
 const ENTITY_SNAPSHOT_FULL = 0;
 const ENTITY_SNAPSHOT_COMPACT = 1;
+const ENTITY_SNAPSHOT_COMPACT_STATES = 2;
+const ENTITY_SNAPSHOT_FULL_STATES = 3;
 
 export const ChatFlag = Object.freeze({
   Global: 0,
@@ -39,6 +42,7 @@ export const ServerType = Object.freeze({
   Inventory: 0x11,
   Chat: 0x12,
   CraftResult: 0x13,
+  Environment: 0x14,
 });
 
 export const PetalSlotCopyState = Object.freeze({
@@ -67,6 +71,12 @@ export const AuthResultCode = Object.freeze({
   VerificationCodeSending: 3,
   VerificationCodeSent: 4,
   EmailBound: 5,
+});
+
+export const EmailPolicy = Object.freeze({
+  Disabled: 0,
+  Optional: 1,
+  Required: 2,
 });
 
 export const PetalNames = [
@@ -134,6 +144,7 @@ export const PetalNames = [
   "Amulet",
   "Plank",
   "Tomato",
+  "HallucinogenicMushroom",
 ];
 
 export const MobNames = [
@@ -351,6 +362,13 @@ class Reader {
     return value;
   }
 
+  f32() {
+    if (!this.has(4)) throw new Error("packet underrun");
+    const value = this.view.getFloat32(this.offset, true);
+    this.offset += 4;
+    return value;
+  }
+
   string(length) {
     if (!this.has(length)) throw new Error("packet underrun");
     const value = readString(this.bytes, this.offset, length);
@@ -362,7 +380,10 @@ class Reader {
 function parseEntity(reader, origin = null) {
   const entity = {};
   const format = reader.u8();
-  if (format === ENTITY_SNAPSHOT_COMPACT) {
+  if (
+    format === ENTITY_SNAPSHOT_COMPACT ||
+    format === ENTITY_SNAPSHOT_COMPACT_STATES
+  ) {
     if (!origin) throw new Error("compact entity without origin");
     entity.entityId = reader.u16();
     entity.entityType = reader.u8();
@@ -380,9 +401,23 @@ function parseEntity(reader, origin = null) {
     entity.name = "";
     entity.primarySlots = [];
     entity.states = [];
+    if (format === ENTITY_SNAPSHOT_COMPACT_STATES) {
+      const stateCount = reader.u8();
+      for (let i = 0; i < stateCount; i += 1) {
+        entity.states.push({
+          type: reader.u8(),
+          rarity: reader.u8(),
+          value: reader.u8(),
+        });
+      }
+    }
+    entity.hallucinations = [];
     return entity;
   }
-  if (format !== ENTITY_SNAPSHOT_FULL)
+  if (
+    format !== ENTITY_SNAPSHOT_FULL &&
+    format !== ENTITY_SNAPSHOT_FULL_STATES
+  )
     throw new Error("unknown entity snapshot format");
 
   entity.entityId = reader.u16();
@@ -433,7 +468,21 @@ function parseEntity(reader, origin = null) {
   const stateCount = reader.u8();
   entity.states = [];
   for (let i = 0; i < stateCount; i += 1) {
-    entity.states.push({ type: reader.u8(), rarity: reader.u8() });
+    entity.states.push({
+      type: reader.u8(),
+      rarity: reader.u8(),
+      value: format === ENTITY_SNAPSHOT_FULL_STATES ? reader.u8() : 0,
+    });
+  }
+  entity.hallucinations = [];
+  if (format === ENTITY_SNAPSHOT_FULL_STATES) {
+    const hallucinationCount = reader.u8();
+    for (let i = 0; i < hallucinationCount; i += 1) {
+      const parameters = [];
+      for (let parameter = 0; parameter < 6; parameter += 1)
+        parameters.push(reader.i16() / NET_HALLUCINATION_PARAM_SCALE);
+      entity.hallucinations.push(parameters);
+    }
   }
   return entity;
 }
@@ -480,6 +529,8 @@ export function parseServerMessage(payload) {
         msg.resultCode === AuthResultCode.Authenticated ||
         msg.resultCode === AuthResultCode.EmailBound;
       msg.message = reader.string(reader.u8());
+      msg.emailPolicy = reader.has(1) ? reader.u8() : EmailPolicy.Disabled;
+      msg.emailBound = reader.has(1) ? reader.u8() !== 0 : false;
       return msg;
     }
 
@@ -560,6 +611,22 @@ export function parseServerMessage(payload) {
           count: reader.u32(),
         });
       }
+      return msg;
+    }
+
+    if (type === ServerType.Environment) {
+      if (payload.length !== 24) return { type: 0xff };
+      msg.anchorServerTick = reader.u64();
+      msg.timeOfDay = reader.u16() / 0xffff;
+      msg.dayDurationSeconds = reader.f32();
+      msg.fixedDtSeconds = reader.f32();
+      msg.weatherIntensity = [
+        reader.u8(),
+        reader.u8(),
+        reader.u8(),
+        reader.u8(),
+        reader.u8(),
+      ];
       return msg;
     }
 

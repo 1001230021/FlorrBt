@@ -1,4 +1,5 @@
 #include "open_spawn_director.h"
+#include "spawn_rules.h"
 #include "../../../Engine/map_tools.h"
 #include "../../../Shared/game_config.h"
 #include "../../HotReload/snapshot_archive.h"
@@ -23,7 +24,7 @@ namespace
 {
 constexpr std::string_view new_player_checkpoint_name = "new_players";
 
-struct zone_bounds
+struct SZoneBounds
 {
     sf::Vector2f center = { 0.f, 0.f };
     float radius = 0.f;
@@ -33,46 +34,51 @@ struct zone_bounds
     float max_y = 0.f;
 };
 
-struct zone_cache
+struct SZoneCache
 {
-    zone_bounds bounds;
+    SZoneBounds bounds;
     float area = 0.f;
     std::vector<SZoneMobEntry> mob_entries;
+    std::string spawn_profile;
 };
 
-struct single_spawn_zone_mob
+struct SSingleSpawnZoneMob
 {
     int id = -1;
     std::uint64_t generation = 0;
 };
 
-struct pending_spawn
+struct SPendingSpawn
 {
     sf::Vector2f pos = { 0.f, 0.f };
     float radius = 0.f;
 };
 
-struct spawn_zone_work
+struct SSpawnZoneWork
 {
     size_t zone_index = 0;
     const FlorrBtMap::Zone* zone = nullptr;
-    zone_bounds bounds;
+    SZoneBounds bounds;
     int target_mobs = 0;
+    int nearby_mob_limit = 0;
     int current_mobs = 0;
+    int population_limit = 0;
     bool single_spawn = false;
+    const std::vector<SZoneMobEntry>* mob_entries = nullptr;
+    float difficulty = 0.f;
 };
 
-struct spawn_scratch
+struct SSpawnScratch
 {
     std::vector<sf::Vector2f> player_positions;
     std::vector<size_t> active_zone_indices;
-    std::vector<spawn_zone_work> zone_work;
-    std::vector<pending_spawn> pending_spawns;
+    std::vector<SSpawnZoneWork> zone_work;
+    std::vector<SPendingSpawn> pending_spawns;
 };
 
-zone_bounds BuildZoneBounds(const FlorrBtMap::Zone& zone)
+SZoneBounds BuildZoneBounds(const FlorrBtMap::Zone& zone)
 {
-    zone_bounds bounds;
+    SZoneBounds bounds;
     if (zone.vertices.empty()) return bounds;
 
     float min_x = zone.vertices.front().x;
@@ -111,7 +117,10 @@ float ComputeZoneArea(const FlorrBtMap::Zone& zone)
                : static_cast<float>(std::min(area, static_cast<double>(std::numeric_limits<float>::max())));
 }
 
-bool IsSingleSpawnZone(const FlorrBtMap::Zone& zone) { return zone.density == 0.f && !zone.mobs.empty(); }
+bool IsSingleSpawnZone(const FlorrBtMap::Zone& zone)
+{
+    return zone.density == 0.f && (!zone.mobs.empty() || !zone.spawn_profile.empty());
+}
 
 bool CountsForZoneDensity(const CMobBase* mob)
 {
@@ -122,23 +131,21 @@ bool CountsForZoneDensity(const CMobBase* mob)
     return true;
 }
 
-bool PointInZoneBounds(const zone_bounds& bounds, const sf::Vector2f& point)
+bool PointInZoneBounds(const SZoneBounds& bounds, const sf::Vector2f& point)
 {
     return point.x >= bounds.min_x && point.x <= bounds.max_x && point.y >= bounds.min_y && point.y <= bounds.max_y;
 }
 
-void CountMobsInSpawnZones(CGameWorld& world, std::vector<spawn_zone_work>& zones)
+void CountMobsInSpawnZones(CGameWorld& world, std::vector<SSpawnZoneWork>& spawn_zones)
 {
-    if (zones.empty()) return;
-
-    for (spawn_zone_work& work : zones)
+    for (SSpawnZoneWork& work : spawn_zones)
     {
-        if (work.single_spawn || work.current_mobs >= work.target_mobs || !work.zone) continue;
+        if (!work.zone || work.single_spawn || work.population_limit <= 0) continue;
         world.ForEachEntityInEdgeRange(work.bounds.center, work.bounds.radius, [&work](const CEntity* entity) {
             const auto* mob = dynamic_cast<const CMobBase*>(entity);
-            if (!CountsForZoneDensity(mob)) return;
-            if (!PointInZoneBounds(work.bounds, mob->m_pos)) return;
-            if (!IsPointInZone(*work.zone, mob->m_pos)) return;
+            if (!CountsForZoneDensity(mob) || !PointInZoneBounds(work.bounds, mob->m_pos) ||
+                !IsPointInZone(*work.zone, mob->m_pos))
+                return;
             ++work.current_mobs;
         });
     }
@@ -155,9 +162,9 @@ float SpawnRadiusFor(const CMobPrototype& proto, ERarity rarity)
 }
 
 bool IsFarFromPendingSpawns(const sf::Vector2f& pos, float spawn_radius,
-                            const std::vector<pending_spawn>& pending_spawns)
+                            const std::vector<SPendingSpawn>& pending_spawns)
 {
-    for (const pending_spawn& pending : pending_spawns)
+    for (const SPendingSpawn& pending : pending_spawns)
     {
         const float min_distance = SpawnSpacingDistance(spawn_radius, pending.radius);
         if (DistanceSq(pending.pos, pos) <= min_distance * min_distance) return false;
@@ -165,9 +172,9 @@ bool IsFarFromPendingSpawns(const sf::Vector2f& pos, float spawn_radius,
     return true;
 }
 
-bool CanSpawnAt(CGameWorld& world, const sf::Vector2f& pos, float spawn_radius)
+bool CanSpawnAt(CGameWorld& world, const sf::Vector2f& pos, float spawn_radius, int nearby_mob_limit)
 {
-    if (world.CircleBlockedByWall(pos, spawn_radius)) return false;
+    if (nearby_mob_limit <= 0 || world.CircleBlockedByWall(pos, spawn_radius)) return false;
 
     int nearby_mobs = 0;
     bool too_close_to_mob = false;
@@ -186,7 +193,7 @@ bool CanSpawnAt(CGameWorld& world, const sf::Vector2f& pos, float spawn_radius)
         if (dist_sq <= min_distance * min_distance) too_close_to_mob = true;
     });
 
-    if (nearby_mobs >= static_cast<int>(game_config::open_max_spawn_num)) return false;
+    if (nearby_mobs >= nearby_mob_limit) return false;
     return !too_close_to_mob;
 }
 
@@ -210,9 +217,9 @@ void CollectPlayerFlowerPositions(CGameWorld& world, std::vector<sf::Vector2f>& 
 }
 } // namespace
 
-struct COpenSpawnDirector::implementation
+struct COpenSpawnDirector::CImplementation
 {
-    implementation() : rng(std::random_device{}()) {}
+    CImplementation() : rng(std::random_device{}()) {}
 
     void EnsureZoneCache(CGameWorld& world, const FlorrBtMap& map)
     {
@@ -221,10 +228,24 @@ struct COpenSpawnDirector::implementation
             cached_zone_count == zone_count)
             return;
 
+        spawn_rules.Clear();
+        if (!map.spawn_rules_path.empty())
+        {
+            std::string error;
+            if (!spawn_rules.Load(map.spawn_rules_path, error))
+                LOG_WARN("opencontroller", "Failed to load spawn rules '" + map.spawn_rules_path + "': " + error);
+        }
+
         zones.clear();
         zones.reserve(zone_count);
         for (const FlorrBtMap::Zone& zone : map.zones)
-            zones.push_back({ BuildZoneBounds(zone), ComputeZoneArea(zone), ParseZoneMobEntries(zone.mobs) });
+        {
+            if (!zone.spawn_profile.empty() && !spawn_rules.HasProfile(zone.spawn_profile))
+                LOG_WARN("opencontroller", "Unknown spawn profile '" + zone.spawn_profile + "' in " +
+                                               world.GetMapPath() + "; using legacy mobs pool");
+            zones.push_back({ BuildZoneBounds(zone), ComputeZoneArea(zone), ParseZoneMobEntries(zone.mobs),
+                              zone.spawn_profile });
+        }
 
         cached_world_id = world.GetId();
         cached_map_path = world.GetMapPath();
@@ -234,7 +255,7 @@ struct COpenSpawnDirector::implementation
 
     ERarity PickRarityForDifficulty(float difficulty)
     {
-        struct rarity_weight
+        struct SRarityWeight
         {
             ERarity rarity = ERarity::Null;
             float probability = 0.f;
@@ -255,7 +276,7 @@ struct COpenSpawnDirector::implementation
                        static_cast<float>(GetLevel(ERarity::Primordial)));
         const float two_sigma_sq = 2.f * sigma * sigma;
 
-        std::vector<rarity_weight> weights;
+        std::vector<SRarityWeight> weights;
         weights.reserve(std::size(naturally_spawned_rarities));
 
         float total_weight = 0.f;
@@ -271,12 +292,12 @@ struct COpenSpawnDirector::implementation
 
         if (weights.empty() || total_weight <= 0.f) return ERarity::Common;
 
-        for (rarity_weight& entry : weights)
+        for (SRarityWeight& entry : weights)
             entry.probability /= total_weight;
 
         std::uniform_real_distribution<float> dist(0.f, 1.f);
         float roll = dist(rng);
-        for (const rarity_weight& entry : weights)
+        for (const SRarityWeight& entry : weights)
         {
             if (roll <= entry.probability) return entry.rarity;
             roll -= entry.probability;
@@ -285,7 +306,7 @@ struct COpenSpawnDirector::implementation
         return weights.back().rarity;
     }
 
-    bool RandomPointInZone(const FlorrBtMap::Zone& zone, const zone_bounds& bounds, sf::Vector2f& out_pos)
+    bool RandomPointInZone(const FlorrBtMap::Zone& zone, const SZoneBounds& bounds, sf::Vector2f& out_pos)
     {
         if (zone.vertices.empty()) return false;
         if (bounds.min_x >= bounds.max_x || bounds.min_y >= bounds.max_y) return false;
@@ -369,7 +390,7 @@ struct COpenSpawnDirector::implementation
         if (zone.density < 0.f) return 0;
         // density == 0 with a mob pool is a map-authored single-spawn sentinel,
         // not a population density. Keep it independent from the ambient wave.
-        if (zone.density == 0.f) return zone.mobs.empty() ? 0 : 1;
+        if (zone.density == 0.f) return IsSingleSpawnZone(zone) ? 1 : 0;
 
         const double density_area = std::max(1.0, static_cast<double>(game_config::open_spawn_density_area));
         const float wave = std::clamp(density_multiplier, 0.f, 1.f);
@@ -389,7 +410,28 @@ struct COpenSpawnDirector::implementation
         return std::clamp(target, 0, max_target);
     }
 
-    bool RandomPointNearActivePlayerInZone(const FlorrBtMap::Zone& zone, const zone_bounds& bounds,
+    int NearbyMobLimit(const FlorrBtMap::Zone& zone, float density_multiplier)
+    {
+        const size_t configured_limit =
+            std::min(game_config::open_max_spawn_num, static_cast<size_t>(std::numeric_limits<int>::max()));
+        const int hard_limit = static_cast<int>(configured_limit);
+        if (hard_limit <= 0) return 0;
+        if (IsSingleSpawnZone(zone)) return hard_limit;
+
+        const double query_radius = std::max(0.0, static_cast<double>(game_config::open_spawn_query_radius));
+        const double query_area = static_cast<double>(game_config::pi) * query_radius * query_radius;
+        const float local_area = static_cast<float>(
+            std::min(query_area, static_cast<double>(std::numeric_limits<float>::max())));
+        return std::min(hard_limit, ZoneTargetMobCount(zone, local_area, density_multiplier));
+    }
+
+    int ZonePopulationLimit(const FlorrBtMap::Zone& zone) const
+    {
+        if (IsSingleSpawnZone(zone)) return 1;
+        return std::max(0, game_config::open_max_zone_population);
+    }
+
+    bool RandomPointNearActivePlayerInZone(const FlorrBtMap::Zone& zone, const SZoneBounds& bounds,
                                            const std::vector<sf::Vector2f>& player_positions, sf::Vector2f& out_pos)
     {
         if (player_positions.empty()) return false;
@@ -416,15 +458,16 @@ struct COpenSpawnDirector::implementation
         return true;
     }
 
-    enum class spawn_position_status
+    enum class ESpawnPositionStatus
     {
         Found,
         NoPosition,
         Blocked,
     };
 
-    spawn_position_status PickSpawnPosition(CGameWorld& world, const FlorrBtMap::Zone& zone, const zone_bounds& bounds,
-                                            float spawn_radius, const std::vector<pending_spawn>& pending_spawns,
+    ESpawnPositionStatus PickSpawnPosition(CGameWorld& world, const FlorrBtMap::Zone& zone, const SZoneBounds& bounds,
+                                            float spawn_radius, int nearby_mob_limit,
+                                            const std::vector<SPendingSpawn>& pending_spawns,
                                             const std::vector<sf::Vector2f>& player_positions, sf::Vector2f& out_pos)
     {
         bool found_zone_position = false;
@@ -436,11 +479,11 @@ struct COpenSpawnDirector::implementation
             if (!RandomPointNearActivePlayerInZone(zone, bounds, player_positions, candidate)) continue;
             found_zone_position = true;
 
-            if (!CanSpawnAt(world, candidate, spawn_radius)) continue;
+            if (!CanSpawnAt(world, candidate, spawn_radius, nearby_mob_limit)) continue;
             if (!IsFarFromPendingSpawns(candidate, spawn_radius, pending_spawns)) continue;
 
             out_pos = candidate;
-            return spawn_position_status::Found;
+            return ESpawnPositionStatus::Found;
         }
 
         const int attempts = std::max(1, game_config::open_spawn_position_attempts);
@@ -450,17 +493,17 @@ struct COpenSpawnDirector::implementation
             if (!RandomPointInZone(zone, bounds, candidate)) continue;
             found_zone_position = true;
 
-            if (!CanSpawnAt(world, candidate, spawn_radius)) continue;
+            if (!CanSpawnAt(world, candidate, spawn_radius, nearby_mob_limit)) continue;
             if (!IsFarFromPendingSpawns(candidate, spawn_radius, pending_spawns)) continue;
 
             out_pos = candidate;
-            return spawn_position_status::Found;
+            return ESpawnPositionStatus::Found;
         }
 
-        return found_zone_position ? spawn_position_status::Blocked : spawn_position_status::NoPosition;
+        return found_zone_position ? ESpawnPositionStatus::Blocked : ESpawnPositionStatus::NoPosition;
     }
 
-    bool ZoneIsNearPlayer(const zone_bounds& bounds, const std::vector<sf::Vector2f>& player_positions) const
+    bool ZoneIsNearPlayer(const SZoneBounds& bounds, const std::vector<sf::Vector2f>& player_positions) const
     {
         if (player_positions.empty()) return false;
 
@@ -477,7 +520,7 @@ struct COpenSpawnDirector::implementation
     bool SingleSpawnZoneMobAlive(CGameWorld& world, size_t zone_index) const
     {
         if (zone_index >= single_spawn_zone_mobs.size()) return false;
-        const single_spawn_zone_mob& tracked = single_spawn_zone_mobs[zone_index];
+        const SSingleSpawnZoneMob& tracked = single_spawn_zone_mobs[zone_index];
         if (tracked.id < 0 || tracked.generation == 0) return false;
 
         CEntity* entity = world.GetEntity(tracked.id, tracked.generation);
@@ -493,14 +536,15 @@ struct COpenSpawnDirector::implementation
     void ForgetSingleSpawnZoneMob(const CEntity* entity)
     {
         if (!entity || entity->m_id < 0 || entity->m_generation == 0) return;
-        for (single_spawn_zone_mob& tracked : single_spawn_zone_mobs)
+        for (SSingleSpawnZoneMob& tracked : single_spawn_zone_mobs)
         {
             if (tracked.id != entity->m_id || tracked.generation != entity->m_generation) continue;
             tracked = {};
         }
     }
 
-    void SpawnMobs(CGameWorld& world, float density_multiplier, COpenSpawnDirector::spawn_callback on_spawn)
+    void SpawnMobs(CGameWorld& world, float density_multiplier, COpenSpawnDirector::spawn_callback on_spawn,
+                   const SWeatherDiurnalSnapshot* environment)
     {
         const FlorrBtMap* map = world.GetMap();
         if (!map)
@@ -523,7 +567,7 @@ struct COpenSpawnDirector::implementation
         const size_t zone_count = map->zones.size();
         if (zone_count == 0) return;
         if (single_spawn_zone_mobs.size() != zone_count)
-            single_spawn_zone_mobs.assign(zone_count, single_spawn_zone_mob{});
+            single_spawn_zone_mobs.assign(zone_count, SSingleSpawnZoneMob{});
 
         // Ambient mobs can skip ticks, so an empty world cannot naturally consume or retire an idle population.
         // Filling map-wide density targets here would therefore create permanent entities without serving a player.
@@ -553,56 +597,70 @@ struct COpenSpawnDirector::implementation
                 has_players ? active_zone_indices[(spawn_zone_cursor + visit_index) % active_zone_indices.size()]
                             : (idle_spawn_zone_cursor + visit_index) % zone_count;
             const FlorrBtMap::Zone& zone = map->zones[zone_index];
-            const zone_cache& cached_zone = zones[zone_index];
+            const SZoneCache& cached_zone = zones[zone_index];
             const bool single_spawn_zone = IsSingleSpawnZone(zone);
             if (single_spawn_zone && SingleSpawnZoneMobAlive(world, zone_index)) continue;
 
-            const int target_mobs = ZoneTargetMobCount(zone, cached_zone.area, density_multiplier);
+            const SResolvedSpawnProfile* resolved =
+                cached_zone.spawn_profile.empty() ? nullptr : spawn_rules.Resolve(cached_zone.spawn_profile, environment);
+            const float effective_density_multiplier =
+                density_multiplier * (resolved ? resolved->density_multiplier : 1.f);
+            const std::vector<SZoneMobEntry>* mob_entries =
+                resolved ? &resolved->mob_entries : &cached_zone.mob_entries;
+            const float difficulty = zone.difficulty + (resolved ? resolved->difficulty_offset : 0.f);
+
+            const int target_mobs = ZoneTargetMobCount(zone, cached_zone.area, effective_density_multiplier);
             if (target_mobs <= 0) continue;
-            zone_work.push_back({ zone_index, &zone, cached_zone.bounds, target_mobs, 0, single_spawn_zone });
+            const int nearby_mob_limit = NearbyMobLimit(zone, effective_density_multiplier);
+            if (nearby_mob_limit <= 0) continue;
+            const int population_limit = ZonePopulationLimit(zone);
+            if (population_limit <= 0) continue;
+            zone_work.push_back({ zone_index, &zone, cached_zone.bounds, target_mobs, nearby_mob_limit, 0,
+                                  population_limit, single_spawn_zone, mob_entries, difficulty });
         }
         CountMobsInSpawnZones(world, zone_work);
 
         const int active_spawn_limit = std::max(1, game_config::open_max_spawn_per_zone_tick);
         pending_spawns.reserve(zone_work.size() * static_cast<size_t>(active_spawn_limit));
-        for (spawn_zone_work& work : zone_work)
+        for (SSpawnZoneWork& work : zone_work)
         {
             const size_t zone_index = work.zone_index;
             const FlorrBtMap::Zone& zone = *work.zone;
             const bool single_spawn_zone = work.single_spawn;
             const int target_mobs = work.target_mobs;
-            int& current_mobs = work.current_mobs;
-            if (current_mobs >= target_mobs) continue;
+            if (work.current_mobs >= work.population_limit) continue;
 
-            const std::vector<SZoneMobEntry>& mob_entries = zones[zone_index].mob_entries;
+            const std::vector<SZoneMobEntry>& mob_entries = *work.mob_entries;
             if (mob_entries.empty())
             {
-                LOG_WARN("opencontroller", "Spawn zone skipped: no mob type for pool '" + zone.mobs + "'");
+                const std::string pool = zone.spawn_profile.empty() ? zone.mobs : zone.spawn_profile;
+                LOG_WARN("opencontroller", "Spawn zone skipped: no mob type for pool '" + pool + "'");
                 continue;
             }
 
             const int max_spawn_for_zone =
                 has_players ? active_spawn_limit : std::max(1, game_config::open_idle_spawn_per_zone_tick);
-            const int spawn_budget = std::min(target_mobs - current_mobs, max_spawn_for_zone);
+            const int remaining_population = work.population_limit - work.current_mobs;
+            const int spawn_budget = std::min({ target_mobs, max_spawn_for_zone, remaining_population });
             for (int i = 0; i < spawn_budget; ++i)
             {
                 EMobType mob_type = PickZoneMobType(mob_entries, rng);
                 if (mob_type == EMobType::None) continue;
 
-                ERarity rarity = PickRarityForDifficulty(zone.difficulty);
+                ERarity rarity = PickRarityForDifficulty(work.difficulty);
                 const CMobPrototype* proto = FindMobPrototype(mob_type);
                 if (!proto) continue;
 
                 const float spawn_radius = SpawnRadiusFor(*proto, rarity);
                 sf::Vector2f pos;
-                switch (PickSpawnPosition(world, zone, zones[zone_index].bounds, spawn_radius, pending_spawns,
-                                          player_positions, pos))
+                switch (PickSpawnPosition(world, zone, zones[zone_index].bounds, spawn_radius,
+                                          work.nearby_mob_limit, pending_spawns, player_positions, pos))
                 {
-                case spawn_position_status::Found:
+                case ESpawnPositionStatus::Found:
                     break;
-                case spawn_position_status::NoPosition:
+                case ESpawnPositionStatus::NoPosition:
                     continue;
-                case spawn_position_status::Blocked:
+                case ESpawnPositionStatus::Blocked:
                     continue;
                 }
 
@@ -615,13 +673,14 @@ struct COpenSpawnDirector::implementation
                 if (single_spawn_zone) RememberSingleSpawnZoneMob(zone_index, raw_mob);
                 if (on_spawn) on_spawn(world, *raw_mob);
                 pending_spawns.push_back({ pos, spawn_radius });
-                for (spawn_zone_work& counted_work : zone_work)
+                for (SSpawnZoneWork& counted_work : zone_work)
                 {
-                    if (counted_work.single_spawn || !counted_work.zone) continue;
+                    if (!counted_work.zone || counted_work.single_spawn) continue;
                     if (!PointInZoneBounds(counted_work.bounds, pos)) continue;
                     if (IsPointInZone(*counted_work.zone, pos)) ++counted_work.current_mobs;
                 }
-                if (single_spawn_zone) ++current_mobs;
+                if (single_spawn_zone) ++work.current_mobs;
+                if (work.current_mobs >= work.population_limit) break;
             }
         }
 
@@ -634,24 +693,26 @@ struct COpenSpawnDirector::implementation
     size_t spawn_zone_cursor = 0;
     size_t idle_spawn_zone_cursor = 0;
     std::mt19937 rng;
-    std::vector<single_spawn_zone_mob> single_spawn_zone_mobs;
-    std::vector<zone_cache> zones;
-    spawn_scratch scratch;
+    std::vector<SSingleSpawnZoneMob> single_spawn_zone_mobs;
+    std::vector<SZoneCache> zones;
+    CSpawnRuleSet spawn_rules;
+    SSpawnScratch scratch;
     std::uint32_t cached_world_id = 0;
     std::string cached_map_path;
     size_t cached_zone_count = 0;
     bool has_cache_identity = false;
 };
 
-COpenSpawnDirector::COpenSpawnDirector() : m_impl(std::make_unique<implementation>()) {}
+COpenSpawnDirector::COpenSpawnDirector() : m_impl(std::make_unique<CImplementation>()) {}
 
 COpenSpawnDirector::~COpenSpawnDirector() = default;
 
-void COpenSpawnDirector::Tick(CGameWorld& world, float dt, float density_multiplier, spawn_callback on_spawn)
+void COpenSpawnDirector::Tick(CGameWorld& world, float dt, float density_multiplier, spawn_callback on_spawn,
+                              const SWeatherDiurnalSnapshot* environment)
 {
     if (m_impl->count <= 0)
     {
-        m_impl->SpawnMobs(world, density_multiplier, on_spawn);
+        m_impl->SpawnMobs(world, density_multiplier, on_spawn, environment);
         m_impl->count = game_config::open_spawn_interval;
     } else
     {
@@ -659,9 +720,10 @@ void COpenSpawnDirector::Tick(CGameWorld& world, float dt, float density_multipl
     }
 }
 
-void COpenSpawnDirector::SpawnMobs(CGameWorld& world, float density_multiplier, spawn_callback on_spawn)
+void COpenSpawnDirector::SpawnMobs(CGameWorld& world, float density_multiplier, spawn_callback on_spawn,
+                                   const SWeatherDiurnalSnapshot* environment)
 {
-    m_impl->SpawnMobs(world, density_multiplier, on_spawn);
+    m_impl->SpawnMobs(world, density_multiplier, on_spawn, environment);
 }
 
 std::optional<sf::Vector2f> COpenSpawnDirector::SelectPlayerSpawn(CGameWorld& world, bool use_new_player_spawn,
@@ -684,7 +746,7 @@ void COpenSpawnDirector::CaptureSnapshot(CSnapshotWriter& writer) const
     writer.Field("spawn_rng", rng_state.str());
 
     CJsonOwner single_spawn_mobs = MakeJsonArray();
-    for (const single_spawn_zone_mob& tracked : m_impl->single_spawn_zone_mobs)
+    for (const SSingleSpawnZoneMob& tracked : m_impl->single_spawn_zone_mobs)
     {
         CJsonOwner entry = MakeJsonObject();
         CSnapshotWriter entry_writer(entry.get());
