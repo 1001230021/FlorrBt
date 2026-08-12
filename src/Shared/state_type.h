@@ -17,9 +17,10 @@ enum class EStateType : std::uint8_t
     Invincible = 10,
     Digging = 11,
     PsionicConnection = 12,
+    Hallucinogenic = 13,
 };
 
 inline constexpr bool IsKnownStateType(EStateType type)
 {
-    return type > EStateType::None && type <= EStateType::PsionicConnection;
+    return type > EStateType::None && type <= EStateType::Hallucinogenic;
 }

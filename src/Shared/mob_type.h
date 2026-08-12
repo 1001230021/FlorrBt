@@ -82,7 +82,8 @@ inline bool MatchMobTypeAlias(std::string_view text, EMobType type)
     case EMobType::BandageBeetle:
         return text == "mummy" || text == "bandagebeetle" || text == "bandage_beetle";
     case EMobType::SoldierAnt:
-        return text == "sa" || text == "sat" || text == "soldierant" || text == "soidierant";
+        return text == "sa" || text == "sat" || text == "soldierant" || text == "soldier_ant" ||
+               text == "soidierant";
     case EMobType::SoldierFireAnt:
         return text == "sfa" || text == "soldierfireant";
     case EMobType::SoldierTermite:

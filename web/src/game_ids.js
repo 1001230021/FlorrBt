@@ -7,6 +7,14 @@ import {
   NETWORK_SPIDER_WEB_ENTITY_TYPE,
   NETWORK_TRAP_PROJECTILE_ENTITY_TYPE,
 } from "./protocol.js";
+import {
+  RARITY_IDS,
+  RARITY_NAMES,
+  PETAL_IDS,
+  PETAL_ICON_IDS as GENERATED_PETAL_ICON_IDS,
+  MOB_IDS,
+  STATE_IDS,
+} from "./generated_ids.js";
 
 export const flagAttacking = 1 << 0;
 export const flagDefending = 1 << 1;
@@ -19,18 +27,19 @@ export const flagCarryingLeafPiece = flagAttached;
 export const flagSkillWindupShift = 12;
 export const flagSkillWindupMask = 0xf000;
 
-export const statePoison = 1;
-export const stateBanSlot = 2;
-export const statePincerSpeedReduce = 3;
-export const stateWebSpeedReduce = 4;
-export const stateAntiHeal = 5;
-export const stateNullification = 6;
-export const stateUndead = 7;
-export const stateCorruption = 8;
-export const stateNoRevive = 9;
-export const stateInvincible = 10;
-export const stateDigging = 11;
-export const statePsionicConnection = 12;
+export const statePoison = STATE_IDS.poison;
+export const stateBanSlot = STATE_IDS.ban_slot;
+export const statePincerSpeedReduce = STATE_IDS.pincer_speed_reduce;
+export const stateWebSpeedReduce = STATE_IDS.web_speed_reduce;
+export const stateAntiHeal = STATE_IDS.anti_heal;
+export const stateNullification = STATE_IDS.nullification;
+export const stateUndead = STATE_IDS.undead;
+export const stateCorruption = STATE_IDS.corruption;
+export const stateNoRevive = STATE_IDS.no_revive;
+export const stateInvincible = STATE_IDS.invincible;
+export const stateDigging = STATE_IDS.digging;
+export const statePsionicConnection = STATE_IDS.psionic_connection;
+export const stateHallucinogenic = STATE_IDS.hallucinogenic;
 
 export function entityState(snap, stateType) {
   if (!Array.isArray(snap?.states)) return null;
@@ -47,41 +56,42 @@ export function skillWindupIdFromFlags(flags) {
   return ((flags || 0) & flagSkillWindupMask) >>> flagSkillWindupShift;
 }
 
-export const beetleType = 1;
-export const normalLadybugType = 3;
-export const mechaFlowerType = 4;
-export const soldierAntType = 7;
-export const soldierFireAntType = 8;
-export const soldierTermiteType = 9;
-export const summonedBeetleType = 10;
-export const summonedSoldierAntType = 11;
-export const bandageBeetleType = 12;
-export const beeType = 13;
-export const hornetType = 14;
-export const bumbleBeeType = 15;
-export const rockType = 16;
-export const babyAntType = 17;
-export const workerAntType = 18;
-export const queenAntType = 19;
-export const antHoleType = 20;
-export const spiderType = 21;
-export const sandstormType = 22;
-export const dummyType = 23;
-export const dandelionType = 24;
-export const antEggMobType = 25;
-export const fireAntEggType = 26;
-export const termiteEggType = 27;
-export const queenAntEggType = 28;
-export const queenFireAntEggType = 29;
-export const babyFireAntType = 30;
-export const workerFireAntType = 31;
-export const fireQueenAntType = 32;
-export const babyTermiteType = 33;
-export const workerTermiteType = 34;
-export const termiteOvermindType = 35;
-export const leafPieceType = 36;
-export const leafcutterSoldierType = 37;
-export const titanType = 38;
+export const beetleType = MOB_IDS.beetle;
+export const normalLadybugType = MOB_IDS.normal_ladybug;
+export const mechaFlowerType = MOB_IDS.mecha_flower;
+export const normalFlowerType = MOB_IDS.normal_flower;
+export const soldierAntType = MOB_IDS.soldier_ant;
+export const soldierFireAntType = MOB_IDS.soldier_fire_ant;
+export const soldierTermiteType = MOB_IDS.soldier_termite;
+export const summonedBeetleType = MOB_IDS.summoned_beetle;
+export const summonedSoldierAntType = MOB_IDS.summoned_soldier_ant;
+export const bandageBeetleType = MOB_IDS.bandage_beetle;
+export const beeType = MOB_IDS.bee;
+export const hornetType = MOB_IDS.hornet;
+export const bumbleBeeType = MOB_IDS.bumble_bee;
+export const rockType = MOB_IDS.rock;
+export const babyAntType = MOB_IDS.baby_ant;
+export const workerAntType = MOB_IDS.worker_ant;
+export const queenAntType = MOB_IDS.queen_ant;
+export const antHoleType = MOB_IDS.ant_hole;
+export const spiderType = MOB_IDS.spider;
+export const sandstormType = MOB_IDS.sandstorm;
+export const dummyType = MOB_IDS.dummy;
+export const dandelionType = MOB_IDS.dandelion;
+export const antEggMobType = MOB_IDS.ant_egg;
+export const fireAntEggType = MOB_IDS.fire_ant_egg;
+export const termiteEggType = MOB_IDS.termite_egg;
+export const queenAntEggType = MOB_IDS.queen_ant_egg;
+export const queenFireAntEggType = MOB_IDS.queen_fire_ant_egg;
+export const babyFireAntType = MOB_IDS.baby_fire_ant;
+export const workerFireAntType = MOB_IDS.worker_fire_ant;
+export const fireQueenAntType = MOB_IDS.fire_queen_ant;
+export const babyTermiteType = MOB_IDS.baby_termite;
+export const workerTermiteType = MOB_IDS.worker_termite;
+export const termiteOvermindType = MOB_IDS.termite_overmind;
+export const leafPieceType = MOB_IDS.leaf_piece;
+export const leafcutterSoldierType = MOB_IDS.leafcutter_soldier;
+export const titanType = MOB_IDS.titan;
 export const trapProjectileType = NETWORK_TRAP_PROJECTILE_ENTITY_TYPE;
 export const bloodSacrificeEffectType = NETWORK_BLOOD_SACRIFICE_ENTITY_TYPE;
 export const dandelionMissileType = NETWORK_DANDELION_MISSILE_ENTITY_TYPE;
@@ -89,147 +99,85 @@ export const pollenProjectileType = NETWORK_POLLEN_ENTITY_TYPE;
 export const spiderWebZoneType = NETWORK_SPIDER_WEB_ENTITY_TYPE;
 export const hornetMissileType = NETWORK_MISSILE_ENTITY_TYPE;
 export const portalType = NETWORK_PORTAL_ENTITY_TYPE;
-export const playerFlowerType = 6;
-export const bossRarity = 8;
+export const playerFlowerType = MOB_IDS.player_flower;
+export const bossRarity = RARITY_IDS.super;
 export const maxBossBars = 3;
 
-export const petalAirType = 1;
-export const petalAntEggType = 2;
-export const petalAntennaeType = 3;
-export const petalBasicType = 4;
-export const petalBeetleEggType = 5;
-export const petalBoneType = 6;
-export const petalBubbleType = 7;
-export const petalCarrotType = 8;
-export const petalCoinType = 9;
-export const petalCompassType = 10;
-export const petalCogwheelType = 11;
-export const petalDiscType = 12;
-export const petalDustType = 13;
-export const petalGoldenLeafType = 14;
-export const petalIrisType = 15;
-export const petalLentilType = 16;
-export const petalMoonType = 17;
-export const petalNullificationType = 18;
-export const petalPincerType = 19;
-export const petalRelicType = 20;
-export const petalRoseType = 21;
-export const petalYinYangType = 22;
-export const petalMissileType = 23;
-export const petalBloodSacrificeType = 24;
-export const petalCorruptionType = 25;
-export const petalBandageType = 26;
-export const petalHeavyType = 27;
-export const petalFasterType = 28;
-export const petalYggdrasilType = 29;
-export const petalDahliaType = 30;
-export const petalWingType = 31;
-export const petalTriangleType = 32;
-export const petalSawbladeType = 33;
-export const petalFragmentType = 34;
-export const petalMimicType = 35;
-export const petalGlassType = 36;
-export const petalStingerType = 37;
-export const petalBrokenEggType = 38;
-export const petalLightType = 39;
-export const petalLeafType = 40;
-export const petalRockType = 41;
-export const petalWebType = 42;
-export const petalCactusType = 43;
-export const petalPollenType = 44;
-export const petalCornType = 45;
-export const petalRiceType = 46;
-export const petalBasilType = 47;
-export const petalSoilType = 48;
-export const petalHoneyType = 49;
-export const petalWaxType = 50;
-export const petalThirdEyeType = 51;
-export const petalDandelionType = 52;
-export const petalOrangeType = 53;
-export const petalShovelType = 54;
-export const petalYuccaType = 55;
-export const petalWhiteFungusType = 56;
-export const petalBlackFungusType = 57;
-export const petalBroccoliType = 58;
-export const petalDouliType = 59;
-export const petalTrapperType = 60;
-export const petalAmuletType = 61;
-export const petalPlankType = 62;
-export const petalTomatoType = 63;
+export const petalAirType = PETAL_IDS.air;
+export const petalAntEggType = PETAL_IDS.ant_egg;
+export const petalAntennaeType = PETAL_IDS.antennae;
+export const petalBasicType = PETAL_IDS.basic;
+export const petalBeetleEggType = PETAL_IDS.beetle_egg;
+export const petalBoneType = PETAL_IDS.bone;
+export const petalBubbleType = PETAL_IDS.bubble;
+export const petalCarrotType = PETAL_IDS.carrot;
+export const petalCoinType = PETAL_IDS.coin;
+export const petalCompassType = PETAL_IDS.compass;
+export const petalCogwheelType = PETAL_IDS.cogwheel;
+export const petalDiscType = PETAL_IDS.disc;
+export const petalDustType = PETAL_IDS.dust;
+export const petalGoldenLeafType = PETAL_IDS.golden_leaf;
+export const petalIrisType = PETAL_IDS.iris;
+export const petalLentilType = PETAL_IDS.lentil;
+export const petalMoonType = PETAL_IDS.moon;
+export const petalNullificationType = PETAL_IDS.nullification;
+export const petalPincerType = PETAL_IDS.pincer;
+export const petalRelicType = PETAL_IDS.relic;
+export const petalRoseType = PETAL_IDS.rose;
+export const petalYinYangType = PETAL_IDS.yin_yang;
+export const petalMissileType = PETAL_IDS.missile;
+export const petalBloodSacrificeType = PETAL_IDS.blood_sacrifice;
+export const petalCorruptionType = PETAL_IDS.corruption;
+export const petalBandageType = PETAL_IDS.bandage;
+export const petalHeavyType = PETAL_IDS.heavy;
+export const petalFasterType = PETAL_IDS.faster;
+export const petalYggdrasilType = PETAL_IDS.yggdrasil;
+export const petalDahliaType = PETAL_IDS.dahlia;
+export const petalWingType = PETAL_IDS.wing;
+export const petalTriangleType = PETAL_IDS.triangle;
+export const petalSawbladeType = PETAL_IDS.sawblade;
+export const petalFragmentType = PETAL_IDS.fragment;
+export const petalMimicType = PETAL_IDS.mimic;
+export const petalGlassType = PETAL_IDS.glass;
+export const petalStingerType = PETAL_IDS.stinger;
+export const petalBrokenEggType = PETAL_IDS.broken_egg;
+export const petalLightType = PETAL_IDS.light;
+export const petalLeafType = PETAL_IDS.leaf;
+export const petalRockType = PETAL_IDS.rock;
+export const petalWebType = PETAL_IDS.web;
+export const petalCactusType = PETAL_IDS.cactus;
+export const petalPollenType = PETAL_IDS.pollen;
+export const petalCornType = PETAL_IDS.corn;
+export const petalRiceType = PETAL_IDS.rice;
+export const petalBasilType = PETAL_IDS.basil;
+export const petalSoilType = PETAL_IDS.soil;
+export const petalHoneyType = PETAL_IDS.honey;
+export const petalWaxType = PETAL_IDS.wax;
+export const petalThirdEyeType = PETAL_IDS.third_eye;
+export const petalDandelionType = PETAL_IDS.dandelion;
+export const petalOrangeType = PETAL_IDS.orange;
+export const petalShovelType = PETAL_IDS.shovel;
+export const petalYuccaType = PETAL_IDS.yucca;
+export const petalWhiteFungusType = PETAL_IDS.white_fungus;
+export const petalBlackFungusType = PETAL_IDS.black_fungus;
+export const petalBroccoliType = PETAL_IDS.broccoli;
+export const petalDouliType = PETAL_IDS.douli;
+export const petalTrapperType = PETAL_IDS.trapper;
+export const petalAmuletType = PETAL_IDS.amulet;
+export const petalPlankType = PETAL_IDS.plank;
+export const petalTomatoType = PETAL_IDS.tomato;
+export const petalHallucinogenicMushroomType = PETAL_IDS.hallucinogenic_mushroom;
 
 export const stingerSplitIconMinRarity = 6;
 export const compassUltraIconMinRarity = 7;
 export const flowerTextureVersion = "20260802a";
 
-export const PetalIconIds = [
-  0,
-  "air",
-  "ant_egg",
-  "antennae",
-  "basic",
-  "beetle_egg",
-  "bone",
-  "bubble",
-  "carrot",
-  "coin",
-  "compass",
-  "cogwheel",
-  "disc",
-  "dust",
-  "golden_leaf",
-  "iris",
-  "lentil",
-  "moon",
-  "nullification",
-  "pincer",
-  "relic",
-  "rose",
-  "yin_yang",
-  "missile",
-  "blood_sacrifice",
-  "corruption",
-  "bandage",
-  "heavy",
-  "faster",
-  "yggdrasil",
-  "dahlia",
-  "wing",
-  "triangle",
-  "sawblade",
-  "fragment",
-  "mimic",
-  "glass",
-  "stinger",
-  "broken_egg",
-  "light",
-  "leaf",
-  "rock",
-  "web",
-  "cactus",
-  "pollen",
-  "corn",
-  "rice",
-  "basil",
-  "soil",
-  "honey",
-  "wax",
-  "third_eye",
-  "dandelion",
-  "orange",
-  "shovel",
-  "yucca",
-  "white_fungus",
-  "black_fungus",
-  "broccoli",
-  "douli",
-  "trapper",
-  "amulet",
-  "plank",
-  "tomato",
-];
+export const PetalIconIds = GENERATED_PETAL_ICON_IDS;
 
 export const worldPetalSizeScale = 6;
 export const worldDropSizeScale = 3.25;
+export const hallucinogenicMushroomLiveViewBox = "30.5 13 52 52";
+export const hallucinogenicMushroomLiveVisualScale = 1 / 3;
 export const trapperLivePetalViewBox = "2.32 -14.95 110 110";
 export const waxLivePetalViewBox = "29 22 52 52";
 export const waxLivePetalVisualScale = 0.52;
@@ -255,21 +203,21 @@ export const nonStackPetalTypes = new Set([
   petalDouliType,
 ]);
 
-export const rarityExotic = 12;
-export const raritySuper = 8;
-export const rarityEternal = 9;
-export const rarityUnique = 10;
-export const rarityPrimordial = 11;
+export const rarityExotic = RARITY_IDS.exotic;
+export const raritySuper = RARITY_IDS.super;
+export const rarityEternal = RARITY_IDS.eternal;
+export const rarityUnique = RARITY_IDS.unique;
+export const rarityPrimordial = RARITY_IDS.primordial;
 export const rarityDisplayOrder = [
-  1,
-  2,
-  3,
-  4,
-  5,
-  6,
-  7,
+  RARITY_IDS.common,
+  RARITY_IDS.unusual,
+  RARITY_IDS.rare,
+  RARITY_IDS.epic,
+  RARITY_IDS.legendary,
+  RARITY_IDS.mythic,
+  RARITY_IDS.ultra,
   rarityExotic,
-  8,
+  RARITY_IDS.super,
   rarityEternal,
   rarityUnique,
   rarityPrimordial,

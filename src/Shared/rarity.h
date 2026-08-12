@@ -52,6 +52,14 @@ inline bool IsKnownRarity(ERarity rarity)
     return index > static_cast<int>(ERarity::Null) && index < static_cast<int>(rarity_colors.size());
 }
 
+inline constexpr std::array<std::string_view, 13> rarity_names = {
+    "Null",      "Common",   "Unusual", "Rare",    "Epic",      "Legendary", "Mythic",
+    "Ultra",     "Super",    "Eternal", "Unique",  "Primordial", "Exotic",
+};
+
+static_assert(static_cast<int>(ERarity::Exotic) + 1 == static_cast<int>(rarity_names.size()),
+              "rarity names must stay aligned with ERarity");
+
 inline SRarityColor GetRarityColor(ERarity rarity)
 {
     int index = static_cast<int>(rarity);
@@ -61,35 +69,9 @@ inline SRarityColor GetRarityColor(ERarity rarity)
 
 inline std::string_view GetRarityName(ERarity rarity)
 {
-    switch (rarity)
-    {
-    case ERarity::Common:
-        return "Common";
-    case ERarity::Unusual:
-        return "Unusual";
-    case ERarity::Rare:
-        return "Rare";
-    case ERarity::Epic:
-        return "Epic";
-    case ERarity::Legendary:
-        return "Legendary";
-    case ERarity::Mythic:
-        return "Mythic";
-    case ERarity::Ultra:
-        return "Ultra";
-    case ERarity::Super:
-        return "Super";
-    case ERarity::Eternal:
-        return "Eternal";
-    case ERarity::Unique:
-        return "Unique";
-    case ERarity::Primordial:
-        return "Primordial";
-    case ERarity::Exotic:
-        return "Exotic";
-    default:
-        return "Null";
-    }
+    int index = static_cast<int>(rarity);
+    if (index < 0 || index >= static_cast<int>(rarity_names.size())) return "Null";
+    return rarity_names[index];
 }
 
 inline float GetRaritySortRank(ERarity rarity)

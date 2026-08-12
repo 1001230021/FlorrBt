@@ -4,7 +4,6 @@
 #include "rarity.h"
 #include "tools.h"
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <initializer_list>
 #include <unordered_map>
@@ -324,7 +323,7 @@ inline void RegisterWikiQueenFireAntDropTables()
     RegisterDropRate(EMobType::FireQueenAnt, ERarity::Super, EPetalType::BrokenEgg, ERarity::Ultra, 0.6745);
 }
 
-inline void RegisterWikiTermiteRelicDropTable(EMobType mob_type)
+inline void RegisterWikiStandardTermiteRelicDropTable(EMobType mob_type)
 {
     RegisterDropRateTable(mob_type, EPetalType::Relic,
                           {
@@ -439,7 +438,22 @@ inline void RegisterWikiSoldierFireAntYuccaDropTable()
     RegisterWikiId5DropTable(EMobType::SoldierFireAnt, EPetalType::Yucca);
 }
 
-inline void RegisterWikiAntDropRates()
+inline void RegisterWikiTermiteEggAntEggDropTable()
+{
+    RegisterWikiFireAntEggDropTable(EMobType::TermiteEgg);
+}
+
+inline void RegisterWikiBabyTermiteCarrotDropTable()
+{
+    RegisterWikiId6DropTable(EMobType::BabyTermite, EPetalType::Carrot);
+}
+
+inline void RegisterWikiSoldierTermiteBoneDropTable()
+{
+    RegisterWikiFireAntEggDropTable(EMobType::SoldierTermite, EPetalType::Bone);
+}
+
+inline void ReplaceAntDropRatesWithWikiData()
 {
     RemoveDropRatesForMob(EMobType::AntEgg);
     RemoveDropRatesForMob(EMobType::BabyAnt);
@@ -452,11 +466,6 @@ inline void RegisterWikiAntDropRates()
     RemoveDropRatesForMob(EMobType::WorkerFireAnt);
     RemoveDropRatesForMob(EMobType::SoldierFireAnt);
     RemoveDropRatesForMob(EMobType::FireQueenAnt);
-    RemoveDropRatesForMob(EMobType::TermiteEgg);
-    RemoveDropRatesForMob(EMobType::BabyTermite);
-    RemoveDropRatesForMob(EMobType::WorkerTermite);
-    RemoveDropRatesForMob(EMobType::SoldierTermite);
-    RemoveDropRatesForMob(EMobType::TermiteOvermind);
 
     RegisterWikiAntEggMobDropTable(EMobType::AntEgg);
     RegisterWikiId6DropTable(EMobType::BabyAnt, EPetalType::Light);
@@ -478,108 +487,100 @@ inline void RegisterWikiAntDropRates()
     RegisterWikiAntEggMobDropTable(EMobType::SoldierFireAnt, EPetalType::Triangle);
     RegisterWikiSoldierFireAntYuccaDropTable();
     RegisterWikiQueenFireAntDropTables();
+}
 
-    RegisterWikiFireAntEggDropTable(EMobType::TermiteEgg);
+inline void ReplaceTermiteDropRatesWithWikiData()
+{
+    RemoveDropRatesForMob(EMobType::TermiteEgg);
+    RemoveDropRatesForMob(EMobType::BabyTermite);
+    RemoveDropRatesForMob(EMobType::WorkerTermite);
+    RemoveDropRatesForMob(EMobType::SoldierTermite);
+    RemoveDropRatesForMob(EMobType::TermiteOvermind);
+
+    RegisterWikiTermiteEggAntEggDropTable();
     RegisterWikiTermiteEggAmuletDropTable();
-    RegisterWikiTermiteRelicDropTable(EMobType::BabyTermite);
-    RegisterWikiId6DropTable(EMobType::BabyTermite, EPetalType::Carrot);
-    RegisterWikiTermiteRelicDropTable(EMobType::WorkerTermite);
+    RegisterWikiStandardTermiteRelicDropTable(EMobType::BabyTermite);
+    RegisterWikiBabyTermiteCarrotDropTable();
+    RegisterWikiStandardTermiteRelicDropTable(EMobType::WorkerTermite);
     RegisterWikiWorkerTermitePlankDropTable();
-    RegisterWikiTermiteRelicDropTable(EMobType::SoldierTermite);
-    RegisterWikiFireAntEggDropTable(EMobType::SoldierTermite, EPetalType::Bone);
+    RegisterWikiStandardTermiteRelicDropTable(EMobType::SoldierTermite);
+    RegisterWikiSoldierTermiteBoneDropTable();
     RegisterWikiTermiteOvermindRelicDropTable();
     RegisterWikiTermiteOvermindCompassDropTable();
     RegisterWikiTermiteOvermindTomatoDropTable();
 }
 
-struct SHardcodedEternalDropRate
+inline void RegisterDerivedSuperAndEternalDropRates()
 {
-    EMobType mob_type = EMobType::None;
-    EPetalType drop_type = EPetalType::None;
-    double super_rate = 0.0;
-    double ultra_rate = 0.0;
-    double mythic_rate = 0.0;
-};
+    constexpr double super_same_rarity_drop_rate = 0.00000001; // 0.000001%
+    constexpr double eternal_super_drop_min_rate = 0.030108;
+    constexpr double eternal_super_drop_max_rate = 0.099892;
+    constexpr double super_ultra_drop_saturation_rate = 0.45;
+    constexpr double eternal_ultra_drop_min_rate = 0.70;
+    constexpr double eternal_ultra_drop_rate_span = 0.20;
 
-// Eternal rates are literals derived from the legacy mapping. Ultra was then raised into the 70%-90% range.
-inline constexpr std::array<SHardcodedEternalDropRate, 57> hardcoded_eternal_drop_rates = {{
-    { EMobType::Beetle, EPetalType::BeetleEgg, 0.099892000000, 0.792999143993, 0.107108856007 },
-    { EMobType::NormalLadybug, EPetalType::Rose, 0.099892000000, 0.792999143993, 0.107108856007 },
-    { EMobType::NormalLadybug, EPetalType::Light, 0.065242864504, 0.771598972792, 0.163158162705 },
-    { EMobType::SoldierAnt, EPetalType::Wing, 0.099892000000, 0.834599476796, 0.065508523204 },
-    { EMobType::SoldierAnt, EPetalType::Glass, 0.099892000000, 0.842000000000, 0.058108000000 },
-    { EMobType::SoldierFireAnt, EPetalType::Triangle, 0.099892000000, 0.828800000000, 0.071308000000 },
-    { EMobType::SoldierFireAnt, EPetalType::Yucca, 0.099892000000, 0.842000000000, 0.058108000000 },
-    { EMobType::SoldierTermite, EPetalType::Bone, 0.039065687134, 0.745400000000, 0.215534312866 },
-    { EMobType::SoldierTermite, EPetalType::Relic, 0.030203725652, 0.710000000000, 0.259796274348 },
-    { EMobType::BandageBeetle, EPetalType::BeetleEgg, 0.099892000000, 0.819599356795, 0.080508643205 },
-    { EMobType::BandageBeetle, EPetalType::Lentil, 0.042216712165, 0.750198801590, 0.207584486244 },
-    { EMobType::Bee, EPetalType::Stinger, 0.099892000000, 0.828800000000, 0.071308000000 },
-    { EMobType::Bee, EPetalType::Pollen, 0.059679163940, 0.767600000000, 0.172720836060 },
-    { EMobType::Bee, EPetalType::Honey, 0.059679163940, 0.767600000000, 0.172720836060 },
-    { EMobType::Hornet, EPetalType::Antennae, 0.058132157767, 0.766400132800, 0.175467709433 },
-    { EMobType::Hornet, EPetalType::Missile, 0.099892000000, 0.833621336213, 0.066486663787 },
-    { EMobType::Hornet, EPetalType::Orange, 0.039065687134, 0.745400000000, 0.215534312866 },
-    { EMobType::BumbleBee, EPetalType::Pollen, 0.099892000000, 0.894000000000, 0.006108000000 },
-    { EMobType::BumbleBee, EPetalType::Honey, 0.099892000000, 0.812400000000, 0.087708000000 },
-    { EMobType::BumbleBee, EPetalType::Wax, 0.099892000000, 0.879400000000, 0.020708000000 },
-    { EMobType::Rock, EPetalType::Moon, 0.030108095726, 0.900000000000, 0.069891904274 },
-    { EMobType::Rock, EPetalType::Heavy, 0.030203725652, 0.710000000000, 0.259796274348 },
-    { EMobType::Rock, EPetalType::Rock, 0.032347372963, 0.728600000000, 0.239052627037 },
-    { EMobType::BabyAnt, EPetalType::Light, 0.099892000000, 0.828800000000, 0.071308000000 },
-    { EMobType::BabyAnt, EPetalType::Leaf, 0.099892000000, 0.792400000000, 0.107708000000 },
-    { EMobType::BabyAnt, EPetalType::Rice, 0.099892000000, 0.828800000000, 0.071308000000 },
-    { EMobType::WorkerAnt, EPetalType::Leaf, 0.099892000000, 0.792400000000, 0.107708000000 },
-    { EMobType::WorkerAnt, EPetalType::Corn, 0.099892000000, 0.792400000000, 0.107708000000 },
-    { EMobType::QueenAnt, EPetalType::AntEgg, 0.099892000000, 0.874600000000, 0.025508000000 },
-    { EMobType::QueenAnt, EPetalType::BrokenEgg, 0.099892000000, 0.900000000000, 0.000108000000 },
-    { EMobType::QueenAnt, EPetalType::Basil, 0.099892000000, 0.842000000000, 0.058108000000 },
-    { EMobType::AntHole, EPetalType::Soil, 0.039065687134, 0.745400000000, 0.215534312866 },
-    { EMobType::AntHole, EPetalType::Shovel, 0.035035846267, 0.737274549098, 0.227689604635 },
-    { EMobType::Spider, EPetalType::Faster, 0.099892000000, 0.828800000000, 0.071308000000 },
-    { EMobType::Spider, EPetalType::Web, 0.099892000000, 0.828800000000, 0.071308000000 },
-    { EMobType::Spider, EPetalType::ThirdEye, 0.030157011534, 0.708000000000, 0.261842988466 },
-    { EMobType::Dandelion, EPetalType::Dandelion, 0.099892000000, 0.833621336213, 0.066486663787 },
-    { EMobType::AntEgg, EPetalType::AntEgg, 0.099892000000, 0.828800000000, 0.071308000000 },
-    { EMobType::FireAntEgg, EPetalType::AntEgg, 0.039065687134, 0.745400000000, 0.215534312866 },
-    { EMobType::TermiteEgg, EPetalType::AntEgg, 0.039065687134, 0.745400000000, 0.215534312866 },
-    { EMobType::TermiteEgg, EPetalType::Amulet, 0.030203725652, 0.710000000000, 0.259796274348 },
-    { EMobType::BabyFireAnt, EPetalType::Light, 0.099892000000, 0.828800000000, 0.071308000000 },
-    { EMobType::BabyFireAnt, EPetalType::Broccoli, 0.042216712165, 0.750198801590, 0.207584486244 },
-    { EMobType::BabyFireAnt, EPetalType::Yucca, 0.099892000000, 0.792400000000, 0.107708000000 },
-    { EMobType::WorkerFireAnt, EPetalType::Corn, 0.099892000000, 0.792400000000, 0.107708000000 },
-    { EMobType::WorkerFireAnt, EPetalType::Yucca, 0.099892000000, 0.792400000000, 0.107708000000 },
-    { EMobType::FireQueenAnt, EPetalType::AntEgg, 0.099892000000, 0.874600000000, 0.025508000000 },
-    { EMobType::FireQueenAnt, EPetalType::BrokenEgg, 0.099892000000, 0.900000000000, 0.000108000000 },
-    { EMobType::FireQueenAnt, EPetalType::Basil, 0.099892000000, 0.842000000000, 0.058108000000 },
-    { EMobType::BabyTermite, EPetalType::Carrot, 0.099892000000, 0.828800000000, 0.071308000000 },
-    { EMobType::BabyTermite, EPetalType::Relic, 0.030203725652, 0.710000000000, 0.259796274348 },
-    { EMobType::WorkerTermite, EPetalType::Relic, 0.030203725652, 0.710000000000, 0.259796274348 },
-    { EMobType::WorkerTermite, EPetalType::Plank, 0.032347372963, 0.728600000000, 0.239052627037 },
-    { EMobType::TermiteOvermind, EPetalType::Compass, 0.099892000000, 0.900000000000, 0.000108000000 },
-    { EMobType::TermiteOvermind, EPetalType::Relic, 0.080230584487, 0.780600000000, 0.139169415513 },
-    { EMobType::TermiteOvermind, EPetalType::Tomato, 0.099892000000, 0.828800000000, 0.071308000000 },
-    { EMobType::LeafPiece, EPetalType::Leaf, 0.065837408000, 0.772000000000, 0.162162592000 },
-}};
-
-inline void RegisterHardcodedHighRarityDropRates()
-{
-    constexpr double super_petal_rate = 0.00000001; // 0.000001%
-
-    for (const SHardcodedEternalDropRate& rate : hardcoded_eternal_drop_rates)
+    std::unordered_map<EMobType, std::vector<EPetalType>> drop_types_by_mob;
+    for (const auto& [drop_table_key, drop_entries] : GetDropRateTable())
     {
-        auto& super_drops = GetDropRateTable()[SDropRateKey{ rate.mob_type, ERarity::Super }];
-        auto super_drop = std::find_if(super_drops.begin(), super_drops.end(), [&rate](const SDropRate& drop) {
-            return drop.type == rate.drop_type && drop.rarity == ERarity::Super;
-        });
-        if (super_drop == super_drops.end())
-            RegisterDropRate(rate.mob_type, ERarity::Super, rate.drop_type, ERarity::Super, super_petal_rate);
-        else
-            super_drop->drop_rate = super_petal_rate;
+        if (drop_table_key.mob_type == EMobType::None) continue;
 
-        RegisterDropRate(rate.mob_type, ERarity::Eternal, rate.drop_type, ERarity::Super, rate.super_rate);
-        RegisterDropRate(rate.mob_type, ERarity::Eternal, rate.drop_type, ERarity::Ultra, rate.ultra_rate);
-        RegisterDropRate(rate.mob_type, ERarity::Eternal, rate.drop_type, ERarity::Mythic, rate.mythic_rate);
+        auto& registered_drop_types = drop_types_by_mob[drop_table_key.mob_type];
+        for (const SDropRate& drop_entry : drop_entries)
+        {
+            if (std::find(registered_drop_types.begin(), registered_drop_types.end(), drop_entry.type) ==
+                registered_drop_types.end())
+            {
+                registered_drop_types.push_back(drop_entry.type);
+            }
+        }
+    }
+
+    for (const auto& [mob_type, registered_drop_types] : drop_types_by_mob)
+    {
+        for (EPetalType drop_type : registered_drop_types)
+        {
+            double super_ultra_drop_rate = 0.0;
+            double super_mythic_drop_rate = 0.0;
+            bool has_same_rarity_super_drop = false;
+            auto& super_mob_drop_entries = GetDropRateTable()[SDropRateKey{ mob_type, ERarity::Super }];
+            for (SDropRate& drop_entry : super_mob_drop_entries)
+            {
+                if (drop_entry.type != drop_type) continue;
+                if (drop_entry.rarity == ERarity::Ultra)
+                    super_ultra_drop_rate += drop_entry.drop_rate;
+                else if (drop_entry.rarity == ERarity::Mythic)
+                    super_mythic_drop_rate += drop_entry.drop_rate;
+                else if (drop_entry.rarity == ERarity::Super)
+                {
+                    drop_entry.drop_rate = super_same_rarity_drop_rate;
+                    has_same_rarity_super_drop = true;
+                }
+            }
+            if (!has_same_rarity_super_drop)
+            {
+                RegisterDropRate(mob_type, ERarity::Super, drop_type, ERarity::Super,
+                                 super_same_rarity_drop_rate);
+            }
+
+            const double super_drop_curve_factor =
+                std::clamp(super_ultra_drop_rate / super_ultra_drop_saturation_rate, 0.0, 1.0);
+            const double super_drop_curve_weight =
+                super_drop_curve_factor * super_drop_curve_factor * super_drop_curve_factor;
+            const double eternal_super_drop_rate =
+                eternal_super_drop_min_rate +
+                (eternal_super_drop_max_rate - eternal_super_drop_min_rate) * super_drop_curve_weight;
+
+            const double super_ultra_mythic_total_rate = super_ultra_drop_rate + super_mythic_drop_rate;
+            const double super_ultra_drop_share =
+                super_ultra_mythic_total_rate > 0.0 ? super_ultra_drop_rate / super_ultra_mythic_total_rate : 0.65;
+            const double eternal_ultra_drop_rate =
+                eternal_ultra_drop_min_rate + eternal_ultra_drop_rate_span * super_ultra_drop_share;
+            const double eternal_mythic_drop_rate = 1.0 - eternal_super_drop_rate - eternal_ultra_drop_rate;
+
+            RegisterDropRate(mob_type, ERarity::Eternal, drop_type, ERarity::Super, eternal_super_drop_rate);
+            RegisterDropRate(mob_type, ERarity::Eternal, drop_type, ERarity::Ultra, eternal_ultra_drop_rate);
+            RegisterDropRate(mob_type, ERarity::Eternal, drop_type, ERarity::Mythic, eternal_mythic_drop_rate);
+        }
     }
 }
 
@@ -1165,12 +1166,13 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::Beetle, ERarity::Super, EPetalType::BeetleEgg, ERarity::Ultra, 0.464992);
     RegisterDropRate(EMobType::Beetle, ERarity::Super, EPetalType::BeetleEgg, ERarity::Mythic, 0.535);
 
-    RegisterWikiAntDropRates();
-    RegisterHardcodedHighRarityDropRates();
+    ReplaceAntDropRatesWithWikiData();
+    ReplaceTermiteDropRatesWithWikiData();
     CopyDropRateTable(EMobType::SoldierAnt, EPetalType::Wing, EMobType::LeafcutterSoldier,
                       EPetalType::WhiteFungus);
     CopyDropRateTable(EMobType::SoldierAnt, EPetalType::Glass, EMobType::LeafcutterSoldier,
                       EPetalType::BlackFungus);
+    RegisterDerivedSuperAndEternalDropRates();
 }
 
 inline const std::vector<SDropRate>& QueryDropRates(EMobType mob_type, ERarity rarity)

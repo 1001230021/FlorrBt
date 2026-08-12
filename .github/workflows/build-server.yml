@@ -9,6 +9,25 @@ permissions:
   contents: read
 
 jobs:
+  shared-ids-sync:
+    name: Shared enum -> JS ids in sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Regenerate client ids from C++ enums
+        run: node tools/generate_shared_ids.js
+
+      - name: Fail if generated ids changed
+        run: |
+          if ! git diff --exit-code -- web/src/generated_ids.js; then
+            echo "::error::web/src/generated_ids.js is out of date."
+            echo "Run 'node tools/generate_shared_ids.js' locally and commit the result."
+            exit 1
+          fi
+
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}

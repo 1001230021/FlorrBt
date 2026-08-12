@@ -69,12 +69,13 @@ enum class EPetalType : int
     Trapper,
     Amulet,
     Plank,
-    Tomato
+    Tomato,
+    HallucinogenicMushroom
 };
 
 using PetalType = EPetalType;
 
-inline constexpr std::array<std::string_view, 64> petal_type_names = {
+inline constexpr std::array<std::string_view, 65> petal_type_names = {
     "None",           "Air",         "AntEgg",        "Antennae", "Basic",     "BeetleEgg", "Bone",       "Bubble",
     "Carrot",         "Coin",        "Compass",       "Cogwheel", "Disc",      "Dust",      "GoldenLeaf", "Iris",
     "Lentil",         "Moon",        "Nullification", "Pincer",   "Relic",     "Rose",      "YinYang",    "Missile",
@@ -83,9 +84,10 @@ inline constexpr std::array<std::string_view, 64> petal_type_names = {
     "Leaf",           "Rock",        "Web",           "Cactus",   "Pollen",    "Corn",      "Rice",       "Basil",
     "Soil",           "Honey",       "Wax",           "ThirdEye", "Dandelion", "Orange",    "Shovel",     "Yucca",
     "WhiteFungus",    "BlackFungus", "Broccoli",      "Douli",     "Trapper",   "Amulet", "Plank", "Tomato",
+    "HallucinogenicMushroom",
 };
 
-static_assert(static_cast<size_t>(EPetalType::Tomato) + 1 == petal_type_names.size(),
+static_assert(static_cast<size_t>(EPetalType::HallucinogenicMushroom) + 1 == petal_type_names.size(),
               "petal type names must stay aligned with EPetalType");
 static_assert(server_petal_entity_type_offset + petal_type_names.size() <= server_drop_entity_type_offset,
               "petal network IDs overlap the drop network ID range");
@@ -245,6 +247,8 @@ inline bool MatchPetalTypeAlias(std::string_view text, EPetalType type)
         return text == "plank" || text == "plk";
     case EPetalType::Tomato:
         return text == "tomato" || text == "tom";
+    case EPetalType::HallucinogenicMushroom:
+        return text == "hallucinogenic_mushroom" || text == "hallucinogenicmushroom" || text == "hm";
     default:
         return false;
     }
