@@ -137,7 +137,7 @@ bool CEmailVerificationService::RequestCode(std::uint32_t player_id, const std::
 {
     error.clear();
     request_id = 0;
-    if (!game_config::email_enabled)
+    if (!game_config::IsEmailBindingEnabled())
     {
         error = "Email verification is disabled";
         return false;

@@ -1011,9 +1011,9 @@ bool CAccountDataStore::PrepareAuthentication(const std::string& name, const std
             if (error) *error = "Password is empty";
             return false;
         }
-        if (!NormalizeEmailAddress(email, normalized_email))
+        if (!email.empty() && !NormalizeEmailAddress(email, normalized_email))
         {
-            if (error) *error = "A valid email address is required";
+            if (error) *error = "Email address is invalid";
             return false;
         }
         if (account)
@@ -1021,7 +1021,7 @@ bool CAccountDataStore::PrepareAuthentication(const std::string& name, const std
             if (error) *error = "Account already exists";
             return false;
         }
-        if (FindAccountByEmail(normalized_email))
+        if (!normalized_email.empty() && FindAccountByEmail(normalized_email))
         {
             if (error) *error = "Email address is already in use";
             return false;
@@ -1073,7 +1073,7 @@ SAccountAuthResult CAccountDataStore::ExecuteAuthentication(SAccountAuthWork wor
     result.observed_password_hash = work.stored_password_hash;
     result.observed_trusted_ip = std::move(work.stored_trusted_ip);
     result.register_mode = work.register_mode;
-    result.email_verification_required = work.register_mode || !work.email_verified;
+    result.email_verification_required = !work.email_verified;
 
     if (work.register_mode)
     {
@@ -1166,9 +1166,16 @@ bool CAccountDataStore::CommitRegistrationInternal(const std::string& name, cons
         return false;
     }
     std::string normalized_email;
-    if (!NormalizeEmailAddress(email, normalized_email))
+    if (email.empty())
     {
-        if (error) *error = "A valid email address is required";
+        if (email_verified)
+        {
+            if (error) *error = "Verified registration requires an email address";
+            return false;
+        }
+    } else if (!NormalizeEmailAddress(email, normalized_email))
+    {
+        if (error) *error = "Email address is invalid";
         return false;
     }
     if (!IsValidClientIp(trusted_ip))
@@ -1181,7 +1188,7 @@ bool CAccountDataStore::CommitRegistrationInternal(const std::string& name, cons
         if (error) *error = "Account already exists";
         return false;
     }
-    if (FindAccountByEmail(normalized_email))
+    if (!normalized_email.empty() && FindAccountByEmail(normalized_email))
     {
         if (error) *error = "Email address is already in use";
         return false;

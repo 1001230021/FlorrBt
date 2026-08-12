@@ -111,7 +111,7 @@ class CAccountDataStore
     static bool PrepareAuthentication(const std::string& name, const std::string& password, const std::string& email,
                                       const std::string& client_ip, bool register_mode, SAccountAuthWork& work,
                                       std::string* error = nullptr);
-    // Source-compatible login helper. Registration through this overload is rejected because no email is supplied.
+    // Source-compatible helper for callers that do not supply email or client IP context.
     static bool PrepareAuthentication(const std::string& name, const std::string& password, bool register_mode,
                                       SAccountAuthWork& work, std::string* error = nullptr);
     static SAccountAuthResult ExecuteAuthentication(SAccountAuthWork work);
@@ -127,7 +127,7 @@ class CAccountDataStore
     // Rotate only after the login has been accepted into the world.
     static bool CommitTrustedIp(const std::string& name, const std::string& client_ip,
                                 std::string* error = nullptr);
-    // Source-compatible overload; it cannot create an account without the now-required email.
+    // Source-compatible overload retained for callers without network context.
     static bool CommitRegistration(const std::string& name, const std::string& password_hash,
                                    std::string* error = nullptr);
     // Synchronous compatibility helper. The network path uses the three methods above.
