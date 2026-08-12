@@ -25,7 +25,7 @@ set report_invalid_disable_count 3
 set report_keyword_base_mute_seconds 60
 set report_scan_window_seconds 60
 
-// Verified email is required for registration and login.
+// Email policy: 0 = binding disabled, 1 = optional binding, 2 = binding required before login.
 // Leave disabled until the SMTP placeholders are replaced.
 // One normalized email address can belong to only one account.
 set email_enabled 0
@@ -51,5 +51,6 @@ set email_verification_ip_cooldown_seconds 10
 set email_verification_queue_limit 64
 set email_verification_max_attempts 5
 
-// After filling the mailbox address and SMTP authorization code:
-// set email_enabled 1
+// After filling the mailbox address and SMTP authorization code, choose one:
+// set email_enabled 1  // optional binding
+// set email_enabled 2  // required binding

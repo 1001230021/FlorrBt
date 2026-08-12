@@ -6,6 +6,7 @@
 #include "Game/entities/mob.h"
 #include "Game/entities/petals/petals_behavior.h"
 #include "Game/gamecontext.h"
+#include "Game/systems/weather_diurnal_system.h"
 #include "HotReload/hot_reload_snapshot.h"
 #include "HotReload/snapshot_archive.h"
 #include "Module/console_module.h"
@@ -19,6 +20,7 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -121,20 +123,6 @@ CServer::CServer()
     m_p_data_store = CreateServerDataStore();
     m_modules.emplace_back(std::make_unique<IConsoleModule>(m_console));
     m_modules.emplace_back(std::make_unique<IServerGuiModule>(m_console));
-
-    auto world_mod = std::make_unique<IWorldModule>();
-    m_p_world_module = world_mod.get();
-    auto& worlds = world_mod->GetWorlds();
-
-    CGameWorld& world = *worlds[0];
-    m_p_main_world = &world;
-    m_modules.emplace_back(std::move(world_mod));
-    auto network_mod = std::make_unique<INetworkModule>(*this, world);
-    m_p_network_module = network_mod.get();
-    m_modules.emplace_back(std::move(network_mod));
-    m_p_game_context = std::make_unique<CGameContext>(world, *m_p_network_module, *this, *this);
-    for (const auto& game_world : worlds)
-        if (game_world) game_world->SetGameContext(m_p_game_context.get());
 }
 
 CServer::~CServer()
@@ -169,10 +157,35 @@ void CServer::Init()
 
     RegisterDropRates();
     m_console.InstallCommands();
-    ExecuteStartupCommands();
+    ExecuteStartupConfigCommands();
     InstallLogSink();
     LOG_INFO("server", std::string(florrbt::version_label) + " starting");
     EnsureRconPasswordInitialized();
+
+    auto weather_diurnal = std::make_unique<CWeatherDiurnalSystem>();
+    m_p_weather_diurnal_system = weather_diurnal.get();
+    m_modules.emplace_back(std::move(weather_diurnal));
+
+    auto world_mod = std::make_unique<IWorldModule>();
+    m_p_world_module = world_mod.get();
+    auto& worlds = world_mod->GetWorlds();
+    if (worlds.empty() || !worlds.front())
+    {
+        LOG_FATAL("server", "No game worlds were configured");
+        m_running = false;
+        return;
+    }
+
+    CGameWorld& world = *worlds.front();
+    m_p_main_world = &world;
+    m_modules.emplace_back(std::move(world_mod));
+    auto network_mod = std::make_unique<INetworkModule>(*this, world);
+    m_p_network_module = network_mod.get();
+    m_modules.emplace_back(std::move(network_mod));
+    m_p_game_context = std::make_unique<CGameContext>(world, *m_p_network_module, *this, *this,
+                                                      *m_p_weather_diurnal_system);
+    for (const auto& game_world : worlds)
+        if (game_world) game_world->SetGameContext(m_p_game_context.get());
 
     std::string persistence_error;
     if (!m_p_data_store || !m_p_data_store->Init(persistence_error))
@@ -198,6 +211,7 @@ void CServer::Init()
         m_running = false;
         return;
     }
+    ExecuteStartupCommands();
     if (!PublishReadyFile())
     {
         m_exit_code = 1;
@@ -409,10 +423,57 @@ void CServer::ExecuteStartupCommands()
         size_t begin = 0;
         while (begin < line.size() && std::isspace(static_cast<unsigned char>(line[begin])))
             ++begin;
-        if (begin >= line.size()) continue;
-        if (line.compare(begin, 2, "//") == 0) continue;
+        if (begin >= line.size() || line.compare(begin, 2, "//") == 0) continue;
 
+        const size_t end = line.find_first_of(" \t", begin);
+        const std::string_view command(line.data() + begin,
+                                       (end == std::string::npos ? line.size() : end) - begin);
+        if (command == "set" || command == "get" || command == "gui_console") continue;
         m_console.ExecuteLine(line.substr(begin));
+    }
+}
+
+void CServer::ExecuteStartupConfigCommands()
+{
+    std::ifstream file(game_config::startup_commands_path);
+    if (!file) return;
+
+    std::string line;
+    while (std::getline(file, line))
+    {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+
+        size_t begin = 0;
+        while (begin < line.size() && std::isspace(static_cast<unsigned char>(line[begin])))
+            ++begin;
+        if (begin >= line.size() || line.compare(begin, 2, "//") == 0) continue;
+
+        const size_t end = line.find_first_of(" \t", begin);
+        const std::string_view command(line.data() + begin,
+                                       (end == std::string::npos ? line.size() : end) - begin);
+        if (command == "set" || command == "get" || command == "gui_console")
+            m_console.ExecuteLine(line.substr(begin));
+    }
+
+    // Environment variables override secret config values so real credentials never
+    // need to be stored in a version-controlled config file.
+    static constexpr struct
+    {
+        const char* config;
+        const char* environment;
+    } kSecretOverrides[] = {
+        { "email_password", "FLORRBT_EMAIL_PASSWORD" },
+        { "rcon_password", "FLORRBT_RCON_PASSWORD" },
+        { "report_deepseek_api_key", "FLORRBT_DEEPSEEK_API_KEY" },
+    };
+    for (const auto& override : kSecretOverrides)
+    {
+        if (const char* value = std::getenv(override.environment); value && *value)
+        {
+            if (game_config::SetConfig(override.config, value))
+                LOG_INFO("server", std::string("Applied secret config override from environment variable ") +
+                                       override.environment);
+        }
     }
 }
 
@@ -584,6 +645,7 @@ void CServer::Run()
         m_running = false;
         return;
     }
+    m_fixed_dt_seconds = dt;
 
     const auto tick_interval =
         std::max(server_clock::duration{ 1 },

@@ -370,6 +370,11 @@ build/
 # FlorrBt runtime and recovery data
 .catalog_registry_test/
 data/hot_reload/
+data/accounts.json
 data/unique_petals.json
 *.corrupt.bak
 tools/*.exe
+
+# Local AI-session and stray build artifacts
+.codex_*.json
+FlorrBt..*/
