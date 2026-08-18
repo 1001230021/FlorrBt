@@ -39,7 +39,7 @@ bool IsUndeadDamageSource(CEntity* entity)
 
     while (entity)
     {
-        if (entity->m_id >= 0 && !visited_ids.insert(entity->m_id).second) return false;
+        if (entity->Id() >= 0 && !visited_ids.insert(entity->Id()).second) return false;
 
         if (auto* mob = dynamic_cast<CMobBase*>(entity))
         {
@@ -129,14 +129,14 @@ void CMobBase::TickStates(float dt)
 bool CMobBase::TickDropPickup(CPlayer* player)
 {
     if (!player || !player->IsAuthenticated() || player->GetAccountName().empty()) return false;
-    if (m_is_marked_for_des || IsDead()) return false;
+    if (IsMarkedForDes() || IsDead()) return false;
 
     CGameWorld* world = GameWorld();
     const SMobStats* stats = GetFinalStats();
     if (!world || !stats || stats->max_absorb_range <= 0.f) return false;
 
     bool picked_any = false;
-    world->GetSpatialGrid().ForEachInRange(m_pos, stats->max_absorb_range, [&](CEntity* candidate) {
+    world->GetSpatialGrid().ForEachInRange(Pos(), stats->max_absorb_range, [&](CEntity* candidate) {
         auto* drop = dynamic_cast<CDrop*>(candidate);
         if (!drop || !drop->CanBePickedUpBy(player->GetId())) return;
         picked_any = drop->PickUpTo(*player) || picked_any;
@@ -151,7 +151,7 @@ void CMobBase::ApplyDamageDirect(float dmg, CEntity* attacker)
     if (HasState<CInvincibleState>()) return;
     if (HasState<CUndeadState>())
     {
-        m_health = std::max(1.f, m_health);
+        Health() = std::max(1.f, Health());
         return;
     }
 
@@ -175,11 +175,11 @@ void CMobBase::ApplyDamageDirect(float dmg, CEntity* attacker)
         }
     }
 
-    m_health -= dmg;
+    Health() -= dmg;
     if (m_p_controller) m_p_controller->OnDamaged(this, attacker);
-    if (m_health <= 0.f)
+    if (Health() <= 0.f)
     {
-        m_health = 0.f;
+        Health() = 0.f;
         MarkForDestroy(EEntityRemovalReason::Defeated);
     }
 }
@@ -205,9 +205,9 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
         m_vel *= next_speed / current_speed;
     }
 
-    sf::Vector2f delta = effective_target_pos - m_pos;
+    sf::Vector2f delta = effective_target_pos - Pos();
     float len = Length(delta);
-    if (len <= m_radius)
+    if (len <= Radius())
     {
         m_vel *= game_config::mob_stop_damping;
         if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = { 0.f, 0.f };
@@ -218,23 +218,23 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
     bool facing_locked = IsFacingLocked();
     if (stats->turn_speed > 0.f)
     {
-        if (!m_has_facing && !facing_locked)
+        if (!HasFacing() && !facing_locked)
         {
-            if (LengthSq(m_vel) > game_config::entity_collision_epsilon) m_facing_angle = std::atan2(m_vel.y, m_vel.x);
-            else m_facing_angle = target_angle;
-            m_has_facing = true;
+            if (LengthSq(m_vel) > game_config::entity_collision_epsilon) FacingAngle() = std::atan2(m_vel.y, m_vel.x);
+            else FacingAngle() = target_angle;
+            HasFacing() = true;
         }
 
         if (!facing_locked)
         {
             float angle_delta =
-                std::atan2(std::sin(target_angle - m_facing_angle), std::cos(target_angle - m_facing_angle));
+                std::atan2(std::sin(target_angle - FacingAngle()), std::cos(target_angle - FacingAngle()));
             float max_turn = stats->turn_speed * dt;
             angle_delta = std::clamp(angle_delta, -max_turn, max_turn);
-            m_facing_angle += angle_delta;
+            FacingAngle() += angle_delta;
         }
 
-        sf::Vector2f forward(std::cos(m_facing_angle), std::sin(m_facing_angle));
+        sf::Vector2f forward(std::cos(FacingAngle()), std::sin(FacingAngle()));
         float speed = Length(m_vel);
         speed = std::min(max_velocity, speed + acceleration * dt);
         m_vel = forward * speed;
@@ -243,8 +243,8 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
 
     if (!facing_locked)
     {
-        m_facing_angle = target_angle;
-        m_has_facing = true;
+        FacingAngle() = target_angle;
+        HasFacing() = true;
     }
 
     sf::Vector2f desired_vel = delta / len * max_velocity;

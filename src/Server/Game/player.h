@@ -1,11 +1,13 @@
 #pragma once
 #include "../../Shared/rarity.h"
 #include "../../Shared/talent_type.h"
+#include "../Persistence/account_store.h"
 #include <SFML/Network/TcpSocket.hpp>
 #include <SFML/System/Vector2.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class CEntity;
@@ -72,6 +74,11 @@ class CPlayer
     CGameContext* GameContext() const;
     void Authenticate(const std::string& account_name);
 
+    // Bestiary: record a mob defeat and read the runtime codex.
+    void RecordCodexKill(uint8_t mob_type, uint8_t rarity);
+    const std::unordered_map<uint32_t, uint32_t>& GetCodex() const { return m_codex; }
+    void LoadCodex(const std::vector<SAccountCodexEntry>& entries);
+
     sf::TcpSocket& GetSocket() { return m_socket; }
     uint32_t GetId() const { return m_player_id; }
     const std::string& GetName() const { return m_name; }
@@ -116,6 +123,8 @@ class CPlayer
     float m_second_chance_cooldown = 0.f;
     bool m_use_new_player_spawn = false;
     std::vector<ITalent*> m_talents;
+    // Bestiary runtime cache: key = (mob_type << 8) | rarity, value = kill count.
+    std::unordered_map<uint32_t, uint32_t> m_codex;
 
     void SaveTalentState() const;
     void NormalizeTalentOrder();

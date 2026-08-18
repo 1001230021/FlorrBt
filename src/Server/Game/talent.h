@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../Shared/shared.h"
+#include "../../Shared/game_config.h"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -328,21 +329,18 @@ class CAntennaeTalent final : public ITalent
 {
   public:
     CAntennaeTalent() = default;
-    CAntennaeTalent(ERarity rarity, int cost, float total_multiplier, float previous_total_multiplier)
-        : ITalent(ETalentId::Antennae, rarity, cost), m_total_multiplier(total_multiplier),
-          m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier
-                                                            : total_multiplier)
+    CAntennaeTalent(ERarity rarity, int cost, float added_default_view)
+        : ITalent(ETalentId::Antennae, rarity, cost), m_added_default_view(added_default_view)
     {
     }
 
     void Apply(ETalentEvent event, STalentContext& ctx) override
     {
         if (event != ETalentEvent::RebuildFlowerStats || !ctx.flower_stats) return;
-        ctx.flower_stats->horizon *= m_step_multiplier;
+        ctx.flower_stats->horizon += game_config::default_player_flower_horizon * m_added_default_view;
     }
 
-    float m_total_multiplier = 1.f;
-    float m_step_multiplier = 1.f;
+    float m_added_default_view = 1.f;
 };
 
 class CPetalSplitTalent final : public ITalent
@@ -625,9 +623,9 @@ inline std::array<CSlotNumTalent, short_talent_tier_count>& SlotNumTalents()
 inline std::array<CAntennaeTalent, antennae_tier_count>& AntennaeTalents()
 {
     static std::array<CAntennaeTalent, antennae_tier_count> talents = {
-        CAntennaeTalent(ERarity::Rare, 1, 1.25f, 1.f),
-        CAntennaeTalent(ERarity::Epic, 3, 1.5f, 1.25f),
-        CAntennaeTalent(ERarity::Legendary, 5, 2.f, 1.5f),
+        CAntennaeTalent(ERarity::Rare, 1, 1.f),
+        CAntennaeTalent(ERarity::Epic, 3, 1.f),
+        CAntennaeTalent(ERarity::Legendary, 5, 1.f),
     };
     static const bool linked = []() {
         auto& slots = SlotNumTalents();

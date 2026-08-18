@@ -70,6 +70,7 @@ export const beeType = MOB_IDS.bee;
 export const hornetType = MOB_IDS.hornet;
 export const bumbleBeeType = MOB_IDS.bumble_bee;
 export const rockType = MOB_IDS.rock;
+export const bubbleType = MOB_IDS.bubble;
 export const babyAntType = MOB_IDS.baby_ant;
 export const workerAntType = MOB_IDS.worker_ant;
 export const queenAntType = MOB_IDS.queen_ant;
@@ -92,6 +93,7 @@ export const termiteOvermindType = MOB_IDS.termite_overmind;
 export const leafPieceType = MOB_IDS.leaf_piece;
 export const leafcutterSoldierType = MOB_IDS.leafcutter_soldier;
 export const titanType = MOB_IDS.titan;
+export const fireflyType = MOB_IDS.firefly;
 export const trapProjectileType = NETWORK_TRAP_PROJECTILE_ENTITY_TYPE;
 export const bloodSacrificeEffectType = NETWORK_BLOOD_SACRIFICE_ENTITY_TYPE;
 export const dandelionMissileType = NETWORK_DANDELION_MISSILE_ENTITY_TYPE;
@@ -167,6 +169,11 @@ export const petalAmuletType = PETAL_IDS.amulet;
 export const petalPlankType = PETAL_IDS.plank;
 export const petalTomatoType = PETAL_IDS.tomato;
 export const petalHallucinogenicMushroomType = PETAL_IDS.hallucinogenic_mushroom;
+export const petalLightningType = PETAL_IDS.lightning;
+export const petalBatteryType = PETAL_IDS.battery;
+export const petalBulbType = PETAL_IDS.bulb;
+export const petalBrushType = PETAL_IDS.brush;
+export const petalEraserType = PETAL_IDS.eraser;
 
 export const stingerSplitIconMinRarity = 6;
 export const compassUltraIconMinRarity = 7;
@@ -201,6 +208,7 @@ export const nonStackPetalTypes = new Set([
   petalThirdEyeType,
   petalShovelType,
   petalDouliType,
+  petalBulbType,
 ]);
 
 export const rarityExotic = RARITY_IDS.exotic;

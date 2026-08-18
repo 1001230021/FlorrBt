@@ -39,7 +39,12 @@ export const dom = {
   quickBackpackBtn: document.getElementById("quickBackpackBtn"),
   quickTalentBtn: document.getElementById("quickTalentBtn"),
   quickCraftBtn: document.getElementById("quickCraftBtn"),
-  quickSettingsBtn: document.getElementById("quickSettingsBtn"),
+  topSettingsBtn: document.getElementById("topSettingsBtn"),
+  codexBtn: document.getElementById("codexBtn"),
+  codexPanel: document.getElementById("codexPanel"),
+  codexCloseBtn: document.getElementById("codexCloseBtn"),
+  codexGrid: document.getElementById("codexGrid"),
+  codexDetail: document.getElementById("codexDetail"),
   quickTalentPoints: document.getElementById("quickTalentPoints"),
   chatPanel: document.getElementById("chatPanel"),
   chatChannels: document.getElementById("chatChannels"),
@@ -56,7 +61,6 @@ export const dom = {
   sliderCloseBtn: document.getElementById("sliderCloseBtn"),
   consolePanel: document.getElementById("consolePanel"),
   debugInfo: document.getElementById("debugInfo"),
-  consoleLog: document.getElementById("consoleLog"),
   consoleInput: document.getElementById("consoleInput"),
   backpackPanel: document.getElementById("backpackPanel"),
   backpackCloseBtn: document.getElementById("backpackCloseBtn"),
@@ -88,6 +92,20 @@ export const dom = {
 
 dom.ctx = dom.canvas.getContext("2d");
 
+export const ui = {
+  panelManager: null,
+  backpackUiPanel: null,
+  craftUiPanel: null,
+  talentUiPanel: null,
+  settingsUi: null,
+  consoleUiPanel: null,
+  chatUi: null,
+  consoleUi: null,
+  mysteryAudio: null,
+  mobileControls: null,
+  mapRenderer: null,
+};
+
 export const state = {
   ws: null,
   connected: false,
@@ -112,9 +130,15 @@ export const state = {
     timeOfDay: 0.25,
     dayDurationSeconds: 21600,
     fixedDtSeconds: clientRuntimeConfig.serverTickInterval,
-    weatherIntensity: [1, 0, 0, 0, 0],
+    weatherIntensity: [1, 0, 0, 0],
+    windDirection: 0,
+    windSpeed: 0,
     receivedAt: 0,
   },
+  codex: new Map(),
+  codexLoot: new Map(),
+  codexOpen: false,
+  lightningChains: [],
   inputSequence: 0,
   ownerPredictionTiming: {
     expectedSnapshotInterval: clientRuntimeConfig.expectedSnapshotInterval,

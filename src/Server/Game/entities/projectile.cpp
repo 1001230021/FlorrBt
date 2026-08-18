@@ -34,11 +34,11 @@ CMissile::CMissile(CGameWorld* world, sf::Vector2f pos, float radius, sf::Vector
     : CProjectile(world ? world : (owner ? owner->GameWorld() : nullptr), pos, radius, owner, entity_type),
       m_damage(std::max(0.f, damage)), m_lifetime(std::max(0.f, lifetime))
 {
-    if (owner) m_team = owner->m_team;
-    m_allow_skip_tick = false;
-    m_health = std::max(0.f, health);
-    m_decay_base_health = m_health;
-    m_mass = std::max(0.f, game_config::default_missile_mass);
+    if (owner) Team() = owner->Team();
+    AllowSkipTick() = false;
+    Health() = std::max(0.f, health);
+    m_decay_base_health = Health();
+    Mass() = std::max(0.f, game_config::default_missile_mass);
 
     float dir_len = Length(direction);
     if (dir_len > game_config::entity_collision_epsilon) m_vel = direction / dir_len * speed;
@@ -46,11 +46,11 @@ CMissile::CMissile(CGameWorld* world, sf::Vector2f pos, float radius, sf::Vector
 
     if (LengthSq(m_vel) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
     {
-        m_facing_angle = std::atan2(m_vel.y, m_vel.x);
-        m_has_facing = true;
+        FacingAngle() = std::atan2(m_vel.y, m_vel.x);
+        HasFacing() = true;
     }
 
-    if (m_health <= 0.f)
+    if (Health() <= 0.f)
         MarkForDestroy(EEntityRemovalReason::Defeated);
     else if (m_lifetime <= 0.f)
         MarkForDestroy(EEntityRemovalReason::Expired);
@@ -58,9 +58,9 @@ CMissile::CMissile(CGameWorld* world, sf::Vector2f pos, float radius, sf::Vector
 
 void CMissile::Tick(float dt)
 {
-    if (m_health <= 0.f)
+    if (Health() <= 0.f)
     {
-        m_health = 0.f;
+        Health() = 0.f;
         MarkForDestroy(EEntityRemovalReason::Defeated);
         return;
     }
@@ -78,16 +78,16 @@ void CMissile::Tick(float dt)
     }
 
     CProjectile::Tick(dt);
-    const bool lifetime_depleted = ApplyLifetimeHealthDecay(dt, m_lifetime, m_decay_base_health, m_age, m_health);
-    if (m_health <= 0.f)
+    const bool lifetime_depleted = ApplyLifetimeHealthDecay(dt, m_lifetime, m_decay_base_health, m_age, Health());
+    if (Health() <= 0.f)
         MarkForDestroy(lifetime_depleted ? EEntityRemovalReason::Expired : EEntityRemovalReason::Defeated);
 }
 
 bool CMissile::ApplyHit(CEntity* target)
 {
     if (m_attached_to_owner) return false;
-    if (!target || target == this || m_health <= 0.f) return false;
-    if (target->m_id == m_owner_id && (m_owner_generation == 0 || target->m_generation == m_owner_generation))
+    if (!target || target == this || Health() <= 0.f) return false;
+    if (target->Id() == m_owner_id && (m_owner_generation == 0 || target->Generation() == m_owner_generation))
         return false;
     if (target == GetOwner()) return false;
     if (m_damage > 0.f) target->TakeDamage(m_damage, GetOwner(), EDamageType::Normal);
@@ -99,7 +99,7 @@ void CMissile::AttachToOwner()
     m_attached_to_owner = true;
     m_age = 0.f;
     m_vel = { 0.f, 0.f };
-    m_has_facing = true;
+    HasFacing() = true;
     RefreshAttachedTransform();
 }
 
@@ -107,27 +107,27 @@ bool CMissile::RefreshAttachedTransform()
 {
     if (!m_attached_to_owner) return false;
     CEntity* owner = GetOwner();
-    if (!owner || owner->m_is_marked_for_des || owner->IsDead()) return false;
+    if (!owner || owner->IsMarkedForDes() || owner->IsDead()) return false;
 
     sf::Vector2f rear = AttachedDirection(*owner);
     if (LengthSq(rear) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
         rear = { 1.f, 0.f };
-    m_pos = owner->m_pos + rear * (owner->m_radius * AttachedOffsetMultiplier());
-    m_prev_pos = m_pos;
+    Pos() = owner->Pos() + rear * (owner->Radius() * AttachedOffsetMultiplier());
+    PrevPos() = Pos();
     m_vel = { 0.f, 0.f };
-    m_facing_angle = std::atan2(rear.y, rear.x);
-    m_has_facing = true;
+    FacingAngle() = std::atan2(rear.y, rear.x);
+    HasFacing() = true;
     return true;
 }
 
 bool CMissile::Fire(sf::Vector2f direction, float speed, float lifetime)
 {
     float dir_len = Length(direction);
-    if (dir_len <= game_config::entity_collision_epsilon || m_health <= 0.f || m_is_marked_for_des) return false;
+    if (dir_len <= game_config::entity_collision_epsilon || Health() <= 0.f || IsMarkedForDes()) return false;
 
     m_attached_to_owner = false;
     m_age = 0.f;
-    m_decay_base_health = std::max(0.f, m_health);
+    m_decay_base_health = std::max(0.f, Health());
     m_lifetime = std::max(0.f, lifetime);
     if (m_lifetime <= 0.f)
     {
@@ -136,14 +136,14 @@ bool CMissile::Fire(sf::Vector2f direction, float speed, float lifetime)
     }
 
     m_vel = direction / dir_len * speed;
-    m_facing_angle = std::atan2(m_vel.y, m_vel.x);
-    m_has_facing = true;
+    FacingAngle() = std::atan2(m_vel.y, m_vel.x);
+    HasFacing() = true;
     return true;
 }
 
 sf::Vector2f CMissile::AttachedDirection(const CEntity& owner) const
 {
-    sf::Vector2f facing = { std::cos(owner.m_facing_angle), std::sin(owner.m_facing_angle) };
+    sf::Vector2f facing = { std::cos(owner.FacingAngle()), std::sin(owner.FacingAngle()) };
     if (LengthSq(facing) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
         facing = { 1.f, 0.f };
     return -facing;
@@ -162,7 +162,7 @@ CDandelionMissile::CDandelionMissile(CGameWorld* world, sf::Vector2f pos, float 
 
 sf::Vector2f CDandelionMissile::AttachedDirection(const CEntity& owner) const
 {
-    float angle = owner.m_facing_angle + m_attach_angle;
+    float angle = owner.FacingAngle() + m_attach_angle;
     sf::Vector2f direction = { std::cos(angle), std::sin(angle) };
     if (LengthSq(direction) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
         direction = { 1.f, 0.f };
@@ -176,16 +176,16 @@ CPollenProjectile::CPollenProjectile(CGameWorld* world, sf::Vector2f pos, float 
     : CProjectile(world ? world : (owner ? owner->GameWorld() : nullptr), pos, radius, owner, entity_type),
       m_damage(std::max(0.f, damage)), m_lifetime(std::max(0.f, lifetime))
 {
-    if (owner) m_team = owner->m_team;
-    m_allow_skip_tick = false;
-    m_health = std::max(0.f, health);
-    m_decay_base_health = m_health;
-    m_mass = std::max(0.f, mass);
+    if (owner) Team() = owner->Team();
+    AllowSkipTick() = false;
+    Health() = std::max(0.f, health);
+    m_decay_base_health = Health();
+    Mass() = std::max(0.f, mass);
     m_vel = { 0.f, 0.f };
-    m_has_facing = true;
-    m_facing_angle = GetLimitedRng(-game_config::pi, game_config::pi);
+    HasFacing() = true;
+    FacingAngle() = GetLimitedRng(-game_config::pi, game_config::pi);
 
-    if (m_health <= 0.f)
+    if (Health() <= 0.f)
         MarkForDestroy(EEntityRemovalReason::Defeated);
     else if (m_lifetime <= 0.f)
         MarkForDestroy(EEntityRemovalReason::Expired);
@@ -195,9 +195,9 @@ void CPollenProjectile::Tick(float dt)
 {
     CProjectile::Tick(dt);
     const bool lifetime_depleted = m_decay_health_over_lifetime
-                                       ? ApplyLifetimeHealthDecay(dt, m_lifetime, m_decay_base_health, m_age, m_health)
+                                       ? ApplyLifetimeHealthDecay(dt, m_lifetime, m_decay_base_health, m_age, Health())
                                        : ((m_age += std::max(0.f, dt)) >= m_lifetime);
-    if (m_health <= 0.f)
+    if (Health() <= 0.f)
         MarkForDestroy(lifetime_depleted ? EEntityRemovalReason::Expired : EEntityRemovalReason::Defeated);
     else if (lifetime_depleted)
         MarkForDestroy(EEntityRemovalReason::Expired);
@@ -205,8 +205,8 @@ void CPollenProjectile::Tick(float dt)
 
 bool CPollenProjectile::ApplyHit(CEntity* target)
 {
-    if (!target || target == this || m_health <= 0.f) return false;
-    if (target->m_id == m_owner_id && (m_owner_generation == 0 || target->m_generation == m_owner_generation))
+    if (!target || target == this || Health() <= 0.f) return false;
+    if (target->Id() == m_owner_id && (m_owner_generation == 0 || target->Generation() == m_owner_generation))
         return false;
     if (target == GetOwner()) return false;
     if (m_damage > 0.f) target->TakeDamage(m_damage, GetOwner(), EDamageType::Normal);
@@ -227,8 +227,8 @@ CTrapProjectile::CTrapProjectile(CGameWorld* world, sf::Vector2f pos, float radi
     m_vel = m_initial_velocity;
     if (LengthSq(direction) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
     {
-        m_facing_angle = std::atan2(direction.y, direction.x);
-        m_has_facing = true;
+        FacingAngle() = std::atan2(direction.y, direction.x);
+        HasFacing() = true;
     }
 }
 

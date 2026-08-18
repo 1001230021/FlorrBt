@@ -227,8 +227,8 @@ sf::Vector2f CHallucinogenicState::ModifyMovementTarget(const CMobBase& owner,
     parameter_array effective{};
     if (!ComputeEffectiveParameters(owner, effective)) return target_pos;
 
-    const double vx = static_cast<double>(target_pos.x) - static_cast<double>(owner.m_pos.x);
-    const double vy = static_cast<double>(target_pos.y) - static_cast<double>(owner.m_pos.y);
+    const double vx = static_cast<double>(target_pos.x) - static_cast<double>(owner.Pos().x);
+    const double vy = static_cast<double>(target_pos.y) - static_cast<double>(owner.Pos().y);
     const double original_length = std::hypot(vx, vy);
     if (original_length <= static_cast<double>(game_config::entity_collision_epsilon)) return target_pos;
 
@@ -251,13 +251,13 @@ sf::Vector2f CHallucinogenicState::ModifyMovementTarget(const CMobBase& owner,
         return target_pos;
 
     const double preserve_length = original_length / transformed_length;
-    return { owner.m_pos.x + static_cast<float>(transformed_x * preserve_length),
-             owner.m_pos.y + static_cast<float>(transformed_y * preserve_length) };
+    return { owner.Pos().x + static_cast<float>(transformed_x * preserve_length),
+             owner.Pos().y + static_cast<float>(transformed_y * preserve_length) };
 }
 
 bool ApplyHallucinogenicExposure(CMobBase* mob, ERarity rarity, float evolution_amount)
 {
-    if (!mob || rarity == ERarity::Null || evolution_amount <= 0.f || mob->m_is_marked_for_des || mob->IsDead())
+    if (!mob || rarity == ERarity::Null || evolution_amount <= 0.f || mob->IsMarkedForDes() || mob->IsDead())
         return false;
 
     CHallucinogenicState* top = nullptr;
@@ -301,8 +301,8 @@ bool ApplyHallucinogenicExposure(CMobBase* mob, ERarity rarity, float evolution_
 
 CPoisonState::CPoisonState(CMobBase* owner, float timer, float basic_dmg, ERarity rarity, CEntity* applier)
     : CState(owner, timer, rarity, EStateType::Poison), m_basic_dmg(basic_dmg),
-      m_applier_id(applier ? applier->m_id : -1),
-      m_applier_generation(applier ? applier->m_generation : 0)
+      m_applier_id(applier ? applier->Id() : -1),
+      m_applier_generation(applier ? applier->Generation() : 0)
 {
     CPoisonState* existing = owner ? owner->FindFirstState<CPoisonState>() : nullptr;
 
@@ -367,7 +367,7 @@ CUndeadState::~CUndeadState()
         player_flower->EnterDeathState();
         return;
     }
-    m_p_owner->m_health = 0.f;
+    m_p_owner->Health() = 0.f;
     m_p_owner->MarkForDestroy(EEntityRemovalReason::Defeated);
 }
 
@@ -381,29 +381,29 @@ CCorruptionState::CCorruptionState(CMobBase* owner, float timer, ERarity rarity)
 {
     if (!owner) return;
 
-    m_old_team = owner->m_team;
+    m_old_team = owner->Team();
     for (auto* undead : owner->FindStates<CUndeadState>())
     {
         undead->CancelDeathOnDestroy();
         owner->RemoveState(undead);
     }
-    owner->m_team = 0;
+    owner->Team() = 0;
 }
 
 CCorruptionState::~CCorruptionState()
 {
-    if (m_p_owner) m_p_owner->m_team = m_old_team;
+    if (m_p_owner) m_p_owner->Team() = m_old_team;
 }
 
 CInvincibleState::CInvincibleState(CMobBase* owner, float timer, ERarity rarity)
     : CState(owner, timer, rarity, EStateType::Invincible)
 {
     if (!owner) return;
-    m_marked_for_destroy = owner->m_is_marked_for_des;
+    m_marked_for_destroy = owner->IsMarkedForDes();
     m_removal_reason = owner->RemovalReason();
     const SMobStats* stats = owner->GetFinalStats();
     float max_health = stats ? stats->max_health : 0.f;
-    if (max_health > game_config::entity_collision_epsilon) m_hp = std::max(0.f, owner->m_health / max_health);
+    if (max_health > game_config::entity_collision_epsilon) m_hp = std::max(0.f, owner->Health() / max_health);
 }
 
 void CInvincibleState::Tick(float dt)
@@ -418,9 +418,9 @@ void CInvincibleState::Tick(float dt)
         float max_health = stats ? stats->max_health : 0.f;
         if (max_health > game_config::entity_collision_epsilon)
         {
-            float hp = std::max(0.f, m_p_owner->m_health / max_health);
+            float hp = std::max(0.f, m_p_owner->Health() / max_health);
             if (hp > m_hp) m_hp = hp;
-            m_p_owner->m_health = max_health * m_hp;
+            m_p_owner->Health() = max_health * m_hp;
         }
     }
     m_timer -= dt;
@@ -486,7 +486,7 @@ float WebSlowMassMultiplier(float desired_multiplier, float target_mass, float r
 CWebSpeedReduceState::CWebSpeedReduceState(CMobBase* owner, float timer, float desired_multiplier, float reference_mass)
     : CState(owner, timer, ERarity::Common, EStateType::WebSpeedReduce)
 {
-    float target_mass = owner ? owner->m_mass : 1.f;
+    float target_mass = owner ? owner->Mass() : 1.f;
     if (owner)
     {
         if (const SMobStats* stats = owner->GetFinalStats();
@@ -564,10 +564,10 @@ int GetPreCorruptionTeam(const CEntity* entity, const CMobBase* interaction_mob)
 {
     if (!entity) return 0;
 
-    if (!interaction_mob) return entity->m_team;
+    if (!interaction_mob) return entity->Team();
     if (const auto* corruption = interaction_mob->FindFirstState<CCorruptionState>())
         return corruption->GetOriginalTeam();
-    return interaction_mob->m_team;
+    return interaction_mob->Team();
 }
 
 int GetPreCorruptionTeam(const CEntity* entity)
@@ -641,7 +641,7 @@ bool TrySharePsionicDamage(CMobBase* receiver, float dmg, CEntity* attacker, EDa
 {
     if (!receiver || dmg <= 0.f) return false;
     if (IsSharedDamageType(dmg_type)) return false;
-    if (receiver->m_team == 0) return false;
+    if (receiver->Team() == 0) return false;
     if (!HasActivePsionicConnection(receiver)) return false;
 
     CGameWorld* world = receiver->GameWorld();

@@ -19,16 +19,16 @@ CPortal::CPortal(CGameWorld* world, sf::Vector2f pos, float radius, std::string 
               MakeEntityType(EEntityType::Portal, server_portal_entity_type)),
       m_target_world_name(std::move(target_world))
 {
-    m_health = std::numeric_limits<float>::infinity();
-    m_mass = 0.f;
-    m_team = 0;
-    m_has_facing = true;
+    Health() = std::numeric_limits<float>::infinity();
+    Mass() = 0.f;
+    Team() = 0;
+    HasFacing() = true;
 }
 
 void CPortal::Tick(float dt)
 {
-    m_facing_angle += dt * game_config::portal_rotation_speed;
-    if (m_facing_angle > game_config::pi * 2.f) m_facing_angle -= game_config::pi * 2.f;
+    FacingAngle() += dt * game_config::portal_rotation_speed;
+    if (FacingAngle() > game_config::pi * 2.f) FacingAngle() -= game_config::pi * 2.f;
 
     CGameContext* context = GameContext();
     if (!context) return;
@@ -46,15 +46,15 @@ void CPortal::Tick(float dt)
 void CPortal::AttractAndTransferPlayer(CPlayer& player, float dt)
 {
     CEntity* entity = player.GetEntity();
-    if (!entity || entity->GameWorld() != GameWorld() || entity->m_is_marked_for_des || entity->IsDead()) return;
+    if (!entity || entity->GameWorld() != GameWorld() || entity->IsMarkedForDes() || entity->IsDead()) return;
 
     auto* flower = dynamic_cast<CPlayerFlower*>(entity);
     if (!flower) return;
     if (flower->HasState<CInvincibleState>()) return;
 
-    sf::Vector2f delta = m_pos - flower->m_pos;
+    sf::Vector2f delta = Pos() - flower->Pos();
     float dist_sq = LengthSq(delta);
-    float attract_radius = m_radius * game_config::portal_attraction_radius_multiplier;
+    float attract_radius = Radius() * game_config::portal_attraction_radius_multiplier;
     if (dist_sq > attract_radius * attract_radius) return;
 
     CServer* server = CServer::GetInstance();
@@ -65,7 +65,7 @@ void CPortal::AttractAndTransferPlayer(CPlayer& player, float dt)
     if (target_worlds.empty()) return;
 
     float dist = std::sqrt(std::max(0.f, dist_sq));
-    if (dist <= m_radius * game_config::portal_transfer_radius_multiplier)
+    if (dist <= Radius() * game_config::portal_transfer_radius_multiplier)
     {
         std::uniform_int_distribution<size_t> target_dist(0, target_worlds.size() - 1);
         CGameWorld* target_world = target_worlds[target_dist(GetRng())];

@@ -32,6 +32,92 @@ body {
   font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
 }
 
+*:focus,
+*:focus-visible {
+  outline: none;
+}
+
+/* Base-layer scrollbar host: containers managed by custom_scrollbar.js.
+   The native scrollbar is hidden so only the custom one is visible. */
+.custom-scrollbar-host {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.custom-scrollbar-host::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.custom-scrollbar {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  bottom: 2px;
+  width: 10px;
+  z-index: 10;
+  pointer-events: none;
+  touch-action: none;
+  border-radius: 999px;
+  background: var(--scrollbar-track, rgba(0, 0, 0, 0.12));
+}
+
+.custom-scrollbar-track {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+}
+
+.custom-scrollbar-thumb {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  border-radius: 999px;
+  /* Dark, high-contrast thumb: visible on every light panel background
+     (the old light blue thumb was nearly invisible on the blue panels). */
+  background: var(--scrollbar-thumb, rgba(20, 32, 48, 0.75));
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
+  will-change: transform;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    left 120ms ease,
+    right 120ms ease;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.custom-scrollbar-thumb:hover,
+.custom-scrollbar-thumb.dragging {
+  left: 0;
+  right: 0;
+}
+
+.custom-scrollbar:hover .custom-scrollbar-thumb,
+.custom-scrollbar-thumb.dragging {
+  background: var(--scrollbar-thumb-hover, rgba(30, 46, 68, 0.95));
+}
+
+/* Light overlay panels use a pale thumb (chat log). */
+.chat-log.custom-scrollbar-host {
+  --scrollbar-track: rgba(255, 255, 255, 0.14);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.4);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.6);
+}
+
+/* Wider, easier to grab on touch devices. */
+@media (pointer: coarse) {
+  .custom-scrollbar {
+    width: 12px;
+    right: 1px;
+  }
+
+  .custom-scrollbar-thumb {
+    left: 1px;
+    right: 1px;
+  }
+}
+
 button,
 input {
   font: inherit;
@@ -40,7 +126,7 @@ input {
 button {
   height: 36px;
   border: 1px solid rgba(20, 64, 118, 0.25);
-  border-radius: 8px;
+  border-radius: 5px;
   background: var(--blue);
   color: #fff;
   cursor: pointer;
@@ -55,7 +141,7 @@ button:active {
   min-width: 0;
   height: 34px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 5px;
   outline: none;
   padding: 0 10px;
   background: #f8fafc;
@@ -156,10 +242,6 @@ button:active {
   display: block;
 }
 
-body.mobile-mode-forced .quick-actions {
-  display: none;
-}
-
 .auth-panel {
   top: 50%;
   left: 50%;
@@ -168,7 +250,7 @@ body.mobile-mode-forced .quick-actions {
   transform: translate(-50%, -50%);
   padding: 18px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 5px;
   background: var(--panel-strong);
   box-shadow: none;
   max-height: calc(100vh - 32px);
@@ -481,13 +563,263 @@ body.mobile-mode-forced .quick-actions {
   gap: 6px;
 }
 
+.top-left-actions {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.top-action {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 2px solid rgba(38, 67, 82, 0.55);
+  border-radius: 5px;
+  background-color: #f4d03f;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 30px 30px;
+  transition: transform 80ms ease;
+}
+
+.top-action:active {
+  transform: translateY(1px);
+}
+
+.top-action.active {
+  border-color: rgba(27, 45, 56, 0.85);
+  background-color: #f9e15f;
+}
+
+.top-action-settings {
+  background-color: #8a8f94;
+}
+
+.top-action-settings.active {
+  background-color: #8a8f94;
+}
+
+.top-action-settings .top-action-icon {
+  display: inline-block;
+  width: 100%;
+  height: 100%;
+  background-image: url("./assets/ui/settings.svg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 28px 28px;
+}
+
+.top-action-codex .top-action-icon {
+  display: inline-block;
+  width: 100%;
+  height: 100%;
+  background-image: url("./assets/ui/mob.svg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 28px 28px;
+}
+
+.game-panel.codex-panel {
+  left: -820px;
+  top: 52px;
+  bottom: auto;
+  width: max-content;
+  min-width: 220px;
+  max-width: min(900px, calc(100vw - 24px));
+  --game-panel-max-height: min(640px, calc(100vh - 64px));
+  background-color: #f4d03f;
+  border-color: rgba(120, 95, 15, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 6px 6px;
+  overflow: hidden;
+  transition: left 160ms ease;
+}
+
+.game-panel.codex-panel.open {
+  left: 12px;
+}
+
+.game-panel.codex-panel .panel-title {
+  color: #ffffff;
+  text-shadow: none;
+}
+
+.game-panel.codex-panel .panel-close {
+  color: #ffffff;
+}
+
+/* Shared floating-card base: every card-like element (backpack slots,
+   inventory entries, codex cells) inherits these variables and behaviors. */
+.card-base {
+  --card-bg: #c9a83f;
+  --card-bg-empty: #b69a35;
+  --card-radius: 4px;
+  --card-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--card-radius);
+  background-color: var(--card-bg);
+  box-shadow: var(--card-shadow);
+}
+
+.card-base.empty {
+  background-color: var(--card-bg-empty);
+  pointer-events: none;
+}
+
+.card-base .card-bg-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.card-base .card-icon-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.codex-grid {
+  min-height: 0;
+  display: grid;
+  gap: 3px;
+  align-content: start;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.codex-cell {
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  background-color: var(--card-bg);
+  image-rendering: pixelated;
+}
+
+.codex-cell.empty {
+  background-color: var(--card-bg-empty);
+  pointer-events: none;
+}
+
+.codex-cell-base {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.codex-cell-mob {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  image-rendering: auto;
+}
+
+/* Shared floating card base for tooltips (bestiary + petal info). */
+:is(.codex-detail, .petal-info-tooltip) {
+  position: fixed;
+  z-index: 70;
+  width: max-content;
+  max-width: 460px;
+  padding: 10px 12px;
+  border: 2px solid rgba(46, 110, 148, 0.85);
+  border-radius: 6px;
+  background: #87ceeb;
+  color: #12303f;
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+}
+
+:is(.codex-detail-title, .petal-info-title) {
+  font-weight: 900;
+  font-size: 19px;
+  line-height: 1.2;
+  margin-bottom: 2px;
+  color: #0d2430;
+  text-shadow: none;
+}
+
+:is(.codex-detail-rarity, .petal-info-subtitle) {
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+:is(.codex-detail-desc, .petal-info-subtitle) {
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.codex-detail-desc {
+  color: #12303f;
+  font-size: 12px;
+  margin-bottom: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.codex-detail:has(.codex-detail-desc:empty) .codex-detail-desc,
+.codex-detail-desc:empty {
+  display: none;
+}
+
+.codex-loot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px 0;
+  margin-top: 4px;
+}
+
+.codex-loot-row {
+  display: grid;
+  gap: 3px;
+  align-items: center;
+}
+
+.codex-loot-row .petal-stack {
+  position: relative;
+  left: auto;
+  top: auto;
+  transform: none;
+  width: 39px;
+  height: 39px;
+}
+
+.codex-loot-rate-row {
+  display: grid;
+  gap: 3px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #0d3a4f;
+  margin-bottom: 6px;
+}
+
 .quick-action {
   position: relative;
   width: 56px;
   height: 56px;
   padding: 0;
   border: 4px solid rgba(38, 67, 82, 0.55);
-  border-radius: 7px;
+  border-radius: 5px;
   background-color: #6cb2e5;
   background-repeat: no-repeat;
   background-position: center;
@@ -560,30 +892,6 @@ body.mobile-mode-forced .quick-actions {
 
 .quick-action-craft.forge-mode {
   background-color: #5a6065;
-}
-
-.quick-action-settings {
-  background-color: #666b70;
-}
-
-.quick-action-settings .quick-action-icon {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 100%;
-}
-
-.quick-action-settings .quick-action-icon::before {
-  content: "\2699";
-  color: #e2e2e2;
-  font-size: 36px;
-  font-weight: 900;
-  line-height: 1;
-  text-shadow:
-    -1px -1px 0 #35393d,
-    1px -1px 0 #35393d,
-    -1px 1px 0 #35393d,
-    1px 1px 0 #35393d;
 }
 
 .chat-panel {
@@ -964,40 +1272,6 @@ body.mobile-mode-forced .quick-actions {
   user-select: text;
 }
 
-.petal-info-tooltip {
-  z-index: 50;
-  width: max-content;
-  min-width: 176px;
-  max-width: min(260px, calc(100vw - 18px));
-  padding: 8px 10px 9px;
-  border: 3px solid rgba(27, 34, 43, 0.9);
-  border-radius: 6px;
-  background: #242c36;
-  color: #fff;
-  box-shadow: none;
-  pointer-events: none;
-}
-
-.petal-info-title {
-  margin-bottom: 2px;
-  font-size: 13px;
-  font-weight: 900;
-  line-height: 1.1;
-  text-shadow:
-    -1px -1px 0 #111820,
-    1px -1px 0 #111820,
-    -1px 1px 0 #111820,
-    1px 1px 0 #111820;
-}
-
-.petal-info-subtitle {
-  margin-bottom: 6px;
-  color: rgba(255, 255, 255, 0.76);
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 1.1;
-}
-
 .petal-info-row {
   display: grid;
   grid-template-columns: minmax(72px, auto) auto;
@@ -1010,70 +1284,64 @@ body.mobile-mode-forced .quick-actions {
 }
 
 .petal-info-label {
-  color: rgba(255, 255, 255, 0.72);
+  color: rgba(18, 48, 63, 0.8);
 }
 
 .petal-info-value {
   justify-self: end;
-  color: #ffffff;
+  color: #0d3a4f;
+  font-weight: 800;
   text-align: right;
-  text-shadow:
-    -1px -1px 0 rgba(15, 20, 26, 0.95),
-    1px -1px 0 rgba(15, 20, 26, 0.95),
-    -1px 1px 0 rgba(15, 20, 26, 0.95),
-    1px 1px 0 rgba(15, 20, 26, 0.95);
+  text-shadow: none;
 }
 
 .petal-info-empty {
-  color: rgba(255, 255, 255, 0.72);
+  color: rgba(18, 48, 63, 0.8);
   font-size: 12px;
   font-weight: 800;
 }
 
 .console-panel {
-  top: calc(-1 * min(360px, calc(100vh - 120px)) - 14px);
-  left: 50%;
-  width: min(760px, calc(100vw - 24px));
-  height: min(360px, calc(100vh - 120px));
-  transform: translateX(-50%);
-  display: grid;
-  grid-template-rows: auto 1fr 38px;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid rgba(48, 68, 96, 0.18);
-  border-top: 0;
-  border-radius: 0 0 8px 8px;
-  background: #f8fbfd;
-  box-shadow: none;
-  transition: top 160ms ease;
+  top: calc(-60vh - 14px);
+  left: 0;
+  width: 100%;
+  height: 60vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid rgba(10, 10, 10, 0.9);
+  border-radius: 0;
+  background: rgba(28, 28, 28, 0.92);
+  box-shadow: 0 10px 10px -6px rgba(0, 0, 0, 0.4);
+  transition: top 160ms cubic-bezier(0.33, 0, 0.66, 1);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .console-panel.open {
   top: 0;
 }
 
-.console-log {
+.console-canvas {
+  flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 8px;
-  border: 1px solid rgba(48, 68, 96, 0.14);
-  border-radius: 8px;
-  background: #ffffff;
-  color: #344255;
-  font:
-    12px/1.4 Consolas,
-    "Cascadia Mono",
-    monospace;
-  user-select: text;
+  width: 100%;
+  display: block;
+  touch-action: none;
+  cursor: text;
 }
 
 .console-debug {
   min-height: 42px;
+  max-height: 72px;
   padding: 7px 9px;
-  border: 1px solid rgba(48, 68, 96, 0.14);
-  border-radius: 8px;
-  background: #f0f6fa;
-  color: #243348;
+  border: 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.35);
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.28);
+  color: #aeb6c4;
   font:
     12px/1.35 Consolas,
     "Cascadia Mono",
@@ -1081,31 +1349,29 @@ body.mobile-mode-forced .quick-actions {
   white-space: pre-wrap;
   overflow: hidden;
   user-select: text;
-}
-
-.console-line {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.console-line.command {
-  color: #1f5fa7;
-}
-
-.console-line.error {
-  color: #b24545;
+  -webkit-user-select: text;
+  flex: none;
 }
 
 .console-input {
+  position: absolute;
+  left: 0;
+  bottom: 0;
   width: 100%;
-  min-width: 0;
-  height: 38px;
-  border: 1px solid rgba(50, 88, 138, 0.25);
-  border-radius: 8px;
-  padding: 0 10px;
-  background: #fff;
-  color: var(--ink);
-  user-select: text;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  font:
+    13px Consolas,
+    "Cascadia Mono",
+    monospace;
 }
 
 .slider-panel {
@@ -1117,7 +1383,7 @@ body.mobile-mode-forced .quick-actions {
   gap: 8px;
   padding: 10px;
   border: 1px solid rgba(48, 68, 96, 0.18);
-  border-radius: 8px;
+  border-radius: 5px;
   background: #f8fbfd;
   color: var(--ink);
 }
@@ -1146,7 +1412,7 @@ body.mobile-mode-forced .quick-actions {
   width: 28px;
   height: 28px;
   border: 1px solid rgba(50, 88, 138, 0.25);
-  border-radius: 6px;
+  border-radius: 5px;
   background: #fff;
   color: #344255;
   font-weight: 900;
@@ -1185,7 +1451,11 @@ body.mobile-mode-forced .quick-actions {
   bottom: 12px;
   z-index: 60;
   width: min(var(--game-panel-width), calc(100vw - 24px));
-  max-height: var(--game-panel-max-height);
+  /* Definite height so the 1fr rows actually constrain the inner lists and
+     the custom scrollbars can kick in; without it the panel grows with its
+     content instead of scrolling. */
+  height: var(--game-panel-max-height);
+  overflow: hidden;
   display: grid;
   gap: var(--game-panel-gap);
   padding: var(--game-panel-padding);
@@ -1202,12 +1472,13 @@ body.mobile-mode-forced .quick-actions {
 }
 
 .backpack-panel {
+  --game-panel-width: 640px;
   grid-template-rows: auto auto 1fr;
 }
 
 .craft-panel {
-  --game-panel-width: 602px;
-  --game-panel-max-height: min(720px, calc(100vh - 72px));
+  --game-panel-width: 600px;
+  --game-panel-max-height: min(640px, calc(100vh - 72px));
   --game-panel-gap: 7px;
   --game-panel-padding: 10px 14px 14px;
   --game-panel-border: #a06e38;
@@ -1235,17 +1506,35 @@ body.mobile-mode-forced .quick-actions {
   --game-panel-max-height: min(580px, calc(100vh - 72px));
   --game-panel-gap: 12px;
   --game-panel-padding: 12px 16px 16px;
-  --game-panel-border: #45494d;
-  --game-panel-background: #696e72;
+  --game-panel-border: #2a2c30;
+  --game-panel-background: #7a7f84;
+  --settings-divider: rgba(34, 36, 39, 0.55);
+  --settings-control-bg: #4a4d52;
+  --settings-control-border: #2a2c30;
+  --settings-control-fill-off: #5c6064;
+  --settings-control-fill-on: #f1e07a;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  /* Pop down from the top-left instead of sliding from the left edge. */
+  left: 12px;
+  bottom: auto;
+  top: -640px;
+  transition: top 160ms ease;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.18);
+}
+
+.settings-panel.open {
+  left: 12px;
+  top: 56px;
 }
 
 .settings-panel .panel-title {
   text-shadow:
-    -2px -2px 0 #414549,
-    2px -2px 0 #414549,
-    -2px 2px 0 #414549,
-    2px 2px 0 #414549;
+    -1px -1px 0 #1c1e22,
+    1px -1px 0 #1c1e22,
+    -1px 1px 0 #1c1e22,
+    1px 1px 0 #1c1e22;
 }
 
 .settings-list {
@@ -1262,7 +1551,7 @@ body.mobile-mode-forced .quick-actions {
   gap: 18px;
   align-items: center;
   padding: 9px 4px;
-  border-bottom: 2px solid rgba(49, 52, 55, 0.42);
+  border-bottom: 2px solid var(--settings-divider);
 }
 
 .settings-row:last-child {
@@ -1271,15 +1560,11 @@ body.mobile-mode-forced .quick-actions {
 
 .settings-label {
   min-width: 0;
-  color: #f5f5f5;
+  color: #f7f7f7;
   font-size: 16px;
   font-weight: 850;
   line-height: 1.2;
-  text-shadow:
-    -1px -1px 0 #3c4043,
-    1px -1px 0 #3c4043,
-    -1px 1px 0 #3c4043,
-    1px 1px 0 #3c4043;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
 }
 
 .settings-email-control {
@@ -1308,41 +1593,60 @@ body.mobile-mode-forced .quick-actions {
   min-width: 136px;
   height: 34px;
   padding: 2px 28px 2px 9px;
-  border: 3px solid #4b4f52;
-  border-radius: 4px;
-  background: #d0d2d3;
-  color: #292c2e;
+  border: 3px solid var(--settings-control-border);
+  border-radius: 5px;
+  outline: 0;
+  background: var(--settings-control-bg);
+  color: #eceeef;
   font: 800 14px/1 "Florr UI", "Segoe UI", sans-serif;
 }
 
 .settings-square-toggle {
   justify-self: end;
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
-  min-height: 32px;
-  display: grid;
-  place-items: center;
+  width: 52px;
+  height: 28px;
+  min-width: 52px;
+  min-height: 28px;
   padding: 0;
-  border: 3px solid #8a8d90;
-  border-radius: 0;
-  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  background: var(--settings-control-fill-off);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32);
+  display: flex;
+  align-items: center;
+  transition:
+    transform 80ms ease,
+    background-color 120ms ease;
+}
+
+.settings-square-toggle:active {
+  transform: translateY(1px);
 }
 
 .settings-square-toggle-fill {
-  width: 18px;
-  height: 18px;
-  background: #424548;
+  display: block;
+  width: 22px;
+  height: 22px;
+  margin: 3px;
+  border-radius: 999px;
+  background: #eceeef;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  transition: transform 120ms ease;
+}
+
+.settings-square-toggle.enabled {
+  background: var(--settings-control-fill-on);
 }
 
 .settings-square-toggle.enabled .settings-square-toggle-fill {
-  background: #c8cbcd;
-}
-
-.settings-square-toggle:focus-visible,
-.settings-choice:focus-visible {
-  outline: 3px solid #eceeef;
-  outline-offset: 2px;
+  background: #fbfaf2;
+  transform: translateX(24px);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 0 8px rgba(241, 224, 122, 0.55);
 }
 
 .talent-points {
@@ -1458,7 +1762,7 @@ body.mobile-mode-forced .quick-actions {
   padding: 6px 8px;
   overflow: hidden;
   border: 3px solid #8293a4;
-  border-radius: 6px;
+  border-radius: 5px;
   background: #d9e0e5;
   color: #263241;
   text-align: left;
@@ -1648,8 +1952,8 @@ body.mobile-mode-forced .quick-actions {
 
 .craft-stage {
   position: relative;
-  width: min(360px, 100%);
-  height: 250px;
+  width: 100%;
+  height: 210px;
   margin: 0 auto;
 }
 
@@ -1658,12 +1962,12 @@ body.mobile-mode-forced .quick-actions {
   position: absolute;
   left: calc(50% + var(--slot-x, 0px));
   top: calc(50% + var(--slot-y, 0px));
-  width: 64px;
-  height: 64px;
+  width: 50px;
+  height: 50px;
   min-width: 0;
   padding: 0;
-  border: 4px solid #765333;
-  border-radius: 4px;
+  border: 3px solid #765333;
+  border-radius: 5px;
   background: #a8794d;
   transform: translate(-50%, -50%);
   transition:
@@ -1682,39 +1986,39 @@ body.mobile-mode-forced .quick-actions {
 }
 
 .craft-stage-slot .petal-stack {
-  width: 58px;
-  height: 58px;
+  width: 44px;
+  height: 44px;
 }
 
 .craft-stage-slot.slot-0 {
   --slot-x: 0px;
-  --slot-y: -82px;
+  --slot-y: -64px;
   --slot-in-x: 0px;
-  --slot-in-y: -28px;
+  --slot-in-y: -22px;
 }
 .craft-stage-slot.slot-1 {
-  --slot-x: 86px;
-  --slot-y: -20px;
-  --slot-in-x: 29px;
-  --slot-in-y: -7px;
+  --slot-x: 67px;
+  --slot-y: -16px;
+  --slot-in-x: 23px;
+  --slot-in-y: -5px;
 }
 .craft-stage-slot.slot-2 {
-  --slot-x: 54px;
-  --slot-y: 78px;
-  --slot-in-x: 18px;
-  --slot-in-y: 26px;
+  --slot-x: 42px;
+  --slot-y: 61px;
+  --slot-in-x: 14px;
+  --slot-in-y: 20px;
 }
 .craft-stage-slot.slot-3 {
-  --slot-x: -54px;
-  --slot-y: 78px;
-  --slot-in-x: -18px;
-  --slot-in-y: 26px;
+  --slot-x: -42px;
+  --slot-y: 61px;
+  --slot-in-x: -14px;
+  --slot-in-y: 20px;
 }
 .craft-stage-slot.slot-4 {
-  --slot-x: -86px;
-  --slot-y: -20px;
-  --slot-in-x: -29px;
-  --slot-in-y: -7px;
+  --slot-x: -67px;
+  --slot-y: -16px;
+  --slot-in-x: -23px;
+  --slot-in-y: -5px;
 }
 
 .craft-stage.spinning .craft-stage-slot {
@@ -1731,15 +2035,15 @@ body.mobile-mode-forced .quick-actions {
 .craft-result-slot {
   left: 50%;
   top: 50%;
-  width: 96px;
-  height: 96px;
+  width: 76px;
+  height: 76px;
   border: 0;
   background: transparent;
 }
 
 .craft-result-slot .petal-stack {
-  width: 92px;
-  height: 92px;
+  width: 72px;
+  height: 72px;
 }
 
 .craft-action {
@@ -1796,16 +2100,26 @@ body.mobile-mode-forced .quick-actions {
 
 .craft-list {
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 4px 2px 1px;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.craft-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .craft-matrix {
   display: grid;
+  /* 41px x sqrt(2) ~= 58px: petal display cards enlarged by sqrt(2). */
   grid-template-columns: repeat(var(--craft-rarity-count, 9), 58px);
-  gap: 5px;
+  gap: 4px;
   align-items: center;
-  width: max-content;
+  width: 100%;
   min-width: 100%;
 }
 
@@ -2142,7 +2456,7 @@ body.mobile-mode-forced .quick-actions {
   white-space: nowrap;
 }
 
-:is(.backpack-panel, .craft-panel, .death-card) .petal-count {
+:is(.backpack-panel, .craft-panel, .death-card, .codex-panel) .petal-count {
   border-radius: 3px;
   background: rgba(64, 76, 85, 0.9);
 }
@@ -2175,6 +2489,10 @@ body.mobile-mode-forced .quick-actions {
   z-index: 27;
   transform: translate(-50%, -50%);
   pointer-events: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-callout: none;
 }
 
 .mobile-joystick-base,
@@ -2184,6 +2502,8 @@ body.mobile-mode-forced .quick-actions {
   top: 50%;
   border-radius: 999px;
   transform: translate(-50%, -50%);
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
 }
 
 .mobile-joystick-base {
@@ -2198,17 +2518,6 @@ body.mobile-mode-forced .quick-actions {
   height: 56px;
   background: rgba(0, 0, 0, 0.38);
   border: 2px solid rgba(255, 255, 255, 0.18);
-}
-
-.mobile-panel-actions {
-  position: fixed;
-  left: max(10px, env(safe-area-inset-left));
-  top: max(10px, env(safe-area-inset-top));
-  z-index: 27;
-  display: grid;
-  grid-template-columns: repeat(2, 58px);
-  gap: 6px;
-  pointer-events: auto;
 }
 
 .mobile-control-button {
@@ -2232,6 +2541,11 @@ body.mobile-mode-forced .quick-actions {
     1px 1px 0 rgba(0, 0, 0, 0.45);
   touch-action: none;
   pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-drag: none;
 }
 
 .mobile-control-button.pressed,
@@ -2239,36 +2553,63 @@ body.mobile-mode-forced .quick-actions {
   background: rgba(0, 0, 0, 0.5);
 }
 
-.mobile-panel-button {
+.mobile-attack-button {
   position: static;
-  width: 58px;
-  height: 42px;
-  border-radius: 8px;
-  font-size: 12px;
+  width: 82px;
+  height: 82px;
+  font-size: 28px;
+  grid-column: 1;
+  grid-row: 2;
 }
 
-.mobile-attack-button {
-  right: max(86px, calc(env(safe-area-inset-right) + 86px));
-  top: 50%;
-  width: 88px;
-  height: 88px;
-  margin-top: -44px;
-  font-size: 30px;
+.mobile-swap-button {
+  position: static;
+  width: 74px;
+  height: 74px;
+  font-size: 24px;
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: center;
+  align-self: center;
 }
 
 .mobile-defend-button {
-  right: max(22px, calc(env(safe-area-inset-right) + 22px));
-  bottom: max(78px, calc(env(safe-area-inset-bottom) + 78px));
-  width: 62px;
-  height: 62px;
-  font-size: 22px;
+  position: static;
+  width: 82px;
+  height: 82px;
+  font-size: 28px;
+  grid-column: 2;
+  grid-row: 3;
+}
+
+.mobile-action-cluster {
+  position: fixed;
+  right: max(26px, calc(env(safe-area-inset-right) + 26px));
+  bottom: max(110px, calc(env(safe-area-inset-bottom) + 110px));
+  z-index: 27;
+  display: grid;
+  grid-template-columns: 82px 82px 82px;
+  grid-template-rows: 82px 82px 82px;
+  gap: 14px;
+  pointer-events: auto;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
 }
 
 .inventory-list {
   width: 100%;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 2px 1px 0;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.inventory-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .inventory-group {
@@ -2307,7 +2648,7 @@ body.mobile-mode-forced .quick-actions {
 
 .inventory-grid {
   display: grid;
-  grid-template-columns: repeat(6, 62px);
+  grid-template-columns: repeat(auto-fill, minmax(62px, 1fr));
   gap: 5px;
   justify-content: center;
 }
@@ -2354,33 +2695,25 @@ body.mobile-mode-forced .quick-actions {
   position: fixed;
   left: 0;
   top: 0;
-  z-index: 20;
-  width: 116px;
-  min-height: 38px;
-  padding: 6px 8px;
-  border: 1px solid rgba(77, 91, 111, 0.26);
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: none;
-  color: var(--ink);
+  z-index: 70;
+  width: 64px;
+  height: 64px;
+  border-radius: 5px;
+  background: transparent;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
   pointer-events: none;
+  transition:
+    width 140ms ease,
+    height 140ms ease;
 }
 
-.drag-ghost strong,
-.drag-ghost span {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.drag-ghost strong {
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.drag-ghost span {
-  font-size: 10px;
+.drag-ghost .petal-stack {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: none;
+  width: 100%;
+  height: 100%;
 }
 
 .hidden {
@@ -2390,10 +2723,6 @@ body.mobile-mode-forced .quick-actions {
 @media (pointer: coarse), (max-width: 720px) {
   .mobile-controls:not(.hidden) {
     display: block;
-  }
-
-  .quick-actions {
-    display: none;
   }
 }
 
@@ -2417,7 +2746,7 @@ body.mobile-mode-forced .quick-actions {
     left: calc(-1 * (100vw - 24px) - 12px);
     bottom: max(8px, env(safe-area-inset-bottom));
     width: calc(100vw - 24px);
-    max-height: calc(100vh - 72px);
+    --game-panel-max-height: calc(100vh - 72px);
   }
 
   .game-panel.open {
@@ -2455,18 +2784,19 @@ body.mobile-mode-forced .quick-actions {
   }
 
   .craft-matrix {
-    grid-template-columns: repeat(var(--craft-rarity-count, 9), 54px);
+    /* Wrap the enlarged cards instead of clipping them on narrow screens. */
+    grid-template-columns: repeat(auto-fill, 58px);
     gap: 4px;
   }
 
   .craft-matrix-cell {
-    width: 54px;
-    height: 54px;
+    width: 58px;
+    height: 58px;
   }
 
   .craft-matrix-cell .petal-stack {
-    width: 52px;
-    height: 52px;
+    width: 56px;
+    height: 56px;
   }
 
   .death-card {

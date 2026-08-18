@@ -73,6 +73,14 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
     bool SendChatToPlayer(CPlayer& player, const CServer::SChatEntry& chat);
     bool QueueWelcome(CPlayer& player) override;
     bool QueueEnvironment(CPlayer& player);
+    void QueueCodexFull(CPlayer& player);
+    void QueueCodexLoot(CPlayer& player);
+    void SendCodexDelta(CPlayer& player, uint8_t mob_type, uint8_t rarity, uint32_t count);
+    void BroadcastLightningChain(CGameWorld& world, const std::vector<sf::Vector2f>& points);
+    void SendTerrainDelta(CPlayer& player, uint8_t layer, uint16_t row, uint16_t col, uint32_t gid);
+    void BroadcastTerrainDelta(CGameWorld& world, uint8_t layer, uint16_t row, uint16_t col, uint32_t gid);
+    void SendTerrainWallRemove(CPlayer& player, sf::Vector2f min_pos, sf::Vector2f max_pos);
+    void BroadcastTerrainWallRemove(CGameWorld& world, sf::Vector2f min_pos, sf::Vector2f max_pos);
     bool QueueOwnerStateUpdate(CPlayer& player) override;
     bool QueueInventoryUpdate(CPlayer& player);
     void NotifyPlayerWorldChanged(CPlayer& player);
@@ -217,7 +225,8 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
     std::unordered_map<std::uint32_t, std::uint64_t> m_email_delivery_requests;
     std::unordered_map<std::string, SAuthFailureState> m_auth_failures;
     std::uint64_t m_next_auth_request_id = 1;
-    std::uint64_t m_last_environment_revision = 0;
+    float m_last_environment_day_duration = 0.f;
+    double m_last_environment_time_of_day = -1.0;
     CPlayerLifecycleService m_player_lifecycle_service;
     CSnapshotService m_snapshot_service;
     SSnapshotTelemetry m_snapshot_telemetry;

@@ -1,6 +1,7 @@
 #pragma once
 #include "../../../Shared/game_config.h"
 #include "../../../Shared/shared.h"
+#include "../gamecontroller.h"
 #include "mob.h"
 #include "petals/petal_slot.h"
 #include <cstdint>
@@ -18,7 +19,7 @@ class CFlower : public CAttackableMob<SFlowerStats>
         : CAttackableMob(pworld, pos, r, mob_type, rarity, base)
     {
         m_final_stats = base;
-        m_health = base.max_health;
+        Health() = base.max_health;
         InitSlots();
     }
     ~CFlower() override;
@@ -36,7 +37,7 @@ class CFlower : public CAttackableMob<SFlowerStats>
     const SFlowerStats* GetFinalStats() const override { return &m_final_stats; }
     float WallCollisionRadius() const override
     {
-        return std::max(0.f, m_radius * game_config::mob_wall_collision_radius_multiplier);
+        return std::max(0.f, Radius() * game_config::mob_wall_collision_radius_multiplier);
     }
 
     int GetStartCopyIndex(int slot_index) const;
@@ -134,6 +135,9 @@ class CTitanFlower final : public CFlower
                  const SFlowerStats& base = SFlowerStats{})
         : CFlower(pworld, pos, r, mob_type, rarity, base)
     {
+        // Titans must never be retired by the inactivity sweep, regardless of
+        // player rarity (view range) or distance.
+        TickMode() = EEntityTickMode::Always;
         SetPetalSlotCount(game_config::titan_petal_slot_count);
     }
 
@@ -161,13 +165,10 @@ class CPlayerFlower : public CFlower
     void RebuildFinalStats() override;
     void RefreshTalentSlotCount();
     bool IsDead() const override { return m_is_dead || CFlower::IsDead(); }
-    bool IsVisible() const override { return !m_is_marked_for_des; }
+    bool IsVisible() const override { return !IsMarkedForDes(); }
     bool CanCollide() const override { return !m_is_dead && CFlower::CanCollide(); }
-    float WallCollisionRadius() const override { return std::max(0.f, m_radius); }
-    bool CollidesWithWalls() const override
-    {
-        return !HasActivePetal(EPetalType::Nullification, ERarity::Primordial);
-    }
+    float WallCollisionRadius() const override { return std::max(0.f, Radius()); }
+    bool CollidesWithWalls() const override;
     void EnterDeathState();
     void PrepareRespawnDestroy(EEntityRemovalReason reason = EEntityRemovalReason::Replaced);
     bool ReviveFromYggdrasil(float health_fraction);

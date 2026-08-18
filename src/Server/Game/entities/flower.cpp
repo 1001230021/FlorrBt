@@ -87,8 +87,8 @@ int TalentPointGainForLevel(int level)
 
 void SyncFlowerRadiusWithStats(CFlower& flower, SFlowerStats& stats)
 {
-    flower.m_radius = std::max(0.f, stats.radius);
-    stats.radius = flower.m_radius;
+    flower.Radius() = std::max(0.f, stats.radius);
+    stats.radius = flower.Radius();
 }
 
 } // namespace
@@ -217,7 +217,7 @@ void CFlower::Tick(float dt)
     if (m_final_stats_dirty) RebuildFinalStats();
     float health_regen = m_final_stats.health_regen;
     if (m_defending && !m_attacking) health_regen += m_final_stats.defense_health_regen;
-    if (health_regen > 0.f && m_final_stats.max_health > 0.f && m_health > 0.f)
+    if (health_regen > 0.f && m_final_stats.max_health > 0.f && Health() > 0.f)
     {
         float regen = health_regen * std::max(0.f, m_final_stats.petal_medicine_multiplier) *
                       std::max(0.f, m_final_stats.healing_received_multiplier) *
@@ -293,11 +293,11 @@ void CFlower::Tick(float dt)
 }
 void CFlower::Heal(float amount)
 {
-    if (amount <= 0.f || m_health <= 0.f || m_final_stats.max_health <= 0.f) return;
+    if (amount <= 0.f || Health() <= 0.f || m_final_stats.max_health <= 0.f) return;
 
-    const float missing_health = std::max(0.f, m_final_stats.max_health - m_health);
+    const float missing_health = std::max(0.f, m_final_stats.max_health - Health());
     const float health_gain = std::min(amount, missing_health);
-    m_health += health_gain;
+    Health() += health_gain;
 
     const float excess_healing = std::max(0.f, amount - health_gain);
     const float conversion = std::max(0.f, m_final_stats.overheal_to_shield);
@@ -322,7 +322,7 @@ void CFlower::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
 
         for (auto* petal : slot.m_p_petals)
         {
-            if (petal && !petal->m_is_marked_for_des)
+            if (petal && !petal->IsMarkedForDes())
             {
                 slot.m_p_proto->m_p_behavior->OnFlowerTakeDamage(petal, slot.m_stored_rarity, this, dmg, damage_type,
                                                                  attacker);
@@ -401,11 +401,11 @@ bool CFlower::TryStartBurrowFromShovel()
         for (size_t i = 0; i < slot.m_p_petals.size(); ++i)
         {
             CPetal* petal = slot.m_p_petals[i];
-            if (!petal || petal->m_is_marked_for_des || petal->m_health <= 0.f || petal->m_hidden) continue;
+            if (!petal || petal->IsMarkedForDes() || petal->Health() <= 0.f || petal->m_hidden) continue;
 
             float duration = std::max(game_config::server_fixed_dt, game_config::default_shovel_dig_duration);
             petal->m_reload_override = std::max(0.f, petal->m_final_petal_stats.preload);
-            petal->m_health = 0.f;
+            petal->Health() = 0.f;
             AddState(std::make_unique<CDiggingState>(this, duration, slot.m_stored_rarity));
             return true;
         }
@@ -428,7 +428,7 @@ CPetal* CFlower::GetMoonPetal() const
 
         for (CPetal* petal : slot.m_p_petals)
         {
-            if (petal && !petal->m_is_marked_for_des && petal->m_health > 0.f && !petal->m_hidden) return petal;
+            if (petal && !petal->IsMarkedForDes() && petal->Health() > 0.f && !petal->m_hidden) return petal;
         }
     }
     return nullptr;
@@ -468,8 +468,8 @@ void CFlower::RebuildFinalStats()
 
     float new_max = m_final_stats.max_health;
     SyncFlowerRadiusWithStats(*this, m_final_stats);
-    if (old_max > 0.f && new_max > 0.f && new_max != old_max) m_health = m_health * new_max / old_max;
-    if (new_max > 0.f) m_health = std::clamp(m_health, 0.f, new_max);
+    if (old_max > 0.f && new_max > 0.f && new_max != old_max) Health() = Health() * new_max / old_max;
+    if (new_max > 0.f) Health() = std::clamp(Health(), 0.f, new_max);
     ClampShieldToMaxHealth();
     FinishFinalStatsRebuild();
 }
@@ -478,6 +478,7 @@ void CFlower::EquipPetal(int slot_index, const CPetalPrototype* proto, ERarity r
 {
     if (slot_index < 0 || slot_index >= static_cast<int>(m_slots.size())) return;
     if (!m_slots[slot_index].m_available) return;
+    if (m_slots[slot_index].m_banned) return;
     if (!proto || !proto->m_p_behavior) return;
 
     m_slots[slot_index].SetPetal(proto, slot_index, rarity);
@@ -618,6 +619,14 @@ void CFlower::ApplyExclusivity(EPetalType type)
     if (changed) MarkFinalStatsDirty();
 }
 
+bool CPlayerFlower::CollidesWithWalls() const
+{
+    if (HasActivePetal(EPetalType::Nullification, ERarity::Primordial)) return false;
+    CGameWorld* world = GameWorld();
+    const IGameController* controller = world ? world->GetController() : nullptr;
+    return !(controller && controller->ForcesPrimordialNullification());
+}
+
 void CFlower::RefreshNullificationState()
 {
     ERarity best_rarity = ERarity::Null;
@@ -627,6 +636,14 @@ void CFlower::RefreshNullificationState()
         if (slot.m_p_proto->m_type != EPetalType::Nullification) continue;
         if (GetRarityValueRank(slot.m_stored_rarity) > GetRarityValueRank(best_rarity))
             best_rarity = slot.m_stored_rarity;
+    }
+
+    // Some world controllers keep every player flower permanently nullified.
+    if (best_rarity == ERarity::Null)
+    {
+        CGameWorld* world = GameWorld();
+        const IGameController* controller = world ? world->GetController() : nullptr;
+        if (controller && controller->ForcesPrimordialNullification()) best_rarity = ERarity::Primordial;
     }
 
     auto states = FindStates<CNullificationState>();
@@ -651,6 +668,30 @@ void CFlower::RefreshNullificationState()
     }
 }
 
+static bool InsideCorruptionSpreadRange(const CFlower* self)
+{
+    if (!self || !self->GameWorld()) return false;
+
+    const float query_radius = std::max(game_config::default_corruption_radius_primordial,
+                                        game_config::default_corruption_radius_above_ultra);
+    if (query_radius <= 0.f) return false;
+
+    bool in_range = false;
+    self->GameWorld()->GetSpatialGrid().ForEachInRange(self->Pos(), query_radius, [&](CEntity* entity) {
+        if (in_range || !entity || entity == self || entity->IsMarkedForDes() || entity->IsDead()) return;
+        const auto* flower = dynamic_cast<const CFlower*>(entity);
+        if (!flower) return;
+        const auto* state = flower->FindFirstState<CCorruptionState>();
+        if (!state || !state->Spreads()) return;
+        const float radius = state->m_rarity == ERarity::Primordial
+                                 ? game_config::default_corruption_radius_primordial
+                                 : game_config::default_corruption_radius_above_ultra;
+        if (radius <= 0.f) return;
+        if (DistanceSq(self->Pos(), flower->Pos()) <= radius * radius) in_range = true;
+    });
+    return in_range;
+}
+
 void CFlower::RefreshCorruptionState()
 {
     ERarity best_rarity = ERarity::Null;
@@ -665,14 +706,24 @@ void CFlower::RefreshCorruptionState()
     auto states = FindStates<CCorruptionState>();
     if (best_rarity == ERarity::Null)
     {
-        for (auto* state : states)
-            RemoveState(state);
+        // No corruption petal equipped: the state survives only while this
+        // flower stays inside another corruptor's spread radius. Unequipping
+        // or leaving the range ends the state and the destructor restores the
+        // original team.
+        if (!InsideCorruptionSpreadRange(this))
+        {
+            for (auto* state : states)
+                RemoveState(state);
+            return;
+        }
+        if (!states.empty()) states.front()->SetSpreads(false);
         return;
     }
 
     if (states.empty())
     {
         AddState(std::make_unique<CCorruptionState>(this, endless, best_rarity));
+        states = FindStates<CCorruptionState>();
     } else
     {
         states.front()->m_rarity = best_rarity;
@@ -681,16 +732,20 @@ void CFlower::RefreshCorruptionState()
         {
             RemoveState(states[i]);
         }
+        states = FindStates<CCorruptionState>();
     }
 
     float radius = 0.f;
     if (best_rarity == ERarity::Primordial) radius = game_config::default_corruption_radius_primordial;
     else if (GetLevel(best_rarity) >= GetLevel(ERarity::Eternal))
         radius = game_config::default_corruption_radius_above_ultra;
+
+    if (!states.empty()) states.front()->SetSpreads(radius > 0.f);
+
     if (radius <= 0.f || !GameWorld()) return;
 
-    GameWorld()->GetSpatialGrid().ForEachInRange(m_pos, radius, [this, best_rarity](CEntity* entity) {
-        if (!entity || entity == this || entity->m_is_marked_for_des || entity->IsDead()) return;
+    GameWorld()->GetSpatialGrid().ForEachInRange(Pos(), radius, [this, best_rarity](CEntity* entity) {
+        if (!entity || entity == this || entity->IsMarkedForDes() || entity->IsDead()) return;
         auto* flower = dynamic_cast<CFlower*>(entity);
         if (!flower) return;
         if (!flower->HasState<CCorruptionState>())
@@ -808,7 +863,7 @@ CPlayerFlower::CPlayerFlower(CGameWorld* pworld, sf::Vector2f pos, float r, EMob
                                 std::max(0, game_config::mob_player_flower_max_petal_slots));
     SetPetalSlotCount(slot_count);
     RebuildFinalStats();
-    m_health = m_final_stats.max_health;
+    Health() = m_final_stats.max_health;
     if (game_config::player_spawn_invincible_duration > 0.f)
         AddState(std::make_unique<CInvincibleState>(this, game_config::player_spawn_invincible_duration, GetRarity()));
 }
@@ -839,8 +894,8 @@ void CPlayerFlower::RebuildFinalStats()
 
     float new_max = m_final_stats.max_health;
     SyncFlowerRadiusWithStats(*this, m_final_stats);
-    if (old_max > 0.f && new_max > 0.f && new_max != old_max) m_health = m_health * new_max / old_max;
-    if (new_max > 0.f) m_health = std::clamp(m_health, 0.f, new_max);
+    if (old_max > 0.f && new_max > 0.f && new_max != old_max) Health() = Health() * new_max / old_max;
+    if (new_max > 0.f) Health() = std::clamp(Health(), 0.f, new_max);
     ClampShieldToMaxHealth();
     FinishFinalStatsRebuild();
 }
@@ -933,7 +988,7 @@ void CPlayerFlower::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_
     if (m_is_dead) return;
 
     CFlower::TakeDamage(dmg, attacker, damage_type);
-    if (m_is_marked_for_des)
+    if (IsMarkedForDes())
     {
         CGameContext* context = GameContext();
         CPlayer* player = context ? context->FindPlayerFromEntity(this) : nullptr;
@@ -960,20 +1015,20 @@ void CPlayerFlower::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_
             if (prevent_death && invincible_time > 0.f)
             {
                 CancelDestroy();
-                m_health = std::max(1.f, m_health);
+                Health() = std::max(1.f, Health());
                 AddState(std::make_unique<CInvincibleState>(this, invincible_time, GetRarity()));
                 return;
             }
         }
     }
 
-    if (m_is_marked_for_des && TryEnterUndeadFromBandage())
+    if (IsMarkedForDes() && TryEnterUndeadFromBandage())
     {
         CancelDestroy();
-        m_health = std::max(1.f, m_health);
+        Health() = std::max(1.f, Health());
         return;
     }
-    if (m_is_marked_for_des) EnterDeathState();
+    if (IsMarkedForDes()) EnterDeathState();
 }
 
 void CPlayerFlower::EnterDeathState()
@@ -981,30 +1036,30 @@ void CPlayerFlower::EnterDeathState()
     if (m_is_dead) return;
 
     const SFlowerStats death_stats = m_final_stats;
-    const float death_radius = m_radius;
-    const float death_mass = m_mass;
+    const float death_radius = Radius();
+    const float death_mass = Mass();
 
     ConsumeCorruptionPetalsOnDeath();
 
     m_is_dead = true;
     CancelDestroy();
-    m_health = 0.f;
+    Health() = 0.f;
     m_vel = { 0.f, 0.f };
     m_attacking = false;
     m_defending = false;
     BeginBloodSacrifice();
-    if (GameWorld()) GameWorld()->DestroySummonedMobsOwnedBy(m_id, m_generation);
+    if (GameWorld()) GameWorld()->DestroySummonedMobsOwnedBy(Id(), Generation());
     DestroyPetalEntities();
 
     m_final_stats = death_stats;
-    m_radius = death_radius;
-    m_mass = death_mass;
+    Radius() = death_radius;
+    Mass() = death_mass;
     ClearFinalStatsDirty();
 }
 
 void CPlayerFlower::PrepareRespawnDestroy(EEntityRemovalReason reason)
 {
-    if (GameWorld()) GameWorld()->DestroySummonedMobsOwnedBy(m_id, m_generation);
+    if (GameWorld()) GameWorld()->DestroySummonedMobsOwnedBy(Id(), Generation());
     ClearPetals();
     m_is_dead = false;
     MarkForDestroy(reason);
@@ -1012,7 +1067,7 @@ void CPlayerFlower::PrepareRespawnDestroy(EEntityRemovalReason reason)
 
 bool CPlayerFlower::ReviveFromYggdrasil(float health_fraction)
 {
-    if (!m_is_dead || m_is_marked_for_des) return false;
+    if (!m_is_dead || IsMarkedForDes()) return false;
 
     for (auto* undead : FindStates<CUndeadState>())
     {
@@ -1025,7 +1080,7 @@ bool CPlayerFlower::ReviveFromYggdrasil(float health_fraction)
     CancelDestroy();
     RebuildFinalStats();
     float max_health = GetFinalStats() ? GetFinalStats()->max_health : m_base_stats.max_health;
-    m_health = std::max(game_config::flower_revive_min_health, max_health * std::clamp(health_fraction, 0.0f, 1.0f));
+    Health() = std::max(game_config::flower_revive_min_health, max_health * std::clamp(health_fraction, 0.0f, 1.0f));
     m_vel = { 0.f, 0.f };
     m_attacking = false;
     m_defending = false;
@@ -1093,7 +1148,7 @@ bool CPlayerFlower::TryEnterUndeadFromBandage()
     float duration = GetBandageUndeadDuration(best_rarity);
     if (duration <= 0.f) return false;
 
-    m_health = 1.f;
+    Health() = 1.f;
     AddState(std::make_unique<CUndeadState>(this, duration, best_rarity, best_slot));
     AddState(std::make_unique<CNoReviveState>(this, game_config::default_bandage_no_revive_duration, best_rarity));
     return true;
@@ -1118,7 +1173,7 @@ void CPlayerFlower::BeginBloodSacrifice()
 
         for (const FlorrBtMap::Zone& zone : map->zones)
         {
-            if (!IsPointInZone(zone, m_pos)) continue;
+            if (!IsPointInZone(zone, Pos())) continue;
 
             std::vector<SZoneMobEntry> mob_entries = ParseZoneMobEntries(zone.mobs);
             if (mob_entries.empty())
@@ -1134,7 +1189,7 @@ void CPlayerFlower::BeginBloodSacrifice()
                 return;
             }
 
-            auto ritual = std::make_unique<CBloodSacrificeRitual>(world, m_pos, mob_type, slot.m_stored_rarity,
+            auto ritual = std::make_unique<CBloodSacrificeRitual>(world, Pos(), mob_type, slot.m_stored_rarity,
                                                                   game_config::default_blood_sacrifice_delay);
             CBloodSacrificeRitual* raw_ritual =
                 dynamic_cast<CBloodSacrificeRitual*>(world->InsertEntity(std::move(ritual)));
@@ -1144,10 +1199,10 @@ void CPlayerFlower::BeginBloodSacrifice()
                 return;
             }
 
-            LOG_INFO("blood_sacrifice", "Created ritual id " + std::to_string(raw_ritual->m_id) + " for " +
+            LOG_INFO("blood_sacrifice", "Created ritual id " + std::to_string(raw_ritual->Id()) + " for " +
                                             std::string(GetRarityName(slot.m_stored_rarity)) + " " +
                                             std::string(GetMobTypeName(mob_type)) + " from slot " + std::to_string(i) +
-                                            " at " + std::to_string(m_pos.x) + "," + std::to_string(m_pos.y));
+                                            " at " + std::to_string(Pos().x) + "," + std::to_string(Pos().y));
             ClearBloodSacrificeSlot(static_cast<int>(i));
             return;
         }

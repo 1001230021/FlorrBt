@@ -1,26 +1,62 @@
 import { dom, state } from "./app_context.js";
+import { clientCommandSpecs } from "./client_commands_spec.js";
+import { listClientConfigEntries } from "./client_config.js";
+import { createGameConsole } from "./game_console.js";
+import { getAvailableLocales, t } from "./i18n.js";
+import { appDisplayName } from "./version.js";
 
-const { authStatus, canvas, consolePanel, consoleLog, consoleInput } = dom;
+const { authStatus, canvas, consolePanel, consoleInput } = dom;
+
+const defaultCompletionSources = Object.freeze({
+  bool: () => ["0", "1"],
+  channel: () => ["global", "local", "squad", "whisper"],
+  config: () => listClientConfigEntries().map((entry) => entry.name),
+  locale: () => getAvailableLocales().map((entry) => entry.id),
+  mobile_mode: () => ["on", "off", "auto", "toggle"],
+});
 
 export function createConsoleUi({
   beforeOpen = null,
   executeCommand = null,
   focusTarget = canvas,
   panel = null,
+  commands = clientCommandSpecs,
+  completionSources = {},
+  version = appDisplayName,
 } = {}) {
   const setStatus = (text) => {
     authStatus.textContent = text;
   };
 
-  const addLine = (text, kind = "") => {
-    const line = document.createElement("div");
-    line.className = `console-line${kind ? ` ${kind}` : ""}`;
-    line.textContent = text;
-    consoleLog.appendChild(line);
-    while (consoleLog.children.length > 90)
-      consoleLog.removeChild(consoleLog.firstChild);
-    consoleLog.scrollTop = consoleLog.scrollHeight;
+  const panelRoot = panel?.root || consolePanel;
+
+  const gameConsole = createGameConsole({
+    panel: panelRoot,
+    input: consoleInput,
+    commands,
+    completionSources: { ...defaultCompletionSources, ...completionSources },
+    executeCommand,
+    translate: t,
+    version,
+    onCloseRequested: () => close(),
+  });
+
+  const close = () => {
+    if (panel) panel.toggle(false);
+    else {
+      state.consoleOpen = false;
+      consolePanel.classList.remove("open");
+    }
+    gameConsole.setOpen(false);
+    focusTarget?.focus?.();
   };
+
+  const syncObserver = new MutationObserver(() => {
+    const openClass = panelRoot.classList.contains("open");
+    gameConsole.setOpen(openClass);
+    if (openClass) gameConsole.focusInput();
+  });
+  syncObserver.observe(panelRoot, { attributes: true, attributeFilter: ["class"] });
 
   const toggle = (force) => {
     const open = panel
@@ -34,28 +70,21 @@ export function createConsoleUi({
     }
     if (open) {
       beforeOpen?.();
-      consoleInput.focus();
-      consoleInput.setSelectionRange(
-        consoleInput.value.length,
-        consoleInput.value.length,
-      );
+      gameConsole.setOpen(true);
+      gameConsole.focusInput();
     } else {
-      consoleInput.blur();
+      gameConsole.setOpen(false);
       focusTarget?.focus?.();
     }
     return open;
   };
 
   const submit = () => {
-    const line = consoleInput.value.trim();
-    consoleInput.value = "";
-    if (!line) return;
-    addLine(`> ${line}`, "command");
-    executeCommand?.(line);
+    gameConsole.submit();
   };
 
   return {
-    addLine,
+    addLine: (text, kind = "") => gameConsole.addLine(text, kind),
     setStatus,
     submit,
     toggle,

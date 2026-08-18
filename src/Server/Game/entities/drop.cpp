@@ -36,13 +36,13 @@ CDrop::CDrop(CGameWorld* world, sf::Vector2f pos, PetalType type, ERarity rarity
       m_owner_id(owner_id), m_stack_num(stack_num), m_merge_timer(InitialDropMergeTimer(pos, owner_id)),
       m_timer(std::max(0.f, lifetime))
 {
-    m_health = 1.f;
-    m_mass = game_config::default_drop_mass;
+    Health() = 1.f;
+    Mass() = game_config::default_drop_mass;
 }
 
 void CDrop::Tick(float dt)
 {
-    if (m_is_marked_for_des) return;
+    if (IsMarkedForDes()) return;
 
     if (m_type == PetalType::None || m_rarity == ERarity::Null || m_stack_num == 0)
     {
@@ -75,7 +75,7 @@ void CDrop::Tick(float dt)
 
 bool CDrop::CanBePickedUpBy(uint32_t player_id) const
 {
-    if (m_is_marked_for_des || m_unable_picked_timer > 0.f) return false;
+    if (IsMarkedForDes() || m_unable_picked_timer > 0.f) return false;
     if (m_type == PetalType::None || m_rarity == ERarity::Null || m_stack_num == 0) return false;
     return m_owner_id == drop_owner_all || m_owner_id == static_cast<int>(player_id);
 }
@@ -114,12 +114,12 @@ void CDrop::MergeNearbyDrops()
     CGameWorld* world = GameWorld();
     if (!world || game_config::default_drop_stack_range <= 0.f) return;
 
-    world->GetSpatialGrid().ForEachInRange(m_pos, game_config::default_drop_stack_range, [this](CEntity* entity) {
+    world->GetSpatialGrid().ForEachInRange(Pos(), game_config::default_drop_stack_range, [this](CEntity* entity) {
         auto* other = dynamic_cast<CDrop*>(entity);
-        if (!other || other == this || other->m_is_marked_for_des) return;
+        if (!other || other == this || other->IsMarkedForDes()) return;
         if (other->m_type != m_type || other->m_rarity != m_rarity) return;
         if (other->m_owner_id != m_owner_id) return;
-        if (other->m_id <= m_id) return;
+        if (other->Id() <= Id()) return;
 
         uint16_t max_stack = std::numeric_limits<uint16_t>::max();
         if (m_stack_num == max_stack) return;

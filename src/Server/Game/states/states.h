@@ -112,6 +112,8 @@ class CCorruptionState : public CState
 
     int GetOriginalTeam() const { return m_old_team; }
     void RestoreOriginalTeam(int team) { m_old_team = team; }
+    bool Spreads() const { return m_spreads; }
+    void SetSpreads(bool spreads) { m_spreads = spreads; }
 
     void Tick(float dt) override
     {
@@ -120,6 +122,7 @@ class CCorruptionState : public CState
 
   private:
     int m_old_team = 0;
+    bool m_spreads = false;
 };
 
 class CNoReviveState : public CState

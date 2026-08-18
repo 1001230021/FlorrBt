@@ -2,6 +2,8 @@
 #include "../Engine/logger.h"
 #include "../Shared/drop_rate.h"
 #include "../Shared/game_config.h"
+#include "../Shared/tools.h"
+#include "../Shared/utf8.h"
 #include "../Shared/version.h"
 #include "Game/entities/mob.h"
 #include "Game/entities/petals/petals_behavior.h"
@@ -270,7 +272,8 @@ void CServer::ProcessHotReloadRequest()
 
     if (m_p_network_module)
     {
-        if (const SChatEntry* chat = SubmitServerChat("Server is reloading")) m_p_network_module->BroadcastChat(*chat);
+        const SChatEntry reload_chat = SubmitServerChat("Server is reloading");
+        if (!reload_chat.message.empty()) m_p_network_module->BroadcastChat(reload_chat);
     }
 
     const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -477,11 +480,11 @@ void CServer::ExecuteStartupConfigCommands()
     }
 }
 
-const CServer::SChatEntry* CServer::SubmitChat(CGameWorld* world, sf::Vector2f pos, EChatFlag flag, uint32_t player_id,
-                                               const std::string& player_name, const std::string& message,
-                                               int target_player_id)
+CServer::SChatEntry CServer::SubmitChat(CGameWorld* world, sf::Vector2f pos, EChatFlag flag, uint32_t player_id,
+                                        const std::string& player_name, const std::string& message,
+                                        int target_player_id)
 {
-    if (message.empty()) return nullptr;
+    if (message.empty()) return {};
 
     SChatEntry entry;
     entry.world = world;
@@ -490,19 +493,19 @@ const CServer::SChatEntry* CServer::SubmitChat(CGameWorld* world, sf::Vector2f p
     entry.player_id = player_id;
     entry.target_player_id = target_player_id;
     entry.player_name = player_name;
-    entry.message = message.substr(0, max_chat_message_size);
+    entry.message = std::string(TruncateUtf8(message, max_chat_message_size));
     entry.system_time = static_cast<uint32_t>(
         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
 
-    m_chats.push_back(std::move(entry));
+    m_chats.push_back(entry);
     const size_t max_saved_chats = std::max<size_t>(1, game_config::server_max_saved_chats);
     if (m_chats.size() > max_saved_chats)
         m_chats.erase(m_chats.begin(), m_chats.begin() + static_cast<std::ptrdiff_t>(m_chats.size() - max_saved_chats));
 
-    return &m_chats.back();
+    return entry;
 }
 
-const CServer::SChatEntry* CServer::SubmitServerChat(const std::string& message)
+CServer::SChatEntry CServer::SubmitServerChat(const std::string& message)
 {
     return SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Server", message);
 }
@@ -558,9 +561,9 @@ bool CServer::BroadcastPetalReport(std::string_view done, ERarity rarity, std::s
     message.append(doer);
     message += ")";
 
-    const SChatEntry* chat = SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Server", message);
-    if (!chat) return false;
-    network->BroadcastChat(*chat);
+    const SChatEntry chat = SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Server", message);
+    if (chat.message.empty()) return false;
+    network->BroadcastChat(chat);
     return true;
 }
 
@@ -586,9 +589,9 @@ bool CServer::BroadcastMobReport(std::string_view action, ERarity rarity, std::s
     message.append(action);
     message += ")";
 
-    const SChatEntry* chat = SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Server", message);
-    if (!chat) return false;
-    network->BroadcastChat(*chat);
+    const SChatEntry chat = SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Server", message);
+    if (chat.message.empty()) return false;
+    network->BroadcastChat(chat);
     return true;
 }
 
@@ -628,9 +631,9 @@ bool CServer::BroadcastMobSpawnReport(CGameWorld& source_world, std::string_view
             world_message += ">(somewhere)";
         }
 
-        const SChatEntry* chat = SubmitChat(world.get(), { 0.f, 0.f }, EChatFlag::Server, 0, "Server", world_message);
-        if (!chat) continue;
-        network->BroadcastChat(*chat);
+        const SChatEntry chat = SubmitChat(world.get(), { 0.f, 0.f }, EChatFlag::Server, 0, "Server", world_message);
+        if (chat.message.empty()) continue;
+        network->BroadcastChat(chat);
         sent = true;
     }
     return sent;
@@ -663,7 +666,7 @@ void CServer::Run()
     m_performance_telemetry.target_tps = 1.0 / static_cast<double>(dt);
 
     auto publish_telemetry = [this, &window, &total_overruns, &total_catch_up_ticks,
-                              &total_dropped_ticks](server_clock::time_point now, bool write_log) {
+                              &total_dropped_ticks](server_clock::time_point now) {
         if (window.ticks == 0) return;
 
         const double sample_seconds = std::chrono::duration<double>(now - window.start).count();
@@ -697,22 +700,6 @@ void CServer::Run()
                 m_performance_telemetry.entity_count += world->GetEntityCount();
                 m_performance_telemetry.active_entity_count += world->GetLastActiveEntityCount();
             }
-        }
-
-        if (write_log)
-        {
-            std::ostringstream message;
-            message << std::fixed << std::setprecision(2) << "tps=" << m_performance_telemetry.actual_tps << "/"
-                    << m_performance_telemetry.target_tps << " tick_ms(last/avg/max)="
-                    << m_performance_telemetry.last_tick_ms << "/" << m_performance_telemetry.average_tick_ms << "/"
-                    << m_performance_telemetry.max_tick_ms << " lag_max_ms="
-                    << m_performance_telemetry.max_schedule_lag_ms << " overruns=" << window.overruns
-                    << " slow_ticks=" << window.slow_ticks << " catch_up=" << window.catch_up_ticks
-                    << " dropped=" << window.dropped_ticks << " worlds=" << m_performance_telemetry.world_count
-                    << " players=" << m_performance_telemetry.player_count
-                    << " entities(active/total)=" << m_performance_telemetry.active_entity_count << "/"
-                    << m_performance_telemetry.entity_count;
-            LOG_INFO("performance", message.str());
         }
 
         window.Reset(now);
@@ -793,10 +780,10 @@ void CServer::Run()
         }
 
         now = server_clock::now();
-        if (now - window.start >= performance_sample_interval) publish_telemetry(now, true);
+        if (now - window.start >= performance_sample_interval) publish_telemetry(now);
     }
 
-    publish_telemetry(server_clock::now(), false);
+    publish_telemetry(server_clock::now());
 }
 
 void CServer::ShutDown()

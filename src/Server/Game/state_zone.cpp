@@ -19,7 +19,7 @@ float WebReferenceMass(const CEntity* owner)
             stats && stats->mass > game_config::entity_collision_epsilon)
             return stats->mass;
     }
-    if (owner && owner->m_mass > game_config::entity_collision_epsilon) return owner->m_mass;
+    if (owner && owner->Mass() > game_config::entity_collision_epsilon) return owner->Mass();
     return std::max(game_config::entity_collision_epsilon, game_config::mob_player_flower_mass);
 }
 } // namespace
@@ -53,13 +53,13 @@ void CStateZone::Tick(float dt)
 void CStateZone::Apply()
 {
     CGameWorld* world = GameWorld();
-    if (!world || !m_state || m_radius <= 0.f) return;
+    if (!world || !m_state || Radius() <= 0.f) return;
 
-    world->ForEachEntityInEdgeRange(m_pos, m_radius, [this](CEntity* entity) {
+    world->ForEachEntityInEdgeRange(Pos(), Radius(), [this](CEntity* entity) {
         if (!entity || entity == this) return;
         if (entity->IsDead() || !entity->CanCollide()) return;
-        const float radius = m_radius + std::max(0.f, entity->m_radius);
-        if (DistanceSq(m_pos, entity->m_pos) > radius * radius) return;
+        const float radius = Radius() + std::max(0.f, entity->Radius());
+        if (DistanceSq(Pos(), entity->Pos()) > radius * radius) return;
         if (m_filter && !m_filter(entity)) return;
         auto* mob = dynamic_cast<CMobBase*>(entity);
         if (!mob) return;
@@ -80,17 +80,17 @@ CSpiderWebZone::CSpiderWebZone(CGameWorld* world, sf::Vector2f pos, float radius
               if (!state->IsValid()) return nullptr;
               return state;
           },
-          [owner_team = owner ? owner->m_team : 0, owner_id = owner ? owner->m_id : -1](CEntity* entity) -> bool {
-              if (!entity || entity->m_id == owner_id) return false;
+          [owner_team = owner ? owner->Team() : 0, owner_id = owner ? owner->Id() : -1](CEntity* entity) -> bool {
+              if (!entity || entity->Id() == owner_id) return false;
               if (dynamic_cast<CProjectile*>(entity)) return false;
-              if (owner_team != 0 && CheckTeam(owner_team, entity->m_team)) return false;
+              if (owner_team != 0 && CheckTeam(owner_team, entity->Team())) return false;
               return true;
           },
           MakeEntityType(EEntityType::StateZone, server_spider_web_entity_type))
 {
-    m_team = owner ? owner->m_team : 0;
-    m_mass = 0.f;
-    m_health = 1.f;
+    Team() = owner ? owner->Team() : 0;
+    Mass() = 0.f;
+    Health() = 1.f;
     m_timer = lifetime;
     m_apply_interval = game_config::mob_spider_web_apply_interval;
 }

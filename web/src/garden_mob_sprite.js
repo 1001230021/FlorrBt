@@ -21,6 +21,36 @@ const BASE_CACHE = new Map();
 const PART_CACHE = new Map();
 const ROCK_SHAPE_CACHE = new Map();
 
+// Drawn size = radius * 4.0, i.e. the sprite's visual radius is ~2x the
+// entity collision radius.
+const BUBBLE_VISUAL_SCALE = 4.0;
+const BUBBLE_FALLBACK_FILL = "rgba(255, 255, 255, 0.34)";
+const BUBBLE_FALLBACK_STROKE = "rgba(255, 255, 255, 0.7)";
+
+export function drawBubble(ctx, pos, radius, entityId) {
+  if (radius < 0.5) return;
+  const image = baseImage("./assets/bubble.svg", "raw", "raw");
+  // Fixed size: the per-mob ±10% radius variation is baked in by the server
+  // at spawn time (snap.radius) and must not change afterwards.
+  const size = Math.max(1, radius * BUBBLE_VISUAL_SCALE);
+  const half = size * 0.5;
+
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  if (isImageReady(image)) {
+    ctx.drawImage(image, -half, -half, size, size);
+  } else {
+    ctx.strokeStyle = BUBBLE_FALLBACK_STROKE;
+    ctx.fillStyle = BUBBLE_FALLBACK_FILL;
+    ctx.lineWidth = Math.max(1.2, size * 0.06);
+    ctx.beginPath();
+    ctx.arc(0, 0, half, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 export function drawRock(ctx, pos, radius, entityId, worldRadius = radius) {
   if (radius < 0.5) return;
   const points = rockShapePoints(entityId, worldRadius);
@@ -669,6 +699,10 @@ function stripAnimatedSvg(svgText, stripWings) {
         path.remove();
       return;
     }
+    if (mode === "firefly-body") {
+      if (wing) path.remove();
+      return;
+    }
     if (forelimb || (mode === "no-limbs-wings" && wing)) path.remove();
   });
   return new XMLSerializer().serializeToString(root);
@@ -832,4 +866,95 @@ function drawFallbackPortal(ctx, radius, scale) {
   ctx.beginPath();
   ctx.arc(0, 0, size * 0.35, 0, Math.PI * 2);
   ctx.stroke();
+}
+
+const FIREFLY_BASE_FACE_ANGLE = -Math.PI * 0.75;
+// Sprite sizing: scale the 110×110 viewBox so the body half-diameter (≈ 21
+// viewBox units) maps to the mob's collision radius. Without this the body
+// only fills ~76% of the collision circle and the firefly looks small.
+const FIREFLY_VIEWBOX_SIZE = 110;
+const FIREFLY_BODY_RADIUS = 21;
+// Wings animate exactly like the soldier ant's: same phase formula and same
+// per-part pivot rotation (svgParts "wings" + drawAnimatedParts).
+// Glow (荧光): warm bloom anchored at the lantern, sprite-local (65,65) —
+// 10 viewBox units right/down of the 110×110 center. Scaled to the collision
+// radius that lands (10/21 × radius, 10/21 × radius) in the rotated frame,
+// i.e. exactly at the butt behind the body when facing. Drawn UNDER the body;
+// radius tracks the body so it grows with size and its area pulses ±12.5%
+// over time like a breathing lantern.
+const FIREFLY_GLOW_RADIUS_SCALE = 1.35;
+const FIREFLY_GLOW_ANCHOR = (65 - FIREFLY_VIEWBOX_SIZE * 0.5) / FIREFLY_BODY_RADIUS;
+const FIREFLY_GLOW_AREA_PULSE = 0.125;
+const FIREFLY_GLOW_PULSE_HZ = 4.4;
+
+function fireflyBodyImage() {
+  return baseImage("./assets/firefly.svg", "firefly-body", "firefly-body");
+}
+
+// Firefly: lantern glow (under the sprite, at the butt) + body + wings that
+// flap exactly like the soldier ant's. Everything scales with `radius` so
+// bigger fireflies radiate a proportionally larger bloom.
+export function drawFirefly(ctx, pos, radius, entityId, angle, motion, time) {
+  const body = fireflyBodyImage();
+  const wings = svgParts("./assets/firefly.svg", "wings");
+  const animation = antAnimation(entityId, motion || 0, time || 0);
+  const spriteSize = Math.max(
+    1,
+    radius * (FIREFLY_VIEWBOX_SIZE / FIREFLY_BODY_RADIUS),
+  );
+  const half = spriteSize * 0.5;
+  const rotation =
+    (Number.isFinite(angle) ? angle : 0) - FIREFLY_BASE_FACE_ANGLE;
+
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  if (Number.isFinite(angle)) ctx.rotate(rotation);
+
+  // (0) Glow UNDER the body, anchored at the lantern (sprite-local 65,65;
+  // both offsets positive because the sprite's +y is the image's down).
+  // Area pulses ±12.5%.
+  const glowRadius = Math.max(1, radius * FIREFLY_GLOW_RADIUS_SCALE);
+  const pulse = Math.sqrt(
+    Math.max(
+      0,
+      1 +
+        FIREFLY_GLOW_AREA_PULSE *
+          Math.sin(
+            (time || 0) * FIREFLY_GLOW_PULSE_HZ + (entityId || 0) * 0.83,
+          ),
+    ),
+  );
+  const finalGlow = glowRadius * pulse;
+  const glowX = radius * FIREFLY_GLOW_ANCHOR;
+  const glowY = radius * FIREFLY_GLOW_ANCHOR;
+  const gradient = ctx.createRadialGradient(
+    glowX,
+    glowY,
+    radius * 0.2,
+    glowX,
+    glowY,
+    finalGlow,
+  );
+  gradient.addColorStop(0, "rgba(255, 240, 160, 0.42)");
+  gradient.addColorStop(0.55, "rgba(255, 226, 110, 0.18)");
+  gradient.addColorStop(1, "rgba(255, 220, 90, 0)");
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.arc(glowX, glowY, finalGlow, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (isImageReady(body)) {
+    ctx.drawImage(body, -half, -half, spriteSize, spriteSize);
+  } else {
+    ctx.fillStyle = "#f9ec77";
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Wings: identical to the soldier ant — same amount, same per-part pivot
+  // rotation around each wing's own pivot.
+  drawAnimatedParts(ctx, wings, spriteSize, animation.wing, "fill");
+
+  ctx.restore();
 }

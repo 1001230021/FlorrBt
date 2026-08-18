@@ -92,14 +92,16 @@ const petalNames = parseNamesArray("petal_type.h", "petal_type_names");
 const mobNames = parseNamesArray("mob_type.h", "mob_type_names");
 if (petalNames.length !== petal.length)
   fail(`petal_type_names has ${petalNames.length} entries but EPetalType has ${petal.length}`);
-if (mobNames.length !== mob.length)
-  fail(`mob_type_names has ${mobNames.length} entries but EMobType has ${mob.length}`);
 for (let i = 0; i < petal.length; i += 1)
   if (petalNames[i] !== petal[i].name)
     fail(`petal_type_names[${i}] = "${petalNames[i]}" but EPetalType entry is "${petal[i].name}"`);
-for (let i = 0; i < mob.length; i += 1)
-  if (mobNames[i] !== mob[i].name)
-    fail(`mob_type_names[${i}] = "${mobNames[i]}" but EMobType entry is "${mob[i].name}"`);
+// The mob enum reserves a sparse mod range (EMobType::Mod64..Mod127), so
+// names align by VALUE (names[entry.value]) instead of by position.
+for (let i = 0; i < mob.length; i += 1) {
+  const value = mob[i].value;
+  if (value < 0 || value >= mobNames.length || mobNames[value] !== mob[i].name)
+    fail(`mob_type_names[${value}] = "${mobNames[value] || "(missing)"}" but EMobType entry is "${mob[i].name}"`);
+}
 
 // Rarity names in rarity.h are a switch; the generator asserts the JS view of
 // them so the hand-written rarity_names array (added to rarity.h) stays aligned.
@@ -157,6 +159,7 @@ emitIndexArray("RARITY_NAMES", rarityNames);
 emitMap("PETAL_IDS", idMap(petal));
 // Index 0 stays the numeric None sentinel used by the client for empty slots.
 emitIndexArray("PETAL_ICON_IDS", petal.map((entry) => (entry.value === 0 ? 0 : toSnakeCase(entry.name))));
+emitIndexArray("PETAL_NAMES", petalNames);
 
 emitMap("MOB_IDS", idMap(mob));
 emitIndexArray("MOB_NAMES", mobNames);

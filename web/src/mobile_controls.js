@@ -19,6 +19,7 @@ function createButton(labelKey, className, titleKey) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = `mobile-control-button ${className}`;
+  button.draggable = false;
   button.dataset.i18nLabel = labelKey;
   button.dataset.i18nTitle = titleKey || labelKey;
   translateButton(button);
@@ -36,11 +37,7 @@ function translateButton(button) {
 
 export function createMobileControls({
   isUiTarget,
-  onBackpack,
-  onTalent,
-  onCraft,
-  onSettings,
-  onChat,
+  onQuickSwap,
 } = {}) {
   const root = document.createElement("section");
   root.className = "mobile-controls ui hidden";
@@ -52,45 +49,15 @@ export function createMobileControls({
     '<div class="mobile-joystick-base"></div><div class="mobile-joystick-knob"></div>';
   const knob = joystick.querySelector(".mobile-joystick-knob");
 
-  const actionGroup = document.createElement("div");
-  actionGroup.className = "mobile-panel-actions";
-  const backpackButton = createButton(
-    "ui.mobile.bagLabel",
-    "mobile-panel-button",
-    "ui.mobile.inventory",
-  );
-  const talentButton = createButton(
-    "ui.mobile.talentLabel",
-    "mobile-panel-button",
-    "ui.mobile.talents",
-  );
-  const craftButton = createButton(
-    "ui.mobile.craft",
-    "mobile-panel-button",
-    "ui.mobile.craft",
-  );
-  const chatButton = createButton(
-    "ui.mobile.chat",
-    "mobile-panel-button",
-    "ui.mobile.chat",
-  );
-  const settingsButton = createButton(
-    "ui.mobile.settingsLabel",
-    "mobile-panel-button",
-    "ui.mobile.settings",
-  );
-  actionGroup.append(
-    backpackButton,
-    talentButton,
-    craftButton,
-    settingsButton,
-    chatButton,
-  );
-
   const attackButton = createButton(
     "ui.mobile.attackLabel",
     "mobile-attack-button",
     "ui.mobile.attack",
+  );
+  const swapButton = createButton(
+    "ui.mobile.swapLabel",
+    "mobile-swap-button",
+    "ui.mobile.swap",
   );
   const defendButton = createButton(
     "ui.mobile.defendLabel",
@@ -98,7 +65,11 @@ export function createMobileControls({
     "ui.mobile.defend",
   );
 
-  root.append(joystick, actionGroup, attackButton, defendButton);
+  const actionCluster = document.createElement("div");
+  actionCluster.className = "mobile-action-cluster";
+  actionCluster.append(attackButton, swapButton, defendButton);
+
+  root.append(joystick, actionCluster);
   document.body.appendChild(root);
 
   let enabled = false;
@@ -210,11 +181,7 @@ export function createMobileControls({
   bindHoldButton(defendButton, (value) => {
     defending = value;
   });
-  bindTapButton(backpackButton, onBackpack);
-  bindTapButton(talentButton, onTalent);
-  bindTapButton(craftButton, onCraft);
-  bindTapButton(settingsButton, onSettings);
-  bindTapButton(chatButton, onChat);
+  bindTapButton(swapButton, onQuickSwap);
 
   window.addEventListener("pointerdown", beginMovement, {
     capture: true,
@@ -232,6 +199,14 @@ export function createMobileControls({
     capture: true,
     passive: false,
   });
+
+  const suppressMystery = (event) => {
+    if (shouldUseMobileMode()) event.preventDefault();
+  };
+  root.addEventListener("contextmenu", suppressMystery);
+  root.addEventListener("dragstart", suppressMystery);
+  window.addEventListener("contextmenu", suppressMystery);
+  window.addEventListener("dragstart", suppressMystery);
 
   return {
     refreshTranslations() {

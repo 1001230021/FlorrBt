@@ -5,9 +5,11 @@
 #include "Game/entity.h"
 #include "Game/gamecontext.h"
 #include "Game/gamecontrollers/opencontroller.h"
+#include "Game/gamecontrollers/world_controller_factory.h"
 #include "Game/gameworld.h"
 #include "Game/player.h"
 #include "Module/network_module.h"
+#include "Module/world_module.h"
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -451,7 +453,7 @@ bool HandleServerCommand(CPlayer& reporter, const std::string& command_line)
     CGameWorld* reporter_world = reporter_entity ? reporter_entity->GameWorld() : nullptr;
     auto* squad_controller = reporter_world ? dynamic_cast<COpenController*>(reporter_world->GetController()) : nullptr;
 
-    if (name == "join")
+    if (name == "invite")
     {
         if (!squad_controller)
         {
@@ -461,26 +463,179 @@ bool HandleServerCommand(CPlayer& reporter, const std::string& command_line)
 
         if (args.size() < 2)
         {
-            SendPrivateSystem(reporter, "failed to squad");
+            SendPrivateSystem(reporter, "Usage: /invite [name|accept|refuse]");
+            return true;
+        }
+
+        const std::string action = ToLower(args[1]);
+        if (action == "accept" || action == "refuse")
+        {
+            CPlayer* inviter = squad_controller->ConsumeSquadInvite(*reporter_world, reporter);
+            if (!inviter)
+            {
+                SendPrivateSystem(reporter, "<sq-invite-none>()");
+                return true;
+            }
+
+            if (action == "refuse")
+            {
+                SendPrivateSystem(reporter, "<sq-invite-refused-you>(" + inviter->GetName() + ")");
+                SendPrivateSystem(*inviter, "<sq-invite-refused>(" + reporter.GetName() + ")");
+                return true;
+            }
+
+            if (!squad_controller->TryAcceptSquadInvite(*reporter_world, reporter, *inviter))
+            {
+                SendPrivateSystem(reporter, "<sq-invite-failed>(" + inviter->GetName() + ")");
+                SendPrivateSystem(*inviter, "<sq-invite-failed-them>(" + reporter.GetName() + ")");
+                return true;
+            }
+
+            const std::vector<CPlayer*> members = squad_controller->GetSquadPlayerList(*reporter_world, reporter);
+            for (CPlayer* member : members)
+            {
+                if (!member) continue;
+                if (member == &reporter)
+                    SendSquadSystem(*member, "<sq-joined-you>(" + inviter->GetName() + ")", members);
+                else
+                    SendSquadSystem(*member, "<sq-joined>(" + reporter.GetName() + ")", members);
+            }
             return true;
         }
 
         CPlayer* target = FindPlayerByName(context, JoinArgs(args, 1));
         CEntity* target_entity = target ? target->GetEntity() : nullptr;
-        if (!target || !target_entity || target_entity->GameWorld() != reporter_world ||
-            !squad_controller->TrySquad(*reporter_world, reporter, *target))
+        if (!target || target == &reporter || !target_entity || target_entity->GameWorld() != reporter_world ||
+            !squad_controller->TryInviteSquad(*reporter_world, reporter, *target))
         {
-            SendPrivateSystem(reporter, "failed to squad");
+            SendPrivateSystem(reporter, "<sq-invite-invalid>()");
             return true;
         }
 
-        const std::vector<CPlayer*> members = squad_controller->GetSquadPlayerList(*reporter_world, reporter);
-        for (CPlayer* member : members)
+        SendPrivateSystem(reporter, "<sq-invite-sent>(" + target->GetName() + ")");
+        SendPrivateSystem(*target, "<sq-invite>(" + reporter.GetName() + ")");
+        return true;
+    }
+
+    if (name == "create" || name == "create_room" || name == "createroom")
+    {
+        if (args.size() < 2)
         {
-            if (!member || member == &reporter) continue;
-            SendSquadSystem(*member, "you have squaded with " + reporter.GetName(), members);
+            SendPrivateSystem(reporter, "Usage: /create [controller name]");
+            return true;
         }
-        SendSquadSystem(reporter, "you have joined " + target->GetName() + "'s squad", members);
+
+        const std::string controller_name = ToLower(JoinArgs(args, 1));
+        const std::string_view controller_key = map_declarations::ControllerKeyForName(controller_name);
+        if (controller_key.empty())
+        {
+            SendPrivateSystem(reporter, "unknown controller: " + controller_name);
+            return true;
+        }
+        if (controller_key == world_controller_keys::waiting)
+        {
+            SendPrivateSystem(reporter, "cannot create a room with the waiting controller");
+            return true;
+        }
+
+        IWorldModule* world_module = server ? server->GetWorldModule() : nullptr;
+        if (!world_module)
+        {
+            SendPrivateSystem(reporter, "room creation unavailable");
+            return true;
+        }
+
+        const int room_code = world_module->NextRoomCode();
+        if (room_code < 0)
+        {
+            SendPrivateSystem(reporter, "no room codes available");
+            return true;
+        }
+
+        CGameWorld* waiting_world =
+            world_module->CreateRoomWorld(game_config::room_default_map_path, controller_key, room_code);
+        if (!waiting_world)
+        {
+            SendPrivateSystem(reporter, "failed to create room");
+            return true;
+        }
+
+        // The creator joins their own room.
+        CEntity* reporter_entity = reporter.GetEntity();
+        bool transferred = false;
+        if (reporter_entity && reporter_entity->GameWorld() != waiting_world)
+            transferred = reporter_entity->GameWorld()->TransferPlayerEntityToWorld(reporter, *waiting_world) != nullptr;
+        LOG_INFO("room", "create: code=" + std::to_string(room_code) + " controller=" + controller_name +
+                             " player=" + reporter.GetName() + " entity=" +
+                             (reporter_entity ? std::to_string(reporter_entity->Id()) : "none") +
+                             " transferred=" + (transferred ? "yes" : "no"));
+        if (!transferred)
+            SendPrivateSystem(reporter, "room created: code " + std::to_string(room_code) + " (transfer failed, use /join-room)");
+        else
+            SendPrivateSystem(reporter, "room created: code " + std::to_string(room_code) + " controller " +
+                                            controller_name);
+        return true;
+    }
+
+    if (name == "join-room" || name == "joinroom" || name == "join_room")
+    {
+        if (args.size() < 2)
+        {
+            SendPrivateSystem(reporter, "Usage: /join-room [code]");
+            return true;
+        }
+
+        int room_code = 0;
+        try
+        {
+            room_code = std::stoi(args[1]);
+        } catch (...)
+        {
+            SendPrivateSystem(reporter, "invalid room code");
+            return true;
+        }
+
+        IWorldModule* world_module = server ? server->GetWorldModule() : nullptr;
+        CGameWorld* waiting_world = world_module ? world_module->FindRoomWorld(room_code) : nullptr;
+        if (!waiting_world)
+        {
+            SendPrivateSystem(reporter, "room not found: " + args[1]);
+            return true;
+        }
+
+        CEntity* reporter_entity = reporter.GetEntity();
+        if (!reporter_entity || reporter_entity->GameWorld() == waiting_world)
+        {
+            SendPrivateSystem(reporter, "already in room " + args[1]);
+            return true;
+        }
+
+        CGameWorld* source_world = reporter_entity->GameWorld();
+        CEntity* transferred_entity =
+            source_world ? source_world->TransferPlayerEntityToWorld(reporter, *waiting_world) : nullptr;
+        LOG_INFO("room", "join: code=" + std::to_string(room_code) + " player=" + reporter.GetName() +
+                             " source=" + (source_world ? std::to_string(source_world->GetId()) : "none") +
+                             " target=" + std::to_string(waiting_world->GetId()) +
+                             " result=" + (transferred_entity ? "ok" : "fail"));
+        if (!transferred_entity)
+        {
+            SendPrivateSystem(reporter, "failed to join room " + args[1]);
+            return true;
+        }
+
+        SendPrivateSystem(reporter, "joined room " + std::to_string(room_code));
+        return true;
+    }
+
+    if (reporter_world && reporter_world->GetController() &&
+        reporter_world->GetController()->HandlePlayerCommand(*reporter_world, reporter, args))
+    {
+        return true;
+    }
+
+    if (name == "start")
+    {
+        SendPrivateSystem(reporter, "you are not in a waiting room");
         return true;
     }
 
@@ -537,13 +692,13 @@ bool HandleServerCommand(CPlayer& reporter, const std::string& command_line)
             return true;
         }
 
-        const CServer::SChatEntry* entry =
-            server->SubmitChat(reporter_world, reporter_entity->m_pos, EChatFlag::Squad, reporter.GetId(),
+        const CServer::SChatEntry entry =
+            server->SubmitChat(reporter_world, reporter_entity->Pos(), EChatFlag::Squad, reporter.GetId(),
                                reporter.GetName(), JoinArgs(args, 1));
-        if (!entry) return true;
+        if (entry.message.empty()) return true;
         for (CPlayer* member : members)
         {
-            if (member) network->SendChatToPlayer(*member, *entry);
+            if (member) network->SendChatToPlayer(*member, entry);
         }
         return true;
     }

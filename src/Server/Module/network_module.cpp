@@ -3,11 +3,15 @@
 #include "../Persistence/account_store.h"
 #include "../Persistence/unique_petal_registry.h"
 #include "../../Engine/logger.h"
+#include "../../Shared/drop_rate.h"
+#include "../../Shared/mob_type.h"
 #include "../../Shared/network_msg.h"
+#include "../../Shared/utf8.h"
 #include "../Game/controllers/player_controller.h"
 #include "../Game/entities/flower.h"
 #include "../Game/entities/petals/petal.h"
 #include "../Game/gamecontext.h"
+#include "../Game/gamecontrollers/world_controller_factory.h"
 #include "../Game/gameworld.h"
 #include "../Game/player.h"
 #include "../Game/systems/weather_diurnal_system.h"
@@ -488,13 +492,12 @@ void SendPrivateServerMessage(CServer& server, INetworkModule& network, CPlayer&
     size_t offset = 0;
     while (offset < text.size())
     {
-        std::string part = text.substr(offset, max_chat_message_size);
+        const std::string_view remaining(text.data() + offset, text.size() - offset);
+        std::string part(TruncateUtf8(remaining, max_chat_message_size));
         offset += part.size();
-        if (const CServer::SChatEntry* chat = server.SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "RCON",
-                                                               part, static_cast<int>(player.GetId())))
-        {
-            network.SendChatToPlayer(player, *chat);
-        }
+        const CServer::SChatEntry chat = server.SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "RCON", part,
+                                                    static_cast<int>(player.GetId()));
+        if (!chat.message.empty()) network.SendChatToPlayer(player, chat);
     }
 }
 
@@ -786,6 +789,26 @@ void INetworkModule::SendSnapshots()
         CSnapshotService::SBuildResult& snapshot = item.snapshot;
         const size_t full_snapshot_size = snapshot.packed_size;
         size_t actual_snapshot_size = full_snapshot_size;
+        // Weather intensities ride along with every snapshot (main thread after
+        // the worker batch joined), so clients always have fresh weather.
+        if (const CWeatherDiurnalSystem* system = m_server.GetWeatherDiurnalSystem())
+        {
+            const SWeatherDiurnalClientState environment = system->GetClientState();
+            for (std::size_t index = 0; index < server_environment_weather_count; ++index)
+            {
+                const float intensity =
+                    index < static_cast<std::size_t>(EWeatherType::Count)
+                        ? environment.weather_intensity[index]
+                        : 0.f;
+                snapshot.message.weather_intensity[index] =
+                    static_cast<std::uint8_t>(std::llround(std::clamp(intensity, 0.f, 1.f) * 255.f));
+            }
+            const SWeatherDiurnalSnapshot environment_snapshot = system->GetWeatherDiurnalSnapshot();
+            snapshot.message.wind_direction = static_cast<std::uint8_t>(std::llround(
+                std::clamp(environment_snapshot.meteorology.wind_direction_degrees / 360.f, 0.f, 1.f) * 255.f));
+            snapshot.message.wind_speed = static_cast<std::uint8_t>(std::llround(
+                std::clamp(environment_snapshot.meteorology.wind_speed / 20.f, 0.f, 1.f) * 255.f));
+        }
         SSnapshotHistoryEntry history_entry =
             PrepareSnapshotForSend(*player, snapshot.message, full_snapshot_size, actual_snapshot_size);
 
@@ -1387,6 +1410,9 @@ INetworkModule::SSnapshotHistoryEntry INetworkModule::PrepareSnapshotForSend(CPl
     delta.server_tick = msg.server_tick;
     delta.owner_entity_id = msg.owner_entity_id;
     delta.view_radius = msg.view_radius;
+    std::copy_n(msg.weather_intensity, server_environment_weather_count, delta.weather_intensity);
+    delta.wind_direction = msg.wind_direction;
+    delta.wind_speed = msg.wind_speed;
 
     for (const ServerEntitySnap& snap : msg.entities)
     {
@@ -1486,18 +1512,30 @@ bool INetworkModule::QueueWelcome(CPlayer& player)
 
     if (CEntity* entity = player.GetEntity())
     {
-        msg.owner_entity_id = static_cast<net_entity_id>(entity->m_id);
+        msg.owner_entity_id = static_cast<net_entity_id>(entity->Id());
         if (CGameWorld* world = entity->GameWorld()) msg.map_name = world->GetMapPath();
     } else
     {
         msg.owner_entity_id = 0;
         msg.map_name = m_lobby_world.GetMapPath();
     }
+    msg.weather_enabled = map_declarations::DeclaresWeatherDiurnal(msg.map_name) ? 1 : 0;
 
-    if (!QueueMessage(player, msg)) return false;
+    if (!QueueMessage(player, msg))
+    {
+        LOG_WARN("network", "QueueWelcome: Welcome message queue failed for player " + std::to_string(player.GetId()));
+        return false;
+    }
     const bool environment_queued = QueueEnvironment(player);
-    if (environment_queued) report::SyncSquadMetadata(player);
-    return environment_queued;
+    if (!environment_queued)
+    {
+        LOG_WARN("network", "QueueWelcome: Environment queue failed for player " + std::to_string(player.GetId()));
+        return false;
+    }
+    QueueCodexFull(player);
+    QueueCodexLoot(player);
+    report::SyncSquadMetadata(player);
+    return true;
 }
 
 bool INetworkModule::QueueEnvironment(CPlayer& player)
@@ -1520,21 +1558,152 @@ bool INetworkModule::QueueEnvironment(CPlayer& player)
         msg.weather_intensity[index] =
             static_cast<std::uint8_t>(std::llround(std::clamp(intensity, 0.f, 1.f) * 255.f));
     }
+    const SWeatherDiurnalSnapshot snapshot = system->GetWeatherDiurnalSnapshot();
+    msg.wind_direction = static_cast<std::uint8_t>(std::llround(
+        std::clamp(snapshot.meteorology.wind_direction_degrees / 360.f, 0.f, 1.f) * 255.f));
+    msg.wind_speed = static_cast<std::uint8_t>(
+        std::llround(std::clamp(snapshot.meteorology.wind_speed / 20.f, 0.f, 1.f) * 255.f));
     return QueueMessage(player, msg);
+}
+
+void INetworkModule::QueueCodexFull(CPlayer& player)
+{
+    // Full codex progress: every mob type x rarity combination, including
+    // zero-count entries, so the client renders the complete bestiary grid.
+    ServerMessage msg;
+    msg.type = ServerMessage::Type::CodexFull;
+    const auto& codex = player.GetCodex();
+    msg.codex_entries.reserve(
+        (mob_type_names.size() - 1) * (static_cast<int>(ERarity::Primordial) - static_cast<int>(ERarity::Common) + 1));
+    for (std::size_t mob = 1; mob < mob_type_names.size(); ++mob)
+    {
+        for (int rarity = static_cast<int>(ERarity::Common); rarity <= static_cast<int>(ERarity::Primordial); ++rarity)
+        {
+            const uint32_t key = (static_cast<uint32_t>(mob) << 8) | static_cast<uint32_t>(rarity);
+            uint32_t count = 0;
+            const auto it = codex.find(key);
+            if (it != codex.end()) count = it->second;
+            msg.codex_entries.push_back(
+                { static_cast<uint8_t>(mob), static_cast<uint8_t>(rarity), count });
+        }
+    }
+    if (!QueueMessage(player, msg))
+    {
+        LOG_WARN("network", "QueueCodexFull failed (" + std::to_string(msg.codex_entries.size()) + " entries)");
+        return;
+    }
+    LOG_INFO("network", "CodexFull queued for player " + std::to_string(player.GetId()) + " (" +
+                            std::to_string(msg.codex_entries.size()) + " entries)");
+}
+
+void INetworkModule::QueueCodexLoot(CPlayer& player)
+{
+    ServerMessage msg;
+    msg.type = ServerMessage::Type::CodexLoot;
+    for (const auto& [key, drops] : GetDropRateTable())
+    {
+        for (const SDropRate& drop : drops)
+        {
+            msg.codex_loot_entries.push_back(
+                { static_cast<uint8_t>(key.mob_type), static_cast<uint8_t>(key.rarity),
+                  static_cast<uint8_t>(drop.type), static_cast<uint8_t>(drop.rarity),
+                  static_cast<uint16_t>(std::clamp(drop.drop_rate, 0.0, 1.0) * 10000.0) });
+        }
+    }
+    QueueMessage(player, msg);
+}
+
+void INetworkModule::SendCodexDelta(CPlayer& player, uint8_t mob_type, uint8_t rarity, uint32_t count)
+{
+    if (!player.IsConnected() || !player.IsAuthenticated()) return;
+    ServerMessage msg;
+    msg.type = ServerMessage::Type::CodexDelta;
+    msg.codex_delta_entries.push_back({ mob_type, rarity, count });
+    QueueMessage(player, msg);
+}
+
+void INetworkModule::BroadcastLightningChain(CGameWorld& world, const std::vector<sf::Vector2f>& points)
+{
+    ServerMessage msg;
+    msg.type = ServerMessage::Type::LightningChain;
+    msg.lightning_points = points;
+    for (const auto& player : m_players)
+    {
+        if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
+        CEntity* entity = player->GetEntity();
+        if (!entity || entity->GameWorld() != &world) continue;
+        QueueMessage(*player, msg);
+    }
+}
+
+void INetworkModule::SendTerrainDelta(CPlayer& player, uint8_t layer, uint16_t row, uint16_t col, uint32_t gid)
+{
+    ServerMessage msg;
+    msg.type = ServerMessage::Type::TerrainDelta;
+    msg.terrain_layer = layer;
+    msg.terrain_row = row;
+    msg.terrain_col = col;
+    msg.terrain_gid = gid;
+    QueueMessage(player, msg);
+}
+
+void INetworkModule::BroadcastTerrainDelta(CGameWorld& world, uint8_t layer, uint16_t row, uint16_t col, uint32_t gid)
+{
+    for (const auto& player : m_players)
+    {
+        if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
+        CEntity* entity = player->GetEntity();
+        if (!entity || entity->GameWorld() != &world) continue;
+        SendTerrainDelta(*player, layer, row, col, gid);
+    }
+}
+
+void INetworkModule::SendTerrainWallRemove(CPlayer& player, sf::Vector2f min_pos, sf::Vector2f max_pos)
+{
+    ServerMessage msg;
+    msg.type = ServerMessage::Type::TerrainWallRemove;
+    msg.wall_remove_min = min_pos;
+    msg.wall_remove_max = max_pos;
+    QueueMessage(player, msg);
+}
+
+void INetworkModule::BroadcastTerrainWallRemove(CGameWorld& world, sf::Vector2f min_pos, sf::Vector2f max_pos)
+{
+    for (const auto& player : m_players)
+    {
+        if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
+        CEntity* entity = player->GetEntity();
+        if (!entity || entity->GameWorld() != &world) continue;
+        SendTerrainWallRemove(*player, min_pos, max_pos);
+    }
 }
 
 void INetworkModule::BroadcastEnvironmentIfChanged()
 {
     const CWeatherDiurnalSystem* system = m_server.GetWeatherDiurnalSystem();
     if (!system) return;
-    const SWeatherDiurnalClientState environment = system->GetClientState();
-    if (environment.revision == m_last_environment_revision) return;
-    m_last_environment_revision = environment.revision;
+    // Time-of-day is extrapolated client-side from the anchor tick, and weather
+    // rides along with every snapshot. The Environment message is therefore only
+    // re-sent on connect (QueueEnvironment), when the day length changes, or when
+    // the virtual time jumps (e.g. the `weather time` command), so clients do not
+    // stay anchored to a stale time-of-day.
+    const SWeatherDiurnalSnapshot snapshot = system->GetWeatherDiurnalSnapshot();
+    const float day_duration = static_cast<float>(system->DayDurationSeconds());
+    const bool day_changed = day_duration != m_last_environment_day_duration;
+    const double raw_jump = std::abs(snapshot.time_of_day - m_last_environment_time_of_day);
+    const double time_jump = std::min(raw_jump, 1.0 - raw_jump);
+    // Natural advance is ~2e-6 per tick; a command jump is orders of magnitude larger.
+    const bool time_jumped = time_jump > 0.002;
+    if (!day_changed && !time_jumped) return;
+    m_last_environment_day_duration = day_duration;
+    m_last_environment_time_of_day = snapshot.time_of_day;
 
+    // Queue only: the network thread owns socket sends, so flushing here would
+    // race with it and disconnect players on send failure.
     for (const auto& player : m_players)
     {
         if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
-        if (!QueueEnvironment(*player) || !FlushSendBuffer(*player)) player->DetachSocket();
+        QueueEnvironment(*player);
     }
 }
 
@@ -1651,7 +1820,7 @@ void INetworkModule::BroadcastChat(const CServer::SChatEntry& chat)
             if (chat.world)
             {
                 CEntity* entity = player->GetEntity();
-                if (!entity || entity->m_is_marked_for_des || entity->GameWorld() != chat.world) continue;
+                if (!entity || entity->IsMarkedForDes() || entity->GameWorld() != chat.world) continue;
             }
             QueueChat(*player, chat);
             continue;
@@ -1674,12 +1843,12 @@ void INetworkModule::BroadcastChat(const CServer::SChatEntry& chat)
         }
 
         CEntity* entity = player->GetEntity();
-        if (!entity || entity->m_is_marked_for_des || entity->GameWorld() != chat.world) continue;
+        if (!entity || entity->IsMarkedForDes() || entity->GameWorld() != chat.world) continue;
 
         auto* mob = dynamic_cast<CMobBase*>(entity);
         const SMobStats* stats = mob ? mob->GetFinalStats() : nullptr;
         float range = (stats ? stats->horizon : game_config::default_horizon) * 2.f;
-        if (DistanceSq(entity->m_pos, chat.pos) <= range * range) QueueChat(*player, chat);
+        if (DistanceSq(entity->Pos(), chat.pos) <= range * range) QueueChat(*player, chat);
     }
 }
 
@@ -1968,7 +2137,7 @@ void INetworkModule::HandleChatRequest(CPlayer& player, const ClientChatRequest&
     if (HandleRconCommand(m_server, *this, player, request.message)) return;
 
     CEntity* entity = player.GetEntity();
-    if (!entity || entity->m_is_marked_for_des) return;
+    if (!entity || entity->IsMarkedForDes()) return;
 
     if (!request.message.empty() && request.message.front() == '/')
     {
@@ -1992,11 +2161,9 @@ void INetworkModule::HandleChatRequest(CPlayer& player, const ClientChatRequest&
     }
 
     EChatFlag flag = request.flag == EChatFlag::Local ? EChatFlag::Local : EChatFlag::Global;
-    if (const CServer::SChatEntry* chat = m_server.SubmitChat(
-            entity->GameWorld(), entity->m_pos, flag, player.GetId(), player.GetName(), request.message))
-    {
-        BroadcastChat(*chat);
-    }
+    const CServer::SChatEntry chat = m_server.SubmitChat(entity->GameWorld(), entity->Pos(), flag, player.GetId(),
+                                                     player.GetName(), request.message);
+    if (!chat.message.empty()) BroadcastChat(chat);
 }
 
 void INetworkModule::HandleSecondarySlotRequest(CPlayer& player, const ClientSecondarySlotRequest& request)
@@ -2045,16 +2212,16 @@ void INetworkModule::HandleForgeRequest(CPlayer& player, const ClientForgeReques
 
     CEntity* player_entity = player.GetEntity();
     CGameWorld* world = player_entity ? player_entity->GameWorld() : nullptr;
-    if (!player_entity || !world || player_entity->m_is_marked_for_des || player_entity->IsDead())
+    if (!player_entity || !world || player_entity->IsMarkedForDes() || player_entity->IsDead())
     {
         reject();
         return;
     }
 
     auto* forge_titan = dynamic_cast<CTitanFlower*>(world->FindClosestEntityByEdge(
-        player_entity->m_pos, game_config::titan_forge_range, [](const CEntity* candidate) {
+        player_entity->Pos(), game_config::titan_forge_range, [](const CEntity* candidate) {
             const auto* titan = dynamic_cast<const CTitanFlower*>(candidate);
-            return titan && !titan->m_is_marked_for_des && !titan->IsDead();
+            return titan && !titan->IsMarkedForDes() && !titan->IsDead();
         }));
     const EPetalType petal_type = static_cast<EPetalType>(request.petal_type);
     if (!forge_titan || !m_server.CanTitanForgePetal(petal_type) ||

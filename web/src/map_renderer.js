@@ -290,11 +290,14 @@ export function createMapRenderer({
 
     const tileWidth = map.tileWidth * overviewScale;
     const tileHeight = map.tileHeight * overviewScale;
-    const overviewTileImages = buildOverviewTileImages(
-      map.tileImages,
-      tileWidth,
-      tileHeight,
-    );
+    if (!map.overviewTileImagesCache) {
+      map.overviewTileImagesCache = buildOverviewTileImages(
+        map.tileImages,
+        tileWidth,
+        tileHeight,
+      );
+    }
+    const overviewTileImages = map.overviewTileImagesCache;
     overviewCtx.imageSmoothingEnabled = true;
     let sliceStarted = performance.now();
 
@@ -715,9 +718,101 @@ export function createMapRenderer({
     );
   }
 
+  function applyTerrainDelta(layerIndex, row, col, gid) {
+    const map = state.map;
+    if (!map) return false;
+    const layer = map.layers[layerIndex];
+    if (!layer || !layer.tiles || !layer.width || !layer.height) return false;
+    const index = row * layer.width + col;
+    if (index < 0 || index >= layer.tiles.length) return false;
+    if (layer.tiles[index] === gid) return false;
+    layer.tiles[index] = gid;
+
+    // Drop every cached chunk (across all zoom profiles) that covers the
+    // changed tile. Chunks always rebuild from the updated layer, so no old
+    // tile pixels can linger.
+    if (map.chunkCache) {
+      for (const [key, chunk] of [...map.chunkCache.entries()]) {
+        const parts = String(key).split(":");
+        if (parts.length !== 5) continue;
+        if (Number(parts[2]) !== layerIndex) continue;
+        const span = Number(parts[0]) || 1;
+        const chunkX = Number(parts[3]);
+        const chunkY = Number(parts[4]);
+        if (
+          col >= chunkX * span &&
+          col < (chunkX + 1) * span &&
+          row >= chunkY * span &&
+          row < (chunkY + 1) * span
+        )
+          map.chunkCache.delete(key);
+      }
+    }
+
+    // If the new tile's image just became available, drop the raster cache so
+    // the next overview rebuild includes it.
+    if (gid && map.overviewTileImagesCache) {
+      const canonicalGid = canonicalTileGid(gid);
+      if (
+        !map.overviewTileImagesCache.has(canonicalGid) &&
+        imageReady(map.tileImages.get(canonicalGid))
+      )
+        map.overviewTileImagesCache = null;
+    }
+
+    // Rebuild the zoomed-out overview lazily: debounce so a burst of deltas
+    // (one per changed tile) collapses into a single rebuild after the burst.
+    if (map.overviewRebuildTimer) window.clearTimeout(map.overviewRebuildTimer);
+    map.overviewRebuildTimer = window.setTimeout(() => {
+      map.overviewRebuildTimer = null;
+      buildFullMapOverview(map, state.mapLoadToken)
+        .catch(() => {})
+        .finally(() => requestDraw());
+    }, 500);
+    requestDraw();
+    return true;
+  }
+
+  function applyWallRemove(minPos, maxPos) {
+    const map = state.map;
+    if (!map || !map.collisionWalls) return false;
+    const minX = Math.min(minPos.x, maxPos.x);
+    const minY = Math.min(minPos.y, maxPos.y);
+    const maxX = Math.max(minPos.x, maxPos.x);
+    const maxY = Math.max(minPos.y, maxPos.y);
+    const before = map.collisionWalls.length;
+    map.collisionWalls = map.collisionWalls.filter(
+      (wall) =>
+        !(wall.maxX >= minX && wall.minX <= maxX && wall.maxY >= minY && wall.minY <= maxY),
+    );
+    if (map.collisionWalls.length === before) return false;
+    map.collisionWallBuckets = buildCollisionWallBuckets(
+      map.collisionWalls,
+      map.tileWidth,
+      map.tileHeight,
+    );
+    const minimapSubdivisions = map.minimapSubdivisions || 1;
+    const minimapCellColumns = Math.max(1, map.width * minimapSubdivisions);
+    map.minimapCollisionCells = buildMinimapCollisionCells(
+      map.collisionWalls,
+      map.width,
+      map.height,
+      map.tileWidth,
+      map.tileHeight,
+      minimapSubdivisions,
+    );
+    map.minimapCollisionCellIndices = new Set(
+      map.minimapCollisionCells.map((cell) => cell.y * minimapCellColumns + cell.x),
+    );
+    requestDraw();
+    return true;
+  }
+
   return {
     drawGrid,
     loadMap,
+    applyTerrainDelta,
+    applyWallRemove,
     resolvePredictedCircleMotion,
   };
 }

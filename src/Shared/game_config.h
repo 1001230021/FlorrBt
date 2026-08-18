@@ -69,6 +69,7 @@ inline int min_mob_spawn_report_rarity = 9;
 inline float default_acceleration = WorldUnits(150.0f);
 inline float default_air_base_mass = 16.0f;
 inline float default_air_base_radius = WorldUnits(8.0f);
+inline float default_brush_reload = 0.5f;
 inline float default_amulet_base_damage = 0.0f;
 inline float default_amulet_base_health = 10.0f;
 inline float default_amulet_base_radius = WorldUnits(10.0f);
@@ -91,17 +92,17 @@ inline float default_antegg_reload_super = 60.0f;
 inline float default_antegg_reload_ultra = 24.0f;
 inline float default_antegg_reload_unique = 180.0f;
 inline float default_antegg_reload_unusual = 8.0f;
-inline float default_antennae_horizon_common = 0.111f;
-inline float default_antennae_horizon_epic = 0.333f;
-inline float default_antennae_horizon_eternal = 13.5f;
-inline float default_antennae_horizon_legendary = 0.429f;
-inline float default_antennae_horizon_mythic = 1.0f;
-inline float default_antennae_horizon_primordial = 38.0f;
-inline float default_antennae_horizon_rare = 0.25f;
-inline float default_antennae_horizon_super = 4.0f;
-inline float default_antennae_horizon_ultra = 1.857f;
-inline float default_antennae_horizon_unique = 13.5f;
-inline float default_antennae_horizon_unusual = 0.176f;
+inline float default_antennae_horizon_common = 0.666f;
+inline float default_antennae_horizon_epic = 1.998f;
+inline float default_antennae_horizon_eternal = 81.0f;
+inline float default_antennae_horizon_legendary = 2.574f;
+inline float default_antennae_horizon_mythic = 6.0f;
+inline float default_antennae_horizon_primordial = 228.0f;
+inline float default_antennae_horizon_rare = 1.5f;
+inline float default_antennae_horizon_super = 24.0f;
+inline float default_antennae_horizon_ultra = 11.142f;
+inline float default_antennae_horizon_unique = 81.0f;
+inline float default_antennae_horizon_unusual = 1.056f;
 inline float default_basic_base_damage = 10.0f;
 inline float default_basic_base_health = 10.0f;
 inline float default_basic_base_radius = WorldUnits(10.0f);
@@ -115,7 +116,7 @@ inline float default_black_fungus_compression_damage_bonus_max = 0.5f;
 inline float default_black_fungus_compression_half_power = 8.0f;
 inline float default_black_fungus_copy = 1.0f;
 inline float default_black_fungus_mass = 2.0f;
-inline float default_black_fungus_reload = 1.5f;
+inline float default_black_fungus_reload = 2.5f;
 inline float default_broccoli_base_damage = 2.5f;
 inline float default_broccoli_base_health = 20.0f;
 inline float default_broccoli_base_radius = WorldUnits(10.0f);
@@ -254,6 +255,12 @@ inline float default_goldenleaf_base_reload_reduction = 0.033f;
 inline float default_goldenleaf_copy = 1.0f;
 inline float default_goldenleaf_mass = 3.0f;
 inline float default_horizon = WorldUnits(256.0f);
+// Inactive (skip-tick, outside every player's active view) ambient mobs retire
+// after this many seconds so they cannot pile up frozen at the view edge.
+inline float mob_inactive_retire_seconds = 10.0f;
+// Player-only base view radius: six times the shared default so the player
+// sees 6× farther without changing mob/NPC-flower detection ranges.
+inline float default_player_flower_horizon = WorldUnits(1536.0f);
 inline float default_heavy_base_damage = 10.0f;
 inline float default_heavy_base_health = 150.0f;
 inline float default_heavy_base_radius = WorldUnits(22.5f);
@@ -261,6 +268,8 @@ inline float default_heavy_copy = 1.0f;
 inline float default_heavy_mass_multiplier = 360.0f;
 inline float default_heavy_reload = 10.0f;
 inline float default_heavy_rotation_speed = -0.33f;
+inline float default_heavy_target_slowdown_range = 40.0f;
+inline float default_heavy_target_min_speed_scale = 0.3f;
 inline float default_iris_base_damage = 5.0f;
 inline float default_iris_base_health = 5.0f;
 inline float default_iris_base_radius = WorldUnits(10.0f);
@@ -303,6 +312,12 @@ inline float default_rice_copy = 1.0f;
 inline float default_rice_mass = 0.25f;
 inline float default_rice_reload = 0.1f;
 inline std::string lobby_map_path = "data/maps/garden.tmj";
+inline std::string room_default_map_path = "data/maps/test.tmj";
+inline std::string room_waiting_map_path = "data/maps/waiting_room.tmj";
+inline float room_idle_destroy_seconds = 10.0f;
+inline int pvp_start_team = 2;
+inline int pvp_spectator_team = 1;
+inline bool pvp_lock_loadout = true;
 inline float default_max_velocity = WorldUnits(75.0f);
 inline float default_moon_base_damage = 3.0f;
 inline float default_moon_base_health = 5000.0f;
@@ -348,7 +363,7 @@ inline float default_pincer_reload = 2.5f;
 inline float default_pincer_slow_duration = 0.8f;
 inline float default_plank_base_damage = 18.0f;
 inline float default_plank_base_health = 15.0f;
-inline float default_plank_base_radius = WorldUnits(10.0f);
+inline float default_plank_base_radius = WorldUnits(15.0f);
 inline float default_plank_copy = 1.0f;
 inline float default_plank_mass = 2.0f;
 inline float default_plank_projectile_damage_multiplier = 20.0f;
@@ -365,6 +380,29 @@ inline float default_basil_base_radius = WorldUnits(10.0f);
 inline float default_basil_copy = 1.0f;
 inline float default_basil_mass = 2.0f;
 inline float default_basil_reload = 2.5f;
+inline float default_lightning_base_damage = 12.0f;
+inline float default_lightning_base_health = 20.0f;
+inline float default_lightning_base_radius = WorldUnits(10.0f);
+inline float default_lightning_bounces = 2.0f;
+inline float default_lightning_copy = 1.0f;
+inline float default_lightning_mass = 2.0f;
+inline float default_lightning_reload = 2.5f;
+inline float default_battery_base_damage = 36.0f;
+inline float default_battery_base_health = 10.0f;
+inline float default_battery_base_radius = WorldUnits(10.0f);
+inline float default_battery_bounces = 2.0f;
+inline float default_battery_charges = 3.0f;
+inline float default_battery_copy = 1.0f;
+inline float default_battery_mass = 2.0f;
+inline float default_battery_reload = 2.5f;
+inline float default_bulb_base_damage = 5.0f;
+inline float default_bulb_base_health = 12.0f;
+inline float default_bulb_detect_radius = WorldUnits(300.0f);
+inline float default_bulb_detect_radius_step = WorldUnits(300.0f);
+inline float default_bulb_copy = 1.0f;
+inline float default_bulb_mass = 2.0f;
+inline float default_bulb_reload = 0.5f;
+inline float default_bulb_preload = 1.0f;
 inline float default_brokenegg_base_damage = 0.0f;
 inline float default_brokenegg_base_health = 1.0f;
 inline float default_brokenegg_base_radius = WorldUnits(10.0f);
@@ -537,7 +575,7 @@ inline int default_white_fungus_petal_extra_hits_eternal = 18;
 inline int default_white_fungus_petal_extra_hits_unique = 18;
 inline int default_white_fungus_petal_extra_hits_primordial = 20;
 inline float default_white_fungus_petal_extra_hits_multiplier = 0.5f;
-inline float default_white_fungus_reload = 1.5f;
+inline float default_white_fungus_reload = 2.5f;
 inline float default_yucca_base_damage = 16.0f;
 inline float default_yucca_base_health = 12.0f;
 inline float default_yucca_base_radius = WorldUnits(10.0f);
@@ -732,6 +770,20 @@ inline float mob_bee_radius = WorldUnits(12.0f);
 inline int mob_bee_team = 2;
 inline float mob_bee_wave_frequency = 5.2f;
 inline float mob_bee_wave_strength = 0.85f;
+// Firefly: bee-like flight, retaliates with a chain lightning on taking damage.
+inline float mob_firefly_armor = 1.0f;
+inline float mob_firefly_damage = 5.0f;
+inline float mob_firefly_mass = 2.5f;
+inline float mob_firefly_max_health = 40.0f;
+inline float mob_firefly_radius = WorldUnits(12.0f);
+inline float mob_firefly_lightning_damage = 13.0f;
+inline int mob_firefly_lightning_bounces = 5;
+inline float mob_firefly_lightning_cooldown_seconds = 1.0f;
+inline int mob_firefly_team = 2;
+inline float mob_firefly_summon_interval_seconds = 6.0f;
+inline int mob_firefly_summon_limit_eternal = 18;
+inline int mob_firefly_summon_limit_primordial = 27;
+inline float chain_lightning_speed_multiplier = 0.67f;
 inline float mob_bumblebee_acceleration = WorldUnits(350.0f);
 inline float mob_bumblebee_armor = 1.0f;
 inline float mob_bumblebee_damage = 20.0f;
@@ -755,6 +807,12 @@ inline float mob_rock_max_health_min = 50.0f;
 inline float mob_rock_max_health_max = 100.0f;
 inline float mob_rock_radius = WorldUnits(18.0f);
 inline int mob_rock_team = 2;
+inline float mob_bubble_armor = 6.0f;
+inline float mob_bubble_damage = 5.0f;
+inline float mob_bubble_mass = 24.0f;
+inline float mob_bubble_max_health = 1.0f;
+inline float mob_bubble_radius = WorldUnits(20.0f);
+inline int mob_bubble_team = 2;
 inline float mob_baby_ant_armor = 1.0f;
 inline float mob_baby_ant_damage = 10.0f;
 inline float mob_baby_ant_mass = 2.0f;
@@ -1008,11 +1066,10 @@ inline size_t network_snapshot_backlog_packet_multiplier = 2;
 inline int network_snapshot_backlog_log_interval = 60;
 inline size_t network_snapshot_mob_reserve_cap = 128;
 inline size_t network_snapshot_projectile_reserve_cap = 256;
-inline float network_snapshot_query_radius_cap = WorldUnits(4096.0f);
 inline float network_snapshot_interval = 1.0f / 30.0f;
 inline size_t network_snapshot_worker_count = 0;
 inline bool network_parallel_snapshot_build = true;
-inline float network_snapshot_view_radius_multiplier = 2.0f;
+inline float network_snapshot_view_radius_multiplier = 1.0f;
 inline uint8_t network_petal_type_offset = 100;
 inline size_t open_active_spawn_zones_per_tick = 8;
 inline size_t open_world_instances_per_map = 2;
@@ -1125,7 +1182,7 @@ inline float entity_hit_spacing_radius_multiplier = 0.5f;
 inline float entity_projectile_contact_skin = 0.02f;
 inline int entity_wall_push_passes = 4;
 inline float entity_wall_query_slop = 2.0f;
-inline float mob_wall_collision_radius_multiplier = 0.70710678118f;
+inline float mob_wall_collision_radius_multiplier = 0.0f;
 inline float drop_merge_distance_radius_multiplier = 0.5f;
 inline int gameworld_transfer_spawn_position_attempts = 32;
 inline float gameworld_wall_contact_skin = 0.5f;
@@ -1290,6 +1347,12 @@ inline int mob_rock_super_cap = 10;
 inline int mob_rock_ultra_cap = 150;
 inline float mob_rock_radius_random_min = 0.75f;
 inline float mob_rock_radius_random_max = 1.5f;
+inline float mob_bubble_attack_flash_duration = 0.12f;
+inline float mob_bubble_attack_cooldown = 1.0f;
+inline int mob_bubble_spawn_position_attempts = 16;
+inline float mob_bubble_spawn_radius_multiplier = 0.5f;
+inline float mob_bubble_radius_random_min = 0.9f;
+inline float mob_bubble_radius_random_max = 1.1f;
 inline float mob_projectile_base_mass = 1.0f;
 inline float MobProjectileMassForLevel(int level)
 {
@@ -1306,9 +1369,9 @@ inline float open_loot_min_damage_rate_normal = 0.05f;
 inline size_t open_controller_max_squad_size = 4;
 inline float open_squad_loot_damage_range = 1.f;
 inline size_t server_max_saved_chats = 256;
-inline float simulation_active_view_padding = 4096.0f;
 inline float world_mob_overlap_velocity_retention = 0.35f;
 inline float world_mob_overlap_weak_push = 0.32f;
+inline float mob_overlap_push_multiplier = 1.25f;
 inline std::uint64_t config_revision = 1;
 
 inline std::uint64_t GetConfigRevision() { return config_revision; }
@@ -1450,9 +1513,11 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("min_craft_report_rarity", min_craft_report_rarity),
         REGISTER_CONFIG("min_drop_report_rarity", min_drop_report_rarity),
         REGISTER_CONFIG("min_mob_spawn_report_rarity", min_mob_spawn_report_rarity),
+        REGISTER_CONFIG("mob_inactive_retire_seconds", mob_inactive_retire_seconds),
         REGISTER_CONFIG("acceleration", default_acceleration),
         REGISTER_CONFIG("air_base_mass", default_air_base_mass),
         REGISTER_CONFIG("air_base_radius", default_air_base_radius),
+        REGISTER_CONFIG("brush_reload", default_brush_reload),
         REGISTER_CONFIG("amulet_base_damage", default_amulet_base_damage),
         REGISTER_CONFIG("amulet_base_health", default_amulet_base_health),
         REGISTER_CONFIG("amulet_base_radius", default_amulet_base_radius),
@@ -1649,7 +1714,10 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("heavy_mass_multiplier", default_heavy_mass_multiplier),
         REGISTER_CONFIG("heavy_reload", default_heavy_reload),
         REGISTER_CONFIG("heavy_rotation_speed", default_heavy_rotation_speed),
+        REGISTER_CONFIG("heavy_target_slowdown_range", default_heavy_target_slowdown_range),
+        REGISTER_CONFIG("heavy_target_min_speed_scale", default_heavy_target_min_speed_scale),
         REGISTER_CONFIG("horizon", default_horizon),
+        REGISTER_CONFIG("player_flower_horizon", default_player_flower_horizon),
         REGISTER_CONFIG("iris_base_damage", default_iris_base_damage),
         REGISTER_CONFIG("iris_base_health", default_iris_base_health),
         REGISTER_CONFIG("iris_base_radius", default_iris_base_radius),
@@ -1692,6 +1760,12 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("rice_mass", default_rice_mass),
         REGISTER_CONFIG("rice_reload", default_rice_reload),
         REGISTER_CONFIG("lobby_map_path", lobby_map_path),
+        REGISTER_CONFIG("room_default_map_path", room_default_map_path),
+        REGISTER_CONFIG("room_waiting_map_path", room_waiting_map_path),
+        REGISTER_CONFIG("room_idle_destroy_seconds", room_idle_destroy_seconds),
+        REGISTER_CONFIG("pvp_start_team", pvp_start_team),
+        REGISTER_CONFIG("pvp_spectator_team", pvp_spectator_team),
+        REGISTER_CONFIG("pvp_lock_loadout", pvp_lock_loadout),
         REGISTER_CONFIG("max_velocity", default_max_velocity),
         REGISTER_CONFIG("melee_random_idle_chance", melee_random_idle_chance),
         REGISTER_CONFIG("melee_random_idle_time", melee_random_idle_time),
@@ -1732,6 +1806,19 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_beetle_team", mob_beetle_team),
         REGISTER_CONFIG("mob_bee_acceleration", mob_bee_acceleration),
         REGISTER_CONFIG("mob_bee_armor", mob_bee_armor),
+        REGISTER_CONFIG("mob_firefly_armor", mob_firefly_armor),
+        REGISTER_CONFIG("mob_firefly_damage", mob_firefly_damage),
+        REGISTER_CONFIG("mob_firefly_mass", mob_firefly_mass),
+        REGISTER_CONFIG("mob_firefly_max_health", mob_firefly_max_health),
+        REGISTER_CONFIG("mob_firefly_radius", mob_firefly_radius),
+        REGISTER_CONFIG("mob_firefly_lightning_damage", mob_firefly_lightning_damage),
+        REGISTER_CONFIG("mob_firefly_lightning_bounces", mob_firefly_lightning_bounces),
+        REGISTER_CONFIG("mob_firefly_lightning_cooldown_seconds", mob_firefly_lightning_cooldown_seconds),
+        REGISTER_CONFIG("mob_firefly_team", mob_firefly_team),
+        REGISTER_CONFIG("mob_firefly_summon_interval_seconds", mob_firefly_summon_interval_seconds),
+        REGISTER_CONFIG("mob_firefly_summon_limit_eternal", mob_firefly_summon_limit_eternal),
+        REGISTER_CONFIG("mob_firefly_summon_limit_primordial", mob_firefly_summon_limit_primordial),
+        REGISTER_CONFIG("chain_lightning_speed_multiplier", chain_lightning_speed_multiplier),
         REGISTER_CONFIG("mob_bee_damage", mob_bee_damage),
         REGISTER_CONFIG("mob_bee_mass", mob_bee_mass),
         REGISTER_CONFIG("mob_bee_max_health", mob_bee_max_health),
@@ -1763,6 +1850,12 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_rock_max_health_max", mob_rock_max_health_max),
         REGISTER_CONFIG("mob_rock_radius", mob_rock_radius),
         REGISTER_CONFIG("mob_rock_team", mob_rock_team),
+        REGISTER_CONFIG("mob_bubble_armor", mob_bubble_armor),
+        REGISTER_CONFIG("mob_bubble_damage", mob_bubble_damage),
+        REGISTER_CONFIG("mob_bubble_mass", mob_bubble_mass),
+        REGISTER_CONFIG("mob_bubble_max_health", mob_bubble_max_health),
+        REGISTER_CONFIG("mob_bubble_radius", mob_bubble_radius),
+        REGISTER_CONFIG("mob_bubble_team", mob_bubble_team),
         REGISTER_CONFIG("mob_baby_ant_armor", mob_baby_ant_armor),
         REGISTER_CONFIG("mob_baby_ant_damage", mob_baby_ant_damage),
         REGISTER_CONFIG("mob_baby_ant_mass", mob_baby_ant_mass),
@@ -2010,7 +2103,6 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("network_snapshot_backlog_log_interval", network_snapshot_backlog_log_interval),
         REGISTER_CONFIG("network_snapshot_mob_reserve_cap", network_snapshot_mob_reserve_cap),
         REGISTER_CONFIG("network_snapshot_projectile_reserve_cap", network_snapshot_projectile_reserve_cap),
-        REGISTER_CONFIG("network_snapshot_query_radius_cap", network_snapshot_query_radius_cap),
         REGISTER_CONFIG("network_snapshot_interval", network_snapshot_interval),
         REGISTER_CONFIG("network_snapshot_worker_count", network_snapshot_worker_count),
         REGISTER_CONFIG("network_parallel_snapshot_build", network_parallel_snapshot_build),
@@ -2192,6 +2284,29 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("stinger_base_radius", default_stinger_base_radius),
         REGISTER_CONFIG("stinger_mass", default_stinger_mass),
         REGISTER_CONFIG("stinger_reload", default_stinger_reload),
+        REGISTER_CONFIG("lightning_base_damage", default_lightning_base_damage),
+        REGISTER_CONFIG("lightning_base_health", default_lightning_base_health),
+        REGISTER_CONFIG("lightning_base_radius", default_lightning_base_radius),
+        REGISTER_CONFIG("lightning_bounces", default_lightning_bounces),
+        REGISTER_CONFIG("lightning_copy", default_lightning_copy),
+        REGISTER_CONFIG("lightning_mass", default_lightning_mass),
+        REGISTER_CONFIG("lightning_reload", default_lightning_reload),
+        REGISTER_CONFIG("battery_base_damage", default_battery_base_damage),
+        REGISTER_CONFIG("battery_base_health", default_battery_base_health),
+        REGISTER_CONFIG("battery_base_radius", default_battery_base_radius),
+        REGISTER_CONFIG("battery_bounces", default_battery_bounces),
+        REGISTER_CONFIG("battery_charges", default_battery_charges),
+        REGISTER_CONFIG("battery_copy", default_battery_copy),
+        REGISTER_CONFIG("battery_mass", default_battery_mass),
+        REGISTER_CONFIG("battery_reload", default_battery_reload),
+        REGISTER_CONFIG("bulb_base_damage", default_bulb_base_damage),
+        REGISTER_CONFIG("bulb_base_health", default_bulb_base_health),
+        REGISTER_CONFIG("bulb_detect_radius", default_bulb_detect_radius),
+        REGISTER_CONFIG("bulb_detect_radius_step", default_bulb_detect_radius_step),
+        REGISTER_CONFIG("bulb_copy", default_bulb_copy),
+        REGISTER_CONFIG("bulb_mass", default_bulb_mass),
+        REGISTER_CONFIG("bulb_reload", default_bulb_reload),
+        REGISTER_CONFIG("bulb_preload", default_bulb_preload),
         REGISTER_CONFIG("triangle_base_damage", default_triangle_base_damage),
         REGISTER_CONFIG("triangle_base_health", default_triangle_base_health),
         REGISTER_CONFIG("triangle_base_radius", default_triangle_base_radius),
@@ -2636,6 +2751,12 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_rock_ultra_cap", mob_rock_ultra_cap),
         REGISTER_CONFIG("mob_rock_radius_random_min", mob_rock_radius_random_min),
         REGISTER_CONFIG("mob_rock_radius_random_max", mob_rock_radius_random_max),
+        REGISTER_CONFIG("mob_bubble_attack_flash_duration", mob_bubble_attack_flash_duration),
+        REGISTER_CONFIG("mob_bubble_attack_cooldown", mob_bubble_attack_cooldown),
+        REGISTER_CONFIG("mob_bubble_spawn_position_attempts", mob_bubble_spawn_position_attempts),
+        REGISTER_CONFIG("mob_bubble_spawn_radius_multiplier", mob_bubble_spawn_radius_multiplier),
+        REGISTER_CONFIG("mob_bubble_radius_random_min", mob_bubble_radius_random_min),
+        REGISTER_CONFIG("mob_bubble_radius_random_max", mob_bubble_radius_random_max),
         REGISTER_CONFIG("mob_projectile_base_mass", mob_projectile_base_mass),
         REGISTER_CONFIG("mob_stop_damping_ticks_per_second", mob_stop_damping_ticks_per_second),
         REGISTER_CONFIG("mob_summoned_rarity_linear_scale", mob_summoned_rarity_linear_scale),
@@ -2648,9 +2769,9 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("open_controller_max_squad_size", open_controller_max_squad_size),
         REGISTER_CONFIG("open_squad_loot_damage_range", open_squad_loot_damage_range),
         REGISTER_CONFIG("server_max_saved_chats", server_max_saved_chats),
-        REGISTER_CONFIG("simulation_active_view_padding", simulation_active_view_padding),
         REGISTER_CONFIG("world_mob_overlap_velocity_retention", world_mob_overlap_velocity_retention),
         REGISTER_CONFIG("world_mob_overlap_weak_push", world_mob_overlap_weak_push),
+        REGISTER_CONFIG("mob_overlap_push_multiplier", mob_overlap_push_multiplier),
         REGISTER_CONFIG("flower_cogwheel_moving_fraction_min", flower_cogwheel_moving_fraction_min),
         REGISTER_CONFIG("flower_revive_min_health", flower_revive_min_health),
         REGISTER_CONFIG("pincer_speed_multiplier_higher_rarity", pincer_speed_multiplier_higher_rarity),

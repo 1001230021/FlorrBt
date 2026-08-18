@@ -39,3 +39,5 @@ target_include_directories(${PROJECT_NAME}_Launcher PRIVATE src)
 if(WIN32)
     target_compile_definitions(${PROJECT_NAME}_Server PRIVATE NOMINMAX)
 endif()
+
+add_subdirectory(tests)

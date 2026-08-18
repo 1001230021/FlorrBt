@@ -108,7 +108,7 @@ registerClientConfig("hornet_sprite_scale", {
 
 registerClientConfig("dummy_sprite_scale", {
   prop: "dummySpriteScale",
-  defaultValue: 1.5,
+  defaultValue: 1.25,
   min: 0.5,
   max: 4,
   aliases: ["dummy_scale"],
@@ -116,7 +116,7 @@ registerClientConfig("dummy_sprite_scale", {
 
 registerClientConfig("titan_sprite_scale", {
   prop: "titanSpriteScale",
-  defaultValue: 1,
+  defaultValue: 1.0,
   min: 0.5,
   max: 4,
   aliases: ["titan_scale"],
@@ -202,8 +202,6 @@ export const clientRuntimeConfig = Object.freeze({
   hurtFlashMinDelta: 0.002,
   hurtFlashFilterEntityLimit: 32,
   missingEntityViewEdgeGrace: 48,
-  viewScreenFill: 0.46,
-  viewScreenPadding: 36,
   mouseMoveDeadzonePx: 16,
   entityFrameMinScreenRadius: 8,
   entityPixelMinScreenRadius: 0.45,

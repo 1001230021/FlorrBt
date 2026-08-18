@@ -10,31 +10,56 @@
           "fade_minutes": 30
         }
       },
-      "density_multiplier": 1.08,
+      "density_multiplier": 1.0,
       "weight_multipliers": {
-        "spider": 1.75,
-        "bee": 0.5,
-        "bumble_bee": 0.6,
-        "hornet": 1.2
+        "spider": 1.4,
+        "hornet": 1.15,
+        "soldier_ant": 1.2,
+        "worker_ant": 1.2,
+        "baby_ant": 1.2,
+        "bee": 0,
+        "bumble_bee": 0
       }
+    },
+    {
+      "id": "cloudy_firefly",
+      "when": {
+        "weather": ["cloudy"]
+      },
+      "add": [
+        {"mob": "firefly", "weight": 0.15}
+      ]
+    },
+    {
+      "id": "dusk_fireflies",
+      "when": {
+        "time": {
+          "from": "17:00",
+          "until": "20:30",
+          "fade_minutes": 75
+        }
+      },
+      "add": [
+        {"mob": "firefly", "weight": 0.10}
+      ]
+    },
+    {
+      "id": "night_fireflies",
+      "when": {
+        "time": {
+          "from": "19:30",
+          "until": "05:30",
+          "fade_minutes": 60
+        }
+      },
+      "add": [
+        {"mob": "firefly", "weight": 0.50}
+      ]
     },
     {
       "id": "rain",
       "when": {
         "weather": ["rain"]
-      },
-      "weight_multipliers": {
-        "bee": 0.35,
-        "bumble_bee": 0.45,
-        "hornet": 0.65,
-        "spider": 1.35,
-        "ant_hole": 1.15
-      }
-    },
-    {
-      "id": "storm",
-      "when": {
-        "weather": ["storm"]
       },
       "density_multiplier": 0.9,
       "difficulty_offset": 2,
@@ -42,7 +67,11 @@
         "bee": 0.1,
         "bumble_bee": 0.2,
         "hornet": 0.45,
-        "spider": 1.55
+        "normal_ladybug": 0.4,
+        "spider": 1.55,
+        "ant_hole": 1.15,
+        "worker_ant": 1.3,
+        "soldier_ant": 1.3
       }
     },
     {
@@ -54,7 +83,10 @@
       "weight_multipliers": {
         "spider": 1.25,
         "hornet": 1.15
-      }
+      },
+      "add": [
+        {"mob": "firefly", "weight": 0.1}
+      ]
     }
   ],
   "profiles": {
@@ -129,6 +161,9 @@
         {"mob": "baby_ant", "weight": 0.05},
         {"mob": "worker_ant", "weight": 0.05},
         {"mob": "ant_hole", "weight": 0.5}
+      ],
+      "modifiers": [
+        {"id": "underground_no_fireflies", "disable": ["firefly"]}
       ]
     },
     "garden_ant_colony": {
@@ -137,6 +172,9 @@
         {"mob": "baby_ant", "weight": 0.1},
         {"mob": "worker_ant", "weight": 0.1},
         {"mob": "ant_hole", "weight": 0.3}
+      ],
+      "modifiers": [
+        {"id": "underground_no_fireflies", "disable": ["firefly"]}
       ]
     },
     "garden_rock_dandelion": {

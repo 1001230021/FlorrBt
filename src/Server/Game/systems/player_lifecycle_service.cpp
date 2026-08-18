@@ -28,11 +28,11 @@ bool RespawnPointBlockedByMob(const CGameWorld& world, sf::Vector2f pos, float r
 
         const auto* mob = dynamic_cast<const CMobBase*>(entity);
         if (!mob || mob->GetMobType() == EMobType::PlayerFlower) return;
-        if (mob->m_is_marked_for_des || mob->IsDead() || !mob->CanCollide()) return;
+        if (mob->IsMarkedForDes() || mob->IsDead() || !mob->CanCollide()) return;
 
         const float min_distance =
-            radius + std::max(0.f, mob->m_radius) + std::max(0.f, game_config::checkpoint_respawn_mob_separation_skin);
-        if (DistanceSq(pos, mob->m_pos) <= min_distance * min_distance) blocked = true;
+            radius + std::max(0.f, mob->Radius()) + std::max(0.f, game_config::checkpoint_respawn_mob_separation_skin);
+        if (DistanceSq(pos, mob->Pos()) <= min_distance * min_distance) blocked = true;
     });
     return blocked;
 }
@@ -142,7 +142,7 @@ void UpdatePlayerCheckpoint(CPlayer& player)
     if (!player.IsAuthenticated()) return;
 
     CEntity* entity = player.GetEntity();
-    if (!entity || entity->m_is_marked_for_des || entity->IsDead()) return;
+    if (!entity || entity->IsMarkedForDes() || entity->IsDead()) return;
 
     CGameWorld* world = entity->GameWorld();
     const FlorrBtMap* map = world ? world->GetMap() : nullptr;
@@ -151,11 +151,11 @@ void UpdatePlayerCheckpoint(CPlayer& player)
     for (const FlorrBtMap::Checkpoint& checkpoint : map->checkpoints)
     {
         if (!checkpoint.is_save || checkpoint.level <= 0) continue;
-        if (!CheckpointContains(checkpoint, entity->m_pos)) continue;
+        if (!CheckpointContains(checkpoint, entity->Pos())) continue;
 
         if (checkpoint.id == 0)
         {
-            LogCheckpoint(player, "hit checkpoint with missing id at pos=" + Vec2String(entity->m_pos) +
+            LogCheckpoint(player, "hit checkpoint with missing id at pos=" + Vec2String(entity->Pos()) +
                                       " stack=" + CheckpointStackLabel(player));
             return;
         }
@@ -182,7 +182,7 @@ void UpdatePlayerCheckpoint(CPlayer& player)
         }
 
         player.m_cp_stack.push_back({ checkpoint.id, checkpoint.level, count });
-        LogCheckpoint(player, "hit " + CheckpointLabel(checkpoint) + " pos=" + Vec2String(entity->m_pos) + " stack " +
+        LogCheckpoint(player, "hit " + CheckpointLabel(checkpoint) + " pos=" + Vec2String(entity->Pos()) + " stack " +
                                   before_stack + " -> " + CheckpointStackLabel(player));
         return;
     }

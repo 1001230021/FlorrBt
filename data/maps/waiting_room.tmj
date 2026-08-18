@@ -46,32 +46,26 @@
          "name":"checkpoints",
          "objects":[
                 {
-                 "class":"respawn_area",
-                 "height":0,
-                 "id":1,
-                 "name":"",
-                 "polygon":[
-                        {
-                         "x":960,
-                         "y":960
-                        }, 
-                        {
-                         "x":3008,
-                         "y":960
-                        }, 
-                        {
-                         "x":3008,
-                         "y":3008
-                        }, 
-                        {
-                         "x":960,
-                         "y":3008
-                        }],
+                 "class":"new_players",
+                 "height":2044,
+                 "id":3,
+                 "name":"new_players",
                  "rotation":0,
                  "visible":true,
-                 "width":0,
-                 "x":64,
-                 "y":64
+                 "width":2044,
+                 "x":1024,
+                 "y":1024
+                }, 
+                {
+                 "class":"respawn_area",
+                 "height":1362.66666666667,
+                 "id":4,
+                 "name":"",
+                 "rotation":0,
+                 "visible":true,
+                 "width":1362.66666666667,
+                 "x":1364.66666666667,
+                 "y":1364.66666666667
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -80,7 +74,7 @@
          "y":0
         }],
  "nextlayerid":5,
- "nextobjectid":3,
+ "nextobjectid":5,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.9.1",
@@ -88,7 +82,7 @@
  "tilesets":[
         {
          "firstgid":1,
-         "source":"C:\/Users\/Administrator\/Desktop\/florrpack\/florr.io map_shipwreck\/tiles\/tileset.tsj"
+         "source":"..\/tiles\/shipwreck_tileset.tsj"
         }, 
         {
          "firstgid":152,

@@ -124,7 +124,7 @@ bool IsSingleSpawnZone(const FlorrBtMap::Zone& zone)
 
 bool CountsForZoneDensity(const CMobBase* mob)
 {
-    if (!mob || mob->m_is_marked_for_des || mob->IsDead()) return false;
+    if (!mob || mob->IsMarkedForDes() || mob->IsDead()) return false;
     if (mob->GetMobType() == EMobType::PlayerFlower) return false;
     if (mob->GetMobType() == EMobType::SummonedBeetle || mob->GetMobType() == EMobType::SummonedSoldierAnt) return false;
     if (dynamic_cast<const CSummonedMeleeController*>(mob->GetController())) return false;
@@ -143,8 +143,8 @@ void CountMobsInSpawnZones(CGameWorld& world, std::vector<SSpawnZoneWork>& spawn
         if (!work.zone || work.single_spawn || work.population_limit <= 0) continue;
         world.ForEachEntityInEdgeRange(work.bounds.center, work.bounds.radius, [&work](const CEntity* entity) {
             const auto* mob = dynamic_cast<const CMobBase*>(entity);
-            if (!CountsForZoneDensity(mob) || !PointInZoneBounds(work.bounds, mob->m_pos) ||
-                !IsPointInZone(*work.zone, mob->m_pos))
+            if (!CountsForZoneDensity(mob) || !PointInZoneBounds(work.bounds, mob->Pos()) ||
+                !IsPointInZone(*work.zone, mob->Pos()))
                 return;
             ++work.current_mobs;
         });
@@ -179,17 +179,24 @@ bool CanSpawnAt(CGameWorld& world, const sf::Vector2f& pos, float spawn_radius, 
     int nearby_mobs = 0;
     bool too_close_to_mob = false;
     const float spawn_query_radius = std::max(0.f, game_config::open_spawn_query_radius);
-    const float spawn_query_radius_sq = spawn_query_radius * spawn_query_radius;
+    const float density_query_radius_sq = spawn_query_radius * spawn_query_radius;
+    // The spacing requirement is spawn_radius + mob_radius + min_distance, so the
+    // query must cover at least that for the largest possible mob; otherwise a
+    // large mob just outside the query circle could violate true minimum spacing.
+    const float largest_mob_radius = std::max(
+        0.f, game_config::open_spawn_query_radius * 0.5f + std::max(0.f, game_config::open_min_spawn_distance));
+    const float query_radius = std::max(spawn_query_radius, spawn_radius + largest_mob_radius);
+    const float query_radius_sq = query_radius * query_radius;
 
-    world.GetSpatialGrid().ForEachInRange(pos, spawn_query_radius, [&](const CEntity* entity) {
+    world.GetSpatialGrid().ForEachInRange(pos, query_radius, [&](const CEntity* entity) {
         const auto* mob = dynamic_cast<const CMobBase*>(entity);
-        if (!mob || mob->m_is_marked_for_des || mob->IsDead()) return;
+        if (!mob || mob->IsMarkedForDes() || mob->IsDead()) return;
 
-        const float dist_sq = DistanceSq(mob->m_pos, pos);
-        if (dist_sq <= spawn_query_radius_sq && CountsForZoneDensity(mob)) ++nearby_mobs;
+        const float dist_sq = DistanceSq(mob->Pos(), pos);
+        if (dist_sq <= density_query_radius_sq && CountsForZoneDensity(mob)) ++nearby_mobs;
 
         if (!mob->CanCollide()) return;
-        const float min_distance = SpawnSpacingDistance(spawn_radius, mob->m_radius);
+        const float min_distance = SpawnSpacingDistance(spawn_radius, mob->Radius());
         if (dist_sq <= min_distance * min_distance) too_close_to_mob = true;
     });
 
@@ -209,10 +216,10 @@ void CollectPlayerFlowerPositions(CGameWorld& world, std::vector<sf::Vector2f>& 
         if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
         const CEntity* entity = player->GetEntity();
         const auto* mob = dynamic_cast<const CMobBase*>(entity);
-        if (!mob || mob->m_is_marked_for_des || mob->IsDead()) continue;
+        if (!mob || mob->IsMarkedForDes() || mob->IsDead()) continue;
         if (mob->GetMobType() != EMobType::PlayerFlower) continue;
         if (entity->GameWorld() != &world) continue;
-        positions.push_back(mob->m_pos);
+        positions.push_back(mob->Pos());
     }
 }
 } // namespace
@@ -524,21 +531,21 @@ struct COpenSpawnDirector::CImplementation
         if (tracked.id < 0 || tracked.generation == 0) return false;
 
         CEntity* entity = world.GetEntity(tracked.id, tracked.generation);
-        return entity && !entity->m_is_marked_for_des && !entity->IsDead();
+        return entity && !entity->IsMarkedForDes() && !entity->IsDead();
     }
 
     void RememberSingleSpawnZoneMob(size_t zone_index, const CEntity* entity)
     {
         if (!entity || zone_index >= single_spawn_zone_mobs.size()) return;
-        single_spawn_zone_mobs[zone_index] = { entity->m_id, entity->m_generation };
+        single_spawn_zone_mobs[zone_index] = { entity->Id(), entity->Generation() };
     }
 
     void ForgetSingleSpawnZoneMob(const CEntity* entity)
     {
-        if (!entity || entity->m_id < 0 || entity->m_generation == 0) return;
+        if (!entity || entity->Id() < 0 || entity->Generation() == 0) return;
         for (SSingleSpawnZoneMob& tracked : single_spawn_zone_mobs)
         {
-            if (tracked.id != entity->m_id || tracked.generation != entity->m_generation) continue;
+            if (tracked.id != entity->Id() || tracked.generation != entity->Generation()) continue;
             tracked = {};
         }
     }

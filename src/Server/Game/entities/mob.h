@@ -75,6 +75,9 @@ class CMobBase : public CEntity
 
     std::vector<CDamageData>& GetDamageData() { return m_damage_data; }
     const std::vector<CDamageData>& GetDamageData() const { return m_damage_data; }
+    float InactiveSeconds() const { return m_inactive_seconds; }
+    void AddInactiveSeconds(float dt) { m_inactive_seconds += dt; }
+    void ResetInactiveSeconds() { m_inactive_seconds = 0.f; }
     const std::vector<std::unique_ptr<CState>>& GetStates() const { return m_states; }
     void ClearStatesForRestore();
 
@@ -145,6 +148,7 @@ class CMobBase : public CEntity
     std::vector<std::unique_ptr<CState>> m_states;
     std::vector<CState*> m_movement_target_states;
     std::unique_ptr<IController> m_p_controller;
+    float m_inactive_seconds = 0.f;
 };
 
 template <typename TStats = SMobStats> class CMob : public CMobBase
@@ -156,12 +160,12 @@ template <typename TStats = SMobStats> class CMob : public CMobBase
         : CMobBase(pworld, pos, r, mob_type), m_base_stats(stats), m_final_stats(stats), m_rarity(rarity)
     {
         if (rarity == ERarity::Eternal || rarity == ERarity::Unique || rarity == ERarity::Primordial)
-            m_tick_mode = EEntityTickMode::Always;
-        m_tick_horizon = std::max(0.f, stats.horizon);
-        m_health = stats.max_health;
-        m_mass = stats.mass;
-        m_facing_angle = GetLimitedRng(-game_config::pi, game_config::pi);
-        m_has_facing = true;
+            TickMode() = EEntityTickMode::Always;
+        SetTickHorizon(std::max(0.f, stats.horizon));
+        Health() = stats.max_health;
+        Mass() = stats.mass;
+        FacingAngle() = GetLimitedRng(-game_config::pi, game_config::pi);
+        HasFacing() = true;
     }
 
     ~CMob() override;
@@ -169,7 +173,7 @@ template <typename TStats = SMobStats> class CMob : public CMobBase
     void Tick(float dt) override
     {
         if (m_p_controller) m_p_controller->OnTick(this, dt);
-        m_pos += m_vel * dt;
+        Pos() += m_vel * dt;
         TickStates(dt);
     }
 
@@ -302,6 +306,10 @@ class CMobPrototype
 
     EMobType m_type = EMobType::None;
     std::string m_name;
+    // When set, the snapshot wire type is disguised as this vanilla mob type
+    // so the client renders the vanilla sprite and name without client-side
+    // mod support.
+    EMobType m_visual_proxy_type = EMobType::None;
     SMobStats m_base_stats;
     SFlowerStats m_base_flower_stats;
     int m_team = 2;
@@ -326,7 +334,9 @@ template <> inline SFlowerStats CMobPrototype::BuildTypedStats<SFlowerStats>(ERa
     return BuildFlowerStats(rarity);
 }
 
-using CMobRegistry = TPrototypeRegistry<EMobType, CMobPrototype, mob_type_names.size()>;
+using CMobRegistry =
+    TPrototypeRegistry<EMobType, CMobPrototype, mob_type_names.size(),
+                       static_cast<std::size_t>(EMobType::Bubble) + 1>;
 namespace mob_registry_detail
 {
 inline CMobRegistry& MutableRegistry()
@@ -367,8 +377,8 @@ template <EMobType Type, typename TMob> bool RegisterMobPrototype(CMobPrototype 
 
         typename TMob::stats_type stats = raw_ptr->BuildTypedStats<typename TMob::stats_type>(rarity);
         auto mob = std::make_unique<TMob>(world, pos, stats.radius, Type, rarity, stats);
-        mob->m_team = raw_ptr->m_team;
-        mob->m_allow_skip_tick = raw_ptr->m_allow_skip_tick;
+        mob->Team() = raw_ptr->m_team;
+        mob->AllowSkipTick() = raw_ptr->m_allow_skip_tick;
         if (raw_ptr->m_after_create) raw_ptr->m_after_create(*mob, rarity);
         if (raw_ptr->m_controller_factory) mob->SetController(raw_ptr->m_controller_factory(rarity));
         return mob;
@@ -377,6 +387,21 @@ template <EMobType Type, typename TMob> bool RegisterMobPrototype(CMobPrototype 
 }
 
 const CMobPrototype* FindMobPrototype(EMobType type);
+
+// Registers a controller/mod-specific mob in the reserved Mod range. The
+// prototype may declare a vanilla visual proxy so the network snapshot
+// presents the mob as an existing mob type.
+template <EMobType Type, typename TMob> bool RegisterModMob(CMobPrototype prototype, EMobType visual_proxy)
+{
+    static_assert(static_cast<std::size_t>(Type) >= static_cast<std::size_t>(EMobType::Mod64),
+                  "mod mobs must live in the reserved Mod range");
+    if (visual_proxy != EMobType::None &&
+        static_cast<std::size_t>(visual_proxy) >= static_cast<std::size_t>(EMobType::Mod64))
+        return false;
+    prototype.m_visual_proxy_type = visual_proxy;
+    return RegisterMobPrototype<Type, TMob>(std::move(prototype));
+}
+
 std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, sf::Vector2f pos, ERarity rarity,
                                     bool resolve_special_rarity = true);
 bool RegisterMobs(std::string& error);

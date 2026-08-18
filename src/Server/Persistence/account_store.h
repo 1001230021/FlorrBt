@@ -14,6 +14,14 @@ struct SAccountTalent
     int rank = 0;
 };
 
+// Bestiary entry: how many times a mob of a given rarity was defeated.
+struct SAccountCodexEntry
+{
+    uint8_t mob_type = 0;
+    uint8_t rarity = 0;
+    uint32_t count = 0;
+};
+
 struct SPlayerAccount
 {
     std::string name;
@@ -29,6 +37,7 @@ struct SPlayerAccount
     std::string extra_json = "{}";
     int talent_points = 0;
     std::vector<SAccountTalent> talents;
+    std::vector<SAccountCodexEntry> codex;
 };
 
 struct SCraftResult
@@ -154,6 +163,8 @@ class CAccountDataStore
     static void AddTalentPoints(const std::string& name, int talent_points);
     static std::vector<SAccountTalent> GetTalents(const std::string& name);
     static void SetTalents(const std::string& name, const std::vector<SAccountTalent>& talents);
+    static std::vector<SAccountCodexEntry> GetCodex(const std::string& name);
+    static void AddCodexKill(const std::string& name, uint8_t mob_type, uint8_t rarity);
     static void SetSlot(const std::string& name, uint8_t slot_index, uint8_t petal_type, uint8_t rarity);
     static void ClearSlot(const std::string& name, uint8_t slot_index);
     static bool SetSecondarySlot(const std::string& name, uint8_t slot_index, uint8_t petal_type, uint8_t rarity);

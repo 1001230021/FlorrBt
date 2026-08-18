@@ -43,10 +43,10 @@ bool HasPreciseSpawnMob(CGameWorld& world, const FlorrBtMap::PreciseSpawn& spawn
     constexpr float position_epsilon = 0.5f;
     bool found = false;
     world.ForEachEntity([&](CEntity* entity) {
-        if (found || !entity || entity->m_is_marked_for_des) return;
+        if (found || !entity || entity->IsMarkedForDes()) return;
         const auto* mob = dynamic_cast<const CMobBase*>(entity);
         if (!mob || mob->IsDead() || mob->GetMobType() != type || mob->GetRarity() != rarity) return;
-        if (DistanceSq(mob->m_pos, { spawn.x, spawn.y }) <= position_epsilon * position_epsilon) found = true;
+        if (DistanceSq(mob->Pos(), { spawn.x, spawn.y }) <= position_epsilon * position_epsilon) found = true;
     });
     return found;
 }
@@ -342,24 +342,59 @@ std::vector<CPlayer*> COpenController::GetSquadPlayerList(CGameWorld& world, CPl
     return players;
 }
 
-bool COpenController::TrySquad(CGameWorld& world, CPlayer& joining_player, CPlayer& target_player)
+bool COpenController::TryInviteSquad(CGameWorld& world, CPlayer& inviter, CPlayer& invitee)
 {
     PruneSquads(world);
-    if (&joining_player == &target_player || !IsSquadPlayerInWorld(world, joining_player) ||
-        !IsSquadPlayerInWorld(world, target_player))
+    if (&inviter == &invitee || !IsSquadPlayerInWorld(world, inviter) || !IsSquadPlayerInWorld(world, invitee))
         return false;
 
-    EnsureSquadPlayer(joining_player.GetId());
-    EnsureSquadPlayer(target_player.GetId());
+    EnsureSquadPlayer(inviter.GetId());
+    EnsureSquadPlayer(invitee.GetId());
 
-    const std::uint32_t joining_root = FindSquadRoot(joining_player.GetId());
-    const std::uint32_t target_root = FindSquadRoot(target_player.GetId());
-    if (joining_root == target_root || GetSquadMemberIds(joining_root).size() != 1) return false;
+    m_squad_invites[invitee.GetId()] = inviter.GetId();
+    return true;
+}
+
+CPlayer* COpenController::ConsumeSquadInvite(CGameWorld& world, CPlayer& invitee)
+{
+    auto node = m_squad_invites.find(invitee.GetId());
+    if (node == m_squad_invites.end()) return nullptr;
+    const std::uint32_t inviter_id = node->second;
+    m_squad_invites.erase(node);
+
+    CGameContext* context = world.GameContext();
+    if (!context) return nullptr;
+    for (const auto& candidate : context->Players())
+    {
+        if (!candidate || candidate->GetId() != inviter_id) continue;
+        CEntity* entity = candidate->GetEntity();
+        if (!entity || entity->IsMarkedForDes() || entity->GameWorld() != &world) return nullptr;
+        return candidate.get();
+    }
+    return nullptr;
+}
+
+bool COpenController::TryAcceptSquadInvite(CGameWorld& world, CPlayer& invitee, CPlayer& inviter)
+{
+    PruneSquads(world);
+    if (&invitee == &inviter || !IsSquadPlayerInWorld(world, invitee) || !IsSquadPlayerInWorld(world, inviter))
+        return false;
+
+    EnsureSquadPlayer(invitee.GetId());
+    EnsureSquadPlayer(inviter.GetId());
+
+    const std::uint32_t inviter_root = FindSquadRoot(inviter.GetId());
+    const std::uint32_t invitee_root = FindSquadRoot(invitee.GetId());
+    if (inviter_root == invitee_root) return false;
 
     const size_t max_squad_size = std::max<size_t>(1, game_config::open_controller_max_squad_size);
-    if (GetSquadMemberIds(target_root).size() >= max_squad_size) return false;
+    const std::vector<std::uint32_t> inviter_members = GetSquadMemberIds(inviter_root);
+    const std::vector<std::uint32_t> invitee_members = GetSquadMemberIds(invitee_root);
+    if (inviter_members.size() + invitee_members.size() > max_squad_size) return false;
 
-    m_squad_parent[joining_player.GetId()] = target_root;
+    // Merge the invitee's whole squad into the inviter's root.
+    for (std::uint32_t member_id : invitee_members)
+        m_squad_parent[member_id] = inviter_root;
     return true;
 }
 

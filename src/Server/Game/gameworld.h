@@ -97,10 +97,10 @@ class CGameWorld
 
     CEntity* GetEntity(int id) const;
     CEntity* GetEntity(int id, std::uint64_t generation) const;
-    bool TryRegisterCarriedLeafPiece(const CEntity& leaf_piece, const CEntity& carrier);
-    void UnregisterCarriedLeafPiece(int leaf_piece_id, std::uint64_t leaf_piece_generation,
-                                    int carrier_id, std::uint64_t carrier_generation);
-    bool IsLeafPieceCarried(const CEntity& leaf_piece);
+    bool TryRegisterCarriedEntity(const CEntity& carried, const CEntity& carrier);
+    void UnregisterCarriedEntity(int carried_id, std::uint64_t carried_generation, int carrier_id,
+                                 std::uint64_t carrier_generation);
+    bool IsCarriedEntity(const CEntity& carried);
     void QueueEntityForCleanup(CEntity* entity);
     void QueuePsionicDamage(CMobBase* receiver, float damage, CEntity* attacker, EDamageType damage_type);
     CEntity* FindClosestEntity(const sf::Vector2f& center, float max_range,
@@ -131,9 +131,9 @@ class CGameWorld
 
         const float query_radius = edge_range + m_normal_entity_radius_limit;
         m_spatial_grid.ForEachInRange(center, query_radius, [&](CEntity* entity) {
-            if (!entity || entity->m_radius > m_normal_entity_radius_limit) return;
-            const float reach = edge_range + std::max(0.f, entity->m_radius);
-            if (DistanceSq(center, entity->m_pos) <= reach * reach) visitor(entity);
+            if (!entity || entity->Radius() > m_normal_entity_radius_limit) return;
+            const float reach = edge_range + std::max(0.f, entity->Radius());
+            if (DistanceSq(center, entity->Pos()) <= reach * reach) visitor(entity);
         });
 
         const size_t large_count = m_large_entities.size();
@@ -141,8 +141,8 @@ class CGameWorld
         {
             CEntity* entity = m_large_entities[i];
             if (!entity || entity->GameWorld() != this) continue;
-            const float reach = edge_range + std::max(0.f, entity->m_radius);
-            if (DistanceSq(center, entity->m_pos) <= reach * reach) visitor(entity);
+            const float reach = edge_range + std::max(0.f, entity->Radius());
+            if (DistanceSq(center, entity->Pos()) <= reach * reach) visitor(entity);
         }
     }
     const FlorrBtMap* GetMap() const { return m_map.get(); }
@@ -152,6 +152,16 @@ class CGameWorld
     bool SegmentBlockedByWall(sf::Vector2f start, sf::Vector2f end) const;
     bool CircleBlockedByWall(sf::Vector2f center, float radius) const;
     bool SweptCircleBlockedByWall(sf::Vector2f start, sf::Vector2f end, float radius) const;
+    // Removes native map walls whose bounding box intersects the given world
+    // rect and rebuilds the wall grid. Returns the number of walls removed.
+    int RemoveWallsInRect(sf::Vector2f min_pos, sf::Vector2f max_pos);
+
+    // Chain lightning: starting at `origin`, repeatedly strikes the closest mob
+    // matching the filter (default: enemy mobs without nullification, not struck
+    // yet, edge distance at most one world tile) up to `bounces` times. Each hit
+    // deals `damage` Lightning damage attributed to `owner`. The chain's node
+    // positions are broadcast to the world's players for the client visual.
+    void ChainLightning(CEntity& origin, float damage, int bounces, CEntity* owner);
 
   private:
     struct SPsionicReceiverKey
@@ -243,6 +253,7 @@ class CGameWorld
     FlorrBtMap::Wall* GetWall(int id) const;
     void BuildWallGrid();
     void CollectActiveEntitiesForTick();
+    void RetireInactiveMobs(float elapsed);
     void TickActiveEntities(float dt);
     void FlushPendingPsionicDamage();
     void RemoveTransferredActiveEntities();
@@ -284,16 +295,17 @@ class CGameWorld
     std::vector<std::pair<int, std::uint64_t>> m_clear_summon_owner_keys;
     std::unordered_map<SPsionicReceiverKey, SPendingPsionicDamage, SPsionicReceiverKeyHash>
         m_pending_psionic_damage;
-    struct SCarriedLeafPieceRecord
+    struct SCarriedEntityRecord
     {
-        std::uint64_t leaf_piece_generation = 0;
+        std::uint64_t carried_generation = 0;
         int carrier_id = -1;
         std::uint64_t carrier_generation = 0;
     };
-    std::unordered_map<int, SCarriedLeafPieceRecord> m_carried_leaf_pieces;
+    std::unordered_map<int, SCarriedEntityRecord> m_carried_entities;
     std::unordered_set<int> m_wall_query_visited;
     std::uint64_t m_active_tick_marker = 1;
     std::uint64_t m_collision_sync_marker = 1;
+    float m_retire_sweep_timer = 0.f;
     float m_normal_entity_radius_limit = 1.f;
     STickPhaseTelemetry m_tick_phase_telemetry;
 };

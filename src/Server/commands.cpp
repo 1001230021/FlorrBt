@@ -257,7 +257,7 @@ std::string EntityCommandRef(const CEntity* entity)
 {
     if (!entity) return "none";
     const CGameWorld* world = entity->GameWorld();
-    return std::to_string(world ? world->GetId() : 0) + ":" + std::to_string(entity->m_id);
+    return std::to_string(world ? world->GetId() : 0) + ":" + std::to_string(entity->Id());
 }
 
 void LogWorldInfo(const CGameWorld& world)
@@ -331,7 +331,7 @@ void LogWeatherStatus(const CWeatherDiurnalSystem& system)
 void LogWeatherUsage()
 {
     LOG_INFO("console",
-             "Usage: weather [status] | weather set <clear|cloudy|rain|storm|fog> [intensity_0..1] | "
+             "Usage: weather [status] | weather set <clear|cloudy|rain|fog> [intensity_0..1] | "
              "weather env <humidity_0..1> <wind_direction_deg_0..359> <wind_speed> <temperature_c> | "
              "weather derive | weather auto | weather time <HH:MM[:SS]>");
 }
@@ -358,7 +358,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(version, "version", {}, { LOG_INFO("console", std
 
 REGISTER_CONSOLE_COMMAND_USAGE(
     weather,
-    "weather [status] | weather set <clear|cloudy|rain|storm|fog> [intensity_0..1] | weather env "
+    "weather [status] | weather set <clear|cloudy|rain|fog> [intensity_0..1] | weather env "
     "<humidity_0..1> <wind_direction_deg_0..359> <wind_speed> <temperature_c> | weather derive | weather auto | "
     "weather time <HH:MM[:SS]>",
     {}, {
@@ -846,7 +846,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(tele, "tele <player> <world_id> <x,y>", "player w
     }
 
     CGameWorld* source_world = entity->GameWorld();
-    sf::Vector2f old_pos = entity->m_pos;
+    sf::Vector2f old_pos = entity->Pos();
     const std::uint32_t old_world_id = source_world ? source_world->GetId() : 0;
     if (!source_world || !source_world->TransferPlayerEntityToWorld(*player, *target_world, *pos))
     {
@@ -883,11 +883,11 @@ REGISTER_CONSOLE_COMMAND_USAGE(set_team, "set_team <world_id>:<entity_id> <team>
         return;
     }
 
-    int old_team = entity->m_team;
-    entity->m_team = *team;
+    int old_team = entity->Team();
+    entity->Team() = *team;
     CGameWorld* world = entity->GameWorld();
-    LOG_INFO("console", "Entity " + std::to_string(world ? world->GetId() : 0) + ":" + std::to_string(entity->m_id) +
-                            " team " + std::to_string(old_team) + " -> " + std::to_string(entity->m_team));
+    LOG_INFO("console", "Entity " + std::to_string(world ? world->GetId() : 0) + ":" + std::to_string(entity->Id()) +
+                            " team " + std::to_string(old_team) + " -> " + std::to_string(entity->Team()));
 })
 
 REGISTER_CONSOLE_COMMAND_USAGE(set, "set <config> <value>", "config", {
@@ -1304,7 +1304,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(
         }
 
         std::string flag = ToLower(args[0]);
-        const CServer::SChatEntry* chat = nullptr;
+        CServer::SChatEntry chat;
         if (flag == "server")
         {
             std::string teller = "Server";
@@ -1387,12 +1387,12 @@ REGISTER_CONSOLE_COMMAND_USAGE(
             return;
         }
 
-        if (!chat)
+        if (chat.message.empty())
         {
             LOG_WARN("console", "Empty chat message.");
             return;
         }
-        network->BroadcastChat(*chat);
+        network->BroadcastChat(chat);
     })
 
 REGISTER_CONSOLE_COMMAND_USAGE(spawn, "spawn <world_id> <mob> <rarity> <x,y>", "world mob rarity", {

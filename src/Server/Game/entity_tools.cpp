@@ -12,7 +12,7 @@ CPlayer* FindPlayerFromEntity(CEntity* entity, const std::vector<std::unique_ptr
 
     while (entity)
     {
-        if (entity->m_id >= 0 && !visited_ids.insert(entity->m_id).second) return nullptr;
+        if (entity->Id() >= 0 && !visited_ids.insert(entity->Id()).second) return nullptr;
 
         for (const auto& player : players)
         {
@@ -49,7 +49,7 @@ CEntity* FindRootOwnerEntity(CEntity* entity)
 
     while (current)
     {
-        if (current->m_id >= 0 && !visited_ids.insert(current->m_id).second) return current;
+        if (current->Id() >= 0 && !visited_ids.insert(current->Id()).second) return current;
 
         if (auto* projectile = dynamic_cast<CProjectile*>(current))
         {

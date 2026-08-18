@@ -251,6 +251,16 @@ class CBasilPetal : public CPetal
     bool CanCollide() const override { return false; }
 };
 
+class CBatteryPetal : public CPetal
+{
+  public:
+    using CPetal::CPetal;
+
+    bool CanCollide() const override { return false; }
+
+    int m_charges_remaining = 0;
+};
+
 class CRosePetal : public CPetal
 {
   public:
@@ -316,7 +326,7 @@ template <typename TPetal> bool RegisterPetalPrototype(EPetalType type, CPetalPr
         auto petal = std::make_unique<TPetal>(petal_stats.radius, flower, slot, petal_stats, raw_ptr->m_type);
         petal->m_rarity = rarity;
         petal->m_slot_index = slot;
-        petal->m_team = flower->m_team;
+        petal->Team() = flower->Team();
         return petal;
     };
     return petal_registry_detail::MutableRegistry().Add(type, std::move(ptr));

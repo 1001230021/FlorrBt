@@ -70,12 +70,17 @@ enum class EPetalType : int
     Amulet,
     Plank,
     Tomato,
-    HallucinogenicMushroom
+    HallucinogenicMushroom,
+    Lightning,
+    Battery,
+    Bulb,
+    Brush,
+    Eraser
 };
 
 using PetalType = EPetalType;
 
-inline constexpr std::array<std::string_view, 65> petal_type_names = {
+inline constexpr std::array<std::string_view, 70> petal_type_names = {
     "None",           "Air",         "AntEgg",        "Antennae", "Basic",     "BeetleEgg", "Bone",       "Bubble",
     "Carrot",         "Coin",        "Compass",       "Cogwheel", "Disc",      "Dust",      "GoldenLeaf", "Iris",
     "Lentil",         "Moon",        "Nullification", "Pincer",   "Relic",     "Rose",      "YinYang",    "Missile",
@@ -84,10 +89,10 @@ inline constexpr std::array<std::string_view, 65> petal_type_names = {
     "Leaf",           "Rock",        "Web",           "Cactus",   "Pollen",    "Corn",      "Rice",       "Basil",
     "Soil",           "Honey",       "Wax",           "ThirdEye", "Dandelion", "Orange",    "Shovel",     "Yucca",
     "WhiteFungus",    "BlackFungus", "Broccoli",      "Douli",     "Trapper",   "Amulet", "Plank", "Tomato",
-    "HallucinogenicMushroom",
+    "HallucinogenicMushroom", "Lightning", "Battery", "Bulb", "Brush", "Eraser",
 };
 
-static_assert(static_cast<size_t>(EPetalType::HallucinogenicMushroom) + 1 == petal_type_names.size(),
+static_assert(static_cast<size_t>(EPetalType::Eraser) + 1 == petal_type_names.size(),
               "petal type names must stay aligned with EPetalType");
 static_assert(server_petal_entity_type_offset + petal_type_names.size() <= server_drop_entity_type_offset,
               "petal network IDs overlap the drop network ID range");
@@ -135,6 +140,8 @@ inline bool PetalIgnoresReachBonus(EPetalType type)
     case EPetalType::Shovel:
     case EPetalType::Trapper:
     case EPetalType::Plank:
+    case EPetalType::Battery:
+    case EPetalType::Bulb:
         return true;
     default:
         return false;
@@ -249,6 +256,16 @@ inline bool MatchPetalTypeAlias(std::string_view text, EPetalType type)
         return text == "tomato" || text == "tom";
     case EPetalType::HallucinogenicMushroom:
         return text == "hallucinogenic_mushroom" || text == "hallucinogenicmushroom" || text == "hm";
+    case EPetalType::Lightning:
+        return text == "lightning" || text == "ltn";
+    case EPetalType::Battery:
+        return text == "battery" || text == "btr";
+    case EPetalType::Bulb:
+        return text == "bulb";
+    case EPetalType::Brush:
+        return text == "brush";
+    case EPetalType::Eraser:
+        return text == "eraser" || text == "ers";
     default:
         return false;
     }

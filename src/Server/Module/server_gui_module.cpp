@@ -167,7 +167,7 @@ std::vector<std::string> EntityRefs(std::string_view prefix)
     if (!world) return refs;
 
     world->ForEachEntity([&](const CEntity* entity) {
-        if (entity) refs.push_back(std::to_string(world_id) + ":" + std::to_string(entity->m_id));
+        if (entity) refs.push_back(std::to_string(world_id) + ":" + std::to_string(entity->Id()));
     });
     std::sort(refs.begin(), refs.end());
     return refs;
@@ -239,7 +239,7 @@ std::vector<std::string> CompletionCandidates(std::string_view kind, std::string
     if (kind == "bool") return { "0", "1" };
     if (kind == "channel") return { "global", "local", "server", "whisper" };
     if (kind == "weather_action") return { "status", "set", "env", "derive", "auto", "time" };
-    if (kind == "weather_type") return { "clear", "cloudy", "rain", "storm", "fog" };
+    if (kind == "weather_type") return { "clear", "cloudy", "rain", "fog" };
     return {};
 }
 

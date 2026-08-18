@@ -10,6 +10,8 @@ bool RegisterPetals(std::string& error)
     }
 
     RegisterPetalDefinition<EPetalType::Air, CAirBehavior>();
+    RegisterPetalDefinition<EPetalType::Brush, CBrushBehavior>();
+    RegisterPetalDefinition<EPetalType::Eraser, CBrushBehavior>();
     RegisterPetalDefinition<EPetalType::AntEgg, CAntEggBehavior, CBeetleEggPetal>();
     RegisterPetalDefinition<EPetalType::Antennae, CAntennaeBehavior>();
     RegisterPetalDefinition<EPetalType::Basic, CBasicBehavior>();
@@ -73,6 +75,9 @@ bool RegisterPetals(std::string& error)
     RegisterPetalDefinition<EPetalType::Plank, CPlankBehavior>();
     RegisterPetalDefinition<EPetalType::Tomato, CTomatoBehavior>();
     RegisterPetalDefinition<EPetalType::HallucinogenicMushroom, CHallucinogenicMushroomBehavior>();
+    RegisterPetalDefinition<EPetalType::Lightning, CLightningBehavior>();
+    RegisterPetalDefinition<EPetalType::Battery, CBatteryBehavior, CBatteryPetal>();
+    RegisterPetalDefinition<EPetalType::Bulb, CBulbBehavior>();
 
     return registry.Finalize(error);
 }

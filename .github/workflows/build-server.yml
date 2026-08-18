@@ -28,6 +28,17 @@ jobs:
             exit 1
           fi
 
+  web-bridge-tests:
+    name: Web bridge unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Run bridge tests
+        run: node --test tests/web_bridge/test_bridge.test.mjs
+
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}

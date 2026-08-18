@@ -9,7 +9,9 @@
 #include <utility>
 #include <vector>
 
-template <typename TId, typename TPrototype, std::size_t Size> class TPrototypeRegistry
+template <typename TId, typename TPrototype, std::size_t Size,
+          std::size_t OptionalFrom = Size>
+class TPrototypeRegistry
 {
   public:
     using name_function = std::string_view (*)(TId);
@@ -76,12 +78,6 @@ template <typename TId, typename TPrototype, std::size_t Size> class TPrototypeR
 
     bool Add(TId id, std::unique_ptr<TPrototype> prototype)
     {
-        if (m_frozen)
-        {
-            AddError("cannot register " + Name(id) + " after the registry was frozen");
-            return false;
-        }
-
         const std::size_t index = Index(id);
         if (index == 0 || index >= Size)
         {
@@ -101,6 +97,20 @@ template <typename TId, typename TPrototype, std::size_t Size> class TPrototypeR
         if (m_entries[index])
         {
             AddError("duplicate registration for " + Name(id));
+            return false;
+        }
+        // Optional (mod) slots stay open after the registry freezes so game
+        // controllers can register their own content at runtime; core slots
+        // are sealed once Finalize runs.
+        if (index >= OptionalFrom)
+        {
+            m_entries[index] = std::move(prototype);
+            ++m_registered_count;
+            return true;
+        }
+        if (m_frozen)
+        {
+            AddError("cannot register " + Name(id) + " after the registry was frozen");
             return false;
         }
 
@@ -155,6 +165,7 @@ template <typename TId, typename TPrototype, std::size_t Size> class TPrototypeR
 
         for (std::size_t index = 1; index < Size; ++index)
         {
+            if (index >= OptionalFrom) continue; // mod range: slots may stay empty
             if (!m_entries[index] && m_unsupported_reasons[index].empty())
                 AddError("missing registration for " + Name(static_cast<TId>(index)));
         }

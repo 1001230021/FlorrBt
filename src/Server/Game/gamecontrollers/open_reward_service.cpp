@@ -2,6 +2,7 @@
 #include "../../../Engine/logger.h"
 #include "../../../Shared/drop_rate.h"
 #include "../../../Shared/game_config.h"
+#include "../../Module/network_module.h"
 #include "../controllers/melee_controller.h"
 #include "../entities/drop.h"
 #include "../entities/mob.h"
@@ -116,7 +117,7 @@ void LogSuperLootIssue(const CMobBase& mob, const std::string& reason)
     const SMobStats* stats = mob.GetFinalStats();
     const float max_health = stats ? stats->max_health : 0.f;
     LOG_WARN("loot", reason + " mob=" + std::string(GetRarityName(mob.GetRarity())) + " " +
-                         std::string(GetMobTypeName(mob.GetMobType())) + " id=" + std::to_string(mob.m_id) +
+                         std::string(GetMobTypeName(mob.GetMobType())) + " id=" + std::to_string(mob.Id()) +
                          " max_health=" + std::to_string(max_health) + " recorded_damage=" +
                          std::to_string(TotalDamageRecorded(mob)) + " damage_sources=" + DamageSummary(mob));
 }
@@ -319,22 +320,37 @@ void COpenRewardService::OnMobDefeated(COpenController& controller, CGameWorld& 
             if (log_loot_issues)
                 LOG_WARN("loot", "Rolled zero drops mob=" + std::string(GetRarityName(mob.GetRarity())) + " " +
                                      std::string(GetMobTypeName(mob.GetMobType())) + " id=" +
-                                     std::to_string(mob.m_id) + " player=" + lootable.player->GetName() + "#" +
+                                     std::to_string(mob.Id()) + " player=" + lootable.player->GetName() + "#" +
                                      std::to_string(lootable.player->GetId()) + " lootables=" +
                                      LootableSummary(lootable_players) + " damage_sources=" + DamageSummary(mob));
             continue;
         }
 
+        // Bestiary: a drop roll counts as a kill entry, whether or not the
+        // drop is ever picked up.
+        const uint8_t mob_type = static_cast<uint8_t>(mob.GetMobType());
+        const uint8_t mob_rarity = static_cast<uint8_t>(mob.GetRarity());
+        lootable.player->RecordCodexKill(mob_type, mob_rarity);
+        if (CGameContext* context = world.GameContext())
+        {
+            auto* network = dynamic_cast<INetworkModule*>(&context->Network());
+            const auto& codex = lootable.player->GetCodex();
+            const uint32_t key = (static_cast<uint32_t>(mob_type) << 8) | static_cast<uint32_t>(mob_rarity);
+            const auto count_it = codex.find(key);
+            if (network && count_it != codex.end())
+                network->SendCodexDelta(*lootable.player, mob_type, mob_rarity, count_it->second);
+        }
+
         for (size_t i = 0; i < drops.size(); ++i)
         {
             const SDropRate& drop = drops[i];
-            auto entity = std::make_unique<CDrop>(&world, mob.m_pos + DropSpreadOffset(i, drops.size()), drop.type,
+            auto entity = std::make_unique<CDrop>(&world, mob.Pos() + DropSpreadOffset(i, drops.size()), drop.type,
                                                   drop.rarity, lootable.player->GetId());
             world.InsertEntity(std::move(entity));
         }
         if (log_loot_issues && mob.GetMobType() == EMobType::AntHole)
             LOG_INFO("loot", "Generated AntHole drops mob=" + std::string(GetRarityName(mob.GetRarity())) +
-                                 " id=" + std::to_string(mob.m_id) + " player=" + lootable.player->GetName() + "#" +
+                                 " id=" + std::to_string(mob.Id()) + " player=" + lootable.player->GetName() + "#" +
                                  std::to_string(lootable.player->GetId()) + " drops=" + DropSummary(drops));
     }
 }

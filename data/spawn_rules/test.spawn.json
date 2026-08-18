@@ -1,0 +1,15 @@
+{
+ "version": 1,
+ "modifiers": [],
+ "profiles": {
+  "test_empty": {
+   "base_pool": [
+    {
+     "mob": "beetle",
+     "weight": 1
+    }
+   ],
+   "modifiers": []
+  }
+ }
+}

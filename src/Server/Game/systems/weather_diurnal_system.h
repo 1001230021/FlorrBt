@@ -11,7 +11,6 @@ enum class EWeatherType : std::uint8_t
     Clear = 0,
     Cloudy,
     Rain,
-    Storm,
     Fog,
     Count,
 };

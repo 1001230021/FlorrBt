@@ -43,9 +43,9 @@ float GetHealthPercent(const CEntity& entity)
     if (entity.IsEntityType(EEntityType::Mob))
     {
         const SMobStats* stats = static_cast<const CMobBase&>(entity).GetFinalStats();
-        if (stats && stats->max_health > 0.f) return entity.m_health / stats->max_health;
+        if (stats && stats->max_health > 0.f) return entity.Health() / stats->max_health;
     }
-    return entity.m_health;
+    return entity.Health();
 }
 
 bool FlowerHasAvailablePetal(const CFlower& flower, EPetalType type)
@@ -97,10 +97,10 @@ void PopulateOwnerPetalRuntime(const CEntity& owner, ServerEntitySnap& snap)
             {
                 copy_snap.state = SOwnerPetalSlot::ECopyState::Alive;
                 const float max_health = petal->m_final_petal_stats.health;
-                copy_snap.progress = PackPercent(max_health > 0.f ? petal->m_health / max_health : 0.f);
+                copy_snap.progress = PackPercent(max_health > 0.f ? petal->Health() / max_health : 0.f);
                 if (slot_snap.visual_type == SOwnerPetalSlot::EVisualType::Angle)
                 {
-                    copy_snap.visual_value = static_cast<uint16_t>(PackAngle(petal->m_facing_angle));
+                    copy_snap.visual_value = static_cast<uint16_t>(PackAngle(petal->FacingAngle()));
                 } else if (slot_snap.visual_type == SOwnerPetalSlot::EVisualType::Size)
                 {
                     const float base_radius =
@@ -109,7 +109,7 @@ void PopulateOwnerPetalRuntime(const CEntity& owner, ServerEntitySnap& snap)
                             : petal->m_final_petal_stats.radius;
                     const float max_radius = base_radius * tomato_max_radius_multiplier;
                     const float size_ratio = max_radius > game_config::entity_collision_epsilon
-                                                 ? petal->m_radius / max_radius
+                                                 ? petal->Radius() / max_radius
                                                  : 1.f;
                     copy_snap.visual_value = static_cast<uint16_t>(std::round(
                         std::clamp(size_ratio, 0.f, 1.f) * static_cast<float>(UINT16_MAX)));
@@ -285,7 +285,7 @@ visible_candidate MakeVisibleCandidate(const cached_snapshot_entity& cached, con
     candidate.rarity_rank = cached.rarity_rank;
     candidate.owner_related = cached.root_owner && cached.root_owner == owner.root_owner;
     candidate.player_entity = cached.player_entity;
-    candidate.same_team = CheckTeam(cached.entity->m_team, owner.entity->m_team);
+    candidate.same_team = CheckTeam(cached.entity->Team(), owner.entity->Team());
     candidate.attached = cached.attached;
     return candidate;
 }
@@ -305,9 +305,9 @@ bool BetterSnapshotCandidate(const visible_candidate& lhs, const visible_candida
     const CEntity* rhs_entity = rhs.cached ? rhs.cached->entity : nullptr;
     if (lhs_entity && rhs_entity)
     {
-        if (lhs_entity->m_id != rhs_entity->m_id) return lhs_entity->m_id < rhs_entity->m_id;
-        if (lhs_entity->m_generation != rhs_entity->m_generation)
-            return lhs_entity->m_generation < rhs_entity->m_generation;
+        if (lhs_entity->Id() != rhs_entity->Id()) return lhs_entity->Id() < rhs_entity->Id();
+        if (lhs_entity->Generation() != rhs_entity->Generation())
+            return lhs_entity->Generation() < rhs_entity->Generation();
     }
     return lhs_entity != nullptr;
 }
@@ -339,8 +339,6 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
 
     float view_radius = owner_stats->horizon;
     float snap_view_radius = view_radius * game_config::network_snapshot_view_radius_multiplier;
-    if (game_config::network_snapshot_query_radius_cap > 0.f)
-        snap_view_radius = std::min(snap_view_radius, game_config::network_snapshot_query_radius_cap);
 
     const size_t configured_entity_budget =
         std::clamp(game_config::network_snapshot_entity_budget, size_t{ 1 }, CSnapshotService::entity_budget);
@@ -371,7 +369,7 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
         }
     }
     CEntity* mandatory_titan_entity = owner->GameWorld()->FindClosestEntityByEdge(
-        owner->m_pos, game_config::titan_forge_range, [](const CEntity* entity) {
+        owner->Pos(), game_config::titan_forge_range, [](const CEntity* entity) {
             if (!entity || !entity->IsEntityType(EEntityType::Mob)) return false;
             const auto* mob = static_cast<const CMobBase*>(entity);
             return mob->GetMobType() == EMobType::Titan && mob->IsVisible();
@@ -394,7 +392,7 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
 
     size_t visible_count = mandatory_entity_count;
 
-    owner->GameWorld()->ForEachEntityInEdgeRange(owner->m_pos, snap_view_radius, [&](CEntity* entity) {
+    owner->GameWorld()->ForEachEntityInEdgeRange(owner->Pos(), snap_view_radius, [&](CEntity* entity) {
         if (!entity || !entity->IsVisible() || entity == owner) return;
         if (entity == mandatory_titan_entity) return;
         if (std::find(mandatory_squad_entities.begin(), mandatory_squad_entities.end(), entity) !=
@@ -402,7 +400,7 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
             return;
         const cached_snapshot_entity& cached = CachedSnapshotEntity(*this, *owner->GameWorld(), *entity, snapshot_id);
         if (!CanSnapshotEntityForPlayer(cached, player)) return;
-        float dist_sq = DistanceSq(owner->m_pos, entity->m_pos);
+        float dist_sq = DistanceSq(owner->Pos(), entity->Pos());
         ++visible_count;
 
         visible_candidate candidate = MakeVisibleCandidate(cached, owner_cached, dist_sq);
@@ -410,6 +408,22 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
         else if (cached.pool == snapshot_pool::Projectile) projectile_entities.push_back(candidate);
         else misc_entities.push_back(candidate);
     });
+
+    // One extra cull pass after the default collection: the world controller
+    // may hide entities from this player (fog of war, ...) before the budget
+    // trimming below, so hidden entities never consume snapshot budget.
+    if (IGameController* controller = owner->GameWorld()->GetController())
+    {
+        const auto hidden = [&](const visible_candidate& candidate) {
+            const CEntity* entity = candidate.cached ? candidate.cached->entity : nullptr;
+            return !entity || !controller->SnapshotEntityVisibleToPlayer(*owner->GameWorld(), player, *entity);
+        };
+        mob_entities.erase(std::remove_if(mob_entities.begin(), mob_entities.end(), hidden), mob_entities.end());
+        projectile_entities.erase(std::remove_if(projectile_entities.begin(), projectile_entities.end(), hidden),
+                                  projectile_entities.end());
+        misc_entities.erase(std::remove_if(misc_entities.begin(), misc_entities.end(), hidden), misc_entities.end());
+    }
+    visible_count = mandatory_entity_count + mob_entities.size() + projectile_entities.size() + misc_entities.size();
 
     TrimSnapshotPool(mob_entities, configured_mob_budget);
     TrimSnapshotPool(projectile_entities, configured_projectile_budget);
@@ -434,7 +448,7 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
     ServerMessage msg;
     msg.type = ServerMessage::Type::Snapshot;
     msg.snapshot_id = snapshot_id;
-    msg.owner_entity_id = static_cast<net_entity_id>(owner->m_id);
+    msg.owner_entity_id = static_cast<net_entity_id>(owner->Id());
     msg.view_radius = view_radius;
     msg.entities.reserve(std::min(visible_entities.size() + mandatory_entity_count, effective_entity_budget));
 
@@ -484,21 +498,30 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
 
     out.message = std::move(msg);
     out.visible_count = visible_count;
-    out.packed_size = packed_size;
+    // Weather intensities and wind ride along with every snapshot.
+    out.packed_size = packed_size + server_environment_weather_count + server_environment_wind_size;
     return true;
 }
 
 ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const CEntity& owner) const
 {
     ServerEntitySnap snap;
-    snap.entity_id = static_cast<net_entity_id>(entity.m_id);
+    snap.entity_id = static_cast<net_entity_id>(entity.Id());
     snap.entity_type = entity.GetNetworkType();
-    snap.team = static_cast<uint8_t>(std::clamp(entity.m_team, 0, static_cast<int>(UINT8_MAX)));
-    snap.pos = entity.m_pos;
-    snap.radius = entity.m_radius;
+    // Mod mobs may disguise themselves as a vanilla mob type on the wire so
+    // clients render the vanilla sprite without client-side mod support.
+    if (const auto* mob = dynamic_cast<const CMobBase*>(&entity))
+    {
+        if (const CMobPrototype* proto = FindMobPrototype(mob->GetMobType());
+            proto && proto->m_visual_proxy_type != EMobType::None)
+            snap.entity_type = static_cast<std::uint8_t>(proto->m_visual_proxy_type);
+    }
+    snap.team = static_cast<uint8_t>(std::clamp(entity.Team(), 0, static_cast<int>(UINT8_MAX)));
+    snap.pos = entity.Pos();
+    snap.radius = entity.Radius();
     snap.hp_percent = GetHealthPercent(entity);
     snap.name = GetEntityName(entity);
-    snap.angle = PackAngle(entity.m_facing_angle);
+    snap.angle = PackAngle(entity.FacingAngle());
 
     if (const auto* mob = dynamic_cast<const CMobBase*>(&entity)) snap.rarity = static_cast<uint8_t>(mob->GetRarity());
     if (const auto* player_flower = dynamic_cast<const CPlayerFlower*>(&entity))
@@ -575,8 +598,8 @@ ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const 
 
         if (dynamic_cast<const CSummonedMeleeController*>(mob->GetController()))
             snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Summoned);
-        if (const auto* controller = dynamic_cast<const CLeafcutterSoldierController*>(mob->GetController());
-            controller && controller->IsCarryingLeafPiece(mob))
+        if (const auto* pickup = dynamic_cast<const CPickupController*>(mob->GetController());
+            pickup && pickup->GetCarried(mob))
             snap.flags |= static_cast<uint16_t>(ServerEntityFlag::CarryingLeafPiece);
     }
     return snap;

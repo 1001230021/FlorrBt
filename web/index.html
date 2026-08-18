@@ -239,18 +239,34 @@
         <span class="quick-action-icon"></span>
         <kbd>C</kbd>
       </button>
+    </section>
+
+    <section
+      id="topLeftActions"
+      class="top-left-actions ui hidden"
+      aria-label="Top left actions"
+    >
       <button
-        id="quickSettingsBtn"
-        class="quick-action quick-action-settings"
+        id="topSettingsBtn"
+        class="top-action top-action-settings"
         type="button"
-        title="Settings [V]"
+        title="Settings"
         aria-label="Settings"
         aria-pressed="false"
         data-i18n-title="ui.quick.settingsTitle"
-        data-i18n-aria-label="ui.quick.settings"
+        data-i18n-aria-label="ui.quick.settingsTitle"
       >
-        <span class="quick-action-icon" aria-hidden="true"></span>
-        <kbd>V</kbd>
+        <span class="top-action-icon" aria-hidden="true"></span>
+      </button>
+      <button
+        id="codexBtn"
+        class="top-action top-action-codex"
+        type="button"
+        title="Bestiary"
+        aria-label="Bestiary"
+        aria-pressed="false"
+      >
+        <span class="top-action-icon" aria-hidden="true"></span>
       </button>
     </section>
 
@@ -287,7 +303,7 @@
           ></label
         >
       </div>
-      <section id="chatLog" class="chat-log"></section>
+      <section id="chatLog" class="chat-log" data-scrollbar></section>
       <button
         id="chatHint"
         class="chat-hint"
@@ -343,7 +359,6 @@
 
     <section id="consolePanel" class="console-panel ui">
       <div id="debugInfo" class="console-debug"></div>
-      <div id="consoleLog" class="console-log"></div>
       <input
         id="consoleInput"
         class="console-input"
@@ -352,6 +367,8 @@
         maxlength="240"
         placeholder="Console"
         data-i18n-placeholder="ui.console.placeholder"
+        aria-label="Console"
+        data-i18n-aria-label="ui.console.placeholder"
       />
     </section>
 
@@ -393,7 +410,7 @@
           data-i18n-placeholder="ui.inventory.search"
         />
       </div>
-      <div id="inventoryList" class="inventory-list"></div>
+      <div id="inventoryList" class="inventory-list" data-scrollbar></div>
     </section>
 
     <section id="craftPanel" class="game-panel craft-panel ui">
@@ -459,7 +476,7 @@
         </div>
         <div id="craftChance" class="craft-chance"></div>
       </div>
-      <div id="craftList" class="craft-list"></div>
+      <div id="craftList" class="craft-list" data-scrollbar></div>
     </section>
 
     <section id="talentPanel" class="game-panel talent-panel ui">
@@ -482,7 +499,7 @@
       >
         Talent Points: 0
       </div>
-      <div id="talentTree" class="talent-tree"></div>
+      <div id="talentTree" class="talent-tree" data-scrollbar></div>
     </section>
 
     <section
@@ -503,7 +520,7 @@
           x
         </button>
       </div>
-      <div id="settingsList" class="settings-list"></div>
+      <div id="settingsList" class="settings-list" data-scrollbar></div>
       <div id="emailSettingsRow" class="settings-row hidden">
         <span class="settings-label" data-i18n="ui.settings.email">Email</span>
         <div class="settings-email-control">
@@ -513,6 +530,26 @@
           </button>
         </div>
       </div>
+    </section>
+
+    <section
+      id="codexPanel"
+      class="game-panel codex-panel ui"
+      aria-label="Bestiary"
+    >
+      <div class="panel-title">
+        <span>生物图鉴</span>
+        <button
+          id="codexCloseBtn"
+          class="panel-close"
+          type="button"
+          aria-label="Close bestiary"
+        >
+          x
+        </button>
+      </div>
+      <div id="codexGrid" class="codex-grid" data-scrollbar></div>
+      <div id="codexDetail" class="codex-detail hidden"></div>
     </section>
 
     <script type="module" src="./src/game.js"></script>

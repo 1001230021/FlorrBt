@@ -633,6 +633,10 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::SoldierAnt, ERarity::Super, EPetalType::Glass, ERarity::Ultra, 0.464992);
     RegisterDropRate(EMobType::SoldierAnt, ERarity::Super, EPetalType::Glass, ERarity::Mythic, 0.535);
 
+    // Bubble: drops Air and Bubble petals with the same rates as Wing from SoldierAnt.
+    CopyDropRateTable(EMobType::SoldierAnt, EPetalType::Wing, EMobType::Bubble, EPetalType::Air);
+    CopyDropRateTable(EMobType::SoldierAnt, EPetalType::Wing, EMobType::Bubble, EPetalType::Bubble);
+
     RegisterDropRate(EMobType::Rock, ERarity::Common, EPetalType::Rock, ERarity::Common, 0.455);
     RegisterDropRate(EMobType::Rock, ERarity::Common, EPetalType::Rock, ERarity::Unusual, 0.101);
     RegisterDropRate(EMobType::Rock, ERarity::Unusual, EPetalType::Rock, ERarity::Common, 0.613);
@@ -1144,6 +1148,9 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::BandageBeetle, ERarity::Super, EPetalType::BeetleEgg, ERarity::Super, 0.000008);
     RegisterDropRate(EMobType::BandageBeetle, ERarity::Super, EPetalType::BeetleEgg, ERarity::Ultra, 0.597992);
     RegisterDropRate(EMobType::BandageBeetle, ERarity::Super, EPetalType::BeetleEgg, ERarity::Mythic, 0.402);
+
+    RegisterLentilDropTable(EMobType::Firefly, EPetalType::Lightning);
+    RegisterLentilDropTable(EMobType::Firefly, EPetalType::Battery);
 
     RegisterDropRate(EMobType::Beetle, ERarity::Unusual, EPetalType::BeetleEgg, ERarity::Common, 0.547);
     RegisterDropRate(EMobType::Beetle, ERarity::Unusual, EPetalType::BeetleEgg, ERarity::Unusual, 0.453);

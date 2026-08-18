@@ -95,6 +95,8 @@
     <ClInclude Include="src\Server\Game\entities\drop.h" />
     <ClInclude Include="src\Server\Game\gamecontroller.h" />
     <ClInclude Include="src\Server\Game\controllers\melee_controller.h" />
+    <ClInclude Include="src\Server\Game\controllers\pickup_controller.h" />
+    <ClInclude Include="src\Server\Game\controller_params.h" />
     <ClInclude Include="src\Server\Game\controllers\player_controller.h" />
     <ClInclude Include="src\Server\Game\entities\flower.h" />
     <ClInclude Include="src\Server\Game\entities\mob.h" />
@@ -109,7 +111,9 @@
     <ClInclude Include="src\Server\Game\gamecontrollers\open_reward_service.h" />
     <ClInclude Include="src\Server\Game\gamecontrollers\open_spawn_director.h" />
     <ClInclude Include="src\Server\Game\gamecontrollers\spawn_rules.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\mutable_terrain_controller.h" />
     <ClInclude Include="src\Server\Game\gamecontrollers\opencontroller.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\pvp_controller.h" />
     <ClInclude Include="src\Server\Game\gamecontrollers\waitingcontroller.h" />
     <ClInclude Include="src\Server\Game\gamecontrollers\world_controller_factory.h" />
     <ClInclude Include="src\Server\Game\gameworld.h" />
@@ -138,6 +142,8 @@
     <ClCompile Include="src\Server\HotReload\snapshot_archive.cpp" />
     <ClCompile Include="src\Server\commands.cpp" />
     <ClCompile Include="src\Server\Game\controllers\melee_controller.cpp" />
+    <ClCompile Include="src\Server\Game\controllers\pickup_controller.cpp" />
+    <ClCompile Include="src\Server\Game\controller_params.cpp" />
     <ClCompile Include="src\Server\Game\controllers\player_controller.cpp" />
     <ClCompile Include="src\Server\Game\entities\blood_sacrifice_ritual.cpp" />
     <ClCompile Include="src\Server\Game\entities\drop.cpp" />
@@ -154,7 +160,9 @@
     <ClCompile Include="src\Server\Game\gamecontrollers\open_reward_service.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\open_spawn_director.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\spawn_rules.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\mutable_terrain_controller.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\opencontroller.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\pvp_controller.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\waitingcontroller.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\weather_diurnal_open_controller.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\world_controller_factory.cpp" />

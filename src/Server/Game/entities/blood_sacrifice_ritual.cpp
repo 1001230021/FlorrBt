@@ -46,9 +46,9 @@ CBloodSacrificeRitual::CBloodSacrificeRitual(CGameWorld* world, sf::Vector2f pos
       m_draw_duration(std::max(game_config::blood_sacrifice_min_phase_duration, timer)),
       m_fade_duration(BloodSacrificeFadeDuration(rarity))
 {
-    m_health = 1.f;
-    m_mass = 0.f;
-    m_team = 0;
+    Health() = 1.f;
+    Mass() = 0.f;
+    Team() = 0;
 }
 
 float CBloodSacrificeRitual::EffectProgress() const
@@ -69,7 +69,7 @@ float CBloodSacrificeRitual::EffectProgress() const
 
 void CBloodSacrificeRitual::Tick(float dt)
 {
-    if (m_is_marked_for_des) return;
+    if (IsMarkedForDes()) return;
 
     m_age += std::max(0.f, dt);
     if (!m_spawned && m_age < m_draw_duration) return;
@@ -87,14 +87,14 @@ void CBloodSacrificeRitual::Tick(float dt)
     CGameWorld* world = GameWorld();
     if (world && m_mob_type != EMobType::None && m_rarity != ERarity::Null)
     {
-        auto mob = CreateMob(m_mob_type, world, m_pos, m_rarity);
+        auto mob = CreateMob(m_mob_type, world, Pos(), m_rarity);
         if (mob)
         {
             CMobBase* raw_mob = dynamic_cast<CMobBase*>(world->InsertEntity(std::move(mob)));
             if (raw_mob)
             {
                 spawned = true;
-                spawned_id = raw_mob->m_id;
+                spawned_id = raw_mob->Id();
                 if (CServer::MeetsPetalReportRarity(raw_mob->GetRarity(), game_config::min_mob_spawn_report_rarity))
                 {
                     const CMobPrototype* proto = FindMobPrototype(raw_mob->GetMobType());
@@ -112,11 +112,11 @@ void CBloodSacrificeRitual::Tick(float dt)
     {
         LOG_INFO("blood_sacrifice", "Ritual spawned " + std::string(GetRarityName(m_rarity)) + " " +
                                         std::string(GetMobTypeName(m_mob_type)) + " id " + std::to_string(spawned_id) +
-                                        " at " + std::to_string(m_pos.x) + "," + std::to_string(m_pos.y));
+                                        " at " + std::to_string(Pos().x) + "," + std::to_string(Pos().y));
     } else
     {
         LOG_INFO("blood_sacrifice", "Ritual failed to spawn " + std::string(GetRarityName(m_rarity)) + " " +
-                                        std::string(GetMobTypeName(m_mob_type)) + " at " + std::to_string(m_pos.x) +
-                                        "," + std::to_string(m_pos.y));
+                                        std::string(GetMobTypeName(m_mob_type)) + " at " + std::to_string(Pos().x) +
+                                        "," + std::to_string(Pos().y));
     }
 }

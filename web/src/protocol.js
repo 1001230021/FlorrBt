@@ -1,4 +1,5 @@
 import { t } from "./i18n.js";
+import { PETAL_NAMES, MOB_NAMES, RARITY_NAMES } from "./generated_ids.js";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -43,6 +44,12 @@ export const ServerType = Object.freeze({
   Chat: 0x12,
   CraftResult: 0x13,
   Environment: 0x14,
+  CodexFull: 0x15,
+  CodexDelta: 0x16,
+  CodexLoot: 0x17,
+  LightningChain: 0x18,
+  TerrainDelta: 0x19,
+  TerrainWallRemove: 0x1a,
 });
 
 export const PetalSlotCopyState = Object.freeze({
@@ -79,131 +86,11 @@ export const EmailPolicy = Object.freeze({
   Required: 2,
 });
 
-export const PetalNames = [
-  "None",
-  "Air",
-  "AntEgg",
-  "Antennae",
-  "Basic",
-  "BeetleEgg",
-  "Bone",
-  "Bubble",
-  "Carrot",
-  "Coin",
-  "Compass",
-  "Cogwheel",
-  "Disc",
-  "Dust",
-  "GoldenLeaf",
-  "Iris",
-  "Lentil",
-  "Moon",
-  "Nullification",
-  "Pincer",
-  "Relic",
-  "Rose",
-  "YinYang",
-  "Missile",
-  "BloodSacrifice",
-  "Corruption",
-  "Bandage",
-  "Heavy",
-  "Faster",
-  "Yggdrasil",
-  "Dahlia",
-  "Wing",
-  "Triangle",
-  "Sawblade",
-  "Fragment",
-  "Mimic",
-  "Glass",
-  "Stinger",
-  "BrokenEgg",
-  "Light",
-  "Leaf",
-  "Rock",
-  "Web",
-  "Cactus",
-  "Pollen",
-  "Corn",
-  "Rice",
-  "Basil",
-  "Soil",
-  "Honey",
-  "Wax",
-  "ThirdEye",
-  "Dandelion",
-  "Orange",
-  "Shovel",
-  "Yucca",
-  "WhiteFungus",
-  "BlackFungus",
-  "Broccoli",
-  "Douli",
-  "Trapper",
-  "Amulet",
-  "Plank",
-  "Tomato",
-  "HallucinogenicMushroom",
-];
+export const PetalNames = PETAL_NAMES;
 
-export const MobNames = [
-  "None",
-  "Beetle",
-  "Gambler",
-  "NormalLadybug",
-  "MechaFlower",
-  "NormalFlower",
-  "PlayerFlower",
-  "SoldierAnt",
-  "SoldierFireAnt",
-  "SoldierTermite",
-  "SummonedBeetle",
-  "SummonedSoldierAnt",
-  "BandageBeetle",
-  "Bee",
-  "Hornet",
-  "BumbleBee",
-  "Rock",
-  "BabyAnt",
-  "WorkerAnt",
-  "QueenAnt",
-  "AntHole",
-  "Spider",
-  "Sandstorm",
-  "Dummy",
-  "Dandelion",
-  "AntEgg",
-  "FireAntEgg",
-  "TermiteEgg",
-  "QueenAntEgg",
-  "QueenFireAntEgg",
-  "BabyFireAnt",
-  "WorkerFireAnt",
-  "FireQueenAnt",
-  "BabyTermite",
-  "WorkerTermite",
-  "TermiteOvermind",
-  "LeafPiece",
-  "LeafcutterSoldier",
-  "Titan",
-];
+export const MobNames = MOB_NAMES;
 
-export const RarityNames = [
-  "Null",
-  "Common",
-  "Unusual",
-  "Rare",
-  "Epic",
-  "Legendary",
-  "Mythic",
-  "Ultra",
-  "Super",
-  "Eternal",
-  "Unique",
-  "Primordial",
-  "Exotic",
-];
+export const RarityNames = RARITY_NAMES;
 
 export const RarityColors = [
   [0, 0, 0, 0, 0, 0],
@@ -280,10 +167,14 @@ export function axisToPacket(value) {
   return clamp(Math.round(clamp(value, -1, 1) * 127), -127, 127);
 }
 
-function fitUtf8(text, maxBytes) {
+export function fitUtf8(text, maxBytes) {
   const bytes = textEncoder.encode(text);
   if (bytes.length <= maxBytes) return bytes;
-  return bytes.slice(0, maxBytes);
+  // Back off over UTF-8 continuation bytes (10xxxxxx) so the cut never splits a
+  // multi-byte code point; decoding would otherwise emit U+FFFD replacement chars.
+  let end = maxBytes;
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end -= 1;
+  return bytes.slice(0, end);
 }
 
 function readString(bytes, offset, length) {
@@ -498,6 +389,7 @@ export function parseServerMessage(payload) {
       msg.ownerEntityId = reader.u16();
       msg.tickRate = reader.u8();
       msg.mapName = reader.has(1) ? reader.string(reader.u8()) : "";
+      msg.weatherEnabled = reader.has(1) ? reader.u8() !== 0 : true;
       return msg;
     }
 
@@ -520,6 +412,14 @@ export function parseServerMessage(payload) {
       for (let i = 0; i < removedCount; i += 1) {
         msg.removedEntityIds.push(reader.u16());
       }
+      msg.weatherIntensity = [
+        reader.u8(),
+        reader.u8(),
+        reader.u8(),
+        reader.u8(),
+      ];
+      msg.windDirection = reader.u8();
+      msg.windSpeed = reader.u8();
       return msg;
     }
 
@@ -615,7 +515,7 @@ export function parseServerMessage(payload) {
     }
 
     if (type === ServerType.Environment) {
-      if (payload.length !== 24) return { type: 0xff };
+      if (payload.length !== 25) return { type: 0xff };
       msg.anchorServerTick = reader.u64();
       msg.timeOfDay = reader.u16() / 0xffff;
       msg.dayDurationSeconds = reader.f32();
@@ -625,8 +525,82 @@ export function parseServerMessage(payload) {
         reader.u8(),
         reader.u8(),
         reader.u8(),
-        reader.u8(),
       ];
+      msg.windDirection = reader.u8();
+      msg.windSpeed = reader.u8();
+      return msg;
+    }
+
+    if (type === ServerType.CodexFull) {
+      const count = reader.u16();
+      msg.codexEntries = [];
+      for (let i = 0; i < count; i += 1) {
+        msg.codexEntries.push({
+          mobType: reader.u8(),
+          rarity: reader.u8(),
+          count: reader.u32(),
+        });
+      }
+      return msg;
+    }
+
+    if (type === ServerType.CodexDelta) {
+      const count = reader.u8();
+      msg.codexDeltaEntries = [];
+      for (let i = 0; i < count; i += 1) {
+        msg.codexDeltaEntries.push({
+          mobType: reader.u8(),
+          rarity: reader.u8(),
+          count: reader.u32(),
+        });
+      }
+      return msg;
+    }
+
+    if (type === ServerType.CodexLoot) {
+      const count = reader.u16();
+      msg.codexLootEntries = [];
+      for (let i = 0; i < count; i += 1) {
+        msg.codexLootEntries.push({
+          mobType: reader.u8(),
+          mobRarity: reader.u8(),
+          petalType: reader.u8(),
+          dropRarity: reader.u8(),
+          dropRate: reader.u16() / 10000,
+        });
+      }
+      return msg;
+    }
+
+    if (type === ServerType.LightningChain) {
+      const count = reader.u8();
+      msg.lightningPoints = [];
+      for (let i = 0; i < count; i += 1) {
+        msg.lightningPoints.push({
+          x: reader.i32() / NET_COORD_SCALE,
+          y: reader.i32() / NET_COORD_SCALE,
+        });
+      }
+      return msg;
+    }
+
+    if (type === ServerType.TerrainDelta) {
+      msg.terrainLayer = reader.u8();
+      msg.terrainRow = reader.u16();
+      msg.terrainCol = reader.u16();
+      msg.terrainGid = reader.u32();
+      return msg;
+    }
+
+    if (type === ServerType.TerrainWallRemove) {
+      msg.wallRemoveMin = {
+        x: reader.i32() / NET_COORD_SCALE,
+        y: reader.i32() / NET_COORD_SCALE,
+      };
+      msg.wallRemoveMax = {
+        x: reader.i32() / NET_COORD_SCALE,
+        y: reader.i32() / NET_COORD_SCALE,
+      };
       return msg;
     }
 

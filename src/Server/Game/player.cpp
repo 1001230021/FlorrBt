@@ -24,7 +24,7 @@ bool SameTalent(const ITalent* lhs, const ITalent* rhs)
 CPlayerController* PlayerControllerFor(CPlayer& player)
 {
     CEntity* entity = player.GetEntity();
-    if (!entity || entity->m_is_marked_for_des) return nullptr;
+    if (!entity || entity->IsMarkedForDes()) return nullptr;
 
     auto* mob = dynamic_cast<CMobBase*>(entity);
     return mob ? dynamic_cast<CPlayerController*>(mob->GetController()) : nullptr;
@@ -141,7 +141,7 @@ bool CPlayer::TickDropPickup()
     if (!m_authenticated || m_account_name.empty()) return false;
 
     CEntity* entity = GetEntity();
-    if (!entity || entity->m_is_marked_for_des || entity->IsDead()) return false;
+    if (!entity || entity->IsMarkedForDes() || entity->IsDead()) return false;
 
     auto* mob = dynamic_cast<CMobBase*>(entity);
     return mob && mob->TickDropPickup(this);
@@ -152,7 +152,7 @@ void CPlayer::ResetControlledMob()
     auto* mob = dynamic_cast<CMobBase*>(GetEntity());
     if (!mob) return;
 
-    mob->MoveTowards(mob->m_pos, 0.f);
+    mob->MoveTowards(mob->Pos(), 0.f);
     mob->m_vel = { 0.f, 0.f };
 
     if (auto* attackable = dynamic_cast<IAttackableMob*>(mob)) attackable->ClearAttackState();
@@ -199,7 +199,7 @@ void CPlayer::ApplySavedProgress()
     flower->m_level = std::max(1, level);
     flower->m_exp = std::max<std::int64_t>(0, exp);
     flower->RebuildFinalStats();
-    if (const SFlowerStats* stats = flower->GetFinalStats()) flower->m_health = stats->max_health;
+    if (const SFlowerStats* stats = flower->GetFinalStats()) flower->Health() = stats->max_health;
 }
 
 void CPlayer::ApplySavedSlots()
@@ -252,6 +252,9 @@ bool CPlayer::TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rari
 
     auto* flower = dynamic_cast<CFlower*>(GetEntity());
     if (!flower) return false;
+    if (CGameWorld* world = flower->GameWorld())
+        if (IGameController* controller = world->GetController())
+            if (controller->LocksPetalLoadout()) return false;
 
     auto& slots = flower->GetSlots();
     if (slot_index >= slots.size()) return false;
@@ -281,6 +284,9 @@ bool CPlayer::TryUnequipPetal(uint8_t slot_index)
 
     auto* flower = dynamic_cast<CFlower*>(GetEntity());
     if (!flower) return false;
+    if (CGameWorld* world = flower->GameWorld())
+        if (IGameController* controller = world->GetController())
+            if (controller->LocksPetalLoadout()) return false;
 
     auto& slots = flower->GetSlots();
     if (slot_index >= slots.size()) return false;
@@ -489,8 +495,8 @@ void CPlayer::SetOwnedEntity(CEntity* entity)
     }
 
     m_p_world = entity->GameWorld();
-    m_entity_id = entity->m_id;
-    m_entity_generation = entity->m_generation;
+    m_entity_id = entity->Id();
+    m_entity_generation = entity->Generation();
 
     if (auto* new_flower = dynamic_cast<CFlower*>(entity)) new_flower->MarkFinalStatsDirty();
 }
@@ -502,6 +508,28 @@ void CPlayer::Authenticate(const std::string& account_name)
     m_authenticated = true;
     m_cp_stack.clear();
     m_cp_check_phase = static_cast<uint8_t>(m_player_id & 0x07);
+    LoadCodex(CAccountDataStore::GetCodex(account_name));
+}
+
+void CPlayer::RecordCodexKill(uint8_t mob_type, uint8_t rarity)
+{
+    if (!m_authenticated || mob_type == 0 || rarity == 0) return;
+    const uint32_t key = (static_cast<uint32_t>(mob_type) << 8) | static_cast<uint32_t>(rarity);
+    auto it = m_codex.find(key);
+    if (it == m_codex.end()) m_codex[key] = 1;
+    else it->second = std::min<uint32_t>(UINT32_MAX, it->second + 1);
+    CAccountDataStore::AddCodexKill(m_account_name, mob_type, rarity);
+}
+
+void CPlayer::LoadCodex(const std::vector<SAccountCodexEntry>& entries)
+{
+    m_codex.clear();
+    for (const SAccountCodexEntry& entry : entries)
+    {
+        if (entry.mob_type == 0 || entry.rarity == 0 || entry.count == 0) continue;
+        const uint32_t key = (static_cast<uint32_t>(entry.mob_type) << 8) | static_cast<uint32_t>(entry.rarity);
+        m_codex[key] = entry.count;
+    }
 }
 
 CEntity* CPlayer::GetEntity() const

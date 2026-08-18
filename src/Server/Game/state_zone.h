@@ -30,7 +30,7 @@ class CStateZone : public CEntity
     }
 
     void Tick(float dt) override;
-    void SetCenter(sf::Vector2f pos) { m_pos = pos; }
+    void SetCenter(sf::Vector2f pos) { Pos() = pos; }
     bool CanCollide() const override { return false; }
     bool IsVisible() const override { return false; }
 

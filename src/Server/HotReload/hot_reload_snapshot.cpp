@@ -100,42 +100,42 @@ std::vector<std::uint8_t> ReadByteArray(const json_t* value)
 
 void CaptureEntityCommon(const CEntity& entity, CSnapshotWriter& writer)
 {
-    writer.Field("id", entity.m_id);
-    writer.UInt64("generation", entity.m_generation);
-    writer.Field("pos", entity.m_pos);
-    writer.Field("prev_pos", entity.m_prev_pos);
-    writer.Field("radius", entity.m_radius);
-    writer.Field("skip_world_tick", entity.m_skip_world_tick);
-    writer.Field("allow_skip_tick", entity.m_allow_skip_tick);
-    writer.Field("tick_mode", static_cast<int>(entity.m_tick_mode));
-    writer.Field("tick_horizon", entity.m_tick_horizon);
-    writer.Field("tags", entity.m_tags);
-    writer.Field("team", entity.m_team);
-    writer.Field("mass", entity.m_mass);
-    if (std::isfinite(entity.m_health)) writer.Field("health", entity.m_health);
-    writer.Field("facing_angle", entity.m_facing_angle);
-    writer.Field("has_facing", entity.m_has_facing);
-    writer.Field("extra_hit_num", entity.m_entity_stats.extra_hit_num);
+    writer.Field("id", entity.Id());
+    writer.UInt64("generation", entity.Generation());
+    writer.Field("pos", entity.Pos());
+    writer.Field("prev_pos", entity.PrevPos());
+    writer.Field("radius", entity.Radius());
+    writer.Field("skip_world_tick", entity.SkipWorldTick());
+    writer.Field("allow_skip_tick", entity.AllowSkipTick());
+    writer.Field("tick_mode", static_cast<int>(entity.TickMode()));
+    writer.Field("tick_horizon", entity.TickHorizon());
+    writer.Field("tags", entity.Tags());
+    writer.Field("team", entity.Team());
+    writer.Field("mass", entity.Mass());
+    if (std::isfinite(entity.Health())) writer.Field("health", entity.Health());
+    writer.Field("facing_angle", entity.FacingAngle());
+    writer.Field("has_facing", entity.HasFacing());
+    writer.Field("extra_hit_num", entity.EntityStats().extra_hit_num);
 }
 
 void RestoreEntityCommon(CEntity& entity, const CSnapshotReader& reader)
 {
-    entity.m_pos = reader.Vector2("pos", entity.m_pos);
-    entity.m_prev_pos = reader.Vector2("prev_pos", entity.m_pos);
-    entity.m_radius = std::max(0.f, reader.Float("radius", entity.m_radius));
-    entity.m_skip_world_tick = reader.Bool("skip_world_tick", entity.m_skip_world_tick);
-    entity.m_allow_skip_tick = reader.Bool("allow_skip_tick", entity.m_allow_skip_tick);
-    entity.m_tick_mode = static_cast<EEntityTickMode>(
-        std::clamp(reader.Int("tick_mode", static_cast<int>(entity.m_tick_mode)),
+    entity.Pos() = reader.Vector2("pos", entity.Pos());
+    entity.PrevPos() = reader.Vector2("prev_pos", entity.Pos());
+    entity.Radius() = std::max(0.f, reader.Float("radius", entity.Radius()));
+    entity.SkipWorldTick() = reader.Bool("skip_world_tick", entity.SkipWorldTick());
+    entity.AllowSkipTick() = reader.Bool("allow_skip_tick", entity.AllowSkipTick());
+    entity.TickMode() = static_cast<EEntityTickMode>(
+        std::clamp(reader.Int("tick_mode", static_cast<int>(entity.TickMode())),
                    static_cast<int>(EEntityTickMode::Default), static_cast<int>(EEntityTickMode::PlayerVisible)));
-    entity.m_tick_horizon = std::max(0.f, reader.Float("tick_horizon", entity.m_tick_horizon));
-    entity.m_tags = reader.UInt32("tags", entity.m_tags);
-    entity.m_team = reader.Int("team", entity.m_team);
-    entity.m_mass = reader.Float("mass", entity.m_mass);
-    if (reader.Has("health")) entity.m_health = reader.Float("health", entity.m_health);
-    entity.m_facing_angle = reader.Float("facing_angle", entity.m_facing_angle);
-    entity.m_has_facing = reader.Bool("has_facing", entity.m_has_facing);
-    entity.m_entity_stats.extra_hit_num = reader.Int("extra_hit_num", entity.m_entity_stats.extra_hit_num);
+    entity.TickHorizon() = std::max(0.f, reader.Float("tick_horizon", entity.TickHorizon()));
+    entity.Tags() = reader.UInt32("tags", entity.Tags());
+    entity.Team() = reader.Int("team", entity.Team());
+    entity.Mass() = reader.Float("mass", entity.Mass());
+    if (reader.Has("health")) entity.Health() = reader.Float("health", entity.Health());
+    entity.FacingAngle() = reader.Float("facing_angle", entity.FacingAngle());
+    entity.HasFacing() = reader.Bool("has_facing", entity.HasFacing());
+    entity.EntityStats().extra_hit_num = reader.Int("extra_hit_num", entity.EntityStats().extra_hit_num);
 }
 
 CJsonOwner CaptureController(const IController* controller)
@@ -297,7 +297,7 @@ std::unique_ptr<CState> RestoreState(CMobBase& owner, const json_t* value, std::
     if (type == "state.pincer_speed_reduce") return std::make_unique<CPincerSpeedReduceState>(&owner, timer, rarity);
     if (type == "state.web_speed_reduce")
     {
-        float reference_mass = owner.GetFinalStats() ? owner.GetFinalStats()->mass : owner.m_mass;
+        float reference_mass = owner.GetFinalStats() ? owner.GetFinalStats()->mass : owner.Mass();
         return std::make_unique<CWebSpeedReduceState>(&owner, timer, reader.Float("multiplier", 1.f), reference_mass);
     }
     if (type == "state.anti_heal")
@@ -308,7 +308,7 @@ std::unique_ptr<CState> RestoreState(CMobBase& owner, const json_t* value, std::
     if (type == "state.corruption")
     {
         auto state = std::make_unique<CCorruptionState>(&owner, timer, rarity);
-        state->RestoreOriginalTeam(reader.Int("original_team", owner.m_team));
+        state->RestoreOriginalTeam(reader.Int("original_team", owner.Team()));
         return state;
     }
     if (type == "state.no_revive") return std::make_unique<CNoReviveState>(&owner, timer, rarity);
@@ -714,7 +714,7 @@ CJsonOwner CaptureEntity(const CEntity& entity, bool& ephemeral, std::string& er
         data_writer.Field("spawned", ritual->HasSpawned());
     } else
     {
-        error = "No entity snapshot codec registered for entity ID " + std::to_string(entity.m_id);
+        error = "No entity snapshot codec registered for entity ID " + std::to_string(entity.Id());
         return {};
     }
 
@@ -957,7 +957,7 @@ bool CreateDependentEntity(CGameWorld& world, const json_t* record, std::string&
         }
         auto* missile = static_cast<CMissile*>(entity.get());
         RestoreProjectile(*missile, data);
-        missile->m_allow_skip_tick = false;
+        missile->AllowSkipTick() = false;
         missile->m_damage = data.Float("damage");
         missile->m_lifetime = data.Float("lifetime");
         missile->m_age = data.Float("age");
@@ -975,7 +975,7 @@ bool CreateDependentEntity(CGameWorld& world, const json_t* record, std::string&
             common.Float("health", 1.f), data.Float("lifetime"), common.Float("mass"),
             data.Float("deceleration_time"), static_cast<ERarity>(data.Int("rarity")), owner);
         RestoreProjectile(*trap, data);
-        trap->m_allow_skip_tick = false;
+        trap->AllowSkipTick() = false;
         trap->m_damage = data.Float("damage");
         trap->m_lifetime = data.Float("lifetime");
         trap->m_age = data.Float("age");
@@ -989,7 +989,7 @@ bool CreateDependentEntity(CGameWorld& world, const json_t* record, std::string&
                                                           common.Float("health", 1.f), data.Float("lifetime"),
                                                           common.Float("mass"), owner);
         RestoreProjectile(*pollen, data);
-        pollen->m_allow_skip_tick = false;
+        pollen->AllowSkipTick() = false;
         pollen->m_damage = data.Float("damage");
         pollen->m_lifetime = data.Float("lifetime");
         pollen->m_age = data.Float("age");
@@ -1101,13 +1101,13 @@ CJsonOwner CaptureWorlds(CServer& server, std::string& error)
 
         std::vector<CEntity*> entities = world->GetAllEntities();
         std::sort(entities.begin(), entities.end(), [](const CEntity* lhs, const CEntity* rhs) {
-            return lhs && rhs ? lhs->m_id < rhs->m_id : lhs != nullptr;
+            return lhs && rhs ? lhs->Id() < rhs->Id() : lhs != nullptr;
         });
         CJsonOwner entity_values = MakeJsonArray();
         std::uint32_t ephemeral_count = 0;
         for (const CEntity* entity : entities)
         {
-            if (!entity || entity->m_is_marked_for_des) continue;
+            if (!entity || entity->IsMarkedForDes()) continue;
             bool ephemeral = false;
             CJsonOwner entity_value = CaptureEntity(*entity, ephemeral, error);
             if (ephemeral)
@@ -1312,8 +1312,8 @@ CJsonOwner CapturePlayers(CServer& server, std::string&)
 
         CEntity* entity = player->GetEntity();
         writer.Field("world_id", entity && entity->GameWorld() ? entity->GameWorld()->GetId() : 0u);
-        writer.Field("entity_id", entity ? entity->m_id : -1);
-        writer.UInt64("entity_generation", entity ? entity->m_generation : 0);
+        writer.Field("entity_id", entity ? entity->Id() : -1);
+        writer.UInt64("entity_generation", entity ? entity->Generation() : 0);
 
         CJsonOwner checkpoints = MakeJsonArray();
         for (const SPlayerCheckpointEntry& checkpoint : player->m_cp_stack)

@@ -55,6 +55,7 @@ struct SFlowerStats : public SMobStats
     float tridmgbonus = 0.f;
     float reach = 0.0f;
     float petal_attraction_range = game_config::stats_default_flower_petal_attraction_range;
+    float detection_range_bonus = 0.f;
 
     float petal_dmg_multiplier = 1.f;
     float petal_reload_multiplier = 1.f;
@@ -86,6 +87,7 @@ struct SFlowerStats : public SMobStats
         tridmgbonus += other.tridmgbonus;
         reach += other.reach;
         petal_attraction_range += other.petal_attraction_range;
+        detection_range_bonus += other.detection_range_bonus;
 
         petal_dmg_multiplier *= other.petal_dmg_multiplier;
         petal_reload_multiplier *= other.petal_reload_multiplier;

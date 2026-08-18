@@ -47,7 +47,7 @@
       "craft": "Craft",
       "craftTitle": "Craft [C]",
       "settings": "Settings",
-      "settingsTitle": "Settings [V]"
+      "settingsTitle": "Settings [Esc]"
     },
     "chat": {
       "ariaLabel": "Chat",
@@ -68,7 +68,36 @@
       "close": "Close slider"
     },
     "console": {
-      "placeholder": "Console"
+      "placeholder": "Console",
+      "searchPlaceholder": "Searching...",
+      "prompt": "> ",
+      "searchPrompt": "Searching: ",
+      "lines": "Lines {first} - {last} ({state})",
+      "following": "Following",
+      "locked": "Locked",
+      "match": "Match {current} of {total}",
+      "noResults": "No results",
+      "helpPrefix": "Help: {text}",
+      "usage": "Usage: {name} {params}",
+      "help": {
+        "version": "Show the client version",
+        "language": "List or change the display language",
+        "say": "Send a chat message on the given channel",
+        "g": "Send a global chat message",
+        "l": "Send a local chat message",
+        "whisper": "Whisper a message to a player",
+        "map": "Load a map",
+        "login_map": "Set the login screen map",
+        "login_map_x": "Set the login screen camera X",
+        "login_map_y": "Set the login screen camera Y",
+        "login_map_horizon": "Set the login screen camera horizon",
+        "hitbox": "Toggle hitbox debug rendering",
+        "colorful_map": "Toggle colorful map rendering",
+        "set": "Show or change a client setting",
+        "slider": "Open a slider for a client setting",
+        "keyboard_control": "Enable or disable keyboard movement",
+        "mobile": "Set the mobile control mode"
+      }
     },
     "settings": {
       "title": "Settings",
@@ -180,7 +209,10 @@
         "maxDurability": "Max durability",
         "maxRadius": "Max radius",
         "hallucination": "Hallucination",
-        "evolveHits": "Evolve hits"
+        "evolveHits": "Evolve hits",
+        "chain": "Chain",
+        "charges": "Charges",
+        "radius": "Radius"
       },
       "values": {
         "corrupted": "Corrupted",
@@ -203,7 +235,9 @@
       "attackLabel": "A",
       "attack": "Attack",
       "defendLabel": "B",
-      "defend": "Defend"
+      "defend": "Defend",
+      "swapLabel": "X",
+      "swap": "Quick Swap"
     }
   },
   "status": {
@@ -370,7 +404,12 @@
       "amulet": "Amulet",
       "plank": "Plank",
       "tomato": "Tomato",
-      "hallucinogenic_mushroom": "Hallucinogenic Mushroom"
+      "hallucinogenic_mushroom": "Hallucinogenic Mushroom",
+      "lightning": "Lightning",
+      "battery": "Battery",
+      "bulb": "Bulb",
+      "brush": "Brush",
+      "eraser": "Eraser"
     },
     "mobs": {
       "none": "None",
@@ -411,7 +450,8 @@
       "termite_overmind": "Termite Overmind",
       "leaf_piece": "Leaf Piece",
       "leafcutter_soldier": "Leafcutter Soldier",
-      "titan": "Titan"
+      "titan": "Titan",
+      "firefly": "Firefly"
     }
   },
   "talents": {
@@ -440,6 +480,20 @@
       "second_chance": "Second Chance",
       "poison": "Poison",
       "concentrated_poison": "Concentrated Poison"
+    }
+  },
+  "squad": {
+    "event": {
+      "inviteReceived": "You received a squad request from {name}. Enter /invite accept to accept or /invite refuse to refuse.",
+      "inviteSent": "Squad request sent to {name}.",
+      "noInvite": "No pending squad request.",
+      "inviteRefused": "{name} refused your squad request.",
+      "inviteRefusedYou": "You refused {name}'s squad request.",
+      "inviteFailed": "Failed to accept {name}'s squad request (the squad may be full).",
+      "inviteFailedThem": "{name} tried to accept your squad request but failed.",
+      "joinedYou": "You have joined {name}'s squad.",
+      "joined": "{name} has joined the squad.",
+      "inviteInvalid": "Invalid squad invite target."
     }
   }
 }

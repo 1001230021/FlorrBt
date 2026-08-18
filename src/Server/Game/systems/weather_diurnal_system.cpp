@@ -66,7 +66,6 @@ std::string_view WeatherTypeName(EWeatherType weather)
     case EWeatherType::Clear: return "clear";
     case EWeatherType::Cloudy: return "cloudy";
     case EWeatherType::Rain: return "rain";
-    case EWeatherType::Storm: return "storm";
     case EWeatherType::Fog: return "fog";
     default: return "unknown";
     }
@@ -209,12 +208,11 @@ void CWeatherDiurnalSystem::DeriveIntensities(float out[weather_type_count]) con
     const float condensation = std::clamp((22.f - value.temperature_celsius) / 25.f, 0.f, 1.f);
 
     // Every score deliberately includes humidity, wind direction, wind speed, and temperature.
-    const float storm_score =
-        value.humidity * 0.48f + wind * 0.25f + moisture_direction * 0.15f + warmth * 0.12f;
+    // Rain absorbs the old storm weighting: stronger wind drives heavier rain.
     const float fog_score = value.humidity * 0.55f + (1.f - wind) * 0.18f +
                             condensation * 0.17f + (1.f - moisture_direction) * 0.10f;
-    const float rain_score = value.humidity * 0.58f + wind * 0.08f +
-                             moisture_direction * 0.14f + condensation * 0.20f;
+    const float rain_score = value.humidity * 0.55f + wind * 0.15f +
+                             moisture_direction * 0.15f + condensation * 0.15f;
     const float cloud_score = value.humidity * 0.58f + wind * 0.17f +
                               moisture_direction * 0.10f + condensation * 0.15f;
 
@@ -222,13 +220,11 @@ void CWeatherDiurnalSystem::DeriveIntensities(float out[weather_type_count]) con
     // the driving attributes, the stronger each weather. Several weathers may be active at once.
     const float cloudy = RampIntensity(cloud_score, 0.45f, 0.66f);
     const float rain = RampIntensity(rain_score, 0.58f, 0.76f);
-    const float storm = RampIntensity(storm_score, 0.72f, 0.85f);
     const float fog = RampIntensity(fog_score, 0.72f, 0.85f);
 
-    out[static_cast<int>(EWeatherType::Clear)] = 1.f - std::max({ cloudy, rain, storm, fog });
+    out[static_cast<int>(EWeatherType::Clear)] = 1.f - std::max({ cloudy, rain, fog });
     out[static_cast<int>(EWeatherType::Cloudy)] = cloudy;
     out[static_cast<int>(EWeatherType::Rain)] = rain;
-    out[static_cast<int>(EWeatherType::Storm)] = storm;
     out[static_cast<int>(EWeatherType::Fog)] = fog;
 }
 

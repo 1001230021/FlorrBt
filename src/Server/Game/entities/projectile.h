@@ -16,14 +16,14 @@ class CProjectile : public CEntity
     }
 
     CProjectile(CGameWorld* world, sf::Vector2f pos, float r, CEntity* owner, SEntityTypeInfo entity_type)
-        : CEntity(world, pos.x, pos.y, r, entity_type), m_p_owner(owner), m_owner_id(owner ? owner->m_id : -1),
-          m_owner_generation(owner ? owner->m_generation : 0)
+        : CEntity(world, pos.x, pos.y, r, entity_type), m_p_owner(owner), m_owner_id(owner ? owner->Id() : -1),
+          m_owner_generation(owner ? owner->Generation() : 0)
     {
-        m_allow_skip_tick = owner && owner->m_allow_skip_tick;
+        AllowSkipTick() = owner && owner->AllowSkipTick();
         if (owner)
         {
-            m_tick_mode = owner->m_tick_mode;
-            m_tick_horizon = owner->TickHorizon();
+            TickMode() = owner->TickMode();
+            TickHorizon() = owner->TickHorizon();
         }
         if (owner) owner->AddTag(EEntityTag::ClearOwnedEntitiesOnDestroy);
     }
@@ -32,15 +32,15 @@ class CProjectile : public CEntity
     {
         if (LengthSq(m_vel) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
         {
-            m_facing_angle = std::atan2(m_vel.y, m_vel.x);
-            m_has_facing = true;
+            FacingAngle() = std::atan2(m_vel.y, m_vel.x);
+            HasFacing() = true;
         }
-        m_pos += m_vel * dt;
+        Pos() += m_vel * dt;
     }
     CEntity* GetOwner() const;
     bool CanPhysicallyCollideWith(const CEntity* other) const override
     {
-        return other && !CheckTeam(m_team, other->m_team);
+        return other && !CheckTeam(Team(), other->Team());
     }
 
     CEntity* m_p_owner = nullptr;

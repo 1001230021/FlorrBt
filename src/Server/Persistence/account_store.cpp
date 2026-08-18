@@ -646,6 +646,23 @@ bool CAccountDataStore::Load(const std::filesystem::path& path, std::string* err
                     account.slots = ParseSlots(account_value.Find("slots"));
                     account.secondary_slots = ParseSlots(account_value.Find("secondary_slots"));
                     account.talents = ParseTalents(account_value.Find("talents"));
+                    if (const CJsonValue* codex_value = account_value.Find("codex"))
+                    {
+                        if (codex_value->IsArray())
+                        {
+                            for (const CJsonValue& entry_value : codex_value->AsArray())
+                            {
+                                if (!entry_value.IsArray() || entry_value.AsArray().size() < 3) continue;
+                                const auto& parts = entry_value.AsArray();
+                                SAccountCodexEntry entry;
+                                entry.mob_type = static_cast<uint8_t>(parts[0].AsInt());
+                                entry.rarity = static_cast<uint8_t>(parts[1].AsInt());
+                                entry.count = static_cast<uint32_t>(std::max(0, parts[2].AsInt()));
+                                if (entry.mob_type > 0 && entry.rarity > 0 && entry.count > 0)
+                                    account.codex.push_back(entry);
+                            }
+                        }
+                    }
                     if (account.talents.empty() && extra && extra->IsObject())
                         account.talents = ParseTalents(extra->Find("talents"));
                     if (!loaded_talent_points && account.talents.empty())
@@ -943,6 +960,15 @@ bool WriteAccountData(const SAccountSaveSnapshot& snapshot, std::string* error)
         file << "      \"talents\": ";
         WriteTalentsJson(file, account.talents);
         file << ",\n";
+        file << "      \"codex\": [";
+        for (size_t entry_index = 0; entry_index < account.codex.size(); ++entry_index)
+        {
+            const SAccountCodexEntry& entry = account.codex[entry_index];
+            if (entry_index > 0) file << ", ";
+            file << "[" << static_cast<int>(entry.mob_type) << ", " << static_cast<int>(entry.rarity) << ", "
+                 << std::max<std::uint32_t>(0, entry.count) << "]";
+        }
+        file << "],\n";
         file << "      \"extra\": " << (account.extra_json.empty() ? "{}" : account.extra_json) << "\n";
         file << "    }" << (i + 1 == snapshot.accounts.size() ? "\n" : ",\n");
     }
@@ -1483,6 +1509,32 @@ void CAccountDataStore::SetTalents(const std::string& name, const std::vector<SA
     if (!account) return;
 
     account->talents = talents;
+    Save();
+}
+
+std::vector<SAccountCodexEntry> CAccountDataStore::GetCodex(const std::string& name)
+{
+    const SPlayerAccount* account = FindAccountConst(name);
+    return account ? account->codex : std::vector<SAccountCodexEntry>{};
+}
+
+void CAccountDataStore::AddCodexKill(const std::string& name, uint8_t mob_type, uint8_t rarity)
+{
+    if (name.empty() || mob_type == 0 || rarity == 0) return;
+
+    SPlayerAccount* account = FindAccount(name);
+    if (!account) return;
+
+    for (SAccountCodexEntry& entry : account->codex)
+    {
+        if (entry.mob_type == mob_type && entry.rarity == rarity)
+        {
+            entry.count = std::min<uint32_t>(UINT32_MAX, entry.count + 1);
+            Save();
+            return;
+        }
+    }
+    account->codex.push_back({ mob_type, rarity, 1 });
     Save();
 }
 

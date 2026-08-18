@@ -24,7 +24,9 @@ class COpenController : public IGameController
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
     void ModifyTalentContext(CGameWorld& world, CPlayer* player, ETalentEvent event, STalentContext& ctx) override;
     void SpawnMobs(CGameWorld& world);
-    bool TrySquad(CGameWorld& world, CPlayer& joining_player, CPlayer& target_player);
+    bool TryInviteSquad(CGameWorld& world, CPlayer& inviter, CPlayer& invitee);
+    CPlayer* ConsumeSquadInvite(CGameWorld& world, CPlayer& invitee);
+    bool TryAcceptSquadInvite(CGameWorld& world, CPlayer& invitee, CPlayer& inviter);
     bool TryLeaveSquad(CGameWorld& world, CPlayer& player);
     std::vector<CPlayer*> GetSquadPlayerList(CGameWorld& world, CPlayer& player);
     std::uint32_t GetSquadRootId(CGameWorld& world, CPlayer& player);
@@ -46,6 +48,7 @@ class COpenController : public IGameController
     float m_spawn_wave_time = 0.f;
     float m_spawn_density_multiplier = 0.6f;
     std::unordered_map<std::uint32_t, std::uint32_t> m_squad_parent;
+    std::unordered_map<std::uint32_t, std::uint32_t> m_squad_invites;
     std::vector<std::uint32_t> m_pruned_squad_player_ids;
     bool m_has_pruned_squads = false;
 };

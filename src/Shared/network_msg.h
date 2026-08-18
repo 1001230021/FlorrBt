@@ -698,7 +698,11 @@ struct ClientInputFrame
 // Welcome:    [type:1 byte][player_id:2 bytes][owner_entity_id:2 bytes][tick_rate:1 byte][map_len:1 byte][map_name]
 // Snapshot:   [type:1 byte][snapshot_id:4 bytes][base_snapshot_id:4 bytes][server_tick:8 bytes]
 // [owner_entity_id:2 bytes][view_radius:4 bytes][changed_count:2 bytes][removed_count:2 bytes]
-// [entity_snap...][removed_entity_id:2 bytes]... A base_snapshot_id of UINT32_MAX denotes a full snapshot.
+// [entity_snap...][removed_entity_id:2 bytes]...[weather_intensity:4 bytes][wind_direction:1 byte]
+// [wind_speed:1 byte]
+// A base_snapshot_id of UINT32_MAX denotes a full snapshot. Weather intensities
+// and wind ride along with every snapshot; the client refreshes them without a
+// broadcast. Wind direction is degrees/360*255, wind speed is speed/20*255.
 // EntitySnap full:    [format:1 byte][entity_id:2 bytes][entity_type:1 byte][team:1 byte][x:4
 // bytes][y:4 bytes][radius:2 bytes][hp_percent:1 byte][shield_percent:1 byte][flags:2 bytes][angle:2
 // bytes][rarity:1 byte][name_len:1
@@ -720,7 +724,8 @@ struct ClientInputFrame
 // byte][name][message] CraftResult:[type:1 byte][success:1 byte][petal_type:1 byte][rarity:1 byte][consumed:4
 // bytes][count:2 bytes][item...]
 // Environment: [type:1 byte][anchor_server_tick:8 bytes][time_of_day_u16:2 bytes]
-// [day_duration_seconds:f32][fixed_dt_seconds:f32][weather_intensity:5 bytes]
+// [day_duration_seconds:f32][fixed_dt_seconds:f32][weather_intensity:4 bytes]
+// [wind_direction:1 byte][wind_speed:1 byte]
 
 using net_coord = int32_t;
 using net_relative_coord = int16_t;
@@ -740,8 +745,11 @@ constexpr size_t server_entity_format_size = 1;
 constexpr size_t server_entity_compact_size = 18;
 constexpr uint32_t full_snapshot_base_id = std::numeric_limits<uint32_t>::max();
 constexpr size_t server_snapshot_header_size = 27;
-// Environment weather intensities, one u8 per EWeatherType in enum order.
-constexpr size_t server_environment_weather_count = 5;
+// Environment weather payload: one u8 per EWeatherType in enum order
+// (clear, cloudy, rain, fog), followed by wind direction (u8, degrees/360*255)
+// and wind speed (u8, speed/20*255 clamped).
+constexpr size_t server_environment_weather_count = 4;
+constexpr size_t server_environment_wind_size = 2;
 
 inline net_coord PackCoord(float value) { return static_cast<net_coord>(std::round(value * net_coord_scale)); }
 
@@ -1280,6 +1288,12 @@ struct ServerMessage
         Chat = 0x12,
         CraftResult = 0x13,
         Environment = 0x14,
+        CodexFull = 0x15,
+        CodexDelta = 0x16,
+        CodexLoot = 0x17,
+        LightningChain = 0x18,
+        TerrainDelta = 0x19,
+        TerrainWallRemove = 0x1a,
         Unknown = 0xff,
     } type = Type::Unknown;
 
@@ -1287,6 +1301,7 @@ struct ServerMessage
     std::optional<net_entity_id> owner_entity_id;
     std::optional<uint8_t> tick_rate;
     std::string map_name;
+    std::optional<uint8_t> weather_enabled;
 
     std::optional<uint32_t> snapshot_id;
     std::optional<uint32_t> base_snapshot_id;
@@ -1300,6 +1315,46 @@ struct ServerMessage
     std::optional<float> day_duration_seconds;
     std::optional<float> fixed_dt_seconds;
     std::uint8_t weather_intensity[server_environment_weather_count] = {};
+    // Wind rides along with the weather payload: direction (degrees/360*255)
+    // and speed (speed/20*255 clamped to [0,20]).
+    std::uint8_t wind_direction = 0;
+    std::uint8_t wind_speed = 0;
+
+    // Bestiary (codex). CodexFull carries the complete kill table on connect,
+    // CodexDelta carries a single updated entry, CodexLoot carries the whole
+    // mob drop table (mob_type, mob_rarity, petal_type, drop_rarity, rate).
+    struct SCodexEntry
+    {
+        uint8_t mob_type = 0;
+        uint8_t rarity = 0;
+        uint32_t count = 0;
+    };
+    std::vector<SCodexEntry> codex_entries;
+    std::vector<SCodexEntry> codex_delta_entries;
+    struct SCodexLootEntry
+    {
+        uint8_t mob_type = 0;
+        uint8_t mob_rarity = 0;
+        uint8_t petal_type = 0;
+        uint8_t drop_rarity = 0;
+        uint16_t drop_rate = 0; // rate * 10000
+    };
+    std::vector<SCodexLootEntry> codex_loot_entries;
+
+    // Lightning chain visual: world-space node positions (net coords).
+    std::vector<sf::Vector2f> lightning_points;
+
+    // Mutable-terrain tile change: layer index (tilelayer order), tile row,
+    // tile column, and the new raw gid (including flip bits).
+    std::uint8_t terrain_layer = 0;
+    std::uint16_t terrain_row = 0;
+    std::uint16_t terrain_col = 0;
+    std::uint32_t terrain_gid = 0;
+
+    // Native wall removal: world-space rect whose overlapping walls were
+    // deleted by the terrain eraser.
+    sf::Vector2f wall_remove_min = { 0.f, 0.f };
+    sf::Vector2f wall_remove_max = { 0.f, 0.f };
 
     std::optional<uint8_t> flags;
 
@@ -1353,6 +1408,7 @@ struct ServerMessage
                 msg.map_name.assign(reinterpret_cast<const char*>(data + offset),
                                     reinterpret_cast<const char*>(data + offset + map_len));
                 offset += map_len;
+                if (offset < len) msg.weather_enabled = data[offset++];
             }
             break;
         case Type::Snapshot: {
@@ -1398,6 +1454,17 @@ struct ServerMessage
             msg.removed_entity_ids.reserve(removed_count);
             for (uint16_t i = 0; i < removed_count; ++i)
                 msg.removed_entity_ids.push_back(ReadU16(data, offset));
+            if (offset + server_environment_weather_count + server_environment_wind_size > len)
+            {
+                msg.entities.clear();
+                msg.removed_entity_ids.clear();
+                msg.type = Type::Unknown;
+                break;
+            }
+            for (size_t i = 0; i < server_environment_weather_count; ++i)
+                msg.weather_intensity[i] = data[offset++];
+            msg.wind_direction = data[offset++];
+            msg.wind_speed = data[offset++];
             break;
         }
         case Type::AuthResult: {
@@ -1588,7 +1655,7 @@ struct ServerMessage
             break;
         }
         case Type::Environment:
-            if (len != 24)
+            if (len != 25)
             {
                 msg.type = Type::Unknown;
                 break;
@@ -1599,6 +1666,104 @@ struct ServerMessage
             msg.fixed_dt_seconds = ReadF32(data, offset);
             for (size_t i = 0; i < server_environment_weather_count; ++i)
                 msg.weather_intensity[i] = data[offset++];
+            msg.wind_direction = data[offset++];
+            msg.wind_speed = data[offset++];
+            break;
+        case Type::CodexFull:
+            if (len < 2)
+            {
+                msg.type = Type::Unknown;
+                break;
+            }
+            {
+                uint16_t count = ReadU16(data, offset);
+                if (offset + static_cast<size_t>(count) * 7 > len)
+                {
+                    msg.type = Type::Unknown;
+                    break;
+                }
+                msg.codex_entries.reserve(count);
+                for (uint16_t i = 0; i < count; ++i)
+                {
+                    SCodexEntry entry;
+                    entry.mob_type = data[offset++];
+                    entry.rarity = data[offset++];
+                    entry.count = ReadU32(data, offset);
+                    msg.codex_entries.push_back(entry);
+                }
+            }
+            break;
+        case Type::CodexDelta:
+            if (len < 1)
+            {
+                msg.type = Type::Unknown;
+                break;
+            }
+            {
+                uint8_t count = data[offset++];
+                if (offset + static_cast<size_t>(count) * 6 > len)
+                {
+                    msg.type = Type::Unknown;
+                    break;
+                }
+                msg.codex_delta_entries.reserve(count);
+                for (uint8_t i = 0; i < count; ++i)
+                {
+                    SCodexEntry entry;
+                    entry.mob_type = data[offset++];
+                    entry.rarity = data[offset++];
+                    entry.count = ReadU32(data, offset);
+                    msg.codex_delta_entries.push_back(entry);
+                }
+            }
+            break;
+        case Type::CodexLoot:
+            if (len < 2)
+            {
+                msg.type = Type::Unknown;
+                break;
+            }
+            {
+                uint16_t count = ReadU16(data, offset);
+                if (offset + static_cast<size_t>(count) * 6 > len)
+                {
+                    msg.type = Type::Unknown;
+                    break;
+                }
+                msg.codex_loot_entries.reserve(count);
+                for (uint16_t i = 0; i < count; ++i)
+                {
+                    SCodexLootEntry entry;
+                    entry.mob_type = data[offset++];
+                    entry.mob_rarity = data[offset++];
+                    entry.petal_type = data[offset++];
+                    entry.drop_rarity = data[offset++];
+                    entry.drop_rate = ReadU16(data, offset);
+                    msg.codex_loot_entries.push_back(entry);
+                }
+            }
+            break;
+        case Type::LightningChain:
+            if (len < 1)
+            {
+                msg.type = Type::Unknown;
+                break;
+            }
+            {
+                uint8_t count = data[offset++];
+                if (offset + static_cast<size_t>(count) * 8 > len)
+                {
+                    msg.type = Type::Unknown;
+                    break;
+                }
+                msg.lightning_points.reserve(count);
+                for (uint8_t i = 0; i < count; ++i)
+                {
+                    const float x = UnpackCoord(ReadI32(data, offset));
+                    const float y = UnpackCoord(ReadI32(data, offset));
+                    msg.lightning_points.push_back({ x, y });
+                }
+            }
             break;
         default:
             msg.type = Type::Unknown;
@@ -1625,6 +1790,7 @@ struct ServerMessage
                 out[offset++] = map_len;
                 std::copy_n(msg.map_name.data(), map_len, out + offset);
                 offset += map_len;
+                out[offset++] = msg.weather_enabled.value_or(1);
             }
             return offset;
         case Type::Snapshot: {
@@ -1651,6 +1817,12 @@ struct ServerMessage
                 }
             }
             for (uint16_t i = 0; i < removed_count; ++i) WriteU16(out, offset, msg.removed_entity_ids[i]);
+            // Weather intensities and wind ride along with every snapshot so clients
+            // always have fresh weather without a separate broadcast.
+            for (size_t i = 0; i < server_environment_weather_count; ++i)
+                out[offset++] = msg.weather_intensity[i];
+            out[offset++] = msg.wind_direction;
+            out[offset++] = msg.wind_speed;
             return offset;
         }
         case Type::AuthResult: {
@@ -1745,6 +1917,68 @@ struct ServerMessage
             WriteF32(out, offset, msg.fixed_dt_seconds.value_or(0.05f));
             for (size_t i = 0; i < server_environment_weather_count; ++i)
                 out[offset++] = msg.weather_intensity[i];
+            out[offset++] = msg.wind_direction;
+            out[offset++] = msg.wind_speed;
+            return offset;
+        case Type::CodexFull: {
+            uint16_t count = static_cast<uint16_t>(std::min<size_t>(msg.codex_entries.size(), UINT16_MAX));
+            WriteU16(out, offset, count);
+            for (uint16_t i = 0; i < count; ++i)
+            {
+                const SCodexEntry& entry = msg.codex_entries[i];
+                out[offset++] = entry.mob_type;
+                out[offset++] = entry.rarity;
+                WriteU32(out, offset, entry.count);
+            }
+            return offset;
+        }
+        case Type::CodexDelta: {
+            uint8_t count = static_cast<uint8_t>(std::min<size_t>(msg.codex_delta_entries.size(), UINT8_MAX));
+            out[offset++] = count;
+            for (uint8_t i = 0; i < count; ++i)
+            {
+                const SCodexEntry& entry = msg.codex_delta_entries[i];
+                out[offset++] = entry.mob_type;
+                out[offset++] = entry.rarity;
+                WriteU32(out, offset, entry.count);
+            }
+            return offset;
+        }
+        case Type::CodexLoot: {
+            uint16_t count = static_cast<uint16_t>(std::min<size_t>(msg.codex_loot_entries.size(), UINT16_MAX));
+            WriteU16(out, offset, count);
+            for (uint16_t i = 0; i < count; ++i)
+            {
+                const SCodexLootEntry& entry = msg.codex_loot_entries[i];
+                out[offset++] = entry.mob_type;
+                out[offset++] = entry.mob_rarity;
+                out[offset++] = entry.petal_type;
+                out[offset++] = entry.drop_rarity;
+                WriteU16(out, offset, entry.drop_rate);
+            }
+            return offset;
+        }
+        case Type::LightningChain: {
+            uint8_t count = static_cast<uint8_t>(std::min<size_t>(msg.lightning_points.size(), UINT8_MAX));
+            out[offset++] = count;
+            for (uint8_t i = 0; i < count; ++i)
+            {
+                WriteI32(out, offset, PackCoord(msg.lightning_points[i].x));
+                WriteI32(out, offset, PackCoord(msg.lightning_points[i].y));
+            }
+            return offset;
+        }
+        case Type::TerrainDelta:
+            out[offset++] = msg.terrain_layer;
+            WriteU16(out, offset, msg.terrain_row);
+            WriteU16(out, offset, msg.terrain_col);
+            WriteU32(out, offset, msg.terrain_gid);
+            return offset;
+        case Type::TerrainWallRemove:
+            WriteI32(out, offset, PackCoord(msg.wall_remove_min.x));
+            WriteI32(out, offset, PackCoord(msg.wall_remove_min.y));
+            WriteI32(out, offset, PackCoord(msg.wall_remove_max.x));
+            WriteI32(out, offset, PackCoord(msg.wall_remove_max.y));
             return offset;
         default:
             return 0;
@@ -1756,7 +1990,7 @@ struct ServerMessage
         switch (msg.type)
         {
         case Type::Welcome:
-            return 7 + std::min<size_t>(msg.map_name.size(), UINT8_MAX);
+            return 8 + std::min<size_t>(msg.map_name.size(), UINT8_MAX);
         case Type::Snapshot: {
             size_t size = server_snapshot_header_size;
             size_t count = std::min<size_t>(msg.entities.size(), UINT16_MAX);
@@ -1774,6 +2008,7 @@ struct ServerMessage
                 }
             }
             size += std::min<size_t>(msg.removed_entity_ids.size(), UINT16_MAX) * sizeof(net_entity_id);
+            size += server_environment_weather_count + server_environment_wind_size;
             return size;
         }
         case Type::AuthResult:
@@ -1792,7 +2027,19 @@ struct ServerMessage
         case Type::CraftResult:
             return 10 + std::min<size_t>(msg.craft_items.size(), UINT16_MAX) * inventory_item_packet_size;
         case Type::Environment:
-            return 23;
+            return 25;
+        case Type::CodexFull:
+            return 3 + std::min<size_t>(msg.codex_entries.size(), UINT16_MAX) * 6;
+        case Type::CodexDelta:
+            return 2 + std::min<size_t>(msg.codex_delta_entries.size(), UINT8_MAX) * 6;
+        case Type::CodexLoot:
+            return 3 + std::min<size_t>(msg.codex_loot_entries.size(), UINT16_MAX) * 6;
+        case Type::LightningChain:
+            return 2 + std::min<size_t>(msg.lightning_points.size(), UINT8_MAX) * 8;
+        case Type::TerrainDelta:
+            return 10;
+        case Type::TerrainWallRemove:
+            return 17;
         default:
             return 0;
         }

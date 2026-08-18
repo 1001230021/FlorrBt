@@ -53,6 +53,58 @@ class CEntity
     bool IsEntityType(EEntityType type) const { return m_entity_type.Is(type); }
     bool IsProjectileType(EProjectileType type) const { return m_entity_type.Is(type); }
 
+    // Reference accessors keep both `entity->Pos().x = v` and `entity->Health()`
+    // styles uniform across the codebase; all state lives in the private section.
+    sf::Vector2f& Pos() { return m_pos; }
+    const sf::Vector2f& Pos() const { return m_pos; }
+    sf::Vector2f& PrevPos() { return m_prev_pos; }
+    const sf::Vector2f& PrevPos() const { return m_prev_pos; }
+    float& Radius() { return m_radius; }
+    const float& Radius() const { return m_radius; }
+    bool& SkipWorldTick() { return m_skip_world_tick; }
+    const bool& SkipWorldTick() const { return m_skip_world_tick; }
+    bool& AllowSkipTick() { return m_allow_skip_tick; }
+    const bool& AllowSkipTick() const { return m_allow_skip_tick; }
+    EEntityTickMode& TickMode() { return m_tick_mode; }
+    const EEntityTickMode& TickMode() const { return m_tick_mode; }
+    int& Id() { return m_id; }
+    const int& Id() const { return m_id; }
+    std::uint64_t& Generation() { return m_generation; }
+    const std::uint64_t& Generation() const { return m_generation; }
+    size_t& LiveIndex() { return m_live_index; }
+    const size_t& LiveIndex() const { return m_live_index; }
+    size_t& CleanupIndex() { return m_cleanup_index; }
+    const size_t& CleanupIndex() const { return m_cleanup_index; }
+    size_t& AlwaysTickIndex() { return m_always_tick_index; }
+    const size_t& AlwaysTickIndex() const { return m_always_tick_index; }
+    size_t& ConditionalTickIndex() { return m_conditional_tick_index; }
+    const size_t& ConditionalTickIndex() const { return m_conditional_tick_index; }
+    size_t& LargeSpatialIndex() { return m_large_spatial_index; }
+    const size_t& LargeSpatialIndex() const { return m_large_spatial_index; }
+    std::uint64_t& ActiveTickMarker() { return m_active_tick_marker; }
+    const std::uint64_t& ActiveTickMarker() const { return m_active_tick_marker; }
+    std::uint64_t& CollisionSyncMarker() { return m_collision_sync_marker; }
+    const std::uint64_t& CollisionSyncMarker() const { return m_collision_sync_marker; }
+    bool& IsMarkedForDes() { return m_is_marked_for_des; }
+    const bool& IsMarkedForDes() const { return m_is_marked_for_des; }
+    std::uint32_t& Tags() { return m_tags; }
+    const std::uint32_t& Tags() const { return m_tags; }
+    int& Team() { return m_team; }
+    const int& Team() const { return m_team; }
+    void SetTickHorizon(float value) { m_tick_horizon = value; }
+    // Non-const reference overload lets existing `TickHorizon() = v` calls work.
+    float& TickHorizon() { return m_tick_horizon; }
+    float& Mass() { return m_mass; }
+    const float& Mass() const { return m_mass; }
+    float& Health() { return m_health; }
+    const float& Health() const { return m_health; }
+    float& FacingAngle() { return m_facing_angle; }
+    const float& FacingAngle() const { return m_facing_angle; }
+    bool& HasFacing() { return m_has_facing; }
+    const bool& HasFacing() const { return m_has_facing; }
+    SEntityStats& EntityStats() { return m_entity_stats; }
+    const SEntityStats& EntityStats() const { return m_entity_stats; }
+
     virtual void Tick(float dt) = 0;
 
     bool IsCollision(const CEntity& other) const;
@@ -72,9 +124,17 @@ class CEntity
     void CancelDestroy();
     EEntityRemovalReason RemovalReason() const { return m_removal_reason; }
 
-    bool HasTag(EEntityTag tag) const { return (m_tags & static_cast<std::uint32_t>(tag)) != 0; }
-    void AddTag(EEntityTag tag) { m_tags |= static_cast<std::uint32_t>(tag); }
-    void RemoveTag(EEntityTag tag) { m_tags &= ~static_cast<std::uint32_t>(tag); }
+    bool HasTag(EEntityTag tag) const { return (Tags() & static_cast<std::uint32_t>(tag)) != 0; }
+    void AddTag(EEntityTag tag) { Tags() |= static_cast<std::uint32_t>(tag); }
+    void RemoveTag(EEntityTag tag) { Tags() &= ~static_cast<std::uint32_t>(tag); }
+
+  protected:
+    void SetNetworkType(std::uint8_t network_type) { m_entity_type.network_type = network_type; }
+
+  private:
+    CGameWorld* m_p_game_world = nullptr;
+    SEntityTypeInfo m_entity_type;
+    EEntityRemovalReason m_removal_reason = EEntityRemovalReason::Despawned;
 
     sf::Vector2f m_pos;
     sf::Vector2f m_prev_pos;
@@ -103,12 +163,4 @@ class CEntity
     float m_facing_angle = 0.f;
     bool m_has_facing = false;
     SEntityStats m_entity_stats;
-
-  protected:
-    void SetNetworkType(std::uint8_t network_type) { m_entity_type.network_type = network_type; }
-
-  private:
-    CGameWorld* m_p_game_world = nullptr;
-    SEntityTypeInfo m_entity_type;
-    EEntityRemovalReason m_removal_reason = EEntityRemovalReason::Despawned;
 };

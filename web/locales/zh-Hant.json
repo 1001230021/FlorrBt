@@ -47,7 +47,7 @@
       "craft": "合成",
       "craftTitle": "合成 [C]",
       "settings": "設置",
-      "settingsTitle": "設置 [V]"
+      "settingsTitle": "設置 [Esc]"
     },
     "chat": {
       "ariaLabel": "聊天",
@@ -180,7 +180,10 @@
         "maxDurability": "最大耐久",
         "maxRadius": "最大半徑",
         "hallucination": "致幻時長",
-        "evolveHits": "進化所需命中"
+        "evolveHits": "進化所需命中",
+        "chain": "連鎖",
+        "charges": "充能",
+        "radius": "半徑"
       },
       "values": {
         "corrupted": "腐化",
@@ -203,7 +206,9 @@
       "attackLabel": "A",
       "attack": "攻擊",
       "defendLabel": "B",
-      "defend": "防禦"
+      "defend": "防禦",
+      "swapLabel": "X",
+      "swap": "快速換位"
     }
   },
   "status": {
@@ -370,7 +375,12 @@
       "amulet": "護身符",
       "plank": "木板",
       "tomato": "番茄",
-      "hallucinogenic_mushroom": "致幻菇"
+      "hallucinogenic_mushroom": "致幻菇",
+      "lightning": "閃電",
+      "battery": "電池",
+      "bulb": "燈泡",
+      "brush": "畫筆",
+      "eraser": "橡皮"
     },
     "mobs": {
       "none": "無",
@@ -411,7 +421,8 @@
       "termite_overmind": "白蟻主宰者",
       "leaf_piece": "葉片",
       "leafcutter_soldier": "切葉兵蟻",
-      "titan": "泰坦"
+      "titan": "泰坦",
+      "firefly": "螢火蟲"
     }
   },
   "talents": {
@@ -440,6 +451,20 @@
       "second_chance": "第二次機會",
       "poison": "毒性",
       "concentrated_poison": "濃縮毒素"
+    }
+  },
+  "squad": {
+    "event": {
+      "inviteReceived": "你收到了來自{name}的組隊請求，請輸入/invite accept同意或輸入/invite refuse拒絕。",
+      "inviteSent": "組隊請求已發送給{name}。",
+      "noInvite": "沒有待處理的組隊請求。",
+      "inviteRefused": "{name}拒絕了你的組隊請求。",
+      "inviteRefusedYou": "你拒絕了{name}的組隊請求。",
+      "inviteFailed": "接受{name}的組隊請求失敗（隊伍可能已滿）。",
+      "inviteFailedThem": "{name}嘗試接受你的組隊請求但失敗了。",
+      "joinedYou": "你加入了{name}的隊伍。",
+      "joined": "{name}加入了隊伍。",
+      "inviteInvalid": "無效的組隊邀請目標。"
     }
   }
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include "../../Shared/talent_type.h"
+#include "controller_params.h"
 #include <SFML/System/Vector2.hpp>
 #include <cstdint>
 #include <optional>
@@ -51,11 +52,44 @@ class IGameController
         return false;
     }
     virtual bool ResolveReferences(CGameWorld&, const IGameWorldResolver&, std::string&) { return true; }
+    // Worlds that force every player flower into permanent primordial
+    // nullification (phasing through mobs and walls).
+    virtual bool ForcesPrimordialNullification() const { return false; }
+    // Worlds where the player flower's petal loadout is locked: equip and
+    // unequip requests from players are rejected outright.
+    virtual bool LocksPetalLoadout() const { return false; }
+    // Construction-time parameters declared by this controller type; the
+    // waiting room exposes them through /setting before the game world is
+    // created. Values are validated (审查函数) and stored as overrides.
+    virtual std::vector<SControllerParamInfo> ParamSchema() const { return {}; }
     virtual void ModifyTalentContext(CGameWorld& world, CPlayer* player, ETalentEvent event, STalentContext& ctx)
     {
         (void)world;
         (void)player;
         (void)event;
         (void)ctx;
+    }
+    // Lets world controllers claim player-issued chat commands (e.g. /start in
+    // the waiting room). `args[0]` is the raw command token including any
+    // leading '/'. Return true when the command was handled.
+    virtual bool HandlePlayerCommand(CGameWorld& world, CPlayer& player, const std::vector<std::string>& args)
+    {
+        (void)world;
+        (void)player;
+        (void)args;
+        return false;
+    }
+    // Post-collection snapshot cull: CSnapshotService::BuildSnapshot gathers
+    // the candidates inside the player's view radius exactly as usual, then
+    // this filter runs once on the gathered candidates before budget trimming.
+    // Return false to keep `entity` out of the player's snapshot (fog of war,
+    // limited scout vision, ...). Not applied to the owner flower, mandatory
+    // squad members, or the titan.
+    virtual bool SnapshotEntityVisibleToPlayer(CGameWorld& world, const CPlayer& player, const CEntity& entity) const
+    {
+        (void)world;
+        (void)player;
+        (void)entity;
+        return true;
     }
 };

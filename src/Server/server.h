@@ -90,6 +90,7 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     CGameWorld* GetMainWorld() const { return m_p_main_world; }
     CGameWorld* FindWorldById(std::uint32_t world_id) const override;
     std::vector<CGameWorld*> GetWorlds() const;
+    IWorldModule* GetWorldModule() const { return m_p_world_module; }
     std::vector<CGameWorld*> FindWorldsByMapName(const std::string& map_name) const;
     CGameWorld* FindRandomWorldByMapName(const std::string& map_name) const;
     INetworkModule* GetNetworkModule() const { return m_p_network_module; }
@@ -103,9 +104,9 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     void MergeLegacyTitanForgeCooldownForRestore(float cooldown);
     CGameContext* GameContext() const { return m_p_game_context.get(); }
     const std::vector<SChatEntry>& GetChats() const { return m_chats; }
-    const SChatEntry* SubmitChat(CGameWorld* world, sf::Vector2f pos, EChatFlag flag, uint32_t player_id,
-                                 const std::string& player_name, const std::string& message, int target_player_id = -1);
-    const SChatEntry* SubmitServerChat(const std::string& message);
+    SChatEntry SubmitChat(CGameWorld* world, sf::Vector2f pos, EChatFlag flag, uint32_t player_id,
+                          const std::string& player_name, const std::string& message, int target_player_id = -1);
+    SChatEntry SubmitServerChat(const std::string& message);
     static bool MeetsPetalReportRarity(ERarity rarity, int min_rarity);
     bool ShouldReportRarity(ERarity rarity, int minimum_rarity) const override;
     bool ReportMob(std::string_view action, ERarity rarity, std::string_view mob_name) override;

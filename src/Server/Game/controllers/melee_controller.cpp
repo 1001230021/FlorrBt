@@ -1,9 +1,11 @@
 #include "melee_controller.h"
 #include "../../../Shared/game_config.h"
 #include "../../HotReload/snapshot_archive.h"
+#include "../entities/mob.h"
 #include "../entities/petals/petal.h"
 #include "../entities/projectile.h"
 #include "../gameworld.h"
+#include "../../server.h"
 #include "../state_zone.h"
 #include "../states/states.h"
 #include <algorithm>
@@ -66,9 +68,9 @@ float DotProduct(sf::Vector2f lhs, sf::Vector2f rhs) { return lhs.x * rhs.x + lh
 float TargetEdgeDistanceSq(const CEntity* source, const CEntity* target)
 {
     if (!source || !target) return std::numeric_limits<float>::max();
-    float center_distance = Distance(source->m_pos, target->m_pos);
+    float center_distance = Distance(source->Pos(), target->Pos());
     float edge_distance =
-        std::max(0.f, center_distance - std::max(0.f, source->m_radius) - std::max(0.f, target->m_radius));
+        std::max(0.f, center_distance - std::max(0.f, source->Radius()) - std::max(0.f, target->Radius()));
     return edge_distance * edge_distance;
 }
 
@@ -78,7 +80,7 @@ float TargetSearchQueryRange(CMobBase* mob, float edge_range)
     float max_target_radius = std::max(game_config::default_flower_radius,
                                        game_config::mob_queen_ant_radius *
                                            game_config::MobRadiusScaleForLevel(GetLevel(ERarity::Primordial)));
-    return edge_range + std::max(0.f, mob->m_radius) + max_target_radius;
+    return edge_range + std::max(0.f, mob->Radius()) + max_target_radius;
 }
 
 float HornetMissileSpeed(ERarity rarity)
@@ -111,7 +113,7 @@ bool ShouldRunEntityTargetScan(int& cooldown, const CEntity* entity, int interva
         return true;
     }
 
-    if (cooldown < 0) cooldown = entity ? std::max(0, entity->m_id) % interval : 0;
+    if (cooldown < 0) cooldown = entity ? std::max(0, entity->Id()) % interval : 0;
 
     if (cooldown > 0)
     {
@@ -154,15 +156,15 @@ bool IsInvalidMeleeTarget(const CMobBase* mob, const CEntity* target, int ignore
 {
     if (!mob || !target) return true;
     if (!mob->GameWorld() || target->GameWorld() != mob->GameWorld()) return true;
-    if (target->m_is_marked_for_des || target->IsDead() || !target->CanCollide()) return true;
+    if (target->IsMarkedForDes() || target->IsDead() || !target->CanCollide()) return true;
     if (IsDiggingEntity(target)) return true;
     if (target == mob) return true;
-    if (target->m_id == ignored_id || target->m_id == ignored_owner_id) return true;
+    if (target->Id() == ignored_id || target->Id() == ignored_owner_id) return true;
     const auto* target_mob = dynamic_cast<const CMobBase*>(target);
     if (mob->GetMobType() == EMobType::Bee && target_mob && target_mob->GetMobType() == EMobType::AntHole)
         return true;
-    if (CheckTeam(target->m_team, mob->m_team)) return true;
-    if ((target->m_team == 0 || mob->m_team == 0) && ShareRootOwner(mob, target)) return true;
+    if (CheckTeam(target->Team(), mob->Team())) return true;
+    if ((target->Team() == 0 || mob->Team() == 0) && ShareRootOwner(mob, target)) return true;
     if (BlocksNullifiedInteraction(mob, target)) return true;
     if (dynamic_cast<const CProjectile*>(target)) return true;
     return false;
@@ -172,12 +174,12 @@ bool IsValidHoneyTarget(const CMobBase* mob, const CEntity* target, int ignored_
 {
     if (!mob || !target) return false;
     if (!mob->GameWorld() || target->GameWorld() != mob->GameWorld()) return false;
-    if (target->m_is_marked_for_des || target->IsDead() || !target->CanCollide()) return false;
+    if (target->IsMarkedForDes() || target->IsDead() || !target->CanCollide()) return false;
     if (IsDiggingEntity(target)) return false;
     if (target == mob) return false;
-    if (target->m_id == ignored_id || target->m_id == ignored_owner_id) return false;
-    if (CheckTeam(target->m_team, mob->m_team)) return false;
-    if ((target->m_team == 0 || mob->m_team == 0) && ShareRootOwner(mob, target)) return false;
+    if (target->Id() == ignored_id || target->Id() == ignored_owner_id) return false;
+    if (CheckTeam(target->Team(), mob->Team())) return false;
+    if ((target->Team() == 0 || mob->Team() == 0) && ShareRootOwner(mob, target)) return false;
     if (BlocksNullifiedInteraction(mob, target)) return false;
 
     auto* petal = dynamic_cast<const CPetal*>(target);
@@ -193,7 +195,7 @@ bool IsMeleeTargetBlockedByWall(CMobBase* mob, const CEntity* target)
     if (!mob || !target || !mob->GameWorld()) return false;
     if (target->GameWorld() != mob->GameWorld()) return true;
     if (IsDiggingEntity(target)) return true;
-    return mob->GameWorld()->SegmentBlockedByWall(mob->m_pos, target->m_pos);
+    return mob->GameWorld()->SegmentBlockedByWall(mob->Pos(), target->Pos());
 }
 
 bool IsUnavailableMeleeTarget(CMobBase* mob, const CEntity* target, int ignored_id = -1, int ignored_owner_id = -1)
@@ -216,6 +218,7 @@ bool IsCurrentMeleeTargetUnavailable(CMobBase* mob, const CEntity* target, float
     } else if (auto* flower = dynamic_cast<const CFlower*>(target))
     {
         retention_range *= std::max(0.f, flower->m_final_stats.detection_multiplier);
+        retention_range += std::max(0.f, flower->m_final_stats.detection_range_bonus);
     }
     if (TargetEdgeDistanceSq(mob, target) > retention_range * retention_range) return true;
 
@@ -246,10 +249,45 @@ CEntity* FindClosestHoneyTarget(CMobBase* mob, float search_range, int ignored_i
     auto& candidates = g_melee_scan_scratch.honey_candidates;
     candidates.clear();
     candidates.reserve(candidate_limit);
-    mob->GameWorld()->GetSpatialGrid().ForEachInRange(mob->m_pos, query_range, [&](CEntity* candidate) {
+    mob->GameWorld()->GetSpatialGrid().ForEachInRange(mob->Pos(), query_range, [&](CEntity* candidate) {
         if (!IsValidHoneyTarget(mob, candidate, ignored_id, ignored_owner_id)) return;
         float dist_sq = TargetEdgeDistanceSq(mob, candidate);
         if (dist_sq > search_range_sq) return;
+        AddMeleeTargetCandidate(candidates, candidate, dist_sq, candidate_limit);
+    });
+    return FirstVisibleMeleeTarget(mob, candidates);
+}
+
+// Flowers lit by a bulb are directly targetable by neutral mobs up to the
+// mob's own search range plus the bulb's radius bonus. Scanned with a wider
+// query, but only bulb flowers pass the per-flower range check, so non-bulb
+// flowers never leak into the neutral mob's target list.
+CEntity* FindClosestBulbTarget(CMobBase* mob, float search_range, int ignored_id = -1, int ignored_owner_id = -1)
+{
+    if (!mob || !mob->GameWorld()) return nullptr;
+    if (search_range <= 0.f) return nullptr;
+
+    const float max_bulb_bonus =
+        game_config::default_bulb_detect_radius +
+        game_config::default_bulb_detect_radius_step * static_cast<float>(GetLevel(ERarity::Primordial) - 1);
+    const float query_range = TargetSearchQueryRange(mob, search_range + max_bulb_bonus);
+    const size_t candidate_limit = std::max<size_t>(1, game_config::melee_target_los_candidate_limit);
+    auto& candidates = g_melee_scan_scratch.target_candidates;
+    candidates.clear();
+    candidates.reserve(candidate_limit);
+    mob->GameWorld()->GetSpatialGrid().ForEachInRange(mob->Pos(), query_range, [&](CEntity* candidate) {
+        if (!candidate || candidate->IsMarkedForDes() || candidate->IsDead() || !candidate->CanCollide()) return;
+        if (candidate->Id() == ignored_id || candidate->Id() == ignored_owner_id) return;
+        if (CheckTeam(candidate->Team(), mob->Team())) return;
+        if ((candidate->Team() == 0 || mob->Team() == 0) && ShareRootOwner(mob, candidate)) return;
+        if (BlocksNullifiedInteraction(mob, candidate)) return;
+        const auto* flower = dynamic_cast<const CFlower*>(candidate);
+        if (!flower || !flower->GetFinalStats()) return;
+        const float bonus = std::max(0.f, flower->GetFinalStats()->detection_range_bonus);
+        if (bonus <= 0.f) return;
+        const float range = std::max(0.f, search_range) + bonus;
+        const float dist_sq = TargetEdgeDistanceSq(mob, candidate);
+        if (dist_sq > range * range) return;
         AddMeleeTargetCandidate(candidates, candidate, dist_sq, candidate_limit);
     });
     return FirstVisibleMeleeTarget(mob, candidates);
@@ -270,7 +308,7 @@ CEntity* FindClosestMeleeTarget(CMobBase* mob, float search_range, int ignored_i
     target_candidates.clear();
     honey_candidates.reserve(candidate_limit);
     target_candidates.reserve(candidate_limit);
-    mob->GameWorld()->GetSpatialGrid().ForEachInRange(mob->m_pos, query_range, [&](CEntity* candidate) {
+    mob->GameWorld()->GetSpatialGrid().ForEachInRange(mob->Pos(), query_range, [&](CEntity* candidate) {
         float dist_sq = TargetEdgeDistanceSq(mob, candidate);
         if (dist_sq > search_range_sq) return;
 
@@ -292,6 +330,8 @@ CEntity* FindClosestMeleeTarget(CMobBase* mob, float search_range, int ignored_i
         if (auto* flower = dynamic_cast<const CFlower*>(candidate))
             detection_multiplier = flower->m_final_stats.detection_multiplier;
         float range = search_range * detection_multiplier;
+        if (auto* flower = dynamic_cast<const CFlower*>(candidate))
+            range += std::max(0.f, flower->m_final_stats.detection_range_bonus);
         if (dist_sq > range * range) return;
 
         AddMeleeTargetCandidate(target_candidates, candidate, dist_sq, candidate_limit);
@@ -327,9 +367,9 @@ float ScoreHornetAimDirection(CMobBase* mob, sf::Vector2f direction, float missi
         const sf::Vector2f offset = target.relative - direction * travel;
         if (LengthSq(offset) > target.hit_radius * target.hit_radius) continue;
 
-        const sf::Vector2f end = mob->m_pos + direction * travel;
+        const sf::Vector2f end = mob->Pos() + direction * travel;
         if (travel > game_config::entity_collision_epsilon &&
-            mob->GameWorld()->SweptCircleBlockedByWall(mob->m_pos, end, missile_radius))
+            mob->GameWorld()->SweptCircleBlockedByWall(mob->Pos(), end, missile_radius))
             continue;
         score += target.weight;
     }
@@ -352,14 +392,14 @@ bool FindBestHornetAimDirection(CMobBase* mob, float missile_radius, float missi
 
     float initial_score = 0.f;
     const float query_range = max_range + std::max(0.f, missile_radius);
-    mob->GameWorld()->ForEachEntityInEdgeRange(mob->m_pos, query_range, [&](CEntity* candidate) {
+    mob->GameWorld()->ForEachEntityInEdgeRange(mob->Pos(), query_range, [&](CEntity* candidate) {
         if (!candidate || !candidate->IsEntityType(EEntityType::Mob)) return;
         if (IsInvalidMeleeTarget(mob, candidate)) return;
 
-        const sf::Vector2f relative = candidate->m_pos - mob->m_pos;
+        const sf::Vector2f relative = candidate->Pos() - mob->Pos();
         const float distance_sq = LengthSq(relative);
         const float distance = std::sqrt(std::max(0.f, distance_sq));
-        const float hit_radius = std::max(0.f, missile_radius) + std::max(0.f, candidate->m_radius);
+        const float hit_radius = std::max(0.f, missile_radius) + std::max(0.f, candidate->Radius());
         if (distance > max_range + hit_radius) return;
 
         const float first_contact_distance = std::max(0.f, distance - hit_radius);
@@ -428,7 +468,7 @@ bool FindBestHornetAimDirection(CMobBase* mob, float missile_radius, float missi
     if (game_config::pi - previous_angle > game_config::entity_collision_epsilon)
         aim_candidates.push_back({ (previous_angle + game_config::pi) * 0.5f, score });
     if (aim_candidates.empty())
-        aim_candidates.push_back({ mob->m_has_facing ? mob->m_facing_angle : 0.f, initial_score });
+        aim_candidates.push_back({ mob->HasFacing() ? mob->FacingAngle() : 0.f, initial_score });
 
     std::sort(aim_candidates.begin(), aim_candidates.end(), [](const hornet_aim_candidate& lhs,
                                                                const hornet_aim_candidate& rhs) {
@@ -455,10 +495,10 @@ void FaceTarget(CMobBase* mob, const CEntity* target)
 {
     if (!mob || !target) return;
     if (mob->IsFacingLocked()) return;
-    sf::Vector2f delta = target->m_pos - mob->m_pos;
+    sf::Vector2f delta = target->Pos() - mob->Pos();
     if (LengthSq(delta) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon) return;
-    mob->m_facing_angle = std::atan2(delta.y, delta.x);
-    mob->m_has_facing = true;
+    mob->FacingAngle() = std::atan2(delta.y, delta.x);
+    mob->HasFacing() = true;
 }
 } // namespace
 
@@ -511,10 +551,7 @@ void CLeafcutterSoldierController::CaptureSnapshot(CSnapshotWriter& writer) cons
     writer.Field("leaf_piece_target_world_id", m_leaf_piece_target_world_id);
     writer.Field("leaf_piece_target_id", m_leaf_piece_target_id);
     writer.UInt64("leaf_piece_target_generation", m_leaf_piece_target_generation);
-    writer.Field("carried_leaf_piece_world_id", m_carried_leaf_piece_world_id);
-    writer.Field("carried_leaf_piece_id", m_carried_leaf_piece_id);
-    writer.UInt64("carried_leaf_piece_generation", m_carried_leaf_piece_generation);
-    writer.Field("leaf_piece_attack_timer", m_leaf_piece_attack_timer);
+    CaptureCarriedSnapshot(writer);
 }
 
 bool CLeafcutterSoldierController::RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version,
@@ -524,10 +561,7 @@ bool CLeafcutterSoldierController::RestoreSnapshot(const CSnapshotReader& reader
     m_leaf_piece_target_world_id = reader.UInt32("leaf_piece_target_world_id");
     m_leaf_piece_target_id = reader.Int("leaf_piece_target_id", -1);
     m_leaf_piece_target_generation = reader.UInt64("leaf_piece_target_generation");
-    m_carried_leaf_piece_world_id = reader.UInt32("carried_leaf_piece_world_id");
-    m_carried_leaf_piece_id = reader.Int("carried_leaf_piece_id", -1);
-    m_carried_leaf_piece_generation = reader.UInt64("carried_leaf_piece_generation");
-    m_leaf_piece_attack_timer = reader.Float("leaf_piece_attack_timer");
+    RestoreCarriedSnapshot(reader);
     return true;
 }
 
@@ -579,12 +613,10 @@ void CSpecialHornetController::CaptureSnapshot(CSnapshotWriter& writer) const
     writer.Field("skill2_tangent_dir", m_skill2_tangent_dir);
     writer.Field("cycle_phase", m_cycle_phase);
     writer.Field("cycle_attack_count", m_cycle_attack_count);
-    writer.Field("skill3_target_world_id", m_skill3_target_world_id);
+writer.Field("skill3_target_world_id", m_skill3_target_world_id);
     writer.Field("skill3_target_id", m_skill3_target_id);
     writer.UInt64("skill3_target_generation", m_skill3_target_generation);
-    writer.Field("skill3_captured_world_id", m_skill3_captured_world_id);
-    writer.Field("skill3_captured_id", m_skill3_captured_id);
-    writer.UInt64("skill3_captured_generation", m_skill3_captured_generation);
+    CaptureCarriedSnapshot(writer);
     writer.Field("skill3_launch_pos", m_skill3_launch_pos);
     writer.Field("skill3_launch_direction", m_skill3_launch_direction);
     writer.Field("skill3_captured_prev_skip_tick", m_skill3_captured_prev_skip_tick);
@@ -611,12 +643,10 @@ bool CSpecialHornetController::RestoreSnapshot(const CSnapshotReader& reader, st
     m_skill2_tangent_dir = reader.Vector2("skill2_tangent_dir", { 1.f, 0.f });
     m_cycle_phase = reader.Int("cycle_phase");
     m_cycle_attack_count = reader.Int("cycle_attack_count");
-    m_skill3_target_world_id = reader.UInt32("skill3_target_world_id");
+m_skill3_target_world_id = reader.UInt32("skill3_target_world_id");
     m_skill3_target_id = reader.Int("skill3_target_id", -1);
     m_skill3_target_generation = reader.UInt64("skill3_target_generation");
-    m_skill3_captured_world_id = reader.UInt32("skill3_captured_world_id");
-    m_skill3_captured_id = reader.Int("skill3_captured_id", -1);
-    m_skill3_captured_generation = reader.UInt64("skill3_captured_generation");
+    RestoreCarriedSnapshot(reader);
     m_skill3_launch_pos = reader.Vector2("skill3_launch_pos");
     m_skill3_launch_direction = reader.Vector2("skill3_launch_direction", { 1.f, 0.f });
     m_skill3_captured_prev_skip_tick = reader.Bool("skill3_captured_prev_skip_tick");
@@ -665,7 +695,7 @@ void CMeleeController::PickRandomTargetPos(CMobBase* mob, const SMobStats& stats
     if (!mob) return;
 
     float half_range = stats.horizon / game_config::melee_random_wander_divisor;
-    PickRandomTargetPosNear(mob, mob->m_pos, half_range);
+    PickRandomTargetPosNear(mob, mob->Pos(), half_range);
 }
 
 void CMeleeController::PickRandomTargetPosNear(CMobBase* mob, const sf::Vector2f& center, float half_range)
@@ -677,7 +707,7 @@ void CMeleeController::PickRandomTargetPosNear(CMobBase* mob, const sf::Vector2f
 
     if (CheckChance(game_config::melee_random_idle_chance))
     {
-        m_target_pos = mob->m_pos;
+        m_target_pos = mob->Pos();
         m_has_random_target_pos = true;
         m_random_idle = true;
         return;
@@ -692,14 +722,14 @@ void CMeleeController::PickRandomTargetPosNear(CMobBase* mob, const sf::Vector2f
     {
         sf::Vector2f candidate =
             min_pos + sf::Vector2f(GetLimitedRng(0.f, half_range * 2.f), GetLimitedRng(0.f, half_range * 2.f));
-        if (world && world->SweptCircleBlockedByWall(mob->m_pos, candidate, collision_radius)) continue;
+        if (world && world->SweptCircleBlockedByWall(mob->Pos(), candidate, collision_radius)) continue;
 
         m_target_pos = candidate;
         m_has_random_target_pos = true;
         return;
     }
 
-    m_target_pos = mob->m_pos;
+    m_target_pos = mob->Pos();
     m_has_random_target_pos = true;
     m_random_idle = true;
 }
@@ -744,7 +774,7 @@ bool CMeleeController::ReachedOrStalledRandomTarget(CMobBase* mob, float dt)
         ResetWanderProgress();
         return IsRandomIdleDone(dt);
     }
-    if (DistanceSq(mob->m_pos, m_target_pos) <= mob->m_radius * mob->m_radius)
+    if (DistanceSq(mob->Pos(), m_target_pos) <= mob->Radius() * mob->Radius())
     {
         ResetWanderProgress();
         return true;
@@ -758,14 +788,14 @@ bool CMeleeController::ReachedOrStalledRandomTarget(CMobBase* mob, float dt)
                  mob->WallCollisionRadius() * std::max(0.f, game_config::melee_wander_progress_radius_multiplier));
     if (!m_wander_progress_initialized)
     {
-        m_wander_progress_anchor = mob->m_pos;
+        m_wander_progress_anchor = mob->Pos();
         m_wander_progress_timer = 0.f;
         m_wander_progress_initialized = true;
         return false;
     }
-    if (DistanceSq(mob->m_pos, m_wander_progress_anchor) >= progress_distance * progress_distance)
+    if (DistanceSq(mob->Pos(), m_wander_progress_anchor) >= progress_distance * progress_distance)
     {
-        m_wander_progress_anchor = mob->m_pos;
+        m_wander_progress_anchor = mob->Pos();
         m_wander_progress_timer = 0.f;
         return false;
     }
@@ -782,8 +812,8 @@ void CMeleeController::SetTarget(CEntity* target)
     if (target) ResetWanderProgress();
     m_p_target = target;
     m_target_world_id = target && target->GameWorld() ? target->GameWorld()->GetId() : 0;
-    m_target_id = target ? target->m_id : -1;
-    m_target_generation = target ? target->m_generation : 0;
+    m_target_id = target ? target->Id() : -1;
+    m_target_generation = target ? target->Generation() : 0;
 }
 
 void CMeleeController::ClearTarget() { SetTarget(nullptr); }
@@ -791,7 +821,7 @@ void CMeleeController::ClearTarget() { SetTarget(nullptr); }
 void CMeleeController::LoseTarget(CMobBase* mob)
 {
     ClearTarget();
-    m_target_pos = mob ? mob->m_pos : sf::Vector2f{};
+    m_target_pos = mob ? mob->Pos() : sf::Vector2f{};
     m_change_target_count = game_config::melee_target_time;
     m_target_los_check_timer = 0.f;
     m_has_random_target_pos = false;
@@ -845,7 +875,7 @@ bool CMeleeController::TryAcquireWanderTarget(CMobBase* mob, float search_range,
     target = ResolveTarget(mob);
     if (!target) return false;
 
-    m_target_pos = target->m_pos;
+    m_target_pos = target->Pos();
     m_change_target_count = 0.f;
     m_target_los_check_timer = 0.f;
     m_has_random_target_pos = true;
@@ -867,7 +897,28 @@ bool CMeleeController::TryAcquireHoneyTarget(CMobBase* mob, float search_range, 
     target = ResolveTarget(mob);
     if (!target) return false;
 
-    m_target_pos = target->m_pos;
+    m_target_pos = target->Pos();
+    m_change_target_count = 0.f;
+    m_target_los_check_timer = 0.f;
+    m_has_random_target_pos = true;
+    m_random_idle = false;
+    m_random_idle_timer = 0.f;
+    return true;
+}
+
+bool CMeleeController::TryAcquireBulbTarget(CMobBase* mob, float search_range, int ignored_id, int ignored_owner_id)
+{
+    if (!mob || !mob->GameWorld() || search_range <= 0.f) return false;
+    if (!ShouldRunEntityTargetScan(m_target_scan_cooldown, mob)) return false;
+
+    CEntity* target = FindClosestBulbTarget(mob, search_range, ignored_id, ignored_owner_id);
+    if (!target) return false;
+
+    SetTarget(target);
+    target = ResolveTarget(mob);
+    if (!target) return false;
+
+    m_target_pos = target->Pos();
     m_change_target_count = 0.f;
     m_target_los_check_timer = 0.f;
     m_has_random_target_pos = true;
@@ -916,14 +967,14 @@ void CMeleeController::OnTick(CMobBase* mob, float dt)
         else PickRandomTargetPos(mob, *stats);
     }
 
-    if ((target = ResolveTarget(mob))) m_target_pos = target->m_pos;
+    if ((target = ResolveTarget(mob))) m_target_pos = target->Pos();
     mob->MoveTowards(m_target_pos, dt);
 }
 
 CEntity* CLeafcutterSoldierController::ResolveLeafPieceReference(const CMobBase* mob, std::uint32_t world_id,
                                                                  int entity_id, std::uint64_t generation) const
 {
-    if (!mob || !mob->GameWorld() || mob->m_is_marked_for_des || mob->IsDead() || entity_id < 0 || generation == 0)
+    if (!mob || !mob->GameWorld() || mob->IsMarkedForDes() || mob->IsDead() || entity_id < 0 || generation == 0)
         return nullptr;
 
     CGameWorld* world = mob->GameWorld();
@@ -931,7 +982,7 @@ CEntity* CLeafcutterSoldierController::ResolveLeafPieceReference(const CMobBase*
 
     CEntity* entity = world->GetEntity(entity_id, generation);
     const auto* leaf_piece = dynamic_cast<const CMobBase*>(entity);
-    if (!leaf_piece || leaf_piece->GetMobType() != EMobType::LeafPiece || leaf_piece->m_is_marked_for_des ||
+    if (!leaf_piece || leaf_piece->GetMobType() != EMobType::LeafPiece || leaf_piece->IsMarkedForDes() ||
         leaf_piece->IsDead())
         return nullptr;
     return entity;
@@ -940,14 +991,8 @@ CEntity* CLeafcutterSoldierController::ResolveLeafPieceReference(const CMobBase*
 CEntity* CLeafcutterSoldierController::ResolveLeafPieceTarget(const CMobBase* mob) const
 {
     CEntity* target = ResolveLeafPieceReference(mob, m_leaf_piece_target_world_id, m_leaf_piece_target_id,
-                                                m_leaf_piece_target_generation);
+                                                 m_leaf_piece_target_generation);
     return IsEligibleLeafPiece(mob, target) ? target : nullptr;
-}
-
-CEntity* CLeafcutterSoldierController::ResolveCarriedLeafPiece(const CMobBase* mob) const
-{
-    return ResolveLeafPieceReference(mob, m_carried_leaf_piece_world_id, m_carried_leaf_piece_id,
-                                     m_carried_leaf_piece_generation);
 }
 
 CEntity* CLeafcutterSoldierController::FindTargetCandidate(CMobBase* mob, float search_range, int ignored_id,
@@ -955,15 +1000,15 @@ CEntity* CLeafcutterSoldierController::FindTargetCandidate(CMobBase* mob, float 
 {
     if (!mob || !mob->GameWorld() || search_range <= 0.f) return nullptr;
 
-    const int carried_id = m_carried_leaf_piece_id;
-    const std::uint64_t carried_generation = m_carried_leaf_piece_generation;
+    const int carried_id = m_carried_id;
+    const std::uint64_t carried_generation = m_carried_generation;
     return FindClosestMeleeTarget(
         mob, search_range, ignored_id, ignored_owner_id,
         [this, mob, ignored_id, ignored_owner_id, carried_id, carried_generation](const CEntity* entity) {
             if (!IsEligibleLeafPiece(mob, entity, false)) return false;
-            if (entity->m_id == ignored_id || entity->m_id == ignored_owner_id) return false;
-            if (entity->m_id == carried_id && entity->m_generation == carried_generation) return false;
-            return !mob->GameWorld()->IsLeafPieceCarried(*entity);
+            if (entity->Id() == ignored_id || entity->Id() == ignored_owner_id) return false;
+            if (entity->Id() == carried_id && entity->Generation() == carried_generation) return false;
+            return !mob->GameWorld()->IsCarriedEntity(*entity);
         });
 }
 
@@ -989,26 +1034,19 @@ bool CLeafcutterSoldierController::IsTargetUnavailable(CMobBase* mob, const CEnt
 bool CLeafcutterSoldierController::IsEligibleLeafPiece(const CMobBase* mob, const CEntity* entity,
                                                        bool reject_carried) const
 {
-    if (!mob || !entity || entity == mob || entity->GameWorld() != mob->GameWorld() || entity->m_is_marked_for_des ||
+    if (!mob || !entity || entity == mob || entity->GameWorld() != mob->GameWorld() || entity->IsMarkedForDes() ||
         entity->IsDead())
         return false;
 
     const auto* leaf_piece = dynamic_cast<const CMobBase*>(entity);
     if (!leaf_piece || leaf_piece->GetMobType() != EMobType::LeafPiece) return false;
-    if (reject_carried && IsLeafPieceCarried(mob, leaf_piece)) return false;
+    if (reject_carried && mob->GameWorld()->IsCarriedEntity(*leaf_piece)) return false;
 
     const int common_level = GetLevel(ERarity::Common);
     const int soldier_level = std::max(common_level, GetLevel(mob->GetRarity()));
     const int minimum_leaf_level = std::max(common_level, soldier_level - 1);
     const int leaf_level = GetLevel(leaf_piece->GetRarity());
     return leaf_level >= minimum_leaf_level && leaf_level <= soldier_level;
-}
-
-bool CLeafcutterSoldierController::IsLeafPieceCarried(const CMobBase* mob, const CEntity* leaf_piece) const
-{
-    if (!mob || !leaf_piece || !mob->GameWorld() || leaf_piece->GameWorld() != mob->GameWorld()) return false;
-
-    return mob->GameWorld()->IsLeafPieceCarried(*leaf_piece);
 }
 
 void CLeafcutterSoldierController::ClearLeafPieceTarget()
@@ -1027,100 +1065,57 @@ void CLeafcutterSoldierController::SetLeafPieceTarget(CEntity* leaf_piece)
     }
 
     m_leaf_piece_target_world_id = leaf_piece->GameWorld()->GetId();
-    m_leaf_piece_target_id = leaf_piece->m_id;
-    m_leaf_piece_target_generation = leaf_piece->m_generation;
+    m_leaf_piece_target_id = leaf_piece->Id();
+    m_leaf_piece_target_generation = leaf_piece->Generation();
 }
 
-void CLeafcutterSoldierController::ClearCarriedLeafPiece(CMobBase* mob)
+bool CLeafcutterSoldierController::CanCarry(const CMobBase* mob, const CEntity* carried) const
 {
-    if (mob && mob->GameWorld())
-        mob->GameWorld()->UnregisterCarriedLeafPiece(m_carried_leaf_piece_id, m_carried_leaf_piece_generation,
-                                                     mob->m_id, mob->m_generation);
-    m_carried_leaf_piece_world_id = 0;
-    m_carried_leaf_piece_id = -1;
-    m_carried_leaf_piece_generation = 0;
+    return IsEligibleLeafPiece(mob, carried, true);
 }
 
-bool CLeafcutterSoldierController::SetCarriedLeafPiece(CMobBase* mob, CEntity* leaf_piece)
+float CLeafcutterSoldierController::CarryContactRadius(const CMobBase* mob, const CEntity* carried) const
 {
-    if (!mob || !mob->GameWorld() || !leaf_piece || leaf_piece->GameWorld() != mob->GameWorld() ||
-        !mob->GameWorld()->TryRegisterCarriedLeafPiece(*leaf_piece, *mob))
-    {
-        ClearCarriedLeafPiece(mob);
-        return false;
-    }
-
-    m_carried_leaf_piece_world_id = leaf_piece->GameWorld()->GetId();
-    m_carried_leaf_piece_id = leaf_piece->m_id;
-    m_carried_leaf_piece_generation = leaf_piece->m_generation;
-    return true;
+    (void)carried;
+    return std::max(0.f, mob->Radius() * game_config::mob_leafcutter_soldier_leaf_piece_attack_radius_multiplier);
 }
 
-bool CLeafcutterSoldierController::TryCarryLeafPiece(CMobBase* mob)
+float CLeafcutterSoldierController::CarryPickupCooldown() const
 {
-    if (!mob || m_leaf_piece_attack_timer > 0.f) return false;
+    return std::max(0.f, game_config::mob_leafcutter_soldier_leaf_piece_attack_interval);
+}
 
-    CEntity* leaf_piece = ResolveTarget(mob);
-    if (!IsEligibleLeafPiece(mob, leaf_piece)) return false;
-
-    const float configured_attack_radius =
-        std::max(0.f, mob->m_radius * game_config::mob_leafcutter_soldier_leaf_piece_attack_radius_multiplier);
-    const float contact_radius = std::max(0.f, mob->m_radius) + std::max(0.f, leaf_piece->m_radius) +
-                                 std::max(0.f, game_config::entity_collision_epsilon);
-    const float attack_radius = std::max(configured_attack_radius, contact_radius);
-    if (DistanceSq(mob->m_pos, leaf_piece->m_pos) > attack_radius * attack_radius) return false;
-
-    if (!SetCarriedLeafPiece(mob, leaf_piece)) return false;
+void CLeafcutterSoldierController::OnCarryChanged(CMobBase* mob, CEntity* carried, bool now_carrying)
+{
+    (void)mob;
+    (void)carried;
+    if (!now_carrying) return;
     ClearTarget();
     ClearLeafPieceTarget();
-    m_leaf_piece_attack_timer = std::max(0.f, game_config::mob_leafcutter_soldier_leaf_piece_attack_interval);
     m_has_random_target_pos = false;
     m_random_idle = false;
     m_random_idle_timer = 0.f;
-    return true;
-}
-
-void CLeafcutterSoldierController::ApplyCarryingTurn(CMobBase* mob, float previous_angle, bool had_facing,
-                                                     float dt) const
-{
-    if (!mob || !had_facing || !mob->m_has_facing) return;
-
-    const float desired_angle = mob->m_facing_angle;
-    float angle_delta = std::atan2(std::sin(desired_angle - previous_angle), std::cos(desired_angle - previous_angle));
-    const float max_turn = std::max(0.f, game_config::mob_leafcutter_soldier_leaf_piece_turn_speed) * std::max(0.f, dt);
-    angle_delta = std::clamp(angle_delta, -max_turn, max_turn);
-    mob->m_facing_angle = std::atan2(std::sin(previous_angle + angle_delta), std::cos(previous_angle + angle_delta));
-
-    const float speed = Length(mob->m_vel);
-    if (speed > game_config::entity_collision_epsilon)
-        mob->m_vel = sf::Vector2f(std::cos(mob->m_facing_angle), std::sin(mob->m_facing_angle)) * speed;
 }
 
 void CLeafcutterSoldierController::OnTick(CMobBase* mob, float dt)
 {
     if (!mob || !mob->GameWorld()) return;
 
-    m_leaf_piece_attack_timer = std::max(0.f, m_leaf_piece_attack_timer - std::max(0.f, dt));
-    CEntity* carried_leaf_piece = ResolveCarriedLeafPiece(mob);
-    if (!carried_leaf_piece) ClearCarriedLeafPiece(mob);
-    else if (!mob->GameWorld()->TryRegisterCarriedLeafPiece(*carried_leaf_piece, *mob))
-    {
-        ClearCarriedLeafPiece(mob);
-        carried_leaf_piece = nullptr;
-    }
+    TickCarried(mob, dt);
+    CEntity* carried = GetCarried(mob);
 
     CEntity* target = ResolveTarget(mob);
     CEntity* leaf_piece_target = ResolveLeafPieceTarget(mob);
-    if (!carried_leaf_piece && !target && leaf_piece_target)
+    if (!carried && !target && leaf_piece_target)
     {
         SetTarget(leaf_piece_target);
         target = ResolveTarget(mob);
     }
-    if (carried_leaf_piece || !leaf_piece_target) ClearLeafPieceTarget();
+    if (carried || !leaf_piece_target) ClearLeafPieceTarget();
 
-    const bool was_carrying = carried_leaf_piece != nullptr;
-    const float previous_angle = mob->m_facing_angle;
-    const bool had_facing = mob->m_has_facing;
+    const bool was_carrying = carried != nullptr;
+    const float previous_angle = mob->FacingAngle();
+    const bool had_facing = mob->HasFacing();
     CMeleeController::OnTick(mob, dt);
     if (was_carrying) ApplyCarryingTurn(mob, previous_angle, had_facing, dt);
 
@@ -1130,123 +1125,7 @@ void CLeafcutterSoldierController::OnTick(CMobBase* mob, float dt)
     if (targeting_leaf_piece) SetLeafPieceTarget(target);
     else ClearLeafPieceTarget();
 
-    if (targeting_leaf_piece && !ResolveCarriedLeafPiece(mob)) TryCarryLeafPiece(mob);
-}
-
-bool CLeafcutterSoldierController::IsCarryingLeafPiece(const CMobBase* mob) const
-{
-    return ResolveCarriedLeafPiece(mob) != nullptr;
-}
-
-bool CLeafcutterSoldierController::IsCarryingLeafPiece(const CMobBase* mob, const CEntity* leaf_piece) const
-{
-    return leaf_piece && ResolveCarriedLeafPiece(mob) == leaf_piece;
-}
-
-void CLeafcutterSoldierController::SyncCarriedLeafPiece(CMobBase* mob)
-{
-    if (!mob || mob->m_is_marked_for_des || mob->IsDead())
-    {
-        ClearCarriedLeafPiece(mob);
-        return;
-    }
-
-    CEntity* leaf_piece = ResolveCarriedLeafPiece(mob);
-    if (!leaf_piece)
-    {
-        ClearCarriedLeafPiece(mob);
-        return;
-    }
-
-    const float angle = mob->m_has_facing ? mob->m_facing_angle : 0.f;
-    const sf::Vector2f forward(std::cos(angle), std::sin(angle));
-    const float contact_distance = std::max(0.f, mob->m_radius) + std::max(0.f, leaf_piece->m_radius);
-    leaf_piece->m_pos = mob->m_pos + forward * contact_distance;
-    if (auto* leaf_piece_mob = dynamic_cast<CMobBase*>(leaf_piece)) leaf_piece_mob->m_vel = { 0.f, 0.f };
-}
-
-void CLeafcutterSoldierController::ResolveCarriedLeafPieceConstraint(CMobBase* mob)
-{
-    if (!mob || mob->m_is_marked_for_des || mob->IsDead() || !mob->GameWorld())
-    {
-        ClearCarriedLeafPiece(mob);
-        return;
-    }
-
-    CEntity* leaf_piece = ResolveCarriedLeafPiece(mob);
-    auto* leaf_piece_mob = dynamic_cast<CMobBase*>(leaf_piece);
-    if (!leaf_piece || !leaf_piece_mob)
-    {
-        ClearCarriedLeafPiece(mob);
-        return;
-    }
-
-    const float angle = mob->m_has_facing ? mob->m_facing_angle : 0.f;
-    const sf::Vector2f forward(std::cos(angle), std::sin(angle));
-    const float contact_distance = std::max(0.f, mob->m_radius) + std::max(0.f, leaf_piece->m_radius);
-    const sf::Vector2f desired_leaf_pos = mob->m_pos + forward * contact_distance;
-    const sf::Vector2f error = leaf_piece->m_pos - desired_leaf_pos;
-    const float error_sq = LengthSq(error);
-    const float epsilon = std::max(0.f, game_config::entity_collision_epsilon);
-    leaf_piece_mob->m_vel = { 0.f, 0.f };
-    if (error_sq <= epsilon * epsilon)
-    {
-        leaf_piece->m_pos = desired_leaf_pos;
-        return;
-    }
-
-    auto inverse_mass = [epsilon](float mass) {
-        if (!std::isfinite(mass)) return 0.f;
-        return mass > epsilon ? 1.f / mass : 1.f;
-    };
-    const float soldier_inverse_mass = inverse_mass(mob->m_mass);
-    const float leaf_inverse_mass = inverse_mass(leaf_piece->m_mass);
-    const float inverse_mass_sum = soldier_inverse_mass + leaf_inverse_mass;
-    const float soldier_weight = inverse_mass_sum > epsilon ? soldier_inverse_mass / inverse_mass_sum : 0.5f;
-    const float leaf_weight = inverse_mass_sum > epsilon ? leaf_inverse_mass / inverse_mass_sum : 0.5f;
-
-    CGameWorld* world = mob->GameWorld();
-    auto is_clear = [world](sf::Vector2f pos, float radius) {
-        return !world->CircleBlockedByWall(pos, std::max(0.f, radius));
-    };
-
-    const sf::Vector2f weighted_soldier_pos = mob->m_pos + error * soldier_weight;
-    const sf::Vector2f weighted_leaf_pos = leaf_piece->m_pos - error * leaf_weight;
-    const bool weighted_soldier_blocked = !is_clear(weighted_soldier_pos, mob->WallCollisionRadius());
-    const bool weighted_leaf_blocked = !is_clear(weighted_leaf_pos, leaf_piece->WallCollisionRadius());
-    bool leaf_wall_pushed_soldier = false;
-
-    if (!weighted_soldier_blocked && !weighted_leaf_blocked)
-    {
-        mob->m_pos = weighted_soldier_pos;
-        leaf_piece->m_pos = weighted_leaf_pos;
-    } else if (weighted_leaf_blocked && is_clear(mob->m_pos + error, mob->WallCollisionRadius()))
-    {
-        mob->m_pos += error;
-        leaf_wall_pushed_soldier = true;
-    } else if (weighted_soldier_blocked &&
-               is_clear(leaf_piece->m_pos - error, leaf_piece->WallCollisionRadius()))
-    {
-        leaf_piece->m_pos -= error;
-    } else if (is_clear(mob->m_pos + error, mob->WallCollisionRadius()))
-    {
-        mob->m_pos += error;
-        leaf_wall_pushed_soldier = weighted_leaf_blocked;
-    } else if (is_clear(leaf_piece->m_pos - error, leaf_piece->WallCollisionRadius()))
-    {
-        leaf_piece->m_pos -= error;
-    } else
-    {
-        return;
-    }
-
-    if (leaf_wall_pushed_soldier)
-    {
-        const float error_length = std::sqrt(error_sq);
-        const sf::Vector2f wall_normal = error / error_length;
-        const float velocity_into_wall = mob->m_vel.x * wall_normal.x + mob->m_vel.y * wall_normal.y;
-        if (velocity_into_wall < 0.f) mob->m_vel -= wall_normal * velocity_into_wall;
-    }
+    if (targeting_leaf_piece && !GetCarried(mob)) TryPickup(mob, target);
 }
 
 // ============ Summoned ============
@@ -1261,8 +1140,8 @@ CEntity* CSummonedMeleeController::GetOwner(CGameWorld* world) const
 bool CSummonedMeleeController::IsOwnedBy(const CEntity* entity) const
 {
     if (!entity || m_owner_id < 0) return false;
-    if (entity->m_id != m_owner_id) return false;
-    return m_owner_generation == 0 || entity->m_generation == m_owner_generation;
+    if (entity->Id() != m_owner_id) return false;
+    return m_owner_generation == 0 || entity->Generation() == m_owner_generation;
 }
 
 void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
@@ -1279,7 +1158,7 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
     }
 
     CEntity* owner = GetOwner(mob->GameWorld());
-    if (!owner || owner->m_is_marked_for_des || owner->IsDead())
+    if (!owner || owner->IsMarkedForDes() || owner->IsDead())
     {
         if (m_persist_after_owner_death)
         {
@@ -1292,8 +1171,8 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
         return;
     }
 
-    float owner_dist_sq = DistanceSq(mob->m_pos, owner->m_pos);
-    float range_scale = std::max(1.f, mob->m_radius / std::max(1.f, game_config::mob_summoned_beetle_radius));
+    float owner_dist_sq = DistanceSq(mob->Pos(), owner->Pos());
+    float range_scale = std::max(1.f, mob->Radius() / std::max(1.f, game_config::mob_summoned_beetle_radius));
     float hard_range = game_config::mob_summoned_beetle_hard_range * range_scale;
     if (owner_dist_sq > hard_range * hard_range)
     {
@@ -1305,12 +1184,12 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
     if (owner_dist_sq > follow_range * follow_range)
     {
         SetTarget(owner);
-        m_target_pos = owner->m_pos;
+        m_target_pos = owner->Pos();
         m_has_random_target_pos = true;
         m_random_idle = false;
         m_random_idle_timer = 0.f;
         m_change_target_count = 0.f;
-        mob->MoveTowards(owner->m_pos, dt);
+        mob->MoveTowards(owner->Pos(), dt);
         return;
     }
 
@@ -1324,7 +1203,7 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
     if (auto* owner_projectile = dynamic_cast<CProjectile*>(owner))
     {
         CEntity* root_owner = owner_projectile->GetOwner();
-        owner_owner_id = root_owner ? root_owner->m_id : -1;
+        owner_owner_id = root_owner ? root_owner->Id() : -1;
     }
 
     float search_range = stats->horizon * game_config::mob_summoned_search_range_multiplier;
@@ -1336,14 +1215,14 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
         LoseTarget(mob);
         target = nullptr;
     }
-    if (TryAcquireHoneyTarget(mob, search_range, owner->m_id, owner_owner_id))
+    if (TryAcquireHoneyTarget(mob, search_range, owner->Id(), owner_owner_id))
     {
         target = ResolveTarget(mob);
         target_invalid = false;
     }
     bool reached_random_target = !target && ReachedOrStalledRandomTarget(mob, dt);
     if (!target && m_has_random_target_pos && !reached_random_target &&
-        TryAcquireWanderTarget(mob, search_range, owner->m_id, owner_owner_id))
+        TryAcquireWanderTarget(mob, search_range, owner->Id(), owner_owner_id))
         target = ResolveTarget(mob);
 
     const bool switch_random_target =
@@ -1358,16 +1237,16 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
         m_random_idle = false;
         m_random_idle_timer = 0.f;
 
-        if (TryAcquireWanderTarget(mob, search_range, owner->m_id, owner_owner_id)) target = ResolveTarget(mob);
+        if (TryAcquireWanderTarget(mob, search_range, owner->Id(), owner_owner_id)) target = ResolveTarget(mob);
         else
         {
-            float wander_half_range = std::max(mob->m_radius * game_config::mob_summoned_wander_radius_multiplier,
+            float wander_half_range = std::max(mob->Radius() * game_config::mob_summoned_wander_radius_multiplier,
                                                follow_range * game_config::mob_summoned_wander_follow_range_multiplier);
-            PickRandomTargetPosNear(mob, owner->m_pos, wander_half_range);
+            PickRandomTargetPosNear(mob, owner->Pos(), wander_half_range);
         }
     }
 
-    if ((target = ResolveTarget(mob))) m_target_pos = target->m_pos;
+    if ((target = ResolveTarget(mob))) m_target_pos = target->Pos();
     mob->MoveTowards(m_target_pos, dt);
 }
 
@@ -1403,11 +1282,15 @@ void CNeutralMeleeController::OnTick(CMobBase* mob, float dt)
     {
         target = ResolveTarget(mob);
     }
+    if (!target && TryAcquireBulbTarget(mob, stats->horizon))
+    {
+        target = ResolveTarget(mob);
+    }
 
     if (target)
     {
         set_attack_state(target);
-        m_target_pos = target->m_pos;
+        m_target_pos = target->Pos();
         mob->MoveTowards(m_target_pos, dt);
         return;
     }
@@ -1433,7 +1316,7 @@ void CNeutralMeleeController::OnDamaged(CMobBase* mob, CEntity* attacker)
     if (IsUnavailableMeleeTarget(mob, attacker)) return;
 
     SetTarget(attacker);
-    m_target_pos = attacker->m_pos;
+    m_target_pos = attacker->Pos();
     m_has_random_target_pos = true;
     m_random_idle = false;
     m_random_idle_timer = 0.f;
@@ -1471,7 +1354,7 @@ overmind_ban_profile OvermindBanProfile(ERarity rarity)
 void CTermiteOvermindController::OnTick(CMobBase* mob, float dt)
 {
     CNeutralMeleeController::OnTick(mob, dt);
-    if (!mob || !mob->GameWorld() || mob->IsDead() || mob->m_is_marked_for_des) return;
+    if (!mob || !mob->GameWorld() || mob->IsDead() || mob->IsMarkedForDes()) return;
 
     const overmind_ban_profile profile = OvermindBanProfile(mob->GetRarity());
     if (profile.interval <= game_config::entity_collision_epsilon ||
@@ -1498,22 +1381,22 @@ void CTermiteOvermindController::ApplyBanSkill(CMobBase* mob, float duration) co
 {
     if (!mob || !mob->GameWorld() || duration <= game_config::entity_collision_epsilon) return;
 
-    const float range = std::max(0.f, mob->m_radius) + std::max(0.f, game_config::psionic_connection_range);
+    const float range = std::max(0.f, mob->Radius()) + std::max(0.f, game_config::psionic_connection_range);
     if (range <= game_config::entity_collision_epsilon) return;
     const float range_sq = range * range;
 
     std::vector<CFlower*> targets;
-    mob->GameWorld()->GetSpatialGrid().ForEachInRange(mob->m_pos, range, [&](CEntity* entity) {
-        if (!entity || entity == mob || entity->m_is_marked_for_des || entity->IsDead()) return;
+    mob->GameWorld()->GetSpatialGrid().ForEachInRange(mob->Pos(), range, [&](CEntity* entity) {
+        if (!entity || entity == mob || entity->IsMarkedForDes() || entity->IsDead()) return;
         auto* flower = dynamic_cast<CFlower*>(entity);
-        if (!flower || !CheckTeam(flower->m_team, mob->m_team)) return;
-        if (DistanceSq(flower->m_pos, mob->m_pos) > range_sq) return;
+        if (!flower || !CheckTeam(flower->Team(), mob->Team())) return;
+        if (DistanceSq(flower->Pos(), mob->Pos()) > range_sq) return;
         targets.push_back(flower);
     });
 
     for (CFlower* flower : targets)
     {
-        if (!flower || flower->m_is_marked_for_des || flower->IsDead()) continue;
+        if (!flower || flower->IsMarkedForDes() || flower->IsDead()) continue;
 
         std::vector<int> eligible_slots;
         const auto& slots = flower->GetSlots();
@@ -1587,7 +1470,7 @@ void CRandomWanderController::OnTick(CMobBase* mob, float dt)
 
     if (target)
     {
-        m_target_pos = target->m_pos;
+        m_target_pos = target->Pos();
         mob->MoveTowards(m_target_pos, dt);
         return;
     }
@@ -1611,14 +1494,14 @@ void CQueenAntController::OnTick(CMobBase* mob, float dt)
 {
     CMeleeController::OnTick(mob, dt);
     CEntity* target = ResolveTarget(mob);
-    if (!mob || !target || target->m_is_marked_for_des || target->IsDead()) return;
+    if (!mob || !target || target->IsMarkedForDes() || target->IsDead()) return;
 
     const SMobStats* stats = mob->GetFinalStats();
     if (!stats) return;
 
     float attack_range =
-        std::max(mob->m_radius * game_config::mob_hornet_attack_range_radius_multiplier, stats->horizon);
-    if (DistanceSq(mob->m_pos, target->m_pos) > attack_range * attack_range) return;
+        std::max(mob->Radius() * game_config::mob_hornet_attack_range_radius_multiplier, stats->horizon);
+    if (DistanceSq(mob->Pos(), target->Pos()) > attack_range * attack_range) return;
 
     if (auto* attackable = dynamic_cast<IAttackableMob*>(mob))
     {
@@ -1634,14 +1517,14 @@ void CSpiderController::OnTick(CMobBase* mob, float dt)
     if (!mob || !mob->GameWorld()) return;
     if (GetLevel(mob->GetRarity()) < GetLevel(ERarity::Legendary)) return;
     CEntity* target = ResolveTarget(mob);
-    if (!target || target->m_is_marked_for_des || target->IsDead()) return;
+    if (!target || target->IsMarkedForDes() || target->IsDead()) return;
 
     m_web_timer += dt;
     float interval = std::max(game_config::server_fixed_dt, game_config::mob_spider_web_interval);
     if (m_web_timer < interval) return;
     m_web_timer = std::fmod(m_web_timer, interval);
 
-    auto web = std::make_unique<CSpiderWebZone>(mob->GameWorld(), mob->m_pos, mob->m_radius, mob,
+    auto web = std::make_unique<CSpiderWebZone>(mob->GameWorld(), mob->Pos(), mob->Radius(), mob,
                                                 game_config::mob_spider_web_lifetime,
                                                 game_config::mob_spider_web_speed_multiplier);
     mob->GameWorld()->InsertEntity(std::move(web));
@@ -1698,13 +1581,13 @@ void CHornetRangedController::OnTick(CMobBase* mob, float dt)
         return;
     }
 
-    m_target_pos = target->m_pos;
+    m_target_pos = target->Pos();
     FaceTarget(mob, target);
 
-    sf::Vector2f to_target = target->m_pos - mob->m_pos;
+    sf::Vector2f to_target = target->Pos() - mob->Pos();
     float target_dist = Length(to_target);
-    float stop_distance = game_config::mob_hornet_stop_distance + mob->m_radius;
-    if (target_dist <= stop_distance) mob->MoveTowards(mob->m_pos, dt);
+    float stop_distance = game_config::mob_hornet_stop_distance + mob->Radius();
+    if (target_dist <= stop_distance) mob->MoveTowards(mob->Pos(), dt);
     else mob->MoveTowards(m_target_pos, dt);
 
     float missile_range = HornetMissileSpeed(mob->GetRarity()) * game_config::default_missile_lifetime;
@@ -1772,7 +1655,7 @@ void CMechaFlowerRangedController::OnTick(CMobBase* mob, float dt)
         return;
     }
 
-    m_target_pos = target->m_pos;
+    m_target_pos = target->Pos();
     if (IsValidHoneyTarget(mob, target))
     {
         flower->SetAttacking(false);
@@ -1786,9 +1669,9 @@ void CMechaFlowerRangedController::OnTick(CMobBase* mob, float dt)
     flower->SetDefending(false);
     SyncOrbitTarget(target);
 
-    const float stop_distance = mob->m_radius + game_config::default_petal_neutral_reach +
+    const float stop_distance = mob->Radius() + game_config::default_petal_neutral_reach +
                                 std::max(0.f, stats->reach);
-    const float target_distance = Distance(mob->m_pos, target->m_pos);
+    const float target_distance = Distance(mob->Pos(), target->Pos());
     if (!m_orbiting)
     {
         if (target_distance > stop_distance)
@@ -1800,7 +1683,7 @@ void CMechaFlowerRangedController::OnTick(CMobBase* mob, float dt)
         if (m_orbit_direction == 0.f) m_orbit_direction = CheckChance(0.5) ? 1.f : -1.f;
     } else
     {
-        const float exit_distance = stop_distance + std::max(0.f, mob->m_radius) *
+        const float exit_distance = stop_distance + std::max(0.f, mob->Radius()) *
                                                         mecha_flower_orbit_exit_hysteresis_radius_multiplier;
         if (target_distance > exit_distance)
         {
@@ -1825,8 +1708,8 @@ void CMechaFlowerRangedController::ClearOrbitTarget()
 void CMechaFlowerRangedController::SyncOrbitTarget(const CEntity* target)
 {
     const std::uint32_t world_id = target && target->GameWorld() ? target->GameWorld()->GetId() : 0;
-    const int target_id = target ? target->m_id : -1;
-    const std::uint64_t generation = target ? target->m_generation : 0;
+    const int target_id = target ? target->Id() : -1;
+    const std::uint64_t generation = target ? target->Generation() : 0;
     if (world_id == m_orbit_target_world_id && target_id == m_orbit_target_id &&
         generation == m_orbit_target_generation)
         return;
@@ -1843,7 +1726,7 @@ void CMechaFlowerRangedController::MoveAroundTarget(CMobBase* mob, const CEntity
 {
     if (!mob || !target) return;
 
-    sf::Vector2f outward = mob->m_pos - target->m_pos;
+    sf::Vector2f outward = mob->Pos() - target->Pos();
     const float distance = Length(outward);
     if (distance > game_config::entity_collision_epsilon) outward /= distance;
     else outward = { 1.f, 0.f };
@@ -1856,8 +1739,8 @@ void CMechaFlowerRangedController::MoveAroundTarget(CMobBase* mob, const CEntity
     if (move_length <= game_config::entity_collision_epsilon) return;
     move_direction /= move_length;
 
-    const float lookahead = std::max(stop_distance, std::max(0.f, mob->m_radius) * 2.f);
-    mob->MoveTowards(mob->m_pos + move_direction * lookahead, dt);
+    const float lookahead = std::max(stop_distance, std::max(0.f, mob->Radius()) * 2.f);
+    mob->MoveTowards(mob->Pos() + move_direction * lookahead, dt);
 }
 
 void CMechaFlowerRangedController::CaptureSnapshot(CSnapshotWriter& writer) const
@@ -1923,24 +1806,24 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
             float speed =
                 stats ? stats->max_velocity * game_config::mob_hornet_skill2_move_speed_multiplier
                       : game_config::mob_hornet_max_velocity * game_config::mob_hornet_skill2_move_speed_multiplier;
-            float base_angle = mob->m_has_facing ? mob->m_facing_angle : 0.f;
+            float base_angle = mob->HasFacing() ? mob->FacingAngle() : 0.f;
             sf::Vector2f forward = { std::cos(base_angle), std::sin(base_angle) };
             if (LengthSq(forward) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
                 forward = { 1.f, 0.f };
             sf::Vector2f left = { -forward.y, forward.x };
             float side = CheckChance(0.5) ? -1.f : 1.f;
-            m_skill2_orbit_radius = std::max(mob->m_radius * game_config::mob_hornet_skill2_orbit_radius_multiplier,
+            m_skill2_orbit_radius = std::max(mob->Radius() * game_config::mob_hornet_skill2_orbit_radius_multiplier,
                                              game_config::entity_collision_epsilon);
-            m_skill2_orbit_center = mob->m_pos + left * (side * m_skill2_orbit_radius);
+            m_skill2_orbit_center = mob->Pos() + left * (side * m_skill2_orbit_radius);
             m_skill2_orbit_angle =
-                std::atan2(mob->m_pos.y - m_skill2_orbit_center.y, mob->m_pos.x - m_skill2_orbit_center.x);
+                std::atan2(mob->Pos().y - m_skill2_orbit_center.y, mob->Pos().x - m_skill2_orbit_center.x);
             m_skill2_orbit_dir = side;
             m_skill2_remaining_angle = game_config::pi * game_config::mob_hornet_skill2_arc_pi_multiplier;
             m_skill2_tangent_dir = { -std::sin(m_skill2_orbit_angle) * m_skill2_orbit_dir,
                                      std::cos(m_skill2_orbit_angle) * m_skill2_orbit_dir };
             mob->m_vel = { 0.f, 0.f };
-            mob->m_facing_angle = std::atan2(m_skill2_tangent_dir.y, m_skill2_tangent_dir.x);
-            mob->m_has_facing = true;
+            mob->FacingAngle() = std::atan2(m_skill2_tangent_dir.y, m_skill2_tangent_dir.x);
+            mob->HasFacing() = true;
             m_state = EState::Skill2Dash;
             float angular_speed = HornetSkill2AngularSpeed(speed, m_skill2_orbit_radius);
             m_state_timer = m_skill2_remaining_angle / std::max(game_config::entity_collision_epsilon, angular_speed);
@@ -1957,11 +1840,11 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
         float step = std::min(m_skill2_remaining_angle, angular_speed * dt);
         sf::Vector2f current_radial = { std::cos(m_skill2_orbit_angle), std::sin(m_skill2_orbit_angle) };
         sf::Vector2f expected_pos = m_skill2_orbit_center + current_radial * m_skill2_orbit_radius;
-        sf::Vector2f drift = mob->m_pos - expected_pos;
+        sf::Vector2f drift = mob->Pos() - expected_pos;
         if (LengthSq(drift) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
             m_skill2_orbit_center += drift;
 
-        sf::Vector2f origin = mob->m_pos;
+        sf::Vector2f origin = mob->Pos();
         m_skill2_orbit_angle += m_skill2_orbit_dir * step;
         m_skill2_remaining_angle = std::max(0.f, m_skill2_remaining_angle - step);
 
@@ -1969,9 +1852,9 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
         m_skill2_tangent_dir = { -radial.y * m_skill2_orbit_dir, radial.x * m_skill2_orbit_dir };
         sf::Vector2f target_pos = m_skill2_orbit_center + radial * m_skill2_orbit_radius;
         float safe_dt = std::max(game_config::entity_collision_epsilon, dt);
-        mob->m_vel = (target_pos - mob->m_pos) / safe_dt;
-        mob->m_facing_angle = std::atan2(m_skill2_tangent_dir.y, m_skill2_tangent_dir.x);
-        mob->m_has_facing = true;
+        mob->m_vel = (target_pos - mob->Pos()) / safe_dt;
+        mob->FacingAngle() = std::atan2(m_skill2_tangent_dir.y, m_skill2_tangent_dir.x);
+        mob->HasFacing() = true;
 
         m_fire_timer -= dt;
         while (m_fire_timer <= 0.f && m_skill2_remaining_angle > 0.f)
@@ -1997,20 +1880,17 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
         return;
     case EState::Skill3Charge: {
         CGameWorld* world = mob->GameWorld();
-        CEntity* target = world && world->GetId() == m_skill3_target_world_id && m_skill3_target_id >= 0
+CEntity* target = world && world->GetId() == m_skill3_target_world_id && m_skill3_target_id >= 0
                               ? world->GetEntity(m_skill3_target_id, m_skill3_target_generation)
                               : nullptr;
-        auto* captured = world && world->GetId() == m_skill3_captured_world_id && m_skill3_captured_id >= 0
-                             ? dynamic_cast<CMobBase*>(
-                                   world->GetEntity(m_skill3_captured_id, m_skill3_captured_generation))
-                             : nullptr;
-        if (!target || target->m_is_marked_for_des || target->IsDead())
+        auto* captured = dynamic_cast<CMobBase*>(GetCarried(mob));
+        if (!target || target->IsMarkedForDes() || target->IsDead())
         {
             LoseTarget(mob);
             FinishCurrentAction(mob);
             return;
         }
-        if (!captured || captured->m_is_marked_for_des || captured->IsDead())
+        if (!captured || captured->IsMarkedForDes() || captured->IsDead())
         {
             FinishCurrentAction(mob);
             return;
@@ -2024,7 +1904,7 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
             return;
         }
 
-        sf::Vector2f mount_dir = { std::cos(mob->m_facing_angle), std::sin(mob->m_facing_angle) };
+        sf::Vector2f mount_dir = { std::cos(mob->FacingAngle()), std::sin(mob->FacingAngle()) };
         if (LengthSq(mount_dir) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
             mount_dir = { -m_skill3_launch_direction.x, -m_skill3_launch_direction.y };
         else
@@ -2034,12 +1914,12 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
 
         // The caster faces away from the attack target, so the captured mob is held on its back.
         const sf::Vector2f back_dir = -mount_dir;
-        m_skill3_launch_pos = mob->m_pos + back_dir * (mob->m_radius * game_config::mob_hornet_missile_attach_offset);
-        captured->m_pos = m_skill3_launch_pos;
-        captured->m_prev_pos = m_skill3_launch_pos;
+        m_skill3_launch_pos = mob->Pos() + back_dir * (mob->Radius() * game_config::mob_hornet_missile_attach_offset);
+        captured->Pos() = m_skill3_launch_pos;
+        captured->PrevPos() = m_skill3_launch_pos;
         captured->m_vel = { 0.f, 0.f };
-        captured->m_facing_angle = std::atan2(mount_dir.y, mount_dir.x);
-        captured->m_has_facing = true;
+        captured->FacingAngle() = std::atan2(mount_dir.y, mount_dir.x);
+        captured->HasFacing() = true;
 
         m_state_timer = std::max(0.f, m_state_timer - dt);
         if (m_state_timer <= 0.f)
@@ -2052,8 +1932,8 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
             float launch_speed = (stats ? stats->max_velocity : game_config::mob_hornet_max_velocity) *
                                  game_config::mob_hornet_skill3_launch_speed_multiplier;
             captured->m_vel = direction * launch_speed;
-            captured->m_facing_angle = std::atan2(direction.y, direction.x);
-            captured->m_has_facing = true;
+            captured->FacingAngle() = std::atan2(direction.y, direction.x);
+            captured->HasFacing() = true;
             FinishCurrentAction(mob);
         }
     }
@@ -2066,7 +1946,7 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
     TickMovementAndTarget(mob, dt);
 
     CEntity* target = ResolveTarget(mob);
-    if (!target || target->m_is_marked_for_des || target->IsDead()) return;
+    if (!target || target->IsMarkedForDes() || target->IsDead()) return;
 
     float missile_range = HornetMissileSpeed(mob->GetRarity()) * game_config::default_missile_lifetime;
     if (TargetEdgeDistanceSq(mob, target) >
@@ -2107,7 +1987,7 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
             const float missile_speed = HornetMissileSpeed(mob->GetRarity());
             const float missile_radius =
                 game_config::mob_hornet_missile_radius *
-                (mob->m_radius / std::max(game_config::entity_collision_epsilon, game_config::mob_hornet_radius));
+                (mob->Radius() / std::max(game_config::entity_collision_epsilon, game_config::mob_hornet_radius));
             if (FindBestHornetAimDirection(mob, missile_radius, missile_speed, game_config::default_missile_lifetime,
                                             aim_direction))
                 fired = hornet->TryCastMissileInDirection(aim_direction);
@@ -2176,13 +2056,13 @@ void CSpecialHornetController::TickMovementAndTarget(CMobBase* mob, float dt)
         return;
     }
 
-    m_target_pos = target->m_pos;
+    m_target_pos = target->Pos();
     FaceTarget(mob, target);
 
-    sf::Vector2f to_target = target->m_pos - mob->m_pos;
+    sf::Vector2f to_target = target->Pos() - mob->Pos();
     float target_dist = Length(to_target);
-    float stop_distance = game_config::mob_hornet_stop_distance + mob->m_radius;
-    if (target_dist <= stop_distance) mob->MoveTowards(mob->m_pos, dt);
+    float stop_distance = game_config::mob_hornet_stop_distance + mob->Radius();
+    if (target_dist <= stop_distance) mob->MoveTowards(mob->Pos(), dt);
     else mob->MoveTowards(m_target_pos, dt);
 }
 
@@ -2232,13 +2112,13 @@ void CSpecialHornetController::PerformSkill1(CMobBase* mob)
         {
             float angle = GetLimitedRng(-game_config::pi, game_config::pi);
             float distance = GetLimitedRng(
-                mob->m_radius * game_config::mob_hornet_skill1_spawn_distance_min_radius_multiplier,
-                std::max(mob->m_radius * game_config::mob_hornet_skill1_spawn_distance_safe_radius_multiplier,
-                         mob->m_radius * game_config::mob_hornet_skill1_spawn_distance_max_radius_multiplier));
-            sf::Vector2f pos = mob->m_pos + sf::Vector2f(std::cos(angle), std::sin(angle)) * distance;
+                mob->Radius() * game_config::mob_hornet_skill1_spawn_distance_min_radius_multiplier,
+                std::max(mob->Radius() * game_config::mob_hornet_skill1_spawn_distance_safe_radius_multiplier,
+                         mob->Radius() * game_config::mob_hornet_skill1_spawn_distance_max_radius_multiplier));
+            sf::Vector2f pos = mob->Pos() + sf::Vector2f(std::cos(angle), std::sin(angle)) * distance;
             auto hornet = CreateMob(EMobType::Hornet, mob->GameWorld(), pos, rarity);
             if (!hornet) continue;
-            hornet->m_team = mob->m_team;
+            hornet->Team() = mob->Team();
             if (mob->GameWorld()->CircleBlockedByWall(pos, hornet->WallCollisionRadius())) continue;
             mob->GameWorld()->InsertEntity(std::move(hornet));
             break;
@@ -2266,33 +2146,26 @@ bool CSpecialHornetController::TryStartSkill3(CMobBase* mob)
     if (!IsAtLeastRarity(mob->GetRarity(), ERarity::Eternal)) return false;
 
     CEntity* target = ResolveTarget(mob);
-    if (!target || target->m_is_marked_for_des || target->IsDead()) return false;
+    if (!target || target->IsMarkedForDes() || target->IsDead()) return false;
 
-    CEntity* captured =
-        FindHighestHornetInRange(mob, mob->m_radius * game_config::mob_hornet_skill3_grab_range_radius_multiplier);
+CEntity* captured =
+        FindHighestHornetInRange(mob, mob->Radius() * game_config::mob_hornet_skill3_grab_range_radius_multiplier);
     if (!captured) return false;
 
     auto* hornet = dynamic_cast<IHornetMob*>(mob);
     if (!hornet) return false;
+    if (!TryPickup(mob, captured)) return false;
 
-    sf::Vector2f launch_direction = NormalizeOrZero(target->m_pos - mob->m_pos);
+    sf::Vector2f launch_direction = NormalizeOrZero(target->Pos() - mob->Pos());
     if (LengthSq(launch_direction) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
         launch_direction = { 1.f, 0.f };
     m_skill3_launch_direction = launch_direction;
-    mob->m_facing_angle = std::atan2(-launch_direction.y, -launch_direction.x);
-    mob->m_has_facing = true;
-    hornet->SetMissileGenerationSuppressed(true, true);
-    m_skill3_missile_suppressed = true;
+    mob->FacingAngle() = std::atan2(-launch_direction.y, -launch_direction.x);
+    mob->HasFacing() = true;
 
     m_skill3_target_world_id = target->GameWorld()->GetId();
-    m_skill3_target_id = target->m_id;
-    m_skill3_target_generation = target->m_generation;
-    m_skill3_captured_world_id = captured->GameWorld()->GetId();
-    m_skill3_captured_id = captured->m_id;
-    m_skill3_captured_generation = captured->m_generation;
-    m_skill3_captured_prev_skip_tick = captured->m_skip_world_tick;
-    m_skill3_has_captured_prev_skip_tick = true;
-    captured->m_skip_world_tick = true;
+    m_skill3_target_id = target->Id();
+    m_skill3_target_generation = target->Generation();
     m_state = EState::Skill3Charge;
     m_state_timer = game_config::mob_hornet_skill3_charge_time;
     if (auto* skill_caster = dynamic_cast<ISkillCasterMob*>(mob))
@@ -2316,24 +2189,18 @@ bool CSpecialHornetController::FireSkill2Missile(CMobBase* mob, const sf::Vector
         direction = { 1.f, 0.f };
 
     sf::Vector2f rear_direction = -direction;
-    sf::Vector2f pos = origin + rear_direction * (mob->m_radius * game_config::mob_hornet_rear_spawn_radius_multiplier);
+    sf::Vector2f pos = origin + rear_direction * (mob->Radius() * game_config::mob_hornet_rear_spawn_radius_multiplier);
     auto missile =
         std::make_unique<CMissile>(mob->GameWorld(), pos, radius, rear_direction, HornetMissileSpeed(missile_rarity),
                                    damage, health, game_config::mob_hornet_skill2_missile_lifetime, mob);
-    missile->m_team = mob->m_team;
-    missile->m_mass = game_config::MobProjectileMassForLevel(GetLevel(missile_rarity));
+    missile->Team() = mob->Team();
+    missile->Mass() = game_config::MobProjectileMassForLevel(GetLevel(missile_rarity));
     return mob->GameWorld()->InsertEntity(std::move(missile)) != nullptr;
 }
 
 void CSpecialHornetController::FinishCurrentAction(CMobBase* mob)
 {
-    CGameWorld* world = mob ? mob->GameWorld() : nullptr;
-    if (m_skill3_has_captured_prev_skip_tick && world && world->GetId() == m_skill3_captured_world_id &&
-        m_skill3_captured_id >= 0)
-    {
-        if (CEntity* captured = world->GetEntity(m_skill3_captured_id, m_skill3_captured_generation))
-            captured->m_skip_world_tick = m_skill3_captured_prev_skip_tick;
-    }
+    DropCarried(mob);
     m_state = EState::Idle;
     m_state_timer = 0.f;
     m_action_timer = 0.f;
@@ -2347,18 +2214,59 @@ void CSpecialHornetController::FinishCurrentAction(CMobBase* mob)
     m_skill3_target_world_id = 0;
     m_skill3_target_id = -1;
     m_skill3_target_generation = 0;
-    m_skill3_captured_world_id = 0;
-    m_skill3_captured_id = -1;
-    m_skill3_captured_generation = 0;
     m_skill3_captured_prev_skip_tick = false;
     m_skill3_has_captured_prev_skip_tick = false;
     m_skill3_launch_direction = { 1.f, 0.f };
+    if (mob) mob->m_vel *= game_config::mob_stop_damping;
+}
+
+bool CSpecialHornetController::CanCarry(const CMobBase* mob, const CEntity* carried) const
+{
+    if (!mob || !carried || carried == mob || carried->GameWorld() != mob->GameWorld() || carried->IsMarkedForDes() ||
+        carried->IsDead())
+        return false;
+
+    const auto* hornet = dynamic_cast<const CMobBase*>(carried);
+    if (!hornet || hornet->GetMobType() != EMobType::Hornet) return false;
+    const int caster_rank = GetRarityValueRank(mob->GetRarity());
+    const int carried_rank = GetRarityValueRank(hornet->GetRarity());
+    if (carried_rank == caster_rank) return false;
+    return carried_rank >= GetRarityValueRank(ERarity::Ultra);
+}
+
+float CSpecialHornetController::CarryContactRadius(const CMobBase* mob, const CEntity* carried) const
+{
+    (void)carried;
+    return std::max(0.f, mob->Radius()) * game_config::mob_hornet_skill3_grab_range_radius_multiplier;
+}
+
+void CSpecialHornetController::OnCarryChanged(CMobBase* mob, CEntity* carried, bool now_carrying)
+{
+    if (now_carrying)
+    {
+        if (auto* hornet_mob = dynamic_cast<IHornetMob*>(mob))
+            hornet_mob->SetMissileGenerationSuppressed(true, true);
+        m_skill3_missile_suppressed = true;
+        m_skill3_captured_prev_skip_tick = carried->SkipWorldTick();
+        m_skill3_has_captured_prev_skip_tick = true;
+        carried->SkipWorldTick() = true;
+        return;
+    }
+
+    if (carried && m_skill3_has_captured_prev_skip_tick)
+        carried->SkipWorldTick() = m_skill3_captured_prev_skip_tick;
+    m_skill3_has_captured_prev_skip_tick = false;
     if (m_skill3_missile_suppressed)
     {
-        if (auto* hornet = dynamic_cast<IHornetMob*>(mob)) hornet->SetMissileGenerationSuppressed(false, false);
+        if (auto* hornet_mob = dynamic_cast<IHornetMob*>(mob))
+            hornet_mob->SetMissileGenerationSuppressed(false, false);
         m_skill3_missile_suppressed = false;
     }
-    if (mob) mob->m_vel *= game_config::mob_stop_damping;
+}
+
+void CSpecialHornetController::ResolveCarriedConstraint(CMobBase* mob)
+{
+    (void)mob;
 }
 
 CEntity* CSpecialHornetController::FindHighestHornetInRange(CMobBase* mob, float range)
@@ -2370,14 +2278,14 @@ CEntity* CSpecialHornetController::FindHighestHornetInRange(CMobBase* mob, float
     float best_dist_sq = std::numeric_limits<float>::max();
     float range_sq = range * range;
     int caster_rank = GetRarityValueRank(mob->GetRarity());
-    mob->GameWorld()->GetSpatialGrid().ForEachInRange(mob->m_pos, range, [&](CEntity* candidate) {
+    mob->GameWorld()->GetSpatialGrid().ForEachInRange(mob->Pos(), range, [&](CEntity* candidate) {
         auto* hornet = dynamic_cast<CMobBase*>(candidate);
         if (!hornet || hornet == mob || hornet->GetMobType() != EMobType::Hornet) return;
-        if (hornet->m_is_marked_for_des || hornet->IsDead()) return;
+        if (hornet->IsMarkedForDes() || hornet->IsDead()) return;
         int rank = GetRarityValueRank(hornet->GetRarity());
         if (rank == caster_rank) return;
         if (rank < GetRarityValueRank(ERarity::Ultra)) return;
-        float dist_sq = DistanceSq(mob->m_pos, hornet->m_pos);
+        float dist_sq = DistanceSq(mob->Pos(), hornet->Pos());
         if (dist_sq > range_sq) return;
         if (rank > best_rank || (rank == best_rank && dist_sq < best_dist_sq))
         {
@@ -2395,10 +2303,10 @@ int CSpecialHornetController::CountNearbyPlayers(CMobBase* mob, float range) con
 
     int count = 0;
     float range_sq = range * range;
-    mob->GameWorld()->GetSpatialGrid().ForEachInRange(mob->m_pos, range, [&](CEntity* candidate) {
+    mob->GameWorld()->GetSpatialGrid().ForEachInRange(mob->Pos(), range, [&](CEntity* candidate) {
         const auto* player = dynamic_cast<const CPlayerFlower*>(candidate);
-        if (!player || player->m_is_marked_for_des || player->IsDead()) return;
-        if (DistanceSq(mob->m_pos, player->m_pos) <= range_sq) ++count;
+        if (!player || player->IsMarkedForDes() || player->IsDead()) return;
+        if (DistanceSq(mob->Pos(), player->Pos()) <= range_sq) ++count;
     });
     return count;
 }
@@ -2411,7 +2319,7 @@ int CSpecialHornetController::CountExistingHornets(CGameWorld* world, ERarity ra
     world->ForEachEntity([&](CEntity* entity) {
         const auto* hornet = dynamic_cast<const CMobBase*>(entity);
         if (!hornet || hornet->GetMobType() != EMobType::Hornet) return;
-        if (hornet->m_is_marked_for_des || hornet->IsDead()) return;
+        if (hornet->IsMarkedForDes() || hornet->IsDead()) return;
         if (hornet->GetRarity() == rarity) ++count;
     });
     return count;
@@ -2489,11 +2397,11 @@ void CBumbleBeeController::SpawnPollen(CMobBase* mob) const
     float health = game_config::mob_bumblebee_pollen_base_health *
                    game_config::MobHealthScaleForLevel(level);
     float mass = game_config::MobProjectileMassForLevel(level);
-    float radius = std::max(1.f, mob->m_radius * game_config::mob_bumblebee_pollen_radius_multiplier);
+    float radius = std::max(1.f, mob->Radius() * game_config::mob_bumblebee_pollen_radius_multiplier);
 
-    auto pollen = std::make_unique<CPollenProjectile>(mob->GameWorld(), mob->m_pos, radius, damage, health,
+    auto pollen = std::make_unique<CPollenProjectile>(mob->GameWorld(), mob->Pos(), radius, damage, health,
                                                       game_config::mob_bumblebee_pollen_lifetime, mass, mob);
-    pollen->m_team = mob->m_team;
+    pollen->Team() = mob->Team();
     mob->GameWorld()->InsertEntity(std::move(pollen));
 }
 
@@ -2501,8 +2409,8 @@ void CBumbleBeeController::SetHoneyTarget(CEntity* target)
 {
     m_p_honey_target = target;
     m_honey_target_world_id = target && target->GameWorld() ? target->GameWorld()->GetId() : 0;
-    m_honey_target_id = target ? target->m_id : -1;
-    m_honey_target_generation = target ? target->m_generation : 0;
+    m_honey_target_id = target ? target->Id() : -1;
+    m_honey_target_generation = target ? target->Generation() : 0;
 }
 
 void CBumbleBeeController::ClearHoneyTarget() { SetHoneyTarget(nullptr); }
@@ -2532,7 +2440,7 @@ void CBumbleBeeController::OnTick(CMobBase* mob, float dt)
 
     if (!m_initialized)
     {
-        m_heading = mob->m_has_facing ? mob->m_facing_angle : GetLimitedRng(-game_config::pi, game_config::pi);
+        m_heading = mob->HasFacing() ? mob->FacingAngle() : GetLimitedRng(-game_config::pi, game_config::pi);
         PickTurnTimer();
         m_initialized = true;
     }
@@ -2559,7 +2467,7 @@ void CBumbleBeeController::OnTick(CMobBase* mob, float dt)
     if (honey_target)
     {
         FaceTarget(mob, honey_target);
-        mob->MoveTowards(honey_target->m_pos, dt);
+        mob->MoveTowards(honey_target->Pos(), dt);
     } else
     {
         m_turn_timer -= dt;
@@ -2574,7 +2482,7 @@ void CBumbleBeeController::OnTick(CMobBase* mob, float dt)
         float wave = std::sin(m_wave_timer * game_config::mob_bee_wave_frequency) * game_config::mob_bee_wave_strength *
                      game_config::mob_bumblebee_wave_strength_multiplier;
         sf::Vector2f target =
-            mob->m_pos +
+            mob->Pos() +
             sf::Vector2f(std::cos(m_heading + wave), std::sin(m_heading + wave)) *
                 std::max(game_config::mob_bumblebee_wander_horizon_min,
                          stats->max_velocity * game_config::mob_bumblebee_wander_horizon_velocity_multiplier);
@@ -2588,4 +2496,76 @@ void CBumbleBeeController::OnTick(CMobBase* mob, float dt)
         m_pollen_timer = std::fmod(m_pollen_timer, interval);
         SpawnPollen(mob);
     }
+}
+
+void CFireflyController::OnTick(CMobBase* mob, float dt)
+{
+    CNeutralMeleeController::OnTick(mob, dt);
+
+    const ERarity rarity = mob->GetRarity();
+    if (rarity != ERarity::Eternal && rarity != ERarity::Unique && rarity != ERarity::Primordial) return;
+    m_skill_timer -= std::max(0.f, dt);
+    if (m_skill_timer > 0.f) return;
+m_skill_timer = rarity == ERarity::Primordial ? 15.f : 30.f;
+    TrySummonSkill(mob);
+}
+
+void CFireflyController::CaptureSnapshot(CSnapshotWriter& writer) const
+{
+    CMeleeController::CaptureSnapshot(writer);
+    writer.Field("skill_timer", m_skill_timer);
+}
+
+bool CFireflyController::RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error)
+{
+    if (!CMeleeController::RestoreSnapshot(reader, version, error)) return false;
+    m_skill_timer = reader.Float("skill_timer", m_skill_timer);
+    return true;
+}
+
+void CFireflyController::TrySummonSkill(CMobBase* mob)
+{
+    CEntity* target = ResolveTarget(mob);
+    if (!target) return; // Only release the skill with a target in view.
+    CGameWorld* world = mob->GameWorld();
+    if (!world) return;
+
+    ERarity minion_rarity = static_cast<ERarity>(static_cast<int>(mob->GetRarity()) - 1);
+    if (minion_rarity == ERarity::Unique) minion_rarity = ERarity::Eternal;
+    const int limit = mob->GetRarity() == ERarity::Primordial ? game_config::mob_firefly_summon_limit_primordial
+                                                              : game_config::mob_firefly_summon_limit_eternal;
+    if (CountNearbyFireflies(mob, minion_rarity) >= limit) return;
+
+    const float range = std::min(game_config::simulation_active_view_radius_cap, game_config::WorldUnits(400.f));
+    const float angle = GetLimitedRng(0.f, 2.f * game_config::pi);
+    const float dist = GetLimitedRng(mob->Radius() * 2.f, range);
+    const sf::Vector2f spawn_pos = mob->Pos() + sf::Vector2f(std::cos(angle), std::sin(angle)) * dist;
+
+    auto created = CreateMob(EMobType::Firefly, world, spawn_pos, minion_rarity);
+    if (!created) return;
+    CMobBase* raw_mob = dynamic_cast<CMobBase*>(world->InsertEntity(std::move(created)));
+    if (!raw_mob) return;
+    raw_mob->AddTag(EEntityTag::NoDefeatRewards);
+
+    if (auto* controller = dynamic_cast<CFireflyController*>(raw_mob->GetController()))
+        controller->SetTarget(target);
+
+    if (CServer::MeetsPetalReportRarity(raw_mob->GetRarity(), game_config::min_mob_spawn_report_rarity) &&
+        CServer::GetInstance())
+        CServer::GetInstance()->BroadcastMobReport("has been summoned", raw_mob->GetRarity(), "Firefly");
+}
+
+int CFireflyController::CountNearbyFireflies(const CMobBase* mob, ERarity rarity) const
+{
+    CGameWorld* world = mob->GameWorld();
+    if (!world) return 0;
+    int count = 0;
+    const float range = game_config::simulation_active_view_radius_cap;
+    world->GetSpatialGrid().ForEachInRange(mob->Pos(), range, [&](const CEntity* entity) {
+        const auto* candidate = dynamic_cast<const CMobBase*>(entity);
+        if (candidate && candidate->GetMobType() == EMobType::Firefly && candidate->GetRarity() == rarity &&
+            !candidate->IsMarkedForDes())
+            ++count;
+    });
+    return count;
 }

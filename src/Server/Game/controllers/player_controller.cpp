@@ -29,11 +29,11 @@ void CPlayerController::OnTick(CMobBase* mob, float dt)
 
     if (m_move_dir.x != 0.f || m_move_dir.y != 0.f)
     {
-        sf::Vector2f target = mob->m_pos + m_move_dir * game_config::player_move_target_distance;
+        sf::Vector2f target = mob->Pos() + m_move_dir * game_config::player_move_target_distance;
         mob->MoveTowards(target, dt);
     } else
     {
-        mob->MoveTowards(mob->m_pos, dt);
+        mob->MoveTowards(mob->Pos(), dt);
     }
 
     if (auto* attackable = dynamic_cast<IAttackableMob*>(mob); attackable && attackable->IsDefending())
@@ -194,8 +194,8 @@ void CPlayerController::TryManualAttack(CMobBase* mob)
 
     if (m_has_aim_dir && !mob->IsFacingLocked())
     {
-        mob->m_facing_angle = std::atan2(m_aim_dir.y, m_aim_dir.x);
-        mob->m_has_facing = true;
+        mob->FacingAngle() = std::atan2(m_aim_dir.y, m_aim_dir.x);
+        mob->HasFacing() = true;
     }
     attackable->TryAttack(nullptr);
 }
