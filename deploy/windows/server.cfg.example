@@ -4,6 +4,14 @@
 // Never commit the completed server.cfg file with real credentials.
 
 set account_data_path data/accounts.json
+// Runtime account storage. Run the JSON -> MySQL migration tool once before
+// starting a production server with these settings.
+set account_backend mysql
+set mysql_host 127.0.0.1
+set mysql_port 3306
+set mysql_user florrbt
+set mysql_password
+set mysql_database florrbt
 set unique_petal_data_path data/unique_petals.json
 set port 10012
 set gui_console 0

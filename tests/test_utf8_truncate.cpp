@@ -80,3 +80,46 @@ TEST(TruncateUtf8NeverGrowsInput)
         CHECK(EndsOnBoundary(cut));
     }
 }
+
+TEST(IsValidUtf8AcceptsValidText)
+{
+    CHECK(IsValidUtf8(""));
+    CHECK(IsValidUtf8("hello"));
+    CHECK(IsValidUtf8("a\xC3\xA9"));                                   // e-acute
+    CHECK(IsValidUtf8("\xE4\xB8\xAD"));                                // CJK
+    CHECK(IsValidUtf8("\xF0\x9F\x98\x80"));                            // emoji
+    CHECK(IsValidUtf8("mix \xC3\xA9 \xE4\xB8\xAD \xF0\x9F\x98\x80 z")); // mixed
+}
+
+TEST(IsValidUtf8RejectsTruncatedSequences)
+{
+    CHECK(!IsValidUtf8("\xC3"));         // lead byte missing its continuation
+    CHECK(!IsValidUtf8("\xE4\xB8"));     // 3-byte sequence missing last byte
+    CHECK(!IsValidUtf8("\xF0\x9F\x98")); // 4-byte sequence missing last byte
+    CHECK(!IsValidUtf8("ab\xE4\xB8"));   // truncated at the end of a string
+}
+
+TEST(IsValidUtf8RejectsStrayContinuationAndInvalidLeads)
+{
+    CHECK(!IsValidUtf8("\x80"));
+    CHECK(!IsValidUtf8("\xBF"));
+    CHECK(!IsValidUtf8("a\x80" "b"));
+    CHECK(!IsValidUtf8("\xF8\x88\x80\x80\x80")); // 5-byte lead never valid
+    CHECK(!IsValidUtf8("\xC0\xAF"));             // overlong 2-byte form of '/'
+    CHECK(!IsValidUtf8("\xE0\x80\xAF"));         // overlong 3-byte form
+    CHECK(!IsValidUtf8("\xF0\x80\x80\xAF"));     // overlong 4-byte form
+}
+
+TEST(IsValidUtf8RejectsSurrogatesAndOutOfRange)
+{
+    CHECK(!IsValidUtf8("\xED\xA0\x80"));     // U+D800 surrogate
+    CHECK(!IsValidUtf8("\xED\xBF\xBF"));     // U+DFFF surrogate
+    CHECK(!IsValidUtf8("\xF4\x90\x80\x80")); // U+110000 out of range
+    CHECK(!IsValidUtf8("\xF5\x80\x80\x80")); // way out of range
+}
+
+TEST(IsValidUtf8ContinuationMustFollowLead)
+{
+    CHECK(!IsValidUtf8("\xC3" "A"));  // ASCII where continuation expected
+    CHECK(!IsValidUtf8("\xE4" "AB")); // ASCII where continuations expected
+}

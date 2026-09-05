@@ -37,6 +37,12 @@ class IWorldModule : public IModule
     CGameWorld* FindRoomWorld(int room_code) const;
     int NextRoomCode() const;
 
+    // World instances for a static map (garden/ant_hel overrides).
+    std::size_t OpenWorldInstancesForMap(std::string_view map_path) const;
+    // Destroys the world by id (admin command). Players inside are migrated
+    // to another world (or their entities released if none is available).
+    bool DestroyWorldById(std::uint32_t world_id);
+
   private:
     void UpdateRoomLifecycle(float dt);
     void DestroyRoom(int room_code);

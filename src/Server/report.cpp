@@ -453,7 +453,7 @@ bool HandleServerCommand(CPlayer& reporter, const std::string& command_line)
     CGameWorld* reporter_world = reporter_entity ? reporter_entity->GameWorld() : nullptr;
     auto* squad_controller = reporter_world ? dynamic_cast<COpenController*>(reporter_world->GetController()) : nullptr;
 
-    if (name == "invite")
+    if (name == "invite" || name == "join")
     {
         if (!squad_controller)
         {

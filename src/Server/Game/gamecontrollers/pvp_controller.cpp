@@ -1,8 +1,9 @@
-#include "pvp_controller.h"
+﻿#include "pvp_controller.h"
 #include "../../HotReload/snapshot_archive.h"
 #include "../../../Engine/logger.h"
 #include "../../../Shared/game_config.h"
 #include "../entities/flower.h"
+#include "../entities/petals/petal.h"
 #include "../gamecontext.h"
 #include "../gameworld.h"
 #include "../player.h"
@@ -45,7 +46,7 @@ std::vector<SControllerParamInfo> CAntHelPvpController::ParamSchemaStatic()
         { "start_team", EControllerParamType::Int, "pvp_start_team",
           "team of the first released player (>= 2)", &ValidateStartTeam },
         { "spectator_team", EControllerParamType::Int, "pvp_spectator_team",
-          "team for mid-game joins (>= 1)", &ValidateSpectatorTeam },
+          "team for over-cap joins (>= 1)", &ValidateSpectatorTeam },
         { "lock_loadout", EControllerParamType::Bool, "pvp_lock_loadout",
           "strip and lock petal loadouts in this world", &ValidateLockLoadout },
     };
@@ -57,6 +58,7 @@ CAntHelPvpController::CAntHelPvpController(CControllerParams params)
         m_next_team = std::max(2, params.GetInt("start_team", 2));
     else if (int default_team = 0; ParseIntStrict(ResolveControllerParamDefault("pvp_start_team"), default_team))
         m_next_team = std::max(2, default_team);
+    m_start_team = m_next_team;
 
     if (params.Contains("spectator_team"))
         m_spectator_team = std::max(1, params.GetInt("spectator_team", kSpectatorTeam));
@@ -112,10 +114,10 @@ int CAntHelPvpController::AssignTeam(CPlayer& player)
     if (existing != m_player_teams.end()) return existing->second;
 
     int team = m_spectator_team;
-    if (!m_started)
+    if (m_next_team < m_start_team + kMaxPlayers)
     {
-        // First arrivals are the waiting room release batch: one player per
-        // team, numbering from start_team.
+        // Arrivals up to the fixed 2-player cap each get their own team
+        // (start_team, start_team + 1); everyone after that spectates.
         m_started = true;
         team = m_next_team++;
     }
@@ -123,6 +125,17 @@ int CAntHelPvpController::AssignTeam(CPlayer& player)
     LOG_INFO("pvp", "Player " + std::to_string(player_id) + " (" + player.GetName() +
                         ") assigned team " + std::to_string(team));
     return team;
+}
+
+int CAntHelPvpController::PlayerTeam(std::uint32_t player_id) const
+{
+    const auto it = m_player_teams.find(player_id);
+    return it == m_player_teams.end() ? 0 : it->second;
+}
+
+bool CAntHelPvpController::HasMatchTeam(std::uint32_t player_id) const
+{
+    return PlayerTeam(player_id) >= m_start_team;
 }
 
 void CAntHelPvpController::StripPlayerPetals(CPlayer& player)
@@ -133,6 +146,9 @@ void CAntHelPvpController::StripPlayerPetals(CPlayer& player)
     auto& slots = flower->GetSlots();
     for (size_t i = 0; i < slots.size(); ++i)
     {
+        // The ant kingdom's pheromone petals are equipped by the controller
+        // and must survive the strip.
+        if (slots[i].m_p_proto && slots[i].m_p_proto->m_type == ToPetalType(EModPetalType::EouPheromone)) continue;
         if (slots[i].m_p_proto) flower->ForceUnequipPetal(static_cast<int>(i));
         flower->SetBanned(true, static_cast<int>(i));
     }
@@ -156,6 +172,8 @@ void CAntHelPvpController::MaintainStrip(CGameWorld& world) const
         auto& slots = flower->GetSlots();
         for (size_t i = 0; i < slots.size(); ++i)
         {
+            // The ant kingdom's pheromone petals survive the strip.
+            if (slots[i].m_p_proto && slots[i].m_p_proto->m_type == ToPetalType(EModPetalType::EouPheromone)) continue;
             if (slots[i].m_p_proto) flower->ForceUnequipPetal(static_cast<int>(i));
             flower->SetBanned(true, static_cast<int>(i));
         }
@@ -166,6 +184,7 @@ void CAntHelPvpController::MaintainStrip(CGameWorld& world) const
 void CAntHelPvpController::CaptureSnapshot(CSnapshotWriter& writer) const
 {
     writer.Field("started", m_started);
+    writer.Field("start_team", m_start_team);
     writer.Field("next_team", m_next_team);
     writer.Field("spectator_team", m_spectator_team);
     writer.Field("lock_loadout", m_lock_loadout);
@@ -188,7 +207,8 @@ bool CAntHelPvpController::RestoreSnapshot(const CSnapshotReader& reader, std::u
     }
 
     m_started = reader.Bool("started", false);
-    m_next_team = std::max(2, reader.Int("next_team", 2));
+    m_start_team = std::max(2, reader.Int("start_team", 2));
+    m_next_team = std::max(2, reader.Int("next_team", m_start_team));
     m_spectator_team = std::max(1, reader.Int("spectator_team", kSpectatorTeam));
     m_lock_loadout = reader.Bool("lock_loadout", true);
     m_player_teams.clear();

@@ -17,7 +17,7 @@ constexpr int unique_petal_data_version = 1;
 
 bool IsValidPetalType(int type)
 {
-    return type > static_cast<int>(EPetalType::None) && type < static_cast<int>(petal_type_names.size());
+    return IsKnownPetalTypeId(type);
 }
 
 class CJsonUniquePetalRegistry final : public IUniquePetalRegistry

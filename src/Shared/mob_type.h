@@ -1,8 +1,12 @@
-#pragma once
+﻿#pragma once
+#include "mod_mob_type.h"
 #include <array>
 #include <cstdint>
 #include <string_view>
 
+// Native (vanilla / open-world) mobs ONLY. Controller-specific mobs live in
+// mod_mob_type.h (EModMobType) and register through RegisterModMob; keep this
+// enum free of controller content.
 enum class EMobType : int
 {
     None = 0,
@@ -46,107 +50,34 @@ enum class EMobType : int
     Titan,
     Firefly,
     Bubble,
-    // Mod/controller-specific mobs live in this reserved range. Slots are
-    // optional (the mob registry does not require them to be registered) so
-    // game controllers can register their own mobs at runtime.
-    Mod64 = 64,
-    Mod65,
-    Mod66,
-    Mod67,
-    Mod68,
-    Mod69,
-    Mod70,
-    Mod71,
-    Mod72,
-    Mod73,
-    Mod74,
-    Mod75,
-    Mod76,
-    Mod77,
-    Mod78,
-    Mod79,
-    Mod80,
-    Mod81,
-    Mod82,
-    Mod83,
-    Mod84,
-    Mod85,
-    Mod86,
-    Mod87,
-    Mod88,
-    Mod89,
-    Mod90,
-    Mod91,
-    Mod92,
-    Mod93,
-    Mod94,
-    Mod95,
-    Mod96,
-    Mod97,
-    Mod98,
-    Mod99,
-    Mod100,
-    Mod101,
-    Mod102,
-    Mod103,
-    Mod104,
-    Mod105,
-    Mod106,
-    Mod107,
-    Mod108,
-    Mod109,
-    Mod110,
-    Mod111,
-    Mod112,
-    Mod113,
-    Mod114,
-    Mod115,
-    Mod116,
-    Mod117,
-    Mod118,
-    Mod119,
-    Mod120,
-    Mod121,
-    Mod122,
-    Mod123,
-    Mod124,
-    Mod125,
-    Mod126,
-    Mod127,
 };
 
 using MobType = EMobType;
 
-inline constexpr std::array<std::string_view, 128> mob_type_names = {
+// Controller-specific ids map into the shared mob id space above the natives.
+constexpr EMobType ToMobType(EModMobType type) { return static_cast<EMobType>(type); }
+
+inline constexpr std::array<std::string_view, 41> mob_type_names = {
     "None",          "Beetle",        "Gambler",        "NormalLadybug",  "MechaFlower",    "NormalFlower",
     "PlayerFlower",  "SoldierAnt",    "SoldierFireAnt", "SoldierTermite", "SummonedBeetle", "SummonedSoldierAnt",
     "BandageBeetle", "Bee",           "Hornet",         "BumbleBee",      "Rock",           "BabyAnt",
     "WorkerAnt",     "QueenAnt",      "AntHole",        "Spider",         "Sandstorm",      "Dummy",
     "Dandelion",     "AntEgg",        "FireAntEgg",     "TermiteEgg",     "QueenAntEgg",    "QueenFireAntEgg",
     "BabyFireAnt",   "WorkerFireAnt", "FireQueenAnt",   "BabyTermite",    "WorkerTermite",  "TermiteOvermind",
-    "LeafPiece",     "LeafcutterSoldier", "Titan",      "Firefly",        "Bubble",         "None", "None",
-    "None",          "None",          "None",           "None",           "None",           "None",
-    "None",          "None",          "None",           "None",           "None",           "None",
-    "None",          "None",          "None",           "None",           "None",           "None",
-    "None",          "None",          "None",           "Mod64",          "Mod65",          "Mod66",
-    "Mod67",         "Mod68",         "Mod69",          "Mod70",          "Mod71",          "Mod72",
-    "Mod73",         "Mod74",         "Mod75",          "Mod76",          "Mod77",          "Mod78",
-    "Mod79",         "Mod80",         "Mod81",          "Mod82",          "Mod83",          "Mod84",
-    "Mod85",         "Mod86",         "Mod87",          "Mod88",          "Mod89",          "Mod90",
-    "Mod91",         "Mod92",         "Mod93",          "Mod94",          "Mod95",          "Mod96",
-    "Mod97",         "Mod98",         "Mod99",          "Mod100",         "Mod101",         "Mod102",
-    "Mod103",        "Mod104",        "Mod105",         "Mod106",         "Mod107",         "Mod108",
-    "Mod109",        "Mod110",        "Mod111",         "Mod112",         "Mod113",         "Mod114",
-    "Mod115",        "Mod116",        "Mod117",         "Mod118",         "Mod119",         "Mod120",
-    "Mod121",        "Mod122",        "Mod123",         "Mod124",         "Mod125",         "Mod126",
-    "Mod127",
+    "LeafPiece",     "LeafcutterSoldier", "Titan",      "Firefly",        "Bubble",
 };
+
+static_assert(static_cast<size_t>(EMobType::Bubble) + 1 == mob_type_names.size(),
+              "mob type names must stay aligned with EMobType");
+static_assert(mob_type_names.size() <= static_cast<size_t>(kModMobTypeBase),
+              "native mob ids grew into the reserved mod range");
 
 inline std::string_view GetMobTypeName(EMobType type)
 {
     size_t index = static_cast<size_t>(type);
-    if (index >= mob_type_names.size()) return "UnknownMob";
-    return mob_type_names[index];
+    if (index < mob_type_names.size()) return mob_type_names[index];
+    const std::string_view mod_name = GetModMobTypeName(static_cast<int>(index));
+    return mod_name.empty() ? "UnknownMob" : mod_name;
 }
 
 inline std::string_view GetMobTypeName(uint8_t type) { return GetMobTypeName(static_cast<EMobType>(type)); }

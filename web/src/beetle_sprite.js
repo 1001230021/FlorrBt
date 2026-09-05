@@ -1,3 +1,4 @@
+import { drawSpriteImage } from "./sprite_raster_cache.js";
 const BEETLE_VIEWBOX_SIZE = 110;
 const BEETLE_EFFECTIVE_BOX = 91.667;
 const BEETLE_BASE_FACE_ANGLE = -Math.PI * 0.75;
@@ -64,7 +65,7 @@ export function drawBeetle(
 
   drawForelimbs(ctx, spriteSize, animation);
   if (isImageReady(base)) {
-    ctx.drawImage(base, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
+    drawSpriteImage(ctx, base, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
   } else {
     drawFallback(ctx, radius * BEETLE_SPRITE_SCALE, summoned);
   }

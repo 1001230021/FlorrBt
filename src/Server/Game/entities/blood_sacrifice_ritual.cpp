@@ -38,7 +38,7 @@ float BloodSacrificeFadeDuration(ERarity rarity)
 }
 } // namespace
 
-CBloodSacrificeRitual::CBloodSacrificeRitual(CGameWorld* world, sf::Vector2f pos, EMobType mob_type, ERarity rarity,
+CBloodSacrificeRitual::CBloodSacrificeRitual(CGameWorld* world, florrbt::Vector2f pos, EMobType mob_type, ERarity rarity,
                                              float timer)
     : CEntity(world, pos.x, pos.y, BloodSacrificeRadius(rarity),
               MakeEntityType(EEntityType::Effect, server_blood_sacrifice_entity_type)),

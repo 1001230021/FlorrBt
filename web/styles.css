@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   color-scheme: light;
   --ink: #263241;
   --muted: #6c7785;
@@ -14,6 +14,22 @@
 @font-face {
   font-family: "Florr UI";
   src: url("./assets/florr/Ubuntu-B.ttf") format("truetype");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sarasa SC";
+  src: url("./assets/florr/Sarasa-SC-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 100 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sarasa SC";
+  src: url("./assets/florr/Sarasa-SC-Bold.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 700 900;
   font-display: swap;
 }
 
@@ -218,7 +234,7 @@ button:active {
 .loading-screen-label {
   max-width: calc(100vw - 32px);
   overflow-wrap: anywhere;
-  font-family: "Florr UI", Ubuntu, "Segoe UI", sans-serif;
+  font-family: "Florr UI", "Sarasa SC", Ubuntu, "Segoe UI", sans-serif;
   font-size: clamp(42px, 8vh, 72px);
   font-weight: 700;
   line-height: 1;
@@ -242,50 +258,106 @@ button:active {
   display: block;
 }
 
+/* Auth + email binding: same visual language as the in-game panels
+   (thick tinted border, saturated fill, Florr UI font, outlined white
+   text) so the login screen no longer looks like a plain web form. */
 .auth-panel {
   top: 50%;
   left: 50%;
   z-index: 61;
-  width: min(360px, calc(100vw - 32px));
+  width: min(380px, calc(100vw - 32px));
   transform: translate(-50%, -50%);
-  padding: 18px;
-  border: 1px solid var(--line);
+  padding: 14px 18px 18px;
+  border: 5px solid #347cae;
   border-radius: 5px;
-  background: var(--panel-strong);
+  background: #5ba7de;
   box-shadow: none;
   max-height: calc(100vh - 32px);
   overflow-y: auto;
+  color: #fff;
+  font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
 }
 
 .auth-panel h1 {
-  margin: 0 0 14px;
-  font-size: 28px;
+  margin: 2px 0 14px;
+  font-size: 30px;
   line-height: 1.1;
   letter-spacing: 0;
+  text-align: center;
+  color: #fff;
+  text-shadow:
+    -2px -2px 0 rgba(48, 75, 96, 0.76),
+    2px -2px 0 rgba(48, 75, 96, 0.76),
+    -2px 2px 0 rgba(48, 75, 96, 0.76),
+    2px 2px 0 rgba(48, 75, 96, 0.76),
+    0 2px 0 rgba(0, 0, 0, 0.28);
 }
 
 .email-binding-panel h2 {
   margin: 0 0 8px;
-  font-size: 21px;
+  font-size: 22px;
   line-height: 1.2;
   letter-spacing: 0;
+  text-align: center;
+  color: #fff;
+  text-shadow:
+    -2px -2px 0 rgba(48, 75, 96, 0.76),
+    2px -2px 0 rgba(48, 75, 96, 0.76),
+    -2px 2px 0 rgba(48, 75, 96, 0.76),
+    2px 2px 0 rgba(48, 75, 96, 0.76);
 }
 
 .auth-panel .auth-version {
   margin-left: 6px;
-  color: var(--muted);
+  color: rgba(255, 255, 255, 0.88);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0;
   vertical-align: middle;
+  text-shadow:
+    -1px -1px 0 #347cae,
+    1px -1px 0 #347cae,
+    -1px 1px 0 #347cae,
+    1px 1px 0 #347cae;
 }
 
 .auth-panel label {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   margin: 10px 0;
-  color: var(--muted);
-  font-size: 12px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  text-shadow:
+    -1px -1px 0 #347cae,
+    1px -1px 0 #347cae,
+    -1px 1px 0 #347cae,
+    1px 1px 0 #347cae;
+}
+
+/* White rounded inputs with a chunky border, like the inventory search. */
+.auth-panel .ui-text-input {
+  height: 36px;
+  border: 3px solid #d5dde3;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #3d4a53;
+  font-size: 14px;
+  font-weight: 700;
+  text-shadow: none;
+  transition: border-color 120ms ease;
+}
+
+.auth-panel .ui-text-input:hover:not(:disabled),
+.auth-panel .ui-text-input:focus {
+  border-color: #c0cad2;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.auth-panel .ui-text-input:disabled {
+  background: #e9edf0;
+  color: #7d8894;
 }
 
 .auth-health-notice {
@@ -309,18 +381,13 @@ button:active {
   min-width: 0;
 }
 
-.auth-code-row button {
-  height: 34px;
-  margin: 10px 0;
-  padding: 0 10px;
-  white-space: nowrap;
-}
-
 .auth-binding-notice {
   margin: 4px 0 8px;
-  color: var(--muted);
+  color: #eef5fa;
   font-size: 12px;
+  font-weight: 700;
   line-height: 1.45;
+  text-shadow: 0 1px 0 rgba(40, 76, 102, 0.5);
 }
 
 .email-binding-actions {
@@ -337,8 +404,57 @@ button:active {
   grid-template-columns: 1fr;
 }
 
+/* Primary auth action: chunky green button, same family as the revive
+   button on the death screen. */
+.auth-panel button {
+  height: 42px;
+  border: 4px solid #36863b;
+  border-radius: 7px;
+  background: #5fc85a;
+  color: #fff;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-shadow:
+    -1px -1px 0 #347838,
+    1px -1px 0 #347838,
+    -1px 1px 0 #347838,
+    1px 1px 0 #347838;
+  transition: filter 80ms ease;
+}
+
+.auth-panel button:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.auth-panel button:disabled {
+  opacity: 0.6;
+  cursor: default;
+  filter: none;
+}
+
+/* Secondary actions (send code / cancel): neutral slate, same family as
+   the death-screen close button. */
+.auth-code-row button,
 #cancelEmailBindingBtn {
-  background: #5b6065;
+  border-color: #656f78;
+  background: #9a9da3;
+  text-shadow:
+    -1px -1px 0 #616970,
+    1px -1px 0 #616970,
+    -1px 1px 0 #616970,
+    1px 1px 0 #616970;
+}
+
+.auth-code-row button {
+  height: 36px;
+  margin: 10px 0;
+  padding: 0 10px;
+  border-width: 3px;
+  border-radius: 6px;
+  font-size: 14px;
+  white-space: nowrap;
 }
 
 .auth-panel.hidden + .auth-health-notice {
@@ -358,12 +474,15 @@ button:active {
 }
 
 .checkbox-row input {
-  width: 16px;
-  height: 16px;
+  width: 17px;
+  height: 17px;
+  margin: 0;
   padding: 0;
+  accent-color: #f1f5f8;
 }
 
-.auth-panel button {
+.auth-panel > button,
+.email-binding-actions button {
   width: 100%;
   margin-top: 4px;
 }
@@ -371,8 +490,15 @@ button:active {
 .auth-status {
   min-height: 18px;
   margin: 10px 0 0;
-  color: var(--muted);
+  color: #f2f7fb;
   font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+  text-shadow:
+    -1px -1px 0 #347cae,
+    1px -1px 0 #347cae,
+    -1px 1px 0 #347cae,
+    1px 1px 0 #347cae;
 }
 
 .hud {
@@ -406,7 +532,7 @@ button:active {
   border-radius: 5px;
   background: rgba(112, 127, 139, 0.94);
   color: #fff;
-  font-family: "Florr UI", "Segoe UI", sans-serif;
+  font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
   text-align: center;
   transition:
     transform 320ms ease,
@@ -573,26 +699,34 @@ button:active {
   align-items: flex-start;
 }
 
+/* Florr-style buttons: the border is the fill darkened to ~78% of the same
+   hue, hover brightens the whole button, press sinks it. */
 .top-action {
   position: relative;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   padding: 0;
-  border: 2px solid rgba(38, 67, 82, 0.55);
-  border-radius: 5px;
+  border: 3px solid #bfa231;
+  border-radius: 6px;
   background-color: #f4d03f;
   background-repeat: no-repeat;
   background-position: center;
-  background-size: 30px 30px;
-  transition: transform 80ms ease;
+  background-size: 28px 28px;
+  transition:
+    filter 80ms ease,
+    transform 80ms ease;
+}
+
+.top-action:hover {
+  filter: brightness(1.08);
 }
 
 .top-action:active {
-  transform: translateY(1px);
+  transform: translateY(1px) scale(0.97);
 }
 
 .top-action.active {
-  border-color: rgba(27, 45, 56, 0.85);
+  border-color: #c9b13c;
   background-color: #f9e15f;
 }
 
@@ -625,7 +759,7 @@ button:active {
 }
 
 .game-panel.codex-panel {
-  left: -820px;
+  left: 12px;
   top: 52px;
   bottom: auto;
   width: max-content;
@@ -639,11 +773,6 @@ button:active {
   gap: 2px;
   padding: 2px 6px 6px;
   overflow: hidden;
-  transition: left 160ms ease;
-}
-
-.game-panel.codex-panel.open {
-  left: 12px;
 }
 
 .game-panel.codex-panel .panel-title {
@@ -818,21 +947,27 @@ button:active {
   width: 56px;
   height: 56px;
   padding: 0;
-  border: 4px solid rgba(38, 67, 82, 0.55);
-  border-radius: 5px;
+  border: 4px solid #548bb3;
+  border-radius: 6px;
   background-color: #6cb2e5;
   background-repeat: no-repeat;
   background-position: center;
   background-size: 44px 44px;
-  transition: transform 80ms ease;
+  transition:
+    filter 80ms ease,
+    transform 80ms ease;
+}
+
+.quick-action:hover {
+  filter: brightness(1.08);
 }
 
 .quick-action:active {
-  transform: translateY(1px);
+  transform: translateY(1px) scale(0.98);
 }
 
 .quick-action.active {
-  border-color: rgba(27, 45, 56, 0.72);
+  filter: brightness(1.12);
 }
 
 .quick-action kbd {
@@ -877,21 +1012,25 @@ button:active {
 
 .quick-action-backpack {
   background-color: #5ba5dd;
+  border-color: #4781ad;
   background-image: url("./assets/ui/quick_backpack.svg");
 }
 
 .quick-action-talent {
   background-color: #e95c5c;
+  border-color: #b64848;
   background-image: url("./assets/ui/quick_talent.svg");
 }
 
 .quick-action-craft {
   background-color: #f1a147;
+  border-color: #bc7e37;
   background-image: url("./assets/ui/quick_craft.svg");
 }
 
 .quick-action-craft.forge-mode {
   background-color: #5a6065;
+  border-color: #464b4f;
 }
 
 .chat-panel {
@@ -1314,6 +1453,7 @@ button:active {
   border-bottom: 1px solid rgba(10, 10, 10, 0.9);
   border-radius: 0;
   background: rgba(28, 28, 28, 0.92);
+  z-index: 900;
   box-shadow: 0 10px 10px -6px rgba(0, 0, 0, 0.4);
   transition: top 160ms cubic-bezier(0.33, 0, 0.66, 1);
   user-select: none;
@@ -1447,7 +1587,7 @@ button:active {
   --game-panel-padding: 10px 12px 12px;
   --game-panel-border: #347cae;
   --game-panel-background: #5ba7de;
-  left: calc(-1 * min(var(--game-panel-width), calc(100vw - 24px)) - 12px);
+  left: 12px;
   bottom: 12px;
   z-index: 60;
   width: min(var(--game-panel-width), calc(100vw - 24px));
@@ -1463,12 +1603,22 @@ button:active {
   border-radius: 5px;
   background: var(--game-panel-background);
   box-shadow: none;
-  transition: left 160ms ease;
-  font-family: "Florr UI", "Segoe UI", sans-serif;
+  /* Slide with transform (compositor-only) instead of animating `left`,
+     which reflowed the whole panel subtree — hundreds of petal cards —
+     every frame. Closed panels also go visibility-hidden (after the slide)
+     so they cost no paint/hit-testing and can't be focused. */
+  visibility: hidden;
+  transform: translateX(calc(-100% - 36px));
+  transition:
+    transform 160ms ease,
+    visibility 0s linear 160ms;
+  font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
 }
 
 .game-panel.open {
-  left: 12px;
+  visibility: visible;
+  transform: none;
+  transition: transform 160ms ease;
 }
 
 .backpack-panel {
@@ -1509,24 +1659,21 @@ button:active {
   --game-panel-border: #2a2c30;
   --game-panel-background: #7a7f84;
   --settings-divider: rgba(34, 36, 39, 0.55);
-  --settings-control-bg: #4a4d52;
-  --settings-control-border: #2a2c30;
-  --settings-control-fill-off: #5c6064;
-  --settings-control-fill-on: #f1e07a;
+  --settings-control-bg: #5c6167;
+  --settings-control-border: #464a4f;
+  --settings-control-fill-off: #5c6167;
+  --settings-control-fill-off-border: #464a4f;
+  --settings-control-fill-on: #5fc85a;
+  --settings-control-fill-on-border: #4a9c46;
   grid-template-rows: auto minmax(0, 1fr) auto;
   /* Pop down from the top-left instead of sliding from the left edge. */
   left: 12px;
   bottom: auto;
-  top: -640px;
-  transition: top 160ms ease;
+  top: 56px;
+  transform: translateY(calc(-100% - 92px));
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     inset 0 -2px 0 rgba(0, 0, 0, 0.18);
-}
-
-.settings-panel.open {
-  left: 12px;
-  top: 56px;
 }
 
 .settings-panel .panel-title {
@@ -1560,11 +1707,15 @@ button:active {
 
 .settings-label {
   min-width: 0;
-  color: #f7f7f7;
+  color: #ffffff;
   font-size: 16px;
-  font-weight: 850;
+  font-weight: 900;
   line-height: 1.2;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
+  text-shadow:
+    -1px -1px 0 #3f4348,
+    1px -1px 0 #3f4348,
+    -1px 1px 0 #3f4348,
+    1px 1px 0 #3f4348;
 }
 
 .settings-email-control {
@@ -1576,77 +1727,164 @@ button:active {
 }
 
 .settings-email-state {
-  color: #eef0f1;
+  color: #ffffff;
   font-size: 13px;
-  font-weight: 750;
+  font-weight: 900;
+  text-shadow:
+    -1px -1px 0 #3f4348,
+    1px -1px 0 #3f4348,
+    -1px 1px 0 #3f4348,
+    1px 1px 0 #3f4348;
 }
 
+/* Every settings control speaks the same florr language as the buttons in
+   the HUD: 3px border in the fill's own darkened hue, chunky radius, white
+   outlined text, hover brightens, press sinks. */
 .settings-action {
   min-width: 104px;
-  min-height: 34px;
-  padding: 5px 10px;
-  font-weight: 800;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 3px solid #4a9c46;
+  border-radius: 6px;
+  background: #5fc85a;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 900;
+  text-shadow:
+    -1px -1px 0 #347838,
+    1px -1px 0 #347838,
+    -1px 1px 0 #347838,
+    1px 1px 0 #347838;
+  transition:
+    filter 80ms ease,
+    transform 80ms ease;
+}
+
+.settings-action:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.settings-action:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98);
+}
+
+.settings-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+  filter: none;
 }
 
 .settings-choice {
   width: 100%;
   min-width: 136px;
-  height: 34px;
-  padding: 2px 28px 2px 9px;
+  height: 36px;
+  padding: 2px 30px 2px 10px;
   border: 3px solid var(--settings-control-border);
-  border-radius: 5px;
+  border-radius: 6px;
   outline: 0;
-  background: var(--settings-control-bg);
-  color: #eceeef;
-  font: 800 14px/1 "Florr UI", "Segoe UI", sans-serif;
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--settings-control-bg);
+  /* Chunky florr caret instead of the OS dropdown arrow. */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path d='M1.6 1.4 6 5.8l4.4-4.4' fill='none' stroke='%23ffffff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 12px 8px;
+  color: #fff;
+  cursor: pointer;
+  font: 900 14px/1 "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
+  text-shadow:
+    -1px -1px 0 #3f4348,
+    1px -1px 0 #3f4348,
+    -1px 1px 0 #3f4348,
+    1px 1px 0 #3f4348;
+  transition:
+    filter 80ms ease,
+    transform 80ms ease;
 }
 
+.settings-choice:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.settings-choice:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.settings-choice:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* The dropdown list itself is drawn by the OS; keep it legible instead of
+   inheriting the outlined white text above. */
+.settings-choice option {
+  background: #4a4d52;
+  color: #f2f4f5;
+  font-weight: 800;
+  text-shadow: none;
+}
+
+/* Florr checkbox: a chunky square that fills green with a white tick. */
 .settings-square-toggle {
   justify-self: end;
-  width: 52px;
-  height: 28px;
-  min-width: 52px;
-  min-height: 28px;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
   padding: 0;
-  border: 0;
-  border-radius: 999px;
+  border: 3px solid var(--settings-control-fill-off-border);
+  border-radius: 6px;
   background: var(--settings-control-fill-off);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32);
   display: flex;
   align-items: center;
+  justify-content: center;
   transition:
+    filter 80ms ease,
     transform 80ms ease,
-    background-color 120ms ease;
+    background-color 120ms ease,
+    border-color 120ms ease;
 }
 
-.settings-square-toggle:active {
-  transform: translateY(1px);
+.settings-square-toggle:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.settings-square-toggle:active:not(:disabled) {
+  transform: translateY(1px) scale(0.97);
+}
+
+.settings-square-toggle:disabled {
+  opacity: 0.6;
+  cursor: default;
+  filter: none;
 }
 
 .settings-square-toggle-fill {
   display: block;
   width: 22px;
   height: 22px;
-  margin: 3px;
-  border-radius: 999px;
-  background: #eceeef;
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  transition: transform 120ms ease;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><path d='M3.6 10.6 8 15 16.4 5.4' fill='none' stroke='%23ffffff' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 20px 20px;
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 100ms ease,
+    transform 120ms ease;
 }
 
 .settings-square-toggle.enabled {
+  border-color: var(--settings-control-fill-on-border);
   background: var(--settings-control-fill-on);
 }
 
 .settings-square-toggle.enabled .settings-square-toggle-fill {
-  background: #fbfaf2;
-  transform: translateX(24px);
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.7),
-    0 0 8px rgba(241, 224, 122, 0.55);
+  opacity: 1;
+  transform: scale(1);
+  filter: drop-shadow(0 1px 0 rgba(52, 120, 56, 0.9));
 }
 
 .talent-points {
@@ -2397,12 +2635,13 @@ button:active {
 .petal-icon-copy {
   width: var(--copy-size, 60%);
   height: var(--copy-size, 60%);
-  transform: translate(
-      calc(-50% + var(--copy-x, 0px)),
-      calc(-50% + var(--copy-y, 0px))
-    )
-    rotate(var(--copy-angle, 0rad)) rotate(var(--live-angle, 0rad))
-    scale(var(--live-scale, 1));
+  /* Group rotation happens around the whole image center: the ring offset
+     (copy-x/y) is rotated by the live angle before the per-copy angle turns
+     the petal itself, so multi-petal stacks revolve around the stack center
+     instead of spinning each copy around its own center. */
+  transform: translate(-50%, -50%) rotate(var(--live-angle, 0rad))
+    translate(var(--copy-x, 0px), var(--copy-y, 0px))
+    rotate(var(--copy-angle, 0rad)) scale(var(--live-scale, 1));
 }
 
 .petal-live-visual {
@@ -2424,6 +2663,40 @@ button:active {
   object-fit: contain;
   pointer-events: none;
   transform: translate(-50%, -50%);
+}
+
+/* Unified petal card name: black-outlined white text at the lower part of
+   the card (moved up from the old bottom position). Font size is set by JS
+   so the rendered text width caps at 32px. */
+.petal-stack {
+  container-type: inline-size;
+}
+
+.petal-card-name {
+  position: absolute;
+  left: 50%;
+  bottom: 14%;
+  z-index: 4;
+  /* Width is constrained by the font sizing in labelFontSizePx (the
+     petal_label_max_width_px client config, default 100px), not by the card
+     box: long names overflow the card edges instead of getting clipped. */
+  white-space: nowrap;
+  pointer-events: none;
+  font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
+  font-weight: 900;
+  color: #ffffff;
+  line-height: 1;
+  letter-spacing: 0;
+  text-shadow:
+    -0.055em 0 0 #000,
+    0.055em 0 0 #000,
+    0 -0.055em 0 #000,
+    0 0.055em 0 #000,
+    -0.04em -0.04em 0 #000,
+    0.04em -0.04em 0 #000,
+    -0.04em 0.04em 0 #000,
+    0.04em 0.04em 0 #000;
+  transform: translateX(-50%);
 }
 
 .petal-mimic-label {
@@ -2743,14 +3016,10 @@ button:active {
   }
 
   .game-panel {
-    left: calc(-1 * (100vw - 24px) - 12px);
+    left: 12px;
     bottom: max(8px, env(safe-area-inset-bottom));
     width: calc(100vw - 24px);
     --game-panel-max-height: calc(100vh - 72px);
-  }
-
-  .game-panel.open {
-    left: 12px;
   }
 
   .settings-row {
@@ -2856,4 +3125,511 @@ button:active {
   .auth-health-notice {
     display: none;
   }
+}
+
+/* ================================================================
+   Chat: florr-style translucent dark panel (kept from theme pass).
+   ================================================================ */
+.chat-panel {
+  --chat-message-background: rgba(8, 9, 11, 0.55);
+}
+
+.chat-channel input {
+  accent-color: #ffdd78;
+}
+
+.chat-line {
+  background: rgba(8, 9, 11, 0.35);
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.7);
+}
+
+.chat-line.global,
+.chat-line.global .chat-prefix,
+.chat-line.global .chat-name {
+  color: #7dffb0;
+}
+
+.chat-line.local,
+.chat-line.local .chat-prefix,
+.chat-line.local .chat-name {
+  color: #ffffff;
+}
+
+.chat-line.whisper,
+.chat-line.whisper .chat-prefix,
+.chat-line.whisper .chat-name {
+  color: #9db1ff;
+}
+
+.chat-line.squad,
+.chat-line.squad .chat-prefix,
+.chat-line.squad .chat-name {
+  color: #f5a9c9;
+}
+
+.chat-line.server,
+.chat-line.server .chat-prefix,
+.chat-line.server .chat-name {
+  color: #ffdd78;
+}
+
+.chat-hint {
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-radius: 2px;
+  background: rgba(8, 9, 11, 0.6);
+  color: rgba(255, 255, 255, 0.6);
+  text-shadow: none;
+}
+
+.chat-hint:hover {
+  border-color: #ffffff;
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+}
+
+.chat-composer {
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-radius: 3px;
+  background: rgba(8, 9, 11, 0.75);
+}
+
+.chat-composer:focus-within {
+  border-color: #ffffff;
+}
+
+.chat-compose-channel {
+  color: var(--florr-muted, #b7bdc3);
+}
+
+.chat-composer[data-channel="squad"] .chat-compose-channel {
+  color: #f5a9c9;
+}
+
+.chat-composer[data-channel="global"] .chat-compose-channel {
+  color: #7dffb0;
+}
+
+.chat-input {
+  color: #fff;}
+
+/* Slot-swap flight ghost: petal glides from source slot to target slot. */
+.petal-flight {
+  position: fixed;
+  z-index: 80;
+  width: 56px;
+  height: 56px;
+  pointer-events: none;
+}
+
+/* ================================================================
+   Light cleanups + mobile UI layout (mobile-only).
+   ================================================================ */
+
+/* Remove white selection accents. */
+.custom-scrollbar-thumb {
+  box-shadow: none;
+}
+
+.chat-composer:focus-within {
+  border-color: rgba(255, 255, 255, 0.35);
+  box-shadow: none;
+}
+
+/* --- Mobile: everything sizes against the screen ------------------
+   Driven by body.mobile-ui, added when mobile mode is ON or the device
+   is small/touch (mobile-ui => mobileControlMode === "on" || <=720px
+   || touch). -------------------------------------------------------- */
+body.mobile-ui {
+  --mob-scale: clamp(0.566, calc(100vw / 678px), 0.848);
+}
+
+/* Fullscreen panels in mobile mode: only while open, instant appear
+   (closed panels stay parked offscreen as usual). */
+body.mobile-ui .game-panel.open {
+  left: 0;
+  bottom: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  border: 0;
+  border-radius: 0;
+  transition: none;
+}
+
+body.mobile-ui .settings-panel.open {
+  top: 0;
+  left: 0;
+}
+
+body.mobile-ui .codex-panel.open {
+  left: 0;
+  top: 0;
+  width: 100vw;
+  max-width: 100vw;
+}
+
+/* Bottom slots: left-aligned, just right of the quick-actions column. */
+body.mobile-ui .slots-panel {
+  left: calc(78px * var(--mob-scale));
+  right: auto;
+  bottom: max(calc(10px * var(--mob-scale)), env(safe-area-inset-bottom));
+  width: max-content;
+  max-width: calc(100vw - 78px * var(--mob-scale) - calc(8px * var(--mob-scale)));
+  transform: none;
+}
+
+body.mobile-ui .slot-row {
+  grid-template-columns: repeat(
+    var(--slot-count, 5),
+    calc(56px * var(--mob-scale))
+  );
+  gap: calc(6px * var(--mob-scale));
+  margin-left: 0;
+  margin-right: 0;
+  max-width: none;
+}
+
+body.mobile-ui .slot-row.secondary {
+  grid-template-columns: repeat(
+    var(--slot-count, 5),
+    calc(36px * var(--mob-scale))
+  );
+  gap: calc(5px * var(--mob-scale));
+}
+
+body.mobile-ui .slot {
+  width: calc(56px * var(--mob-scale));
+  height: calc(56px * var(--mob-scale));
+}
+
+body.mobile-ui .slot-row.secondary .slot {
+  width: calc(36px * var(--mob-scale));
+  height: calc(36px * var(--mob-scale));
+}
+
+body.mobile-ui .slot:not(.empty) .petal-stack {
+  width: calc(56px * var(--mob-scale));
+  height: calc(56px * var(--mob-scale));
+}
+
+body.mobile-ui .secondary .slot:not(.empty) .petal-stack {
+  width: calc(32px * var(--mob-scale));
+  height: calc(32px * var(--mob-scale));
+}
+
+body.mobile-ui .petal-flight {
+  width: calc(56px * var(--mob-scale));
+  height: calc(56px * var(--mob-scale));
+}
+
+body.mobile-ui .slot .petal-name {
+  font-size: calc(11px * var(--mob-scale));
+  max-width: calc(100% - 10px * var(--mob-scale));
+}
+
+body.mobile-ui .slot .rarity-name {
+  font-size: calc(9px * var(--mob-scale));
+}
+
+/* Quick action buttons (Z/X/C). */
+body.mobile-ui .quick-actions {
+  left: calc(6px * var(--mob-scale));
+  bottom: max(
+    calc(14px * var(--mob-scale)),
+    calc(env(safe-area-inset-bottom) + 10px * var(--mob-scale))
+  );
+  gap: calc(6px * var(--mob-scale));
+}
+
+body.mobile-ui .quick-action {
+  width: calc(56px * var(--mob-scale));
+  height: calc(56px * var(--mob-scale));
+  background-size: calc(44px * var(--mob-scale)) calc(44px * var(--mob-scale));
+}
+
+/* Chat: above the slots, left-aligned with them. */
+body.mobile-ui .chat-panel {
+  left: calc(78px * var(--mob-scale));
+  bottom: calc(
+    max(calc(10px * var(--mob-scale)), env(safe-area-inset-bottom)) +
+      126px * var(--mob-scale)
+  );
+  width: min(
+    calc(420px * var(--mob-scale)),
+    calc(100vw - 86px * var(--mob-scale))
+  );
+  transition: bottom 0.2s ease;
+}
+
+body.mobile-ui.slots-collapsed .chat-panel {
+  bottom: calc(
+    max(calc(10px * var(--mob-scale)), env(safe-area-inset-bottom)) +
+      62px * var(--mob-scale)
+  );
+}
+
+body.mobile-ui .chat-panel.open .chat-log {
+  max-height: min(calc(230px * var(--mob-scale)), calc(100vh - 200px));
+}
+
+/* Touch controls scale too. */
+body.mobile-ui .mobile-joystick,
+body.mobile-ui .mobile-joystick-base {
+  width: calc(124px * var(--mob-scale));
+  height: calc(124px * var(--mob-scale));
+}
+
+body.mobile-ui .mobile-joystick-knob {
+  width: calc(56px * var(--mob-scale));
+  height: calc(56px * var(--mob-scale));
+}
+
+body.mobile-ui .mobile-action-cluster {
+  right: max(
+    calc(10px * var(--mob-scale)),
+    calc(env(safe-area-inset-right) + 10px * var(--mob-scale))
+  );
+  bottom: max(
+    calc(110px * var(--mob-scale)),
+    calc(env(safe-area-inset-bottom) + 110px * var(--mob-scale))
+  );
+  grid-template-columns: calc(96px * var(--mob-scale)) calc(
+      96px * var(--mob-scale)
+    ) calc(96px * var(--mob-scale));
+  grid-template-rows: calc(96px * var(--mob-scale)) calc(
+      96px * var(--mob-scale)
+    ) calc(96px * var(--mob-scale));
+  gap: calc(8px * var(--mob-scale));
+}
+
+body.mobile-ui .mobile-attack-button,
+body.mobile-ui .mobile-defend-button {
+  width: calc(96px * var(--mob-scale));
+  height: calc(96px * var(--mob-scale));
+}
+
+body.mobile-ui .mobile-swap-button {
+  width: calc(74px * var(--mob-scale));
+  height: calc(74px * var(--mob-scale));
+  transform: translateY(calc(12px * var(--mob-scale)));
+}
+
+/* Slot collapse toggle (right of the primary row). */
+.slot-collapse-btn {
+  display: none;
+}
+
+body.mobile-ui .slot-row-wrap {
+  position: relative;
+}
+
+body.mobile-ui .slot-collapse-btn {
+  position: absolute;
+  left: calc(100% + 8px * var(--mob-scale));
+  top: 50%;
+  z-index: 6;
+  width: calc(52px * var(--mob-scale));
+  height: calc(52px * var(--mob-scale));
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-radius: calc(14px * var(--mob-scale));
+  background: rgba(0, 0, 0, 0.34);
+  color: #fff;
+  transform: translateY(-50%);
+  transition:
+    background-color 100ms ease,
+    border-color 100ms ease;
+}
+
+body.mobile-ui .slot-collapse-btn:hover {
+  background: rgba(0, 0, 0, 0.5);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+body.mobile-ui .slot-collapse-btn svg {
+  width: 62%;
+  height: 62%;
+  transition: transform 0.2s ease;
+}
+
+body.mobile-ui.slots-collapsed .slot-collapse-btn svg {
+  transform: rotate(180deg);
+}
+
+body.mobile-ui .slot-row.secondary {
+  max-height: calc(44px * var(--mob-scale));
+  overflow: hidden;
+  transition:
+    max-height 0.2s ease,
+    opacity 0.2s ease,
+    margin-bottom 0.2s ease;
+}
+
+body.mobile-ui.slots-collapsed .slot-row.secondary {
+  max-height: 0;
+  opacity: 0;
+  margin-bottom: 0;
+}
+
+/* Soft-keyboard: keep the focused input inside the visual viewport by
+   lifting the whole chrome while an input is focused on touch devices. */
+body.mobile-ui.input-shift-active {
+  transform: translateY(var(--input-shift, 0px));
+  will-change: transform;
+}
+
+body.mobile-ui.input-shift-active .mobile-controls {
+  visibility: hidden;
+}
+
+/* Slot-swap flight: while a petal is airborne the destination slots show
+   no petal card; it renders only when the swap settles. */
+.slot.slot-swap-hidden .petal-stack {
+  visibility: hidden;
+}
+
+.petal-flight .petal-stack {
+  width: 100%;
+  height: 100%;
+}
+
+/* --- Remaining mobile pieces scale with the screen ----------------- */
+body.mobile-ui .mobile-attack-button,
+body.mobile-ui .mobile-defend-button {
+  font-size: calc(28px * var(--mob-scale));
+}
+
+body.mobile-ui .mobile-swap-button {
+  font-size: calc(24px * var(--mob-scale));
+}
+
+body.mobile-ui .quick-action kbd {
+  right: calc(2px * var(--mob-scale));
+  bottom: calc(1px * var(--mob-scale));
+  font-size: calc(12px * var(--mob-scale));
+}
+
+body.mobile-ui .quick-talent-points {
+  min-width: calc(18px * var(--mob-scale));
+  height: calc(18px * var(--mob-scale));
+  font-size: calc(13px * var(--mob-scale));
+  line-height: calc(18px * var(--mob-scale));
+}
+
+body.mobile-ui .chat-hint {
+  width: calc(255px * var(--mob-scale));
+  height: calc(31px * var(--mob-scale));
+  font-size: calc(13px * var(--mob-scale));
+}
+
+body.mobile-ui .chat-line {
+  min-height: calc(18px * var(--mob-scale));
+  font-size: calc(14px * var(--mob-scale));
+}
+
+body.mobile-ui .chat-input {
+  font-size: calc(14px * var(--mob-scale));
+}
+
+body.mobile-ui .panel-title {
+  font-size: calc(17px * var(--mob-scale));
+}
+
+body.mobile-ui .panel-close {
+  width: calc(28px * var(--mob-scale));
+  height: calc(28px * var(--mob-scale));
+  font-size: calc(14px * var(--mob-scale));
+}
+
+body.mobile-ui button {
+  height: calc(36px * var(--mob-scale));
+}
+
+body.mobile-ui .settings-label {
+  font-size: calc(16px * var(--mob-scale));
+}
+
+body.mobile-ui .settings-choice {
+  min-width: 0;
+  height: calc(36px * var(--mob-scale));
+  font-size: calc(14px * var(--mob-scale));
+}
+
+body.mobile-ui .settings-action {
+  height: calc(36px * var(--mob-scale));
+  font-size: calc(14px * var(--mob-scale));
+}
+
+body.mobile-ui .settings-square-toggle {
+  width: calc(36px * var(--mob-scale));
+  height: calc(36px * var(--mob-scale));
+  min-width: calc(36px * var(--mob-scale));
+  min-height: calc(36px * var(--mob-scale));
+}
+
+body.mobile-ui .inventory-grid {
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(calc(56px * var(--mob-scale)), 1fr)
+  );
+  gap: calc(5px * var(--mob-scale));
+}
+
+body.mobile-ui .inventory-item,
+body.mobile-ui .inventory-item .petal-stack {
+  width: calc(58px * var(--mob-scale));
+  height: calc(58px * var(--mob-scale));
+}
+
+body.mobile-ui .inventory-search {
+  height: calc(30px * var(--mob-scale));
+  font-size: calc(14px * var(--mob-scale));
+}
+
+body.mobile-ui .inventory-group-title {
+  font-size: calc(13px * var(--mob-scale));
+}
+
+body.mobile-ui .craft-action button {
+  font-size: calc(14px * var(--mob-scale));
+}
+
+body.mobile-ui .craft-selection {
+  font-size: calc(13px * var(--mob-scale));
+}
+
+body.mobile-ui .craft-chance {
+  font-size: calc(15px * var(--mob-scale));
+}
+
+body.mobile-ui .talent-points {
+  font-size: calc(16px * var(--mob-scale));
+}
+
+body.mobile-ui .talent-group-title {
+  font-size: calc(14px * var(--mob-scale));
+}
+
+body.mobile-ui .talent-name {
+  font-size: calc(12px * var(--mob-scale));
+}
+
+body.mobile-ui .codex-loot-rate-row {
+  font-size: calc(12px * var(--mob-scale));
+}
+
+body.mobile-ui .slider-title {
+  font-size: calc(12px * var(--mob-scale));
+}
+
+body.mobile-ui .console-input {
+  font-size: calc(14px * var(--mob-scale));
+}
+
+body.mobile-ui .console-debug {
+  font-size: calc(11px * var(--mob-scale));
 }

@@ -14,7 +14,7 @@ class CStateZone : public CEntity
     using state_factory = std::function<std::unique_ptr<CState>(CMobBase*)>;
     using zone_filter = std::function<bool(CEntity*)>;
 
-    CStateZone(CGameWorld* world, sf::Vector2f pos, float radius, state_factory state, zone_filter filter = nullptr,
+    CStateZone(CGameWorld* world, florrbt::Vector2f pos, float radius, state_factory state, zone_filter filter = nullptr,
                SEntityTypeInfo entity_type = MakeEntityType(EEntityType::StateZone));
 
     template <typename TState, typename... TArgs> static state_factory MakeStateFactory(TArgs... args)
@@ -30,7 +30,7 @@ class CStateZone : public CEntity
     }
 
     void Tick(float dt) override;
-    void SetCenter(sf::Vector2f pos) { Pos() = pos; }
+    void SetCenter(florrbt::Vector2f pos) { Pos() = pos; }
     bool CanCollide() const override { return false; }
     bool IsVisible() const override { return false; }
 
@@ -46,7 +46,7 @@ class CStateZone : public CEntity
 class CSpiderWebZone : public CStateZone
 {
   public:
-    CSpiderWebZone(CGameWorld* world, sf::Vector2f pos, float radius, CEntity* owner, float lifetime,
+    CSpiderWebZone(CGameWorld* world, florrbt::Vector2f pos, float radius, CEntity* owner, float lifetime,
                    float desired_speed_multiplier);
 
     bool IsVisible() const override { return !IsDead(); }

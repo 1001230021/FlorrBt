@@ -1,5 +1,6 @@
 import { t } from "./i18n.js";
 import { PETAL_NAMES, MOB_NAMES, RARITY_NAMES } from "./generated_ids.js";
+import { appVersionMajor, appVersionMinor, appVersionPatch } from "./version.js";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -113,7 +114,7 @@ export function rarityColor(rarity, alpha = 1) {
   return `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${alpha})`;
 }
 
-function translationSlug(name) {
+export function translationSlug(name) {
   return String(name || "")
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .replace(/[^A-Za-z0-9]+/g, "_")
@@ -608,6 +609,10 @@ export function parseServerMessage(payload) {
   } catch (error) {
     return { type: 0xff, error };
   }
+}
+
+export function packVersion() {
+  return new Uint8Array([0xfb, appVersionMajor, appVersionMinor, appVersionPatch]);
 }
 
 export function packAuth({

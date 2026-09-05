@@ -29,7 +29,7 @@ void CPlayerController::OnTick(CMobBase* mob, float dt)
 
     if (m_move_dir.x != 0.f || m_move_dir.y != 0.f)
     {
-        sf::Vector2f target = mob->Pos() + m_move_dir * game_config::player_move_target_distance;
+        florrbt::Vector2f target = mob->Pos() + m_move_dir * game_config::player_move_target_distance;
         mob->MoveTowards(target, dt);
     } else
     {

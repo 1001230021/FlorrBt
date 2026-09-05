@@ -191,7 +191,7 @@ void COpenController::SpawnMobs(CGameWorld& world)
                                SpawnEnvironment());
 }
 
-std::optional<sf::Vector2f> COpenController::SelectPlayerSpawn(CGameWorld& world, CPlayer& player,
+std::optional<florrbt::Vector2f> COpenController::SelectPlayerSpawn(CGameWorld& world, CPlayer& player,
                                                                EPlayerSpawnReason reason)
 {
     return m_spawn_director.SelectPlayerSpawn(world, player.GetUseNewPlayerSpawn(), reason);

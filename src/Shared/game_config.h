@@ -23,6 +23,16 @@ inline constexpr float world_unit_scale = 2.0f;
 inline constexpr float WorldUnits(float value) { return value * world_unit_scale; }
 
 inline std::string account_data_path = "data/accounts.json";
+// Account persistence backend. MySQL is the runtime store; account_data_path
+// is retained for the one-time JSON migration tools.
+inline std::string account_backend = "mysql";
+inline std::string mysql_host = "127.0.0.1";
+inline int mysql_port = 3306;
+inline std::string mysql_user = "florrbt";
+// Prefer the FLORRBT_MYSQL_PASSWORD environment variable over storing the
+// real password here (same secret-override mechanism as email_password).
+inline std::string mysql_password = "";
+inline std::string mysql_database = "florrbt";
 inline std::string unique_petal_data_path = "data/unique_petals.json";
 inline std::string server_log_path = "data/server.log";
 inline std::string startup_commands_path = "data/server.cfg";
@@ -158,16 +168,19 @@ inline float default_bandage_undead_unusual = 2.1f;
 inline float default_blood_sacrifice_base_radius = WorldUnits(10.0f);
 inline float default_blood_sacrifice_copy = 0.0f;
 inline float default_blood_sacrifice_delay = 10.0f;
-inline float default_bone_base_armor = 19.0f / 6.0f;
-inline float default_bone_base_damage = 14.0f;
-inline float default_bone_base_health = 10.0f;
+// Bone petal armor: high enough that a base (common) bone fully absorbs the
+// typical early-mob hit so its health bar and reload state match what the
+// player sees (no "damaged-looking but untouched" feedback).
+inline float default_bone_base_armor = 8.0f;
+inline float default_bone_base_damage = 18.0f;
+inline float default_bone_base_health = 8.0f;
 inline float default_bone_base_radius = WorldUnits(10.0f);
 inline float default_bone_copy = 1.0f;
 inline float default_bone_mass = 2.0f;
 inline float default_bone_reload = 2.5f;
 inline float default_bubble_base_health = 1.0f;
 inline float default_bubble_base_radius = WorldUnits(10.0f);
-inline float default_bubble_boost_speed = WorldUnits(240.0f);
+inline float default_bubble_boost_speed = WorldUnits(720.0f);
 inline float default_bubble_copy = 1.0f;
 inline float default_bubble_mass = 1.0f;
 inline float default_bubble_reload_common = 1.0f;
@@ -193,6 +206,15 @@ inline float default_compass_base_health = 40.0f;
 inline float default_compass_base_radius = WorldUnits(10.0f);
 inline float default_compass_copy = 1.0f;
 inline float default_compass_magnet_range = WorldUnits(1024.0f);
+// Magnet petal: a yucca-like opener that grants an absorb-range bonus while
+// active (no bonus during preload/reload). The bonus is linear in rarity:
+// 0 at Common, the magnetism-talent value at Mythic.
+inline float default_magnet_base_damage = 5.0f;
+inline float default_magnet_base_health = 20.0f;
+inline float default_magnet_reload = 2.5f;
+inline float default_magnet_base_radius = WorldUnits(10.0f);
+inline float default_magnet_mass = 2.0f;
+inline float default_magnet_bonus_base = 1024.0f;
 inline float default_compass_mass = 1.0f;
 inline float default_compass_reload = 2.5f;
 inline float default_compass_wait_ultra = 4.0f;
@@ -220,6 +242,10 @@ inline float default_drop_merge_phase_owner_coefficient = 0.2718281f;
 inline float default_drop_merge_phase_x_coefficient = 0.6180339f;
 inline float default_drop_merge_phase_y_coefficient = 0.4142135f;
 inline float default_drop_pickup_delay = 0.5f;
+// Drop inertia: drops inherit the dead mob's velocity for their target
+// center; the center decays to zero over this window while each drop glides
+// from that center to its final spot. Drops stay un-pickable during it.
+inline float default_drop_inertia_delay = 0.2f;
 inline float default_drop_pickup_range = WorldUnits(64.0f);
 inline float default_drop_radius = WorldUnits(8.0f);
 inline float default_drop_stack_range = WorldUnits(128.0f);
@@ -318,6 +344,46 @@ inline float room_idle_destroy_seconds = 10.0f;
 inline int pvp_start_team = 2;
 inline int pvp_spectator_team = 1;
 inline bool pvp_lock_loadout = true;
+inline int eou_pheromone_group_count = 6;
+inline float eou_worker_scan_interval = 0.4f;
+// EOU workers dig team-flagged wall cells: standing within dig_range_tiles
+// of the wall's center for dig_time seconds removes the wall.
+inline float eou_worker_dig_time = 2.0f;
+inline float eou_worker_dig_range_tiles = 0.8f;
+inline int eou_initial_worker_count = 3;
+// EOU pheromone groups reroute members time-sliced: a full group finishes
+// rerouting to a new target within about this many seconds.
+inline float eou_group_reroute_window = 1.5f;
+// EOU food system: neutral food corpses every eou mob leaves behind, ants
+// gather from the nearest corpse (or one inside their own vision) and ferry
+// the food home to the team's storage cells (overflow goes to the stash).
+inline float eou_food_carry_capacity = 25.0f;
+inline float eou_food_gather_rate = 24.0f;
+inline float eou_food_scan_interval = 1.0f;
+inline float eou_food_rotten_rate = 0.2f;
+inline float eou_food_biomass_ratio = 0.5f;
+inline float eou_food_home_radius = 40.0f;
+inline int eou_initial_food_count = 12;
+inline float eou_initial_food_amount = 120.0f;
+inline float eou_food_mob_max_health = 500.0f;
+inline float eou_food_mob_armor = 100.0f;
+inline float eou_food_mob_radius = WorldUnits(12.0f);
+inline float eou_food_mob_mass = 100.0f;
+// EOU cells (hatchery/storage) and eggs.
+inline float eou_cell_size = WorldUnits(12.0f);
+inline float eou_egg_grow_time = 12.0f;
+inline float eou_egg_size_start = WorldUnits(6.0f);
+inline float eou_egg_size_final = WorldUnits(20.0f);
+inline float eou_egg_hatch_food_cost = 50.0f;
+inline float eou_cell_food_capacity = 200.0f;
+inline float eou_cell_egg_retry_interval = 2.0f;
+// EOU queen: the colony's heart. She stands still in the nest; when she dies
+// her team loses the match.
+inline float eou_queen_max_health = 3000.0f;
+inline float eou_queen_armor = 10.0f;
+inline float eou_queen_damage = 10.0f;
+inline float eou_queen_radius = WorldUnits(28.0f);
+inline float eou_queen_mass = 5000.0f;
 inline float default_max_velocity = WorldUnits(75.0f);
 inline float default_moon_base_damage = 3.0f;
 inline float default_moon_base_health = 5000.0f;
@@ -449,10 +515,10 @@ inline float default_stinger_base_health = 1.0f;
 inline float default_stinger_base_radius = WorldUnits(10.0f);
 inline float default_stinger_mass = 2.0f;
 inline float default_stinger_reload = 10.0f;
-inline float default_triangle_base_damage = 6.0f;
-inline float default_triangle_base_health = 10.0f;
+inline float default_triangle_base_damage = 4.0f;
+inline float default_triangle_base_health = 6.0f;
 inline float default_triangle_base_radius = WorldUnits(10.0f);
-inline float default_triangle_bonus_damage = 3.75f;
+inline float default_triangle_bonus_damage = 10.0f;
 inline float default_triangle_copy = 1.0f;
 inline float default_triangle_mass = 2.0f;
 inline float default_triangle_reload = 2.0f;
@@ -770,20 +836,23 @@ inline float mob_bee_radius = WorldUnits(12.0f);
 inline int mob_bee_team = 2;
 inline float mob_bee_wave_frequency = 5.2f;
 inline float mob_bee_wave_strength = 0.85f;
-// Firefly: bee-like flight, retaliates with a chain lightning on taking damage.
-inline float mob_firefly_armor = 1.0f;
-inline float mob_firefly_damage = 5.0f;
-inline float mob_firefly_mass = 2.5f;
-inline float mob_firefly_max_health = 40.0f;
-inline float mob_firefly_radius = WorldUnits(12.0f);
-inline float mob_firefly_lightning_damage = 13.0f;
-inline int mob_firefly_lightning_bounces = 5;
-inline float mob_firefly_lightning_cooldown_seconds = 1.0f;
-inline int mob_firefly_team = 2;
+    // Firefly: bee-like flight, retaliates with a chain lightning on taking damage.
+    // Rating tiers: below Super only retaliates against mob attackers, Super
+    // retaliates against any attacker, above Super also fires at enemies on its own.
+    inline float mob_firefly_armor = 1.0f;
+    inline float mob_firefly_damage = 5.0f;
+    inline float mob_firefly_mass = 2.5f;
+    inline float mob_firefly_max_health = 40.0f;
+    inline float mob_firefly_radius = WorldUnits(12.0f);
+    inline float mob_firefly_lightning_damage = 13.0f;
+    inline int mob_firefly_lightning_bounces = 5;
+    inline float mob_firefly_lightning_cooldown_seconds = 1.0f;
+    inline float mob_firefly_active_lightning_interval_seconds = 3.0f;
+    inline int mob_firefly_team = 2;
 inline float mob_firefly_summon_interval_seconds = 6.0f;
 inline int mob_firefly_summon_limit_eternal = 18;
 inline int mob_firefly_summon_limit_primordial = 27;
-inline float chain_lightning_speed_multiplier = 0.67f;
+inline float chain_lightning_speed_multiplier = 0.0f;
 inline float mob_bumblebee_acceleration = WorldUnits(350.0f);
 inline float mob_bumblebee_armor = 1.0f;
 inline float mob_bumblebee_damage = 20.0f;
@@ -977,6 +1046,7 @@ inline float mob_player_flower_damage = 25.0f;
 inline float mob_player_flower_level_damage_exponent = 0.5f;
 inline float mob_player_flower_level_health_growth = 1.1f;
 inline float mob_player_flower_mass = 5.0f;
+inline float mob_player_flower_acceleration = default_acceleration * 3.f;
 inline float mob_player_flower_max_health = 50.0f;
 inline int mob_player_flower_max_stat_level = 75;
 inline int mob_player_flower_initial_petal_slots = 5;
@@ -985,7 +1055,11 @@ inline float mob_player_flower_petal_rotation_speed = 1.5f;
 inline float mob_player_flower_radius = WorldUnits(18.0f);
 inline int mob_player_flower_team = 1;
 inline float player_level_exp_base = 25.0f;
-inline float player_level_exp_growth = 1.22f;
+inline float player_level_exp_growth = 1.20f;
+// Legacy per-level base used only to anchor the level-50 experience cost,
+// so switching growth never shifts what level 50 costs (see
+// PlayerFlowerExpRequired).
+inline float player_level_exp_legacy_growth = 1.22f;
 inline float player_spawn_invincible_duration = 3.0f;
 inline float mob_radius_level_step = 0.15f;
 inline float MobRadiusScaleForLevel(int level)
@@ -1040,7 +1114,9 @@ inline float mob_summoned_beetle_max_health = 100.0f;
 inline float mob_summoned_beetle_radius = WorldUnits(16.0f);
 inline float mob_summoned_beetle_scale_exp = 0.5f;
 inline int mob_summoned_beetle_team = 1;
-inline float mob_summoned_search_range_multiplier = 2.0f;
+// Summoned-mob target search range multiplier (times mob horizon). Summons
+// search 0.5x wider than before.
+inline float mob_summoned_search_range_multiplier = 3.0f;
 inline float mob_summoned_target_time = 0.35f;
 inline float mob_summoned_wander_follow_range_multiplier = 0.08f;
 inline float mob_summoned_wander_radius_multiplier = 1.2f;
@@ -1072,10 +1148,22 @@ inline bool network_parallel_snapshot_build = true;
 inline float network_snapshot_view_radius_multiplier = 1.0f;
 inline uint8_t network_petal_type_offset = 100;
 inline size_t open_active_spawn_zones_per_tick = 8;
-inline size_t open_world_instances_per_map = 2;
+// World instances per static map. Each map now defaults to a single
+// instance; garden and ant_hel expose their own override knobs.
+inline size_t open_world_instances_per_map = 1;
+inline size_t garden_world_instances = 1;
+inline size_t ant_hel_world_instances = 1;
 inline int open_active_spawn_near_player_attempts = 16;
 inline float open_active_spawn_near_player_radius = WorldUnits(512.0f);
 inline float open_drop_spread_radius = WorldUnits(32.0f);
+// Inactive high-difficulty zones still receive a small natural rare-spawn
+// budget, so ET/Unique mobs do not require a player to already be nearby.
+inline size_t open_rare_spawn_zones_per_tick = 1;
+inline int open_rare_spawn_rolls_per_zone_tick = 4;
+inline float open_rare_spawn_min_difficulty = 70.0f;
+// Unique mobs roll this many Super-tier drop tables on defeat ("repeat
+// unique drop"): the mob's Super drop distribution is rolled N times.
+inline int unique_repeat_drop_rolls = 25;
 inline float open_initial_spawn_delay = 5.f;
 inline int open_idle_spawn_per_zone_tick = 1;
 inline int open_idle_spawn_zones_per_tick = 2;
@@ -1371,7 +1459,12 @@ inline float open_squad_loot_damage_range = 1.f;
 inline size_t server_max_saved_chats = 256;
 inline float world_mob_overlap_velocity_retention = 0.35f;
 inline float world_mob_overlap_weak_push = 0.32f;
+// General mob-overlap separation push (used whenever at least one side is a
+// flower). This is the pre-swarm-tuning value.
 inline float mob_overlap_push_multiplier = 1.25f;
+// Non-flower mob pairs still collide physically, but separate more gently so
+// several attackers can pack around a flower instead of becoming a rigid shell.
+inline float nonflower_mob_overlap_push_multiplier = 0.60f;
 inline std::uint64_t config_revision = 1;
 
 inline std::uint64_t GetConfigRevision() { return config_revision; }
@@ -1471,7 +1564,8 @@ inline config_entry MakeSecretConfigEntry(std::string& variable)
 
 inline bool IsSensitiveConfig(const std::string& name)
 {
-    return name == "email_password" || name == "rcon_password" || name == "report_deepseek_api_key";
+    return name == "email_password" || name == "rcon_password" || name == "report_deepseek_api_key" ||
+           name == "mysql_password";
 }
 
 #define REGISTER_CONFIG(name, variable) { name, game_config::MakeConfigEntry(variable) }
@@ -1481,6 +1575,12 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
 {
     static std::unordered_map<std::string, config_entry> entries = {
         REGISTER_CONFIG("account_data_path", account_data_path),
+        REGISTER_CONFIG("account_backend", account_backend),
+        REGISTER_CONFIG("mysql_host", mysql_host),
+        REGISTER_CONFIG("mysql_port", mysql_port),
+        REGISTER_CONFIG("mysql_user", mysql_user),
+        REGISTER_SECRET_CONFIG("mysql_password", mysql_password),
+        REGISTER_CONFIG("mysql_database", mysql_database),
         REGISTER_CONFIG("unique_petal_data_path", unique_petal_data_path),
         REGISTER_CONFIG("startup_commands_path", startup_commands_path),
         REGISTER_CONFIG("hot_reload_directory", hot_reload_directory),
@@ -1642,6 +1742,12 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("compass_base_radius", default_compass_base_radius),
         REGISTER_CONFIG("compass_copy", default_compass_copy),
         REGISTER_CONFIG("compass_magnet_range", default_compass_magnet_range),
+        REGISTER_CONFIG("magnet_base_damage", default_magnet_base_damage),
+        REGISTER_CONFIG("magnet_base_health", default_magnet_base_health),
+        REGISTER_CONFIG("magnet_reload", default_magnet_reload),
+        REGISTER_CONFIG("magnet_base_radius", default_magnet_base_radius),
+        REGISTER_CONFIG("magnet_mass", default_magnet_mass),
+        REGISTER_CONFIG("magnet_bonus_base", default_magnet_bonus_base),
         REGISTER_CONFIG("compass_mass", default_compass_mass),
         REGISTER_CONFIG("compass_reload", default_compass_reload),
         REGISTER_CONFIG("compass_wait_super", default_compass_wait_super),
@@ -1669,6 +1775,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("drop_merge_phase_x_coefficient", default_drop_merge_phase_x_coefficient),
         REGISTER_CONFIG("drop_merge_phase_y_coefficient", default_drop_merge_phase_y_coefficient),
         REGISTER_CONFIG("drop_pickup_delay", default_drop_pickup_delay),
+        REGISTER_CONFIG("drop_inertia_delay", default_drop_inertia_delay),
         REGISTER_CONFIG("drop_pickup_range", default_drop_pickup_range),
         REGISTER_CONFIG("drop_radius", default_drop_radius),
         REGISTER_CONFIG("drop_stack_range", default_drop_stack_range),
@@ -1766,6 +1873,36 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("pvp_start_team", pvp_start_team),
         REGISTER_CONFIG("pvp_spectator_team", pvp_spectator_team),
         REGISTER_CONFIG("pvp_lock_loadout", pvp_lock_loadout),
+        REGISTER_CONFIG("eou_pheromone_group_count", eou_pheromone_group_count),
+        REGISTER_CONFIG("eou_worker_scan_interval", eou_worker_scan_interval),
+        REGISTER_CONFIG("eou_worker_dig_time", eou_worker_dig_time),
+        REGISTER_CONFIG("eou_worker_dig_range_tiles", eou_worker_dig_range_tiles),
+        REGISTER_CONFIG("eou_initial_worker_count", eou_initial_worker_count),
+        REGISTER_CONFIG("eou_group_reroute_window", eou_group_reroute_window),
+        REGISTER_CONFIG("eou_food_carry_capacity", eou_food_carry_capacity),
+        REGISTER_CONFIG("eou_food_gather_rate", eou_food_gather_rate),
+        REGISTER_CONFIG("eou_food_scan_interval", eou_food_scan_interval),
+        REGISTER_CONFIG("eou_food_rotten_rate", eou_food_rotten_rate),
+        REGISTER_CONFIG("eou_food_biomass_ratio", eou_food_biomass_ratio),
+        REGISTER_CONFIG("eou_food_home_radius", eou_food_home_radius),
+        REGISTER_CONFIG("eou_initial_food_count", eou_initial_food_count),
+        REGISTER_CONFIG("eou_initial_food_amount", eou_initial_food_amount),
+        REGISTER_CONFIG("eou_food_mob_max_health", eou_food_mob_max_health),
+        REGISTER_CONFIG("eou_food_mob_armor", eou_food_mob_armor),
+        REGISTER_CONFIG("eou_food_mob_radius", eou_food_mob_radius),
+        REGISTER_CONFIG("eou_food_mob_mass", eou_food_mob_mass),
+        REGISTER_CONFIG("eou_cell_size", eou_cell_size),
+        REGISTER_CONFIG("eou_egg_grow_time", eou_egg_grow_time),
+        REGISTER_CONFIG("eou_egg_size_start", eou_egg_size_start),
+        REGISTER_CONFIG("eou_egg_size_final", eou_egg_size_final),
+        REGISTER_CONFIG("eou_egg_hatch_food_cost", eou_egg_hatch_food_cost),
+        REGISTER_CONFIG("eou_cell_food_capacity", eou_cell_food_capacity),
+        REGISTER_CONFIG("eou_cell_egg_retry_interval", eou_cell_egg_retry_interval),
+        REGISTER_CONFIG("eou_queen_max_health", eou_queen_max_health),
+        REGISTER_CONFIG("eou_queen_armor", eou_queen_armor),
+        REGISTER_CONFIG("eou_queen_damage", eou_queen_damage),
+        REGISTER_CONFIG("eou_queen_radius", eou_queen_radius),
+        REGISTER_CONFIG("eou_queen_mass", eou_queen_mass),
         REGISTER_CONFIG("max_velocity", default_max_velocity),
         REGISTER_CONFIG("melee_random_idle_chance", melee_random_idle_chance),
         REGISTER_CONFIG("melee_random_idle_time", melee_random_idle_time),
@@ -1814,6 +1951,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_firefly_lightning_damage", mob_firefly_lightning_damage),
         REGISTER_CONFIG("mob_firefly_lightning_bounces", mob_firefly_lightning_bounces),
         REGISTER_CONFIG("mob_firefly_lightning_cooldown_seconds", mob_firefly_lightning_cooldown_seconds),
+        REGISTER_CONFIG("mob_firefly_active_lightning_interval_seconds", mob_firefly_active_lightning_interval_seconds),
         REGISTER_CONFIG("mob_firefly_team", mob_firefly_team),
         REGISTER_CONFIG("mob_firefly_summon_interval_seconds", mob_firefly_summon_interval_seconds),
         REGISTER_CONFIG("mob_firefly_summon_limit_eternal", mob_firefly_summon_limit_eternal),
@@ -2022,6 +2160,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_player_flower_level_health_growth", mob_player_flower_level_health_growth),
         REGISTER_CONFIG("mob_player_flower_initial_petal_slots", mob_player_flower_initial_petal_slots),
         REGISTER_CONFIG("mob_player_flower_mass", mob_player_flower_mass),
+        REGISTER_CONFIG("mob_player_flower_acceleration", mob_player_flower_acceleration),
         REGISTER_CONFIG("mob_player_flower_max_health", mob_player_flower_max_health),
         REGISTER_CONFIG("mob_player_flower_max_petal_slots", mob_player_flower_max_petal_slots),
         REGISTER_CONFIG("mob_player_flower_max_stat_level", mob_player_flower_max_stat_level),
@@ -2109,9 +2248,15 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("network_snapshot_view_radius_multiplier", network_snapshot_view_radius_multiplier),
         REGISTER_CONFIG("open_active_spawn_zones_per_tick", open_active_spawn_zones_per_tick),
         REGISTER_CONFIG("open_world_instances_per_map", open_world_instances_per_map),
+        REGISTER_CONFIG("garden_world_instances", garden_world_instances),
+        REGISTER_CONFIG("ant_hel_world_instances", ant_hel_world_instances),
         REGISTER_CONFIG("open_active_spawn_near_player_attempts", open_active_spawn_near_player_attempts),
         REGISTER_CONFIG("open_active_spawn_near_player_radius", open_active_spawn_near_player_radius),
         REGISTER_CONFIG("open_drop_spread_radius", open_drop_spread_radius),
+        REGISTER_CONFIG("open_rare_spawn_zones_per_tick", open_rare_spawn_zones_per_tick),
+        REGISTER_CONFIG("open_rare_spawn_rolls_per_zone_tick", open_rare_spawn_rolls_per_zone_tick),
+        REGISTER_CONFIG("open_rare_spawn_min_difficulty", open_rare_spawn_min_difficulty),
+        REGISTER_CONFIG("unique_repeat_drop_rolls", unique_repeat_drop_rolls),
         REGISTER_CONFIG("open_spawn_density_area", open_spawn_density_area),
         REGISTER_CONFIG("open_idle_spawn_per_zone_tick", open_idle_spawn_per_zone_tick),
         REGISTER_CONFIG("open_idle_spawn_zones_per_tick", open_idle_spawn_zones_per_tick),
@@ -2195,6 +2340,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("player_talent_point_major_level_interval", player_talent_point_major_level_interval),
         REGISTER_CONFIG("player_level_exp_base", player_level_exp_base),
         REGISTER_CONFIG("player_level_exp_growth", player_level_exp_growth),
+        REGISTER_CONFIG("player_level_exp_legacy_growth", player_level_exp_legacy_growth),
         REGISTER_CONFIG("player_move_target_distance", player_move_target_distance),
         REGISTER_CONFIG("player_respawn_x", player_respawn_x),
         REGISTER_CONFIG("player_respawn_y", player_respawn_y),
@@ -2772,6 +2918,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("world_mob_overlap_velocity_retention", world_mob_overlap_velocity_retention),
         REGISTER_CONFIG("world_mob_overlap_weak_push", world_mob_overlap_weak_push),
         REGISTER_CONFIG("mob_overlap_push_multiplier", mob_overlap_push_multiplier),
+        REGISTER_CONFIG("nonflower_mob_overlap_push_multiplier", nonflower_mob_overlap_push_multiplier),
         REGISTER_CONFIG("flower_cogwheel_moving_fraction_min", flower_cogwheel_moving_fraction_min),
         REGISTER_CONFIG("flower_revive_min_health", flower_revive_min_health),
         REGISTER_CONFIG("pincer_speed_multiplier_higher_rarity", pincer_speed_multiplier_higher_rarity),

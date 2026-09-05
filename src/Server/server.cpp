@@ -42,8 +42,7 @@ constexpr auto performance_sample_interval = std::chrono::seconds(10);
 
 bool IsForgeablePetalType(EPetalType type)
 {
-    const int value = static_cast<int>(type);
-    return value > static_cast<int>(EPetalType::None) && value < static_cast<int>(petal_type_names.size());
+    return IsKnownPetalTypeId(static_cast<int>(type));
 }
 
 struct SPerformanceWindow
@@ -468,6 +467,7 @@ void CServer::ExecuteStartupConfigCommands()
         { "email_password", "FLORRBT_EMAIL_PASSWORD" },
         { "rcon_password", "FLORRBT_RCON_PASSWORD" },
         { "report_deepseek_api_key", "FLORRBT_DEEPSEEK_API_KEY" },
+        { "mysql_password", "FLORRBT_MYSQL_PASSWORD" },
     };
     for (const auto& override : kSecretOverrides)
     {
@@ -480,7 +480,7 @@ void CServer::ExecuteStartupConfigCommands()
     }
 }
 
-CServer::SChatEntry CServer::SubmitChat(CGameWorld* world, sf::Vector2f pos, EChatFlag flag, uint32_t player_id,
+CServer::SChatEntry CServer::SubmitChat(CGameWorld* world, florrbt::Vector2f pos, EChatFlag flag, uint32_t player_id,
                                         const std::string& player_name, const std::string& message,
                                         int target_player_id)
 {

@@ -9,3 +9,8 @@ struct SInventoryItem
     uint8_t rarity = 0;
     uint32_t count = 0;
 };
+
+inline bool operator==(const SInventoryItem& lhs, const SInventoryItem& rhs)
+{
+    return lhs.petal_type == rhs.petal_type && lhs.rarity == rhs.rarity && lhs.count == rhs.count;
+}

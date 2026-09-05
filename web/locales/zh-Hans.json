@@ -6,7 +6,9 @@
   },
   "ui": {
     "loading": "加载中...",
-    "canvas": { "ariaLabel": "FlorrBt 游戏" },
+    "canvas": {
+      "ariaLabel": "FlorrBt 游戏"
+    },
     "auth": {
       "socket": "连接地址",
       "account": "账号",
@@ -45,7 +47,9 @@
       "craft": "合成",
       "craftTitle": "合成 [C]",
       "settings": "设置",
-      "settingsTitle": "设置 [Esc]"
+      "settingsTitle": "设置 [Esc]",
+      "bestiary": "生物图鉴",
+      "bestiaryTitle": "生物图鉴"
     },
     "chat": {
       "ariaLabel": "聊天",
@@ -65,7 +69,45 @@
       "title": "滑块",
       "close": "关闭滑块"
     },
-    "console": { "placeholder": "控制台" },
+    "console": {
+      "placeholder": "控制台",
+      "searchPlaceholder": "搜索中...",
+      "prompt": "> ",
+      "searchPrompt": "搜索：",
+      "lines": "第 {first} - {last} 行（{state}）",
+      "following": "跟随中",
+      "locked": "已锁定",
+      "match": "第 {current} 个匹配 / 共 {total} 个",
+      "noResults": "无结果",
+      "helpPrefix": "帮助：{text}",
+      "usage": "用法：{name} {params}",
+      "help": {
+        "version": "显示客户端版本",
+        "language": "查看或切换显示语言",
+        "say": "在指定频道发送聊天消息",
+        "g": "发送全局聊天消息",
+        "l": "发送本地聊天消息",
+        "whisper": "向指定玩家发送私聊",
+        "map": "加载地图",
+        "login_map": "设置登录界面的地图",
+        "login_map_x": "设置登录界面镜头的 X 坐标",
+        "login_map_y": "设置登录界面镜头的 Y 坐标",
+        "login_map_horizon": "设置登录界面镜头的视界",
+        "hitbox": "开关碰撞箱调试显示",
+        "colorful_map": "开关彩色地图渲染",
+        "set": "查看或修改客户端配置项",
+        "slider": "为某个配置项打开调节滑杆",
+        "keyboard_control": "启用或禁用键盘移动",
+        "mobile": "设置移动端操控模式",
+        "bind": "将按键或鼠标按钮绑定到命令",
+        "unbind": "移除某个按键或鼠标按钮的绑定",
+        "unbindall": "移除某个设备的全部绑定",
+        "render_scale": "查看或设置渲染分辨率倍率",
+        "bench": "在登录界面运行渲染基准测试",
+        "freeze_log": "列出最近的冻结检测记录（客户端卡顿/服务端断流）",
+        "reset": "重置客户端配置、按键绑定或设置"
+      }
+    },
     "settings": {
       "title": "设置",
       "close": "关闭设置",
@@ -80,7 +122,13 @@
       "holdDefense": "保持防御",
       "email": "邮箱",
       "emailBound": "已绑定",
-      "emailNotBound": "未绑定"
+      "emailNotBound": "未绑定",
+      "fullscreen": "全屏",
+      "renderScale": "渲染分辨率",
+      "renderScaleModes": {
+        "auto": "自动",
+        "native": "原生"
+      }
     },
     "inventory": {
       "title": "背包",
@@ -179,7 +227,8 @@
         "evolveHits": "进化所需命中",
         "chain": "连锁",
         "charges": "充能",
-        "radius": "半径"
+        "radius": "半径",
+        "absorbRange": "吸收范围"
       },
       "values": {
         "corrupted": "腐化",
@@ -205,6 +254,10 @@
       "defend": "防御",
       "swapLabel": "X",
       "swap": "快速换位"
+    },
+    "codex": {
+      "title": "生物图鉴",
+      "close": "关闭生物图鉴"
     }
   },
   "status": {
@@ -227,13 +280,16 @@
     "authSent": "已发送验证",
     "clientReady": "{app} Web 客户端已就绪",
     "mapLoading": "正在加载地图：{path}",
+    "mapLoadingt": "正在加载地图：{path}",
     "tileImageFailed": "图块图片加载失败：{path}",
     "mapLoaded": "地图已加载：{path}（{layers} 个图层，{tiles} 个图块）",
     "mapLoadFailed": "地图加载失败：{path}（{error}）",
     "mapTilesReady": "地图图块已就绪：{path}（{chunks} 个区块按需加载）",
     "player": "玩家 {id}",
     "authenticated": "验证成功",
-    "authFailed": "验证失败"
+    "authFailed": "验证失败",
+    "renderScaleLowered": "为保持帧率，渲染分辨率已自动降至 {scale}x",
+    "renderScaleRaised": "渲染分辨率已自动回升至 {scale}x"
   },
   "commands": {
     "language": {
@@ -282,7 +338,44 @@
       "auto": "自动",
       "hitbox": "碰撞箱显示已{value}",
       "keyboard": "键盘控制已{value}",
-      "mobile": "移动端控制：{value}"
+      "mobile": "移动端控制：{value}",
+      "movement": "移动方式：{value}"
+    },
+    "bind": {
+      "usage": "用法：bind [keyboard|mouse] <按键> <指令> [+ 指令...]  |  bind list  |  bind commands",
+      "unknownCommand": "未知命令：{command}",
+      "available": "可用命令：{commands}",
+      "bound": "已将 {device} {key} 绑定到：{commands}",
+      "empty": "没有任何绑定。",
+      "listItem": "{device} {key} = {commands}",
+      "unbound": "{device} {key} 未绑定"
+    },
+    "unbind": {
+      "usage": "用法：unbind [keyboard|mouse] <按键>",
+      "unbound": "已移除绑定 {device} {key}"
+    },
+    "unbindall": {
+      "usage": "用法：unbindall [keyboard|mouse]",
+      "unbound": "已移除 {device} 的全部绑定"
+    },
+    "renderScale": {
+      "current": "渲染倍率：{mode}（实际 {dpr}x）",
+      "changed": "渲染倍率已设为 {mode}（实际 {dpr}x）"
+    },
+    "bench": {
+      "alreadyRunning": "基准测试已在运行",
+      "loggedOutOnly": "基准测试只能在登录界面运行",
+      "mapLoading": "请先等待地图加载完成",
+      "started": "基准测试开始：{entities} 个实体，{frames} 帧",
+      "doneDraw": "基准测试：绘制耗时平均 {avg}ms，p50 {p50}ms，p95 {p95}ms，最大 {max}ms（{n} 帧）",
+      "doneFrame": "基准测试：{fps} fps @ {px}（可见实体 {visible}，渲染倍率 {dpr}x）"
+    },
+    "reset": {
+      "usage": "用法：reset <config [名称] | bindings | settings | all>",
+      "bindings": "按键绑定已恢复默认。",
+      "settings": "客户端设置已恢复默认。",
+      "all": "全部已恢复默认。",
+      "unknown": "未知的重置目标：{name}"
     }
   },
   "formats": {
@@ -346,7 +439,7 @@
       "glass": "玻璃",
       "stinger": "毒刺",
       "broken_egg": "破碎的卵",
-      "light": "光",
+      "light": "轻",
       "leaf": "叶子",
       "rock": "岩石",
       "web": "蛛网",
@@ -376,7 +469,9 @@
       "battery": "电池",
       "bulb": "灯泡",
       "brush": "画笔",
-      "eraser": "橡皮"
+      "eraser": "橡皮",
+      "eou_pheromone": "信息素",
+      "magnet": "磁铁"
     },
     "mobs": {
       "none": "无",
@@ -461,6 +556,48 @@
       "joinedYou": "你加入了{name}的队伍。",
       "joined": "{name}加入了队伍。",
       "inviteInvalid": "无效的组队邀请目标。"
+    }
+  },
+  "codex": {
+    "descriptions": {
+      "beetle": "最常见的敌人之一，缓慢爬行并造成撞击伤害。",
+      "bandage_beetle": "裹着绷带的甲虫，比普通甲虫更耐打。",
+      "normal_ladybug": "圆滚滚的瓢虫，移动缓慢但攻击不低。",
+      "mecha_flower": "机械花朵，花园里的常客。",
+      "normal_flower": "普通花朵，被打倒后会掉落花瓣。",
+      "soldier_ant": "蚁群的士兵，成群出现并围攻玩家。",
+      "soldier_fire_ant": "火蚁士兵，比普通兵蚁更强。",
+      "soldier_termite": "白蚁士兵，沙漠区域的威胁。",
+      "summoned_beetle": "被召唤的甲虫，为它的主人而战。",
+      "summoned_soldier_ant": "被召唤的兵蚁，听从主人指挥。",
+      "bee": "忙碌的蜜蜂，用尾针攻击。",
+      "hornet": "凶猛的黄蜂，发射导弹攻击。",
+      "bumble_bee": "胖乎乎的大黄蜂，撞击伤害高。",
+      "rock": "一块石头，挡路也伤人。",
+      "bubble": "漂浮的泡泡，轻巧但很难打破，高等级泡泡受击时会分裂。",
+      "baby_ant": "幼蚁，脆弱但数量多。",
+      "worker_ant": "工蚁，负责搬运与建巢。",
+      "queen_ant": "蚁后，蚁穴的核心与守护者。",
+      "ant_hole": "蚁穴，持续产出蚂蚁大军。",
+      "spider": "蜘蛛，吐出蛛网减速猎物。",
+      "sandstorm": "移动的沙暴，席卷一切。",
+      "dummy": "训练假人，适合测试伤害。",
+      "dandelion": "蒲公英，发射种子弹幕。",
+      "ant_egg": "蚁卵，孵化出新蚂蚁。",
+      "fire_ant_egg": "火蚁卵，孵化出火蚁。",
+      "termite_egg": "白蚁卵，孵化出白蚁。",
+      "queen_ant_egg": "蚁后卵，孵化出新的蚁后。",
+      "queen_fire_ant_egg": "火蚁后卵，孵化出新的火蚁后。",
+      "baby_fire_ant": "幼火蚁，速度比普通幼蚁快。",
+      "worker_fire_ant": "火工蚁，比普通工蚁更强。",
+      "fire_queen_ant": "火蚁后，火蚁群的核心。",
+      "baby_termite": "幼白蚁，脆弱但数量多。",
+      "worker_termite": "白蚁工蚁，负责建设巢穴。",
+      "termite_overmind": "白蚁心智，沙漠深处的首领。",
+      "leaf_piece": "被切下的叶片，切叶蚁的搬运物。",
+      "leafcutter_soldier": "切叶蚁士兵，沙漠区域的威胁。",
+      "titan": "泰坦，最强的存在之一。",
+      "firefly": "萤火虫，受到攻击时会用连锁闪电反击。"
     }
   }
 }

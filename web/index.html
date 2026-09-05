@@ -11,6 +11,20 @@
       type="font/ttf"
       crossorigin
     />
+    <link
+      rel="preload"
+      href="./assets/florr/Sarasa-SC-Bold.ttf"
+      as="font"
+      type="font/ttf"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./assets/florr/Sarasa-SC-Regular.ttf"
+      as="font"
+      type="font/ttf"
+      crossorigin
+    />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -265,6 +279,8 @@
         title="Bestiary"
         aria-label="Bestiary"
         aria-pressed="false"
+        data-i18n-title="ui.quick.bestiaryTitle"
+        data-i18n-aria-label="ui.quick.bestiary"
       >
         <span class="top-action-icon" aria-hidden="true"></span>
       </button>
@@ -373,7 +389,25 @@
     </section>
 
     <section id="slotsPanel" class="slots-panel ui">
-      <div id="primarySlots" class="slot-row"></div>
+      <div class="slot-row-wrap">
+        <div id="primarySlots" class="slot-row"></div>
+        <button
+          id="slotCollapseBtn"
+          class="slot-collapse-btn"
+          type="button"
+          aria-pressed="false"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M6 9l6 7 6-7z"
+              fill="currentColor"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+      </div>
       <div id="secondarySlots" class="slot-row secondary"></div>
     </section>
 
@@ -536,14 +570,16 @@
       id="codexPanel"
       class="game-panel codex-panel ui"
       aria-label="Bestiary"
+      data-i18n-aria-label="ui.codex.title"
     >
       <div class="panel-title">
-        <span>生物图鉴</span>
+        <span data-i18n="ui.codex.title">Bestiary</span>
         <button
           id="codexCloseBtn"
           class="panel-close"
           type="button"
           aria-label="Close bestiary"
+          data-i18n-aria-label="ui.codex.close"
         >
           x
         </button>

@@ -114,6 +114,10 @@ export const state = {
   emailPolicy: 0,
   emailBound: false,
   emailBindingRequired: false,
+  // Render resolution: "auto" (adaptive), "native", or a fixed number.
+  renderScaleMode: "auto",
+  // Auto mode's current scale; 0 = untouched native DPI.
+  adaptiveDpr: 0,
   receiveBuffer: new Uint8Array(),
   entities: new Map(),
   playerId: 0,
@@ -138,6 +142,7 @@ export const state = {
   codex: new Map(),
   codexLoot: new Map(),
   codexOpen: false,
+  slotPanelCollapsed: false,
   lightningChains: [],
   inputSequence: 0,
   ownerPredictionTiming: {
@@ -182,9 +187,9 @@ export const state = {
   chats: [],
   selectedSlot: 0,
   camera: { x: 0, y: 0 },
-  keys: new Set(),
   mouse: { x: 0, y: 0, seen: false, inUi: false },
   localMoveInput: { x: 0, y: 0 },
+  moveVector: { x: 0, y: 0 },
   ownerMovementMultiplier: 1,
   predictionDebug: {
     errorDistance: 0,

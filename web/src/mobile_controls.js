@@ -85,13 +85,14 @@ export function createMobileControls({
   }
 
   function updateRootVisibility() {
-    const active = shouldUseMobileMode();
+    const uiActive = mode !== "off" && (mode === "on" || isMobileInputMode());
+    const active = enabled && uiActive;
     root.classList.toggle("force-mobile", mode === "on");
     root.classList.toggle("hidden", !active);
-    document.body.classList.toggle(
-      "mobile-mode-forced",
-      active && mode === "on",
-    );
+    document.body.classList.toggle("mobile-mode-forced", active && mode === "on");
+    // Mobile UI layout applies whenever the mobile mode is on or the device
+    // is small/touch, regardless of the enable flag (login page included).
+    document.body.classList.toggle("mobile-ui", uiActive);
     if (!active) resetMovement();
   }
 
@@ -182,6 +183,8 @@ export function createMobileControls({
     defending = value;
   });
   bindTapButton(swapButton, onQuickSwap);
+
+  window.addEventListener("resize", updateRootVisibility);
 
   window.addEventListener("pointerdown", beginMovement, {
     capture: true,

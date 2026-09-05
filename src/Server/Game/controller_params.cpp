@@ -1,4 +1,4 @@
-#include "controller_params.h"
+﻿#include "controller_params.h"
 #include "../../Shared/game_config.h"
 #include "../HotReload/snapshot_archive.h"
 #include <algorithm>

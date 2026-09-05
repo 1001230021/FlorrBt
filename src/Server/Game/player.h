@@ -81,12 +81,18 @@ class CPlayer
 
     sf::TcpSocket& GetSocket() { return m_socket; }
     uint32_t GetId() const { return m_player_id; }
-    const std::string& GetName() const { return m_name; }
+    const std::string&     GetName() const { return m_name; }
     const std::string& GetAccountName() const { return m_account_name; }
+    // Sandbox rooms switch the player's account key to an ephemeral sandbox
+    // clone so in-world inventory/slot changes never touch the persistent
+    // account. The controller restores the original key on world leave.
+    void SetSandboxAccountName(const std::string& name) { m_account_name = name; }
     const std::string& GetRemoteAddress() const { return m_remote_address; }
     bool HasOwnedEntity() const { return m_p_world != nullptr && m_entity_id >= 0; }
     bool IsConnected() const { return m_connected; }
     bool IsAuthenticated() const { return m_authenticated; }
+    bool IsVersionVerified() const { return m_version_verified; }
+    void SetVersionVerified(bool verified) { m_version_verified = verified; }
     bool IsRconAuthorized() const { return m_rcon_authorized; }
     void SetRconAuthorized(bool authorized) { m_rcon_authorized = authorized; }
     bool IsTimedOut() const { return !m_connected && m_timeout_left <= 0.f; }
@@ -110,6 +116,7 @@ class CPlayer
     std::uint64_t m_entity_generation = 0;
     bool m_connected = true;
     bool m_authenticated = false;
+    bool m_version_verified = false;
     bool m_rcon_authorized = false;
     bool m_report_disabled = false;
     float m_timeout_left = 0.f;

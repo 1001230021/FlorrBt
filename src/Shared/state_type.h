@@ -18,9 +18,13 @@ enum class EStateType : std::uint8_t
     Digging = 11,
     PsionicConnection = 12,
     Hallucinogenic = 13,
+    DropStack = 14,
 };
+
+// DropStack is not a gameplay state: it carries a drop entity's stack count
+// (value byte, clamped to 255) so the client can render the "xN" badge.
 
 inline constexpr bool IsKnownStateType(EStateType type)
 {
-    return type > EStateType::None && type <= EStateType::Hallucinogenic;
+    return type > EStateType::None && type <= EStateType::DropStack;
 }

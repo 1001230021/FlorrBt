@@ -1,4 +1,5 @@
 import { dom, state, ui } from "./app_context.js";
+import { releaseInputHolds } from "./bindings.js";
 import { clientRuntimeConfig } from "./client_config.js";
 import {
   loadClientSettings,
@@ -21,9 +22,9 @@ import {
   renderInventoryPanel,
   renderSliderPanel,
   renderTalentPanel,
-  sendBytes,
   setAuthUiMode,
 } from "./game.js";
+import { sendBytes } from "./net_outbound.js";
 
 const defaultMapName = clientRuntimeConfig.loginMapDefaultName;
 const {
@@ -64,7 +65,7 @@ export function setMobileControlMode(value, announce = true) {
 
 export function setMovementMode(value, announce = false) {
   state.movementMode = normalizeMovementMode(value);
-  state.keys.clear();
+  releaseInputHolds();
   state.localMoveInput = { x: 0, y: 0 };
   saveSettings();
   if (announce)
@@ -80,6 +81,24 @@ export function setHeldAction(action, value) {
   if (action === "attack") state.holdAttack = enabled;
   else if (action === "defense") state.holdDefense = enabled;
   saveSettings();
+}
+
+export async function setFullscreen(enabled) {
+  try {
+    const element = document.fullscreenElement;
+    if (enabled && !element) await document.documentElement.requestFullscreen?.();
+    else if (!enabled && element) await document.exitFullscreen?.();
+  } catch (error) {
+    addConsoleLine(String(error?.message || error || "Fullscreen failed"), "error");
+  }
+  // Keep the saved preference in line with the actual fullscreen state.
+  state.fullscreen = !!document.fullscreenElement;
+  saveSettings();
+  ui.settingsUi?.render();
+}
+
+export function toggleFullscreen() {
+  return setFullscreen(!document.fullscreenElement);
 }
 
 export function setStatus(text, good = false) {
@@ -168,10 +187,8 @@ export function setLoadingScreenVisible(visible) {
   loadingScreen.setAttribute("aria-busy", visible ? "true" : "false");
   if (!visible) return;
 
-  state.keys.clear();
+  releaseInputHolds();
   state.localMoveInput = { x: 0, y: 0 };
-  state.attacking = false;
-  state.defending = false;
   state.digging = false;
   ui.mobileControls?.reset();
   if (state.authenticated) {

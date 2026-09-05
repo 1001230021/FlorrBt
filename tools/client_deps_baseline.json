@@ -1,0 +1,12 @@
+{
+  "tangles": [
+    [
+      "game.js",
+      "ui_codex.js",
+      "ui_settings.js"
+    ]
+  ],
+  "gameImporters": [
+    "ui_settings.js"
+  ]
+}

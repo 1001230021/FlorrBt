@@ -29,7 +29,7 @@ class COpenSpawnDirector
               const SWeatherDiurnalSnapshot* environment = nullptr);
     void SpawnMobs(CGameWorld& world, float density_multiplier, spawn_callback on_spawn,
                    const SWeatherDiurnalSnapshot* environment = nullptr);
-    std::optional<sf::Vector2f> SelectPlayerSpawn(CGameWorld& world, bool use_new_player_spawn,
+    std::optional<florrbt::Vector2f> SelectPlayerSpawn(CGameWorld& world, bool use_new_player_spawn,
                                                   EPlayerSpawnReason reason);
     void OnEntityRemoved(const CEntity& entity);
 

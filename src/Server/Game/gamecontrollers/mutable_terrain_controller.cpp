@@ -1,4 +1,4 @@
-#include "mutable_terrain_controller.h"
+﻿#include "mutable_terrain_controller.h"
 #include "../../../Engine/json_value.h"
 #include "../../../Engine/logger.h"
 #include "../../../Shared/game_config.h"
@@ -58,6 +58,15 @@ int ApplyFlips(int bits, bool flip_h, bool flip_v, bool flip_d)
         }
     }
     return out;
+}
+
+// The terrain rule only ever uses these four dirt variants (dirt_l_0,
+// dirt_tl_0, dirt_tri_0, dirt_c_0) plus their H/V/D flip transforms. Every
+// other variant is ignored at load time and no fifth wall tile may appear in
+// the rules below.
+bool IsAllowedDirtVariant(int bits)
+{
+    return bits == 1 || bits == 5 || bits == 13 || bits == 15; // tl, l, tri, c
 }
 
 std::string StripFrameSuffix(std::string name)
@@ -132,7 +141,7 @@ void CMutableTerrainController::LoadTerrainData(CGameWorld& world)
                 std::string variant;
                 if (!SplitTerrainName(base, prefix, variant) || prefix != "dirt") continue;
                 const int bits = VariantBits(variant);
-                if (bits < 0) continue;
+                if (bits < 0 || !IsAllowedDirtVariant(bits)) continue;
                 m_dirt_bits_by_gid[gid] = bits;
                 m_dirt_gid_by_bits[bits] = gid;
             }
@@ -255,13 +264,19 @@ void CMutableTerrainController::NormalizeRegion(CGameWorld& world, int min_row, 
 
             if (CurrentDirtMask(row, col) == mask) continue;
             const std::uint32_t next = DirtGidForMask(mask);
-            if (!next) continue;
+            // The four-variant rule cannot express this mask: the tile is
+            // cleared instead of falling back to a fifth wall tile.
+            if (!next)
+            {
+                SetTile(world, row, col, 0);
+                continue;
+            }
             SetTile(world, row, col, next);
         }
     }
 }
 
-bool CMutableTerrainController::FindBrushBlock(sf::Vector2f pos, int size_tiles, int& out_anchor_x,
+bool CMutableTerrainController::FindBrushBlock(florrbt::Vector2f pos, int size_tiles, int& out_anchor_x,
                                                  int& out_anchor_y) const
 {
     if (!m_terrain_loaded || size_tiles <= 0) return false;
@@ -284,14 +299,14 @@ bool CMutableTerrainController::BlockClearOfWalls(CGameWorld& world, int anchor_
     {
         for (int px = 0; px <= size_tiles; ++px)
         {
-            const sf::Vector2f probe{ (anchor_x + px) * m_tile_size, (anchor_y + py) * m_tile_size };
+            const florrbt::Vector2f probe{ (anchor_x + px) * m_tile_size, (anchor_y + py) * m_tile_size };
             if (world.CircleBlockedByWall(probe, probe_radius)) return false;
         }
     }
     return true;
 }
 
-int CMutableTerrainController::PaintTerrain(CGameWorld& world, sf::Vector2f center, float size_tiles)
+int CMutableTerrainController::PaintTerrain(CGameWorld& world, florrbt::Vector2f center, float size_tiles)
 {
     const int size = std::max(1, static_cast<int>(std::round(size_tiles)));
     int anchor_x = -1;
@@ -325,7 +340,7 @@ int CMutableTerrainController::PaintTerrain(CGameWorld& world, sf::Vector2f cent
     return changed;
 }
 
-int CMutableTerrainController::EraseTerrain(CGameWorld& world, sf::Vector2f center, float size_tiles)
+int CMutableTerrainController::EraseTerrain(CGameWorld& world, florrbt::Vector2f center, float size_tiles)
 {
     const int size = std::max(1, static_cast<int>(std::round(size_tiles)));
     int anchor_x = -1;
@@ -338,9 +353,13 @@ int CMutableTerrainController::EraseTerrain(CGameWorld& world, sf::Vector2f cent
             if (SetTile(world, anchor_y + row, anchor_x + col, 0)) ++changed;
 
     // Native map walls overlapping the erased block are removed too, and the
-    // removal is broadcast so clients drop the same walls locally.
-    const sf::Vector2f block_min{ anchor_x * m_tile_size, anchor_y * m_tile_size };
-    const sf::Vector2f block_max{ (anchor_x + size) * m_tile_size, (anchor_y + size) * m_tile_size };
+    // removal is broadcast so clients drop the same walls locally. The rect
+    // is shrunk by an epsilon: wall-rect intersection is inclusive, so an
+    // unshrunk block would also take out flush walls of neighbouring tiles.
+    constexpr float kEdgeEpsilon = 1.f;
+    const florrbt::Vector2f block_min{ anchor_x * m_tile_size + kEdgeEpsilon, anchor_y * m_tile_size + kEdgeEpsilon };
+    const florrbt::Vector2f block_max{ (anchor_x + size) * m_tile_size - kEdgeEpsilon,
+                                  (anchor_y + size) * m_tile_size - kEdgeEpsilon };
     if (world.RemoveWallsInRect(block_min, block_max) > 0)
     {
         m_removed_wall_rects.emplace_back(block_min, block_max);
@@ -366,6 +385,19 @@ void CMutableTerrainController::PaintBrush(CGameWorld& world, CPlayerFlower& flo
 void CMutableTerrainController::EraseBrush(CGameWorld& world, CPlayerFlower& flower)
 {
     EraseTerrain(world, flower.Pos());
+}
+
+int CMutableTerrainController::DeleteTile(CGameWorld& world, int row, int col)
+{
+    if (!m_terrain_loaded || TileAt(row, col) == 0) return 0;
+
+    SetTile(world, row, col, 0);
+    // Re-conform the hole's edge: flood fills seeded from the cleared cell
+    // and its eight neighbors.
+    for (int dr = -1; dr <= 1; ++dr)
+        for (int dc = -1; dc <= 1; ++dc)
+            NormalizeFloodFill(world, row + dr, col + dc);
+    return 1;
 }
 
 void CMutableTerrainController::NormalizeFloodFill(CGameWorld& world, int seed_row, int seed_col)
@@ -415,7 +447,17 @@ void CMutableTerrainController::NormalizeFloodFill(CGameWorld& world, int seed_r
         }
 
         const std::uint32_t next = DirtGidForMask(mask);
-        if (!next) continue;
+        if (!next)
+        {
+            // The four-variant rule cannot express this mask: clear the tile
+            // (never a fifth wall tile) and keep walking so its neighbors
+            // re-conform to the new edge.
+            SetTile(world, row, col, 0);
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx)
+                    if (dx != 0 || dy != 0) stack.emplace_back(row + dy, col + dx);
+            continue;
+        }
         SetTile(world, row, col, next);
 
         for (int dy = -1; dy <= 1; ++dy)
@@ -454,8 +496,8 @@ void CMutableTerrainController::OnTick(CGameWorld& world, float dt)
         if (!player) continue;
         auto* flower = dynamic_cast<CPlayerFlower*>(player->GetEntity());
         if (!flower || flower->IsDead() || flower->IsMarkedForDes()) continue;
-        const bool has_brush = flower->HasActivePetal(EPetalType::Brush);
-        const bool has_eraser = flower->HasActivePetal(EPetalType::Eraser);
+        const bool has_brush = flower->HasActivePetal(ToPetalType(EModPetalType::Brush));
+        const bool has_eraser = flower->HasActivePetal(ToPetalType(EModPetalType::Eraser));
         if (!has_brush && !has_eraser) continue;
         const bool paint = has_brush && flower->m_attacking;
         const bool erase = has_eraser && flower->m_defending;
@@ -553,9 +595,9 @@ bool CMutableTerrainController::RestoreSnapshot(const CSnapshotReader& reader, s
         json_array_foreach(walls, index, entry)
         {
             if (!json_is_array(entry) || json_array_size(entry) < 4) continue;
-            const sf::Vector2f min_pos{ static_cast<float>(json_real_value(json_array_get(entry, 0))),
+            const florrbt::Vector2f min_pos{ static_cast<float>(json_real_value(json_array_get(entry, 0))),
                                         static_cast<float>(json_real_value(json_array_get(entry, 1))) };
-            const sf::Vector2f max_pos{ static_cast<float>(json_real_value(json_array_get(entry, 2))),
+            const florrbt::Vector2f max_pos{ static_cast<float>(json_real_value(json_array_get(entry, 2))),
                                         static_cast<float>(json_real_value(json_array_get(entry, 3))) };
             m_removed_wall_rects.emplace_back(min_pos, max_pos);
         }

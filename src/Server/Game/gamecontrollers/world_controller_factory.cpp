@@ -1,7 +1,10 @@
-#include "world_controller_factory.h"
+﻿#include "world_controller_factory.h"
+#include "ant_kingdom_controller.h"
+#include "deathmatch_controller.h"
 #include "mutable_terrain_controller.h"
 #include "opencontroller.h"
 #include "pvp_controller.h"
+#include "sandbox_controller.h"
 #include "weather_diurnal_open_controller.h"
 #include "waitingcontroller.h"
 
@@ -15,6 +18,11 @@ std::unique_ptr<IGameController> CreateWorldController(std::string_view snapshot
     if (snapshot_key == world_controller_keys::mutable_terrain)
         return std::make_unique<CMutableTerrainController>();
     if (snapshot_key == world_controller_keys::pvp) return std::make_unique<CAntHelPvpController>(params);
+    if (snapshot_key == world_controller_keys::ant_kingdom)
+        return std::make_unique<CAntKingdomController>(params);
+    if (snapshot_key == world_controller_keys::deathmatch)
+        return std::make_unique<CDeathmatchController>(params);
+    if (snapshot_key == world_controller_keys::sandbox) return std::make_unique<CSandboxController>(params);
     return {};
 }
 

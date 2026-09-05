@@ -12,7 +12,9 @@
 #include "Game/gameworld.h"
 #include "Game/player.h"
 #include "Game/systems/weather_diurnal_system.h"
+#include "Game/gamecontrollers/world_controller_factory.h"
 #include "Module/network_module.h"
+#include "Module/world_module.h"
 #include "Persistence/account_store.h"
 #include "server.h"
 #include <algorithm>
@@ -176,7 +178,7 @@ const CMobPrototype* FindMobPrototypeByText(std::string_view text)
     return nullptr;
 }
 
-std::optional<sf::Vector2f> ParsePosition(const std::vector<std::string>& args, size_t begin)
+std::optional<florrbt::Vector2f> ParsePosition(const std::vector<std::string>& args, size_t begin)
 {
     if (begin >= args.size()) return std::nullopt;
 
@@ -186,7 +188,7 @@ std::optional<sf::Vector2f> ParsePosition(const std::vector<std::string>& args, 
     {
         auto x = ParseFloat(std::string_view(first).substr(0, comma));
         auto y = ParseFloat(std::string_view(first).substr(comma + 1));
-        if (x && y) return sf::Vector2f(*x, *y);
+        if (x && y) return florrbt::Vector2f(*x, *y);
         return std::nullopt;
     }
 
@@ -195,7 +197,7 @@ std::optional<sf::Vector2f> ParsePosition(const std::vector<std::string>& args, 
     auto x = ParseFloat(args[begin]);
     auto y = ParseFloat(args[begin + 1]);
     if (!x || !y) return std::nullopt;
-    return sf::Vector2f(*x, *y);
+    return florrbt::Vector2f(*x, *y);
 }
 
 int FindFirstEquipSlot(CFlower& flower)
@@ -814,7 +816,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(tele, "tele <player> <world_id> <x,y>", "player w
         return;
     }
 
-    std::optional<sf::Vector2f> pos = ParsePosition(args, 2);
+    std::optional<florrbt::Vector2f> pos = ParsePosition(args, 2);
     if (!pos)
     {
         LOG_WARN("console", "Invalid position. Usage: tele <player> <world_id> <x,y>");
@@ -846,7 +848,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(tele, "tele <player> <world_id> <x,y>", "player w
     }
 
     CGameWorld* source_world = entity->GameWorld();
-    sf::Vector2f old_pos = entity->Pos();
+    florrbt::Vector2f old_pos = entity->Pos();
     const std::uint32_t old_world_id = source_world ? source_world->GetId() : 0;
     if (!source_world || !source_world->TransferPlayerEntityToWorld(*player, *target_world, *pos))
     {
@@ -858,6 +860,93 @@ REGISTER_CONSOLE_COMMAND_USAGE(tele, "tele <player> <world_id> <x,y>", "player w
                             std::to_string(old_pos.x) + "," + std::to_string(old_pos.y) + " to world " +
                             std::to_string(target_world->GetId()) + " at " + std::to_string(pos->x) + "," +
                             std::to_string(pos->y));
+})
+
+REGISTER_CONSOLE_COMMAND_USAGE(world_create, "world_create <map|path> <controller>", "map controller", {
+    if (args.size() < 2)
+    {
+        LOG_INFO("console", "Usage: world_create <map|path> <controller>");
+        return;
+    }
+
+    auto* server = CServer::GetInstance();
+    IWorldModule* world_module = server ? server->GetWorldModule() : nullptr;
+    if (!world_module)
+    {
+        LOG_WARN("console", "World module unavailable");
+        return;
+    }
+
+    std::string map_path = args[0];
+    const std::string lowered = ToLower(map_path);
+    if (lowered.find(".tmj") == std::string::npos && lowered.find('/') == std::string::npos &&
+        lowered.find('\\') == std::string::npos)
+        map_path = "data/maps/" + map_path + ".tmj";
+
+    const std::string_view controller_key = map_declarations::ControllerKeyForName(ToLower(args[1]));
+    if (controller_key.empty())
+    {
+        LOG_WARN("console", "Unknown controller: " + args[1] +
+                                " (open|weather|mutable_terrain|pvp|ant_kingdom|waiting)");
+        return;
+    }
+
+    CGameWorld* world = world_module->CreateWorld(map_path, controller_key, {});
+    if (!world)
+    {
+        LOG_WARN("console", "world_create failed (map load or controller creation failed): " + map_path);
+        return;
+    }
+    LOG_INFO("console", "Created world id=" + std::to_string(world->GetId()) + " map=" + map_path + " controller=" +
+                            std::string(controller_key));
+})
+
+REGISTER_CONSOLE_COMMAND_USAGE(world_controller, "world_controller <world_id> <controller>", "world controller", {
+    if (args.size() < 2)
+    {
+        LOG_INFO("console", "Usage: world_controller <world_id> <controller>");
+        return;
+    }
+
+    const auto world_id = ParseWorldId(args[0]);
+    auto* server = CServer::GetInstance();
+    CGameWorld* world = world_id && server ? server->FindWorldById(*world_id) : nullptr;
+    if (!world)
+    {
+        LOG_WARN("console", "World not found: " + args[0]);
+        return;
+    }
+
+    const std::string_view controller_key = map_declarations::ControllerKeyForName(ToLower(args[1]));
+    if (controller_key.empty())
+    {
+        LOG_WARN("console", "Unknown controller: " + args[1]);
+        return;
+    }
+
+    const std::string_view old_controller = world->GetController() ? world->GetController()->SnapshotKey() : "";
+    world->SetController(CreateWorldController(controller_key, {}));
+    LOG_INFO("console", "World " + std::to_string(*world_id) + " controller " + std::string(old_controller) +
+                            " -> " + std::string(controller_key));
+})
+
+REGISTER_CONSOLE_COMMAND_USAGE(world_destroy, "world_destroy <world_id>", "world", {
+    if (args.empty())
+    {
+        LOG_INFO("console", "Usage: world_destroy <world_id>");
+        return;
+    }
+
+    const auto world_id = ParseWorldId(args[0]);
+    auto* server = CServer::GetInstance();
+    IWorldModule* world_module = server ? server->GetWorldModule() : nullptr;
+    if (!world_module)
+    {
+        LOG_WARN("console", "World module unavailable");
+        return;
+    }
+    if (!world_id || !world_module->DestroyWorldById(*world_id))
+        LOG_WARN("console", "World not found: " + args[0]);
 })
 
 REGISTER_CONSOLE_COMMAND_USAGE(set_team, "set_team <world_id>:<entity_id> <team>", "entity", {

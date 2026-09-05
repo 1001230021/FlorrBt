@@ -1,4 +1,4 @@
-import {
+﻿import {
   NETWORK_BLOOD_SACRIFICE_ENTITY_TYPE,
   NETWORK_DANDELION_MISSILE_ENTITY_TYPE,
   NETWORK_MISSILE_ENTITY_TYPE,
@@ -40,6 +40,7 @@ export const stateInvincible = STATE_IDS.invincible;
 export const stateDigging = STATE_IDS.digging;
 export const statePsionicConnection = STATE_IDS.psionic_connection;
 export const stateHallucinogenic = STATE_IDS.hallucinogenic;
+export const stateDropStack = STATE_IDS.drop_stack;
 
 export function entityState(snap, stateType) {
   if (!Array.isArray(snap?.states)) return null;
@@ -170,6 +171,7 @@ export const petalPlankType = PETAL_IDS.plank;
 export const petalTomatoType = PETAL_IDS.tomato;
 export const petalHallucinogenicMushroomType = PETAL_IDS.hallucinogenic_mushroom;
 export const petalLightningType = PETAL_IDS.lightning;
+export const petalMagnetType = PETAL_IDS.magnet;
 export const petalBatteryType = PETAL_IDS.battery;
 export const petalBulbType = PETAL_IDS.bulb;
 export const petalBrushType = PETAL_IDS.brush;
@@ -183,10 +185,7 @@ export const PetalIconIds = GENERATED_PETAL_ICON_IDS;
 
 export const worldPetalSizeScale = 6;
 export const worldDropSizeScale = 3.25;
-export const hallucinogenicMushroomLiveViewBox = "30.5 13 52 52";
 export const hallucinogenicMushroomLiveVisualScale = 1 / 3;
-export const trapperLivePetalViewBox = "2.32 -14.95 110 110";
-export const waxLivePetalViewBox = "29 22 52 52";
 export const waxLivePetalVisualScale = 0.52;
 export const petalCardIconScale = 0.92;
 export const mobSpriteEffectiveBox = 91.667;

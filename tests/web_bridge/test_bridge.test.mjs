@@ -217,6 +217,22 @@ test("fitUtf8 does not split multi-byte code points", async () => {
   assert.equal(new TextDecoder().decode(ascii), "hel");
 });
 
+test("packVersion matches the server's wire version", async () => {
+  const { packVersion } = await import("../../web/src/protocol.js");
+  const { appVersionMajor, appVersionMinor, appVersionPatch } =
+    await import("../../web/src/version.js");
+  // Server expects [0xfb, major, minor, patch] as the first packet (see
+  // ClientVersionPacket in src/Shared/network_msg.h).
+  const packet = packVersion();
+  assert.deepEqual(
+    [...packet],
+    [0xfb, appVersionMajor, appVersionMinor, appVersionPatch],
+  );
+  assert.equal(appVersionMajor, 1);
+  assert.equal(appVersionMinor, 0);
+  assert.equal(appVersionPatch, 1);
+});
+
 test("live bridge survives malformed URL and oversized frames", async () => {
   const port = await freePort();
   const child = spawn(process.execPath, [path.join(repoRoot, "tools", "web_client_server.js")], {

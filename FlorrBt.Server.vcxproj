@@ -49,15 +49,19 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
-      <PreprocessorDefinitions>_DEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_DEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;FLORRBT_WITH_MYSQL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;D:\库\mysql-8.4.6-winx64\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>D:\库\SFML-3.1.0\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>sfml-main-d.lib;sfml-graphics-d.lib;sfml-window-d.lib;sfml-network-d.lib;sfml-system-d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:\库\SFML-3.1.0\lib;D:\库\mysql-8.4.6-winx64\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>libmysql.lib;sfml-main-d.lib;sfml-graphics-d.lib;sfml-window-d.lib;sfml-network-d.lib;sfml-system-d.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <PostBuildEvent>
+      <Command>xcopy /y /d "D:\库\mysql-8.4.6-winx64\lib\libmysql.dll" "$(OutDir)"</Command>
+      <Message>Copy libmysql.dll next to the server executable</Message>
+    </PostBuildEvent>
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>
     </Manifest>
@@ -70,16 +74,20 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
-      <PreprocessorDefinitions>NDEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>NDEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;FLORRBT_WITH_MYSQL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;D:\库\mysql-8.4.6-winx64\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
-      <AdditionalLibraryDirectories>D:\库\SFML-3.1.0\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>sfml-main.lib;sfml-graphics.lib;sfml-window.lib;sfml-network.lib;sfml-system.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:\库\SFML-3.1.0\lib;D:\库\mysql-8.4.6-winx64\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>libmysql.lib;sfml-main.lib;sfml-graphics.lib;sfml-window.lib;sfml-network.lib;sfml-system.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <PostBuildEvent>
+      <Command>xcopy /y /d "D:\库\mysql-8.4.6-winx64\lib\libmysql.dll" "$(OutDir)"</Command>
+      <Message>Copy libmysql.dll next to the server executable</Message>
+    </PostBuildEvent>
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>
     </Manifest>
@@ -100,6 +108,7 @@
     <ClInclude Include="src\Server\Game\controllers\player_controller.h" />
     <ClInclude Include="src\Server\Game\entities\flower.h" />
     <ClInclude Include="src\Server\Game\entities\mob.h" />
+    <ClInclude Include="src\Server\Game\entities\eou_mob.h" />
     <ClInclude Include="src\Server\Game\entities\petals\petal.h" />
     <ClInclude Include="src\Server\Game\entities\petals\petal_slot.h" />
     <ClInclude Include="src\Server\Game\entities\petals\petals_behavior.h" />
@@ -115,8 +124,13 @@
     <ClInclude Include="src\Server\Game\gamecontrollers\opencontroller.h" />
     <ClInclude Include="src\Server\Game\gamecontrollers\pvp_controller.h" />
     <ClInclude Include="src\Server\Game\gamecontrollers\waitingcontroller.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\ant_kingdom_controller.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\eou_slot_proxy.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\eou_team.h" />
     <ClInclude Include="src\Server\Game\gamecontrollers\world_controller_factory.h" />
     <ClInclude Include="src\Server\Game\gameworld.h" />
+    <ClInclude Include="src\Server\Game\tile_board.h" />
+    <ClInclude Include="src\Server\Game\wall_board.h" />
     <ClInclude Include="src\Server\Game\player.h" />
     <ClInclude Include="src\Server\Game\prototype_registry.h" />
     <ClInclude Include="src\Server\Game\state.h" />
@@ -130,6 +144,8 @@
     <ClInclude Include="src\Server\Module\server_gui_module.h" />
     <ClInclude Include="src\Server\Module\world_module.h" />
     <ClInclude Include="src\Server\Persistence\account_store.h" />
+    <ClInclude Include="src\Server\Persistence\account_migration.h" />
+    <ClInclude Include="src\Server\Persistence\mysql_account_backend.h" />
     <ClInclude Include="src\Server\Persistence\server_data_store.h" />
     <ClInclude Include="src\Server\Persistence\unique_petal_registry.h" />
     <ClInclude Include="src\Server\report.h" />
@@ -149,6 +165,7 @@
     <ClCompile Include="src\Server\Game\entities\drop.cpp" />
     <ClCompile Include="src\Server\Game\entities\flower.cpp" />
     <ClCompile Include="src\Server\Game\entities\mob.cpp" />
+    <ClCompile Include="src\Server\Game\entities\eou_mob.cpp" />
     <ClCompile Include="src\Server\Game\entities\mob_behavior.cpp" />
     <ClCompile Include="src\Server\Game\entities\petals\petal.cpp" />
     <ClCompile Include="src\Server\Game\entities\petals\petal_behavior.cpp" />
@@ -162,11 +179,17 @@
     <ClCompile Include="src\Server\Game\gamecontrollers\spawn_rules.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\mutable_terrain_controller.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\opencontroller.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\deathmatch_controller.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\sandbox_controller.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\pvp_controller.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\waitingcontroller.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\ant_kingdom_controller.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\eou_team.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\weather_diurnal_open_controller.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\world_controller_factory.cpp" />
     <ClCompile Include="src\Server\Game\gameworld.cpp" />
+    <ClCompile Include="src\Server\Game\tile_board.cpp" />
+    <ClCompile Include="src\Server\Game\wall_board.cpp" />
     <ClCompile Include="src\Server\Game\player.cpp" />
     <ClCompile Include="src\Server\Game\state_zone.cpp" />
     <ClCompile Include="src\Server\Game\states\states.cpp" />
@@ -179,6 +202,8 @@
     <ClCompile Include="src\Server\Module\server_gui_module.cpp" />
     <ClCompile Include="src\Server\Module\world_module.cpp" />
     <ClCompile Include="src\Server\Persistence\account_store.cpp" />
+    <ClCompile Include="src\Server\Persistence\account_migration.cpp" />
+    <ClCompile Include="src\Server\Persistence\mysql_account_backend.cpp" />
     <ClCompile Include="src\Server\Persistence\server_data_store.cpp" />
     <ClCompile Include="src\Server\Persistence\unique_petal_registry.cpp" />
     <ClCompile Include="src\Server\report.cpp" />

@@ -1,4 +1,4 @@
-#include "waitingcontroller.h"
+﻿#include "waitingcontroller.h"
 #include "../../HotReload/snapshot_archive.h"
 #include "../../Module/network_module.h"
 #include "../../Module/world_module.h"
@@ -16,7 +16,7 @@
 
 namespace
 {
-sf::Vector2f PickWaitingSpawnPosition(CGameWorld& world)
+florrbt::Vector2f PickWaitingSpawnPosition(CGameWorld& world)
 {
     const FlorrBtMap* map = world.GetMap();
     if (!map) return { 0.f, 0.f };
@@ -180,7 +180,7 @@ bool CWaitingController::ResolveReferences(CGameWorld& world, const IGameWorldRe
     return true;
 }
 
-std::optional<sf::Vector2f> CWaitingController::SelectPlayerSpawn(CGameWorld& world, CPlayer& player,
+std::optional<florrbt::Vector2f> CWaitingController::SelectPlayerSpawn(CGameWorld& world, CPlayer& player,
                                                                   EPlayerSpawnReason reason)
 {
     (void)player;

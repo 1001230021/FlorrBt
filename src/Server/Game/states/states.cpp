@@ -221,8 +221,8 @@ bool CHallucinogenicState::ComputeEffectiveParameters(const CMobBase& owner, par
     return true;
 }
 
-sf::Vector2f CHallucinogenicState::ModifyMovementTarget(const CMobBase& owner,
-                                                        const sf::Vector2f& target_pos) const
+florrbt::Vector2f CHallucinogenicState::ModifyMovementTarget(const CMobBase& owner,
+                                                        const florrbt::Vector2f& target_pos) const
 {
     parameter_array effective{};
     if (!ComputeEffectiveParameters(owner, effective)) return target_pos;

@@ -40,14 +40,22 @@ import {
   workerFireAntType,
   workerTermiteType,
 } from "./game_ids.js";
-import { mobTypeName, rarityColor, rarityName } from "./protocol.js";
+import { rarityExotic } from "./game_ids.js";
+import {
+  MobNames,
+  mobTypeName,
+  rarityColor,
+  rarityName,
+  translationSlug,
+} from "./protocol.js";
+import { t } from "./i18n.js";
 import {
   assetImage,
   formatShortCount,
   imageReady,
   makePetalStack,
+  petalBaseImage,
 } from "./petal_info.js";
-import { petalBaseImage } from "./game.js";
 import {
   toggleBackpack,
   toggleCraft,
@@ -69,53 +77,28 @@ export const codexMobOrder = [
   leafcutterSoldierType, titanType, fireflyType,
 ];
 
-export const codexRarityOrder = [
-  rarityDisplayOrder[0], rarityDisplayOrder[1], rarityDisplayOrder[2],
-  rarityDisplayOrder[3], rarityDisplayOrder[4], rarityDisplayOrder[5],
-  rarityDisplayOrder[6], rarityDisplayOrder[7], rarityDisplayOrder[8],
-  rarityDisplayOrder[9], rarityDisplayOrder[10], rarityDisplayOrder[11],
-];
+// No column is carved out for the exotic rarity: like on the server, exotic
+// is the same tier as common, so common is the lowest column and exotic
+// kills are tallied into it.
+export const codexRarityOrder = rarityDisplayOrder.filter(
+  (rarity) => rarity !== rarityExotic,
+);
 
-export const codexMobDescriptions = {
-  [beetleType]: "最常见的敌人之一，缓慢爬行并造成撞击伤害。",
-  [bandageBeetleType]: "裹着绷带的甲虫，比普通甲虫更耐打。",
-  [normalLadybugType]: "圆滚滚的瓢虫，移动缓慢但攻击不低。",
-  [mechaFlowerType]: "机械花朵，花园里的常客。",
-  [normalFlowerType]: "普通花朵，被打倒后会掉落花瓣。",
-  [soldierAntType]: "蚁群的士兵，成群出现并围攻玩家。",
-  [soldierFireAntType]: "火蚁士兵，比普通兵蚁更强。",
-  [soldierTermiteType]: "白蚁士兵，沙漠区域的威胁。",
-  [summonedBeetleType]: "被召唤的甲虫，为它的主人而战。",
-  [summonedSoldierAntType]: "被召唤的兵蚁，听从主人指挥。",
-  [beeType]: "忙碌的蜜蜂，用尾针攻击。",
-  [hornetType]: "凶猛的黄蜂，发射导弹攻击。",
-  [bumbleBeeType]: "胖乎乎的大黄蜂，撞击伤害高。",
-  [rockType]: "一块石头，挡路也伤人。",
-  [bubbleType]: "漂浮的泡泡，轻巧但很难打破，高等级泡泡受击时会分裂。",
-  [babyAntType]: "幼蚁，脆弱但数量多。",
-  [workerAntType]: "工蚁，负责搬运与建巢。",
-  [queenAntType]: "蚁后，蚁穴的核心与守护者。",
-  [antHoleType]: "蚁穴，持续产出蚂蚁大军。",
-  [spiderType]: "蜘蛛，吐出蛛网减速猎物。",
-  [sandstormType]: "移动的沙暴，席卷一切。",
-  [dummyType]: "训练假人，适合测试伤害。",
-  [dandelionType]: "蒲公英，发射种子弹幕。",
-  [antEggMobType]: "蚁卵，孵化出新蚂蚁。",
-  [fireAntEggType]: "火蚁卵，孵化出火蚁。",
-  [termiteEggType]: "白蚁卵，孵化出白蚁。",
-  [queenAntEggType]: "蚁后卵，孵化出新的蚁后。",
-  [queenFireAntEggType]: "火蚁后卵，孵化出新的火蚁后。",
-  [babyFireAntType]: "幼火蚁，速度比普通幼蚁快。",
-  [workerFireAntType]: "火工蚁，比普通工蚁更强。",
-  [fireQueenAntType]: "火蚁后，火蚁群的核心。",
-  [babyTermiteType]: "幼白蚁，脆弱但数量多。",
-  [workerTermiteType]: "白蚁工蚁，负责建设巢穴。",
-  [termiteOvermindType]: "白蚁心智，沙漠深处的首领。",
-  [leafPieceType]: "被切下的叶片，切叶蚁的搬运物。",
-  [leafcutterSoldierType]: "切叶蚁士兵，沙漠区域的威胁。",
-  [titanType]: "泰坦，最强的存在之一。",
-  [fireflyType]: "萤火虫，受到攻击时会用连锁闪电反击。",
-};
+export function codexKillCount(mobType, rarity) {
+  const count = state.codex.get(codexKey(mobType, rarity)) || 0;
+  if (rarity === rarityExotic || rarity === rarityDisplayOrder[0])
+    return count + (state.codex.get(codexKey(mobType, rarityExotic)) || 0);
+  return count;
+}
+
+// Bestiary descriptions live in the locale files (codex.descriptions.<slug>)
+// so they follow the display language like every other UI string.
+export function codexMobDescription(mobType) {
+  const fallback = MobNames[mobType] || "Mob" + mobType;
+  return t(`codex.descriptions.${translationSlug(fallback)}`, {}, {
+    defaultValue: "",
+  });
+}
 
 export function codexKey(mobType, rarity) {
   return (mobType << 8) | rarity;
@@ -154,20 +137,21 @@ export function renderCodexPanel() {
     codexGrid.style.gridTemplateColumns = "repeat(auto-fill, 56px)";
     return;
   }
-  // x = rarity (fixed 12 columns), y = mob type (alphabetical, top to bottom).
-  // Skip rows whose mob has no kills at all.
+  // x = rarity (exotic shares the common column; 11 columns total),
+  // y = mob type (alphabetical, top to bottom). Skip rows whose mob has no
+  // kills at all.
   codexGrid.style.gridTemplateColumns = `repeat(${codexRarityOrder.length}, 56px)`;
   for (const mobType of mobTypes) {
     let anyKill = false;
     for (const rarity of codexRarityOrder) {
-      if ((state.codex.get(codexKey(mobType, rarity)) || 0) > 0) {
+      if (codexKillCount(mobType, rarity) > 0) {
         anyKill = true;
         break;
       }
     }
     if (!anyKill) continue;
     for (const rarity of codexRarityOrder) {
-      const count = state.codex.get(codexKey(mobType, rarity)) || 0;
+      const count = codexKillCount(mobType, rarity);
       const cell = document.createElement("button");
       cell.className = `codex-cell card-base${count > 0 ? "" : " empty"}`;
       cell.type = "button";
@@ -275,7 +259,7 @@ export function moveCodexDetail(event) {
 
   const desc = document.createElement("div");
   desc.className = "codex-detail-desc";
-  desc.textContent = codexMobDescriptions[mobType] || "";
+  desc.textContent = codexMobDescription(mobType);
   codexDetail.appendChild(desc);
 
   const loot = state.codexLoot.get(codexKey(mobType, rarity)) || [];

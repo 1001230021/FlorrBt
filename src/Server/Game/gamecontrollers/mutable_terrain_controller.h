@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "opencontroller.h"
 #include <cstdint>
 #include <unordered_map>
@@ -29,17 +29,24 @@ class CMutableTerrainController : virtual public COpenController
     // the rounded dirt circle of the four corner variants). Returns the
     // number of changed tiles, or 0 if the edit was rejected (out of bounds,
     // blocked by walls, no dirt layer...).
-    int PaintTerrain(CGameWorld& world, sf::Vector2f center, float size_tiles = 2.f);
+    int PaintTerrain(CGameWorld& world, florrbt::Vector2f center, float size_tiles = 2.f);
 
     // Eraser-like terrain edit: clears tiles and removes native map walls in
     // the block, then re-applies the terrain rule with a flood fill. Returns
     // the number of changed tiles (including removed walls' tile clears), or
     // 0 if rejected.
-    int EraseTerrain(CGameWorld& world, sf::Vector2f center, float size_tiles = 2.f);
+    int EraseTerrain(CGameWorld& world, florrbt::Vector2f center, float size_tiles = 2.f);
 
-  private:
+    // Deletes a single terrain tile (dirt layer only; walls are the CWall
+    // board's business) and re-applies the terrain rule around the hole.
+    // Returns 1 when a tile was cleared, 0 when the cell was already empty.
+    int DeleteTile(CGameWorld& world, int row, int col);
+
+  protected:
+    // Exposed to derived controllers (e.g. the ant-kingdom controller scans
+    // the dirt layer to bind a CWall to every in-rule tile).
     void LoadTerrainData(CGameWorld& world);
-    bool FindBrushBlock(sf::Vector2f pos, int size_tiles, int& out_anchor_x, int& out_anchor_y) const;
+    bool FindBrushBlock(florrbt::Vector2f pos, int size_tiles, int& out_anchor_x, int& out_anchor_y) const;
     bool BlockClearOfWalls(CGameWorld& world, int anchor_x, int anchor_y, int size_tiles) const;
     void PaintBrush(CGameWorld& world, CPlayerFlower& flower);
     void EraseBrush(CGameWorld& world, CPlayerFlower& flower);
@@ -58,9 +65,11 @@ class CMutableTerrainController : virtual public COpenController
     bool m_terrain_tried = false;
     std::vector<std::uint32_t> m_tiles;                       // raw gids (gid + flip bits)
     std::unordered_map<std::uint32_t, std::uint32_t> m_dirty; // cell index -> raw gid
-    std::vector<std::pair<sf::Vector2f, sf::Vector2f>> m_removed_wall_rects;
-    std::unordered_map<std::uint32_t, float> m_paint_cooldowns;
     std::unordered_map<std::uint32_t, int> m_dirt_bits_by_gid;  // canonical gid -> variant bits
+
+  private:
+    std::vector<std::pair<florrbt::Vector2f, florrbt::Vector2f>> m_removed_wall_rects;
+    std::unordered_map<std::uint32_t, float> m_paint_cooldowns;
     std::unordered_map<int, std::uint32_t> m_dirt_gid_by_bits;  // variant bits -> canonical gid
     std::unordered_map<int, std::uint32_t> m_dirt_rep_by_mask;  // corner mask -> gid | flip bits
 };

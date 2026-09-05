@@ -67,7 +67,7 @@ void CSnapshotWriter::Field(std::string_view key, std::string_view value) const
     Node(key, json_stringn(value.data(), value.size()));
 }
 
-void CSnapshotWriter::Field(std::string_view key, sf::Vector2f value) const
+void CSnapshotWriter::Field(std::string_view key, florrbt::Vector2f value) const
 {
     json_t* array = json_array();
     if (!array) return;
@@ -150,7 +150,7 @@ std::string CSnapshotReader::String(std::string_view key, std::string fallback) 
     return text ? std::string(text, json_string_length(value)) : fallback;
 }
 
-sf::Vector2f CSnapshotReader::Vector2(std::string_view key, sf::Vector2f fallback) const
+florrbt::Vector2f CSnapshotReader::Vector2(std::string_view key, florrbt::Vector2f fallback) const
 {
     const json_t* value = Find(m_object, key);
     if (!json_is_array(value) || json_array_size(value) != 2) return fallback;

@@ -33,7 +33,7 @@ bool ShouldBlockDiggingDamage(CMobBase* receiver, CEntity* attacker, EDamageType
 class CMobBase : public CEntity
 {
   public:
-    CMobBase(CGameWorld* pworld, sf::Vector2f pos, float r, EMobType mob_type)
+    CMobBase(CGameWorld* pworld, florrbt::Vector2f pos, float r, EMobType mob_type)
         : CEntity(pworld, pos.x, pos.y, r, MakeMobEntityType(static_cast<std::uint8_t>(mob_type)))
     {
     }
@@ -45,7 +45,11 @@ class CMobBase : public CEntity
     void AddState(std::unique_ptr<CState> state);
     void TickStates(float dt);
     bool TickDropPickup(CPlayer* player);
-    virtual void MoveTowards(const sf::Vector2f& target_pos, float dt);
+    // Moves toward target_pos. When target_radius >= 0 the approach stop
+    // distance is the mob's radius plus the target's radius, so melee mobs
+    // close in until they actually overlap the target (contact damage range)
+    // instead of braking one target-radius early.
+    virtual void MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius = -1.f);
     void ApplyDamageDirect(float dmg, CEntity* attacker);
 
     virtual const SMobStats* GetBaseStats() const = 0;
@@ -62,8 +66,20 @@ class CMobBase : public CEntity
         return stats ? std::max(0.f, stats->horizon) : CEntity::TickHorizon();
     }
     virtual ERarity GetRarity() const = 0;
+    // Marks a mob created by an open-world natural spawn. This is deliberately
+    // separate from rarity: console commands, precise map spawns and ability
+    // summons may create Eternal/Unique mobs without consuming the natural
+    // spawn uniqueness budget.
+    bool IsNaturallySpawned() const { return m_naturally_spawned; }
+    void SetNaturallySpawned(bool value) { m_naturally_spawned = value; }
     virtual bool IsFacingLocked() const { return false; }
-    float WallCollisionRadius() const override { return 0.f; }
+    // Wall collision uses a circle of the mob's own radius, capped at the
+    // player-flower radius for stability (a 0-radius "point" contact lets
+    // mobs tunnel/embed into walls after a fast frame).
+    float WallCollisionRadius() const override
+    {
+        return std::clamp(Radius(), 0.f, game_config::mob_player_flower_radius);
+    }
     virtual std::uint32_t RuntimeSnapshotVersion() const { return 1; }
     virtual void CaptureRuntimeSnapshot(CSnapshotWriter&) const {}
     virtual bool RestoreRuntimeSnapshot(const CSnapshotReader&, std::uint32_t version, std::string& error)
@@ -138,10 +154,10 @@ class CMobBase : public CEntity
     IController* GetController() { return m_p_controller.get(); }
     const IController* GetController() const { return m_p_controller.get(); }
 
-    sf::Vector2f m_vel = { 0.f, 0.f };
+    florrbt::Vector2f m_vel = { 0.f, 0.f };
 
   protected:
-    sf::Vector2f ApplyMovementTargetStates(const sf::Vector2f& target_pos) const;
+    florrbt::Vector2f ApplyMovementTargetStates(const florrbt::Vector2f& target_pos) const;
     void UnregisterMovementTargetState(CState* state);
 
     std::vector<CDamageData> m_damage_data;
@@ -149,6 +165,7 @@ class CMobBase : public CEntity
     std::vector<CState*> m_movement_target_states;
     std::unique_ptr<IController> m_p_controller;
     float m_inactive_seconds = 0.f;
+    bool m_naturally_spawned = false;
 };
 
 template <typename TStats = SMobStats> class CMob : public CMobBase
@@ -156,7 +173,7 @@ template <typename TStats = SMobStats> class CMob : public CMobBase
   public:
     using stats_type = TStats;
 
-    CMob(CGameWorld* pworld, sf::Vector2f pos, float r, EMobType mob_type, ERarity rarity, const TStats& stats)
+    CMob(CGameWorld* pworld, florrbt::Vector2f pos, float r, EMobType mob_type, ERarity rarity, const TStats& stats)
         : CMobBase(pworld, pos, r, mob_type), m_base_stats(stats), m_final_stats(stats), m_rarity(rarity)
     {
         if (rarity == ERarity::Eternal || rarity == ERarity::Unique || rarity == ERarity::Primordial)
@@ -230,7 +247,7 @@ class IHornetMob
 {
   public:
     virtual ~IHornetMob() = default;
-    virtual bool TryCastMissileInDirection(sf::Vector2f direction) = 0;
+    virtual bool TryCastMissileInDirection(florrbt::Vector2f direction) = 0;
     virtual void SetMissileGenerationSuppressed(bool suppressed, bool discard_loaded) = 0;
 };
 
@@ -270,8 +287,8 @@ class CMobPrototype
     using flower_stats_factory = std::function<SFlowerStats(ERarity)>;
     using controller_factory = std::function<std::unique_ptr<IController>(ERarity)>;
     using after_create = std::function<void(CMobBase&, ERarity)>;
-    using rarity_resolver = std::function<ERarity(CGameWorld&, sf::Vector2f, ERarity)>;
-    using mob_factory = std::function<std::unique_ptr<CMobBase>(CGameWorld*, sf::Vector2f, ERarity)>;
+    using rarity_resolver = std::function<ERarity(CGameWorld&, florrbt::Vector2f, ERarity)>;
+    using mob_factory = std::function<std::unique_ptr<CMobBase>(CGameWorld*, florrbt::Vector2f, ERarity)>;
 
     CMobPrototype() = default;
     CMobPrototype(const CMobPrototype&) = delete;
@@ -334,8 +351,11 @@ template <> inline SFlowerStats CMobPrototype::BuildTypedStats<SFlowerStats>(ERa
     return BuildFlowerStats(rarity);
 }
 
+// Registry slots cover the native range plus the reserved mod range
+// (mod_mob_type.h); slots past the natives are optional so controllers can
+// register content without every id being mandatory at Finalize.
 using CMobRegistry =
-    TPrototypeRegistry<EMobType, CMobPrototype, mob_type_names.size(),
+    TPrototypeRegistry<EMobType, CMobPrototype, static_cast<std::size_t>(kMobIdCapacity),
                        static_cast<std::size_t>(EMobType::Bubble) + 1>;
 namespace mob_registry_detail
 {
@@ -372,7 +392,7 @@ template <EMobType Type, typename TMob> bool RegisterMobPrototype(CMobPrototype 
     prototype.m_name = std::string(GetMobTypeName(Type));
     auto ptr = std::make_unique<CMobPrototype>(std::move(prototype));
     CMobPrototype* raw_ptr = ptr.get();
-    raw_ptr->m_factory = [raw_ptr](CGameWorld* world, sf::Vector2f pos, ERarity rarity) -> std::unique_ptr<CMobBase> {
+    raw_ptr->m_factory = [raw_ptr](CGameWorld* world, florrbt::Vector2f pos, ERarity rarity) -> std::unique_ptr<CMobBase> {
         if (!world) return nullptr;
 
         typename TMob::stats_type stats = raw_ptr->BuildTypedStats<typename TMob::stats_type>(rarity);
@@ -388,20 +408,31 @@ template <EMobType Type, typename TMob> bool RegisterMobPrototype(CMobPrototype 
 
 const CMobPrototype* FindMobPrototype(EMobType type);
 
-// Registers a controller/mod-specific mob in the reserved Mod range. The
-// prototype may declare a vanilla visual proxy so the network snapshot
-// presents the mob as an existing mob type.
-template <EMobType Type, typename TMob> bool RegisterModMob(CMobPrototype prototype, EMobType visual_proxy)
+// Registers a controller-specific mob from the mod id space (mod_mob_type.h).
+// A vanilla visual proxy is MANDATORY: the network snapshot always presents
+// the mob as an existing type, so mod ids stay server-internal and never
+// reach the wire or the client id tables.
+template <EModMobType Type, typename TMob> bool RegisterModMob(CMobPrototype prototype, EMobType visual_proxy)
 {
-    static_assert(static_cast<std::size_t>(Type) >= static_cast<std::size_t>(EMobType::Mod64),
-                  "mod mobs must live in the reserved Mod range");
-    if (visual_proxy != EMobType::None &&
-        static_cast<std::size_t>(visual_proxy) >= static_cast<std::size_t>(EMobType::Mod64))
+    static_assert(IsModMobTypeId(static_cast<int>(Type)), "mod mobs must live in the reserved mod id range");
+    static_assert(!GetModMobTypeName(static_cast<int>(Type)).empty(),
+                  "declare the mod mob in the mod_mob_type.h controller manifest first");
+    if (visual_proxy == EMobType::None || static_cast<std::size_t>(visual_proxy) >= mob_type_names.size())
+    {
+        mob_registry_detail::MutableRegistry().ReportError(
+            "mod mob " + std::string(GetModMobTypeName(static_cast<int>(Type))) +
+            " requires a vanilla visual proxy");
         return false;
+    }
     prototype.m_visual_proxy_type = visual_proxy;
-    return RegisterMobPrototype<Type, TMob>(std::move(prototype));
+    return RegisterMobPrototype<ToMobType(Type), TMob>(std::move(prototype));
 }
 
-std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, sf::Vector2f pos, ERarity rarity,
-                                    bool resolve_special_rarity = true);
+std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, florrbt::Vector2f pos, ERarity rarity,
+                                    bool resolve_special_rarity = true, bool naturally_spawned = false);
+inline std::unique_ptr<CMobBase> CreateMob(EModMobType type, CGameWorld* world, florrbt::Vector2f pos, ERarity rarity,
+                                           bool resolve_special_rarity = true, bool naturally_spawned = false)
+{
+    return CreateMob(ToMobType(type), world, pos, rarity, resolve_special_rarity, naturally_spawned);
+}
 bool RegisterMobs(std::string& error);

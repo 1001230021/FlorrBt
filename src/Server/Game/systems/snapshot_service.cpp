@@ -9,6 +9,7 @@
 #include "../entities/petals/petal.h"
 #include "../entities/portal.h"
 #include "../entities/projectile.h"
+#include "../gamecontrollers/eou_slot_proxy.h"
 #include "../gamecontrollers/opencontroller.h"
 #include "../gameworld.h"
 #include "../player.h"
@@ -68,6 +69,9 @@ void PopulateOwnerPetalRuntime(const CEntity& owner, ServerEntitySnap& snap)
     for (size_t slot_index = 0; slot_index < slot_count; ++slot_index)
     {
         const CPetalSlot& slot = slots[slot_index];
+        // Proxy-filled slots carry their copies in the primary pass and have
+        // no runtime petal state to populate here.
+        if (!slot.m_p_proto) continue;
         SOwnerPetalSlot& slot_snap = snap.primary_slots[slot_index];
         EPetalType runtime_type = slot.m_runtime_type;
         for (const CPetal* petal : slot.m_p_petals)
@@ -458,7 +462,7 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
     PopulateOwnerHallucinations(*owner, owner_snap);
     size_t packed_size = snapshot_header_size + ServerEntitySnap::GetPackedSize(owner_snap);
     msg.entities.push_back(std::move(owner_snap));
-    sf::Vector2f snapshot_origin = msg.entities.front().pos;
+    florrbt::Vector2f snapshot_origin = msg.entities.front().pos;
     net_entity_id owner_id = msg.owner_entity_id.value_or(0);
 
     for (const CEntity* squad_entity : mandatory_squad_entities)
@@ -528,6 +532,9 @@ ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const 
     {
         snap.rarity = static_cast<uint8_t>(std::clamp(player_flower->m_level, 0, static_cast<int>(UINT8_MAX)));
         const auto& slots = player_flower->GetSlots();
+        const CEouSlotProxy* slot_proxy = nullptr;
+        if (const IGameController* controller = entity.GameWorld()->GetController()) slot_proxy = controller->SlotProxy();
+        int proxy_index = 0;
         snap.primary_slots.reserve(slots.size());
         for (const CPetalSlot& slot : slots)
         {
@@ -537,7 +544,16 @@ ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const 
                 primary_slot.petal_type = static_cast<uint8_t>(slot.m_p_proto->m_type);
                 primary_slot.rarity = static_cast<uint8_t>(slot.m_stored_rarity);
             }
-            snap.primary_slots.push_back(primary_slot);
+            else if (slot_proxy && proxy_index < slot_proxy->SlotCount())
+            {
+                // Slot proxy: locked/empty player slots are disguised as the
+                // controller's skill cards (same idea as mod mob visual
+                // proxies - the wire carries vanilla data).
+                snap.primary_slots.push_back(slot_proxy->MakeOwnerSlot(proxy_index));
+                ++proxy_index;
+                continue;
+            }
+            snap.primary_slots.push_back(std::move(primary_slot));
         }
     }
     if (const auto* drop = dynamic_cast<const CDrop*>(&entity)) snap.rarity = static_cast<uint8_t>(drop->GetRarity());
@@ -574,6 +590,18 @@ ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const 
             snap.shield_percent = std::clamp(flower->GetShield() / stats->max_health, 0.f, 1.f);
         if (FlowerHasAvailablePetal(*flower, EPetalType::Antennae))
             snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Antennae);
+    }
+    if (const auto* drop = dynamic_cast<const CDrop*>(&entity))
+    {
+        // Stacked drops carry their count so the client can render the same
+        // "xN" badge the inventory cards use.
+        if (drop->GetStackNum() > 1)
+        {
+            SEntityStateSnap state_snap{ EStateType::DropStack, 0 };
+            state_snap.value =
+                static_cast<uint8_t>(std::min<uint32_t>(drop->GetStackNum(), UINT8_MAX));
+            snap.states.push_back(state_snap);
+        }
     }
     if (const auto* mob = dynamic_cast<const CMobBase*>(&entity))
     {

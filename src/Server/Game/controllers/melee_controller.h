@@ -17,7 +17,7 @@ class CMeleeController : public IController
 
   protected:
     void PickRandomTargetPos(CMobBase* mob, const SMobStats& stats);
-    void PickRandomTargetPosNear(CMobBase* mob, const sf::Vector2f& center, float half_range);
+    void PickRandomTargetPosNear(CMobBase* mob, const florrbt::Vector2f& center, float half_range);
     bool IsRandomIdleDone(float dt);
     bool ShouldSwitchRandomWanderTarget(float dt) const;
     bool ReachedOrStalledRandomTarget(CMobBase* mob, float dt);
@@ -39,13 +39,16 @@ class CMeleeController : public IController
     std::uint32_t m_target_world_id = 0;
     int m_target_id = -1;
     std::uint64_t m_target_generation = 0;
-    sf::Vector2f m_target_pos = { 0.f, 0.f };
+    florrbt::Vector2f m_target_pos = { 0.f, 0.f };
+    // Radius of the entity currently chased: move approach stops at
+    // mob.Radius() + target.Radius() so melee mobs reach contact range.
+    float m_target_radius = 0.f;
     float m_change_target_count = game_config::melee_target_time;
     float m_target_los_check_timer = 0.f;
     bool m_has_random_target_pos = false;
     bool m_random_idle = false;
     float m_random_idle_timer = 0.f;
-    sf::Vector2f m_wander_progress_anchor = { 0.f, 0.f };
+    florrbt::Vector2f m_wander_progress_anchor = { 0.f, 0.f };
     float m_wander_progress_timer = 0.f;
     bool m_wander_progress_initialized = false;
     int m_target_scan_cooldown = -1;
@@ -237,7 +240,7 @@ class CSpecialHornetController : public CMeleeController, public CPickupControll
     bool TryStartSkill2(CMobBase* mob);
     bool TryStartSkill3(CMobBase* mob);
     void PerformSkill1(CMobBase* mob);
-    bool FireSkill2Missile(CMobBase* mob, const sf::Vector2f& origin);
+    bool FireSkill2Missile(CMobBase* mob, const florrbt::Vector2f& origin);
     void FinishCurrentAction(CMobBase* mob);
     static ERarity PrevHornetRarity(ERarity rarity);
     static ERarity PickSkill1SummonRarity(ERarity caster_rarity, int& et_limit, int& s_limit);
@@ -254,12 +257,12 @@ class CSpecialHornetController : public CMeleeController, public CPickupControll
     float m_state_timer = 0.f;
     float m_action_timer = 0.f;
     float m_fire_timer = 0.f;
-    sf::Vector2f m_skill2_orbit_center = { 0.f, 0.f };
+    florrbt::Vector2f m_skill2_orbit_center = { 0.f, 0.f };
     float m_skill2_orbit_radius = 0.f;
     float m_skill2_orbit_angle = 0.f;
     float m_skill2_orbit_dir = 1.f;
     float m_skill2_remaining_angle = 0.f;
-    sf::Vector2f m_skill2_tangent_dir = { 1.f, 0.f };
+    florrbt::Vector2f m_skill2_tangent_dir = { 1.f, 0.f };
     int m_cycle_phase = 0;
     int m_cycle_attack_count = 0;
     std::uint32_t m_skill3_target_world_id = 0;
@@ -267,8 +270,8 @@ class CSpecialHornetController : public CMeleeController, public CPickupControll
     std::uint64_t m_skill3_target_generation = 0;
     bool m_skill3_captured_prev_skip_tick = false;
     bool m_skill3_has_captured_prev_skip_tick = false;
-    sf::Vector2f m_skill3_launch_pos = { 0.f, 0.f };
-    sf::Vector2f m_skill3_launch_direction = { 1.f, 0.f };
+    florrbt::Vector2f m_skill3_launch_pos = { 0.f, 0.f };
+    florrbt::Vector2f m_skill3_launch_direction = { 1.f, 0.f };
     bool m_skill3_missile_suppressed = false;
 };
 

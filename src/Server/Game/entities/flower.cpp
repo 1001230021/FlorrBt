@@ -66,7 +66,18 @@ std::int64_t PlayerFlowerExpRequired(int level)
     const int safe_level = std::max(1, level);
     const long double base_exp = std::max(1.0L, static_cast<long double>(game_config::player_level_exp_base));
     const long double level_growth = std::max(1.0L, static_cast<long double>(game_config::player_level_exp_growth));
-    const long double required = base_exp * std::pow(level_growth, static_cast<long double>(safe_level - 1));
+
+    // Level 50 costs exactly what the legacy formula produced, so the
+    // (smaller, gentler) exponent is anchored by a bigger coefficient:
+    // cost(x) = cost_base * level_growth^(x-1) with
+    // cost_base chosen so cost(50) == base_exp * legacy_growth^49.
+    const long double legacy_growth = std::max(1.0L, static_cast<long double>(game_config::player_level_exp_legacy_growth));
+    const long double legacy_50 = base_exp * std::pow(legacy_growth, 49.0L);
+    const long double cost_base = legacy_50 / std::pow(level_growth, 49.0L);
+
+    // cost(x) = 7/8 * cost_base * growth^(x-1) - 24
+    const long double required =
+        (cost_base * std::pow(level_growth, static_cast<long double>(safe_level - 1))) * (7.0L / 8.0L) - 24.0L;
     const long double max_exp = static_cast<long double>(std::numeric_limits<std::int64_t>::max());
     if (!std::isfinite(static_cast<double>(required)) || required >= max_exp)
         return std::numeric_limits<std::int64_t>::max();
@@ -99,7 +110,7 @@ CFlower::~CFlower()
         RemoveState(state);
 }
 
-CMechaFlower::CMechaFlower(CGameWorld* pworld, sf::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
+CMechaFlower::CMechaFlower(CGameWorld* pworld, florrbt::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
                            const SFlowerStats& base)
     : CFlower(pworld, pos, r, mob_type, rarity, base)
 {
@@ -551,21 +562,9 @@ bool CFlower::CanUnequipPetal(int slot_index) const
 
     if (!slot.m_available || slot.m_banned) return true;
 
-    if (slot.m_p_proto->m_type == EPetalType::Corruption)
-    {
-        if (GetLevel(slot.m_stored_rarity) <= GetLevel(ERarity::Ultra)) return false;
-        return IsDead();
-    }
-
-    if (slot.m_p_proto->m_type == EPetalType::Bandage)
-    {
-        auto undead_states = const_cast<CFlower*>(this)->FindStates<CUndeadState>();
-        for (const auto* undead : undead_states)
-        {
-            if (undead && undead->SourceSlot() == slot_index) return false;
-        }
-    }
-
+    // Bandage undead states and corruption no longer pin their slot: the
+    // player may always swap or unequip them (undead stays applied until it
+    // expires or the flower respawns; corruption keeps draining while on).
     return true;
 }
 
@@ -853,7 +852,7 @@ bool CFlower::HasActivePetal(EPetalType type, ERarity rarity) const
     return false;
 }
 
-CPlayerFlower::CPlayerFlower(CGameWorld* pworld, sf::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
+CPlayerFlower::CPlayerFlower(CGameWorld* pworld, florrbt::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
                              const SFlowerStats& base)
     : CFlower(pworld, pos, r, mob_type, rarity, base)
 {

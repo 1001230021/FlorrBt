@@ -77,6 +77,27 @@ export const clientCommandSpecs = Object.freeze([
     help: "ui.console.help.hitbox",
   },
   {
+    name: "bench",
+    aliases: ["benchmark"],
+    params: "[entities] [frames]",
+    args: "",
+    help: "ui.console.help.bench",
+  },
+  {
+    name: "freeze_log",
+    aliases: ["freezelog"],
+    params: "",
+    args: "",
+    help: "ui.console.help.freeze_log",
+  },
+  {
+    name: "render_scale",
+    aliases: ["renderscale"],
+    params: "[auto|native|0.75-4]",
+    args: "",
+    help: "ui.console.help.render_scale",
+  },
+  {
     name: "colorful_map",
     params: "[0|1|on|off]",
     args: "bool",
@@ -106,6 +127,32 @@ export const clientCommandSpecs = Object.freeze([
     params: "[on|off|auto|toggle]",
     args: "mobile_mode",
     help: "ui.console.help.mobile",
+  },
+  {
+    name: "bind",
+    params: "[keyboard|mouse] <key> <cmd> [+ cmd...]",
+    // Slot 1 may be a device or a key, slot 2 a key or the first command,
+    // everything after that is a command.
+    args: "bind_target bind_key_cmd bind_cmd",
+    help: "ui.console.help.bind",
+  },
+  {
+    name: "unbind",
+    params: "[keyboard|mouse] <key>",
+    args: "bind_target bind_key",
+    help: "ui.console.help.unbind",
+  },
+  {
+    name: "unbindall",
+    params: "[keyboard|mouse]",
+    args: "bind_device",
+    help: "ui.console.help.unbindall",
+  },
+  {
+    name: "reset",
+    params: "<config [name]|bindings|settings|all>",
+    args: "reset_target config",
+    help: "ui.console.help.reset",
   },
 ]);
 

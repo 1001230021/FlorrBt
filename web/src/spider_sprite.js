@@ -1,3 +1,4 @@
+import { drawSpriteImage } from "./sprite_raster_cache.js";
 const SPIDER_ASSET = "./assets/spider.svg";
 const SPIDER_VIEWBOX = 110;
 const SPIDER_CLIP_X = 9.167;
@@ -24,7 +25,7 @@ export function drawSpider(ctx, pos, radius, entityId, angle, motion, time) {
 
   drawSpiderLegs(ctx, cache.legs, spriteSize, entityId || 0, move, time || 0);
   if (isImageReady(cache.body)) {
-    ctx.drawImage(cache.body, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
+    drawSpriteImage(ctx, cache.body, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
   } else {
     drawSpiderFallback(ctx, radius);
   }

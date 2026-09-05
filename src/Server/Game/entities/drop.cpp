@@ -10,7 +10,7 @@
 
 namespace
 {
-float InitialDropMergeTimer(sf::Vector2f pos, int owner_id)
+float InitialDropMergeTimer(florrbt::Vector2f pos, int owner_id)
 {
     const float interval = std::max(game_config::server_fixed_dt, game_config::default_drop_merge_interval);
     if (interval <= 0.f) return 0.f;
@@ -28,7 +28,7 @@ float InitialDropMergeTimer(sf::Vector2f pos, int owner_id)
 
 CDrop::CDrop() : CDrop(nullptr, { 0.f, 0.f }, PetalType::None, ERarity::Null, drop_owner_all, 0.f, 0) {}
 
-CDrop::CDrop(CGameWorld* world, sf::Vector2f pos, PetalType type, ERarity rarity, int owner_id, float lifetime,
+CDrop::CDrop(CGameWorld* world, florrbt::Vector2f pos, PetalType type, ERarity rarity, int owner_id, float lifetime,
              uint16_t stack_num)
     : CEntity(world, pos.x, pos.y, game_config::default_drop_radius,
               MakeDropEntityType(static_cast<std::uint8_t>(type))),
@@ -38,6 +38,18 @@ CDrop::CDrop(CGameWorld* world, sf::Vector2f pos, PetalType type, ERarity rarity
 {
     Health() = 1.f;
     Mass() = game_config::default_drop_mass;
+}
+
+void CDrop::BeginInertiaDrop(florrbt::Vector2f center_start, florrbt::Vector2f center_velocity, float delay)
+{
+    m_inertia_active = true;
+    m_inertia_duration = std::max(0.001f, delay);
+    m_inertia_elapsed = 0.f;
+    m_inertia_target = Pos();
+    m_inertia_center_start = center_start;
+    m_inertia_center_velocity = center_velocity;
+    // Un-pickable the whole window.
+    m_unable_picked_timer = std::max(m_unable_picked_timer, m_inertia_duration);
 }
 
 void CDrop::Tick(float dt)
@@ -51,6 +63,32 @@ void CDrop::Tick(float dt)
     }
 
     if (m_unable_picked_timer > 0.f) m_unable_picked_timer = std::max(0.f, m_unable_picked_timer - dt);
+
+    // Inertia gliding: the center drifts with the inherited velocity while it
+    // decays linearly to zero; the drop lerps from that moving center to its
+    // final spot over the same window.
+    if (m_inertia_active)
+    {
+        m_inertia_elapsed = std::min(m_inertia_duration, m_inertia_elapsed + dt);
+        const float tau = std::max(0.001f, m_inertia_duration);
+        const float t = m_inertia_elapsed / tau; // 0..1
+        const float drift_t = m_inertia_elapsed;
+        // ∫v0(1 - s/τ)ds = v0(t - t²/(2τ))
+        const float drift_x = m_inertia_center_velocity.x * (drift_t - drift_t * drift_t / (2.f * tau));
+        const float drift_y = m_inertia_center_velocity.y * (drift_t - drift_t * drift_t / (2.f * tau));
+        const float center_x = m_inertia_center_start.x + drift_x;
+        const float center_y = m_inertia_center_start.y + drift_y;
+        const float ease = t * t * (3.f - 2.f * t); // smoothstep
+        Pos() = { center_x + (m_inertia_target.x - center_x) * ease,
+                  center_y + (m_inertia_target.y - center_y) * ease };
+        PrevPos() = Pos();
+        if (t >= 1.f)
+        {
+            Pos() = m_inertia_target;
+            PrevPos() = m_inertia_target;
+            m_inertia_active = false;
+        }
+    }
 
     if (m_timer <= 0.f)
     {

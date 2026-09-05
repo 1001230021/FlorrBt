@@ -104,11 +104,17 @@ class CPetal : public CProjectile
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
     const SEntityStats& GetEntityStats() const override { return m_final_petal_stats; }
-    EPetalType GetPetalType() const
+    EPetalType GetPetalType() const { return m_petal_type; }
+    void SetPetalType(EPetalType type)
     {
-        return static_cast<EPetalType>(GetNetworkType() - server_petal_entity_type_offset);
+        m_petal_type = type;
+        // The eou pheromone petal disguises itself as Honey on the wire so
+        // clients render the vanilla sprite without client-side mod support
+        // (same idea as mod mob visual proxies).
+        const EPetalType wire_type =
+            type == ToPetalType(EModPetalType::EouPheromone) ? EPetalType::Honey : type;
+        SetNetworkType(PetalNetworkType(static_cast<std::uint8_t>(wire_type)));
     }
-    void SetPetalType(EPetalType type) { SetNetworkType(PetalNetworkType(static_cast<std::uint8_t>(type))); }
     bool CanCollide() const override { return !m_hidden && CProjectile::CanCollide(); }
     bool CollidesWithWalls() const override;
     bool IsVisible() const override { return !m_hidden && CProjectile::IsVisible(); }
@@ -116,6 +122,7 @@ class CPetal : public CProjectile
     SPetalStats m_base_petal_stats;
     SPetalStats m_final_petal_stats;
     ERarity m_rarity = ERarity::Null;
+    EPetalType m_petal_type = EPetalType::None;
     int m_max_slot_num = 0;
     int m_copy_index = 0;
     int m_slot_index = 0;
@@ -133,6 +140,12 @@ class CPetal : public CProjectile
     float m_growth_base_radius = 0.f;
     std::uint64_t m_growth_stats_revision = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t m_applied_flower_stats_revision = std::numeric_limits<std::uint64_t>::max();
+    // Lightning petal: contact-session hit accumulator. While the petal
+    // touches a target each damage event increments m_chain_hit_count; when
+    // the contact ends the stored chain fires once with damage*count.
+    int m_chain_target_id = -1;
+    std::uint64_t m_chain_target_generation = 0;
+    int m_chain_hit_count = 0;
     std::unordered_map<int, float> m_hit_credits;
 };
 
@@ -163,17 +176,21 @@ class CThrownPetal : public CPetal
     using CPetal::CPetal;
 
     void Tick(float dt) override;
-    void BeginThrow(sf::Vector2f direction, float speed, float deceleration_time, bool destroy_when_stopped,
+    void BeginThrow(florrbt::Vector2f direction, float speed, float deceleration_time, bool destroy_when_stopped,
                     bool tick_from_world, bool decelerates = true);
     void StopThrow(bool destroy);
 
+    // Called once when a throw finishes decelerating to a full stop.
+    virtual void OnThrowStopped() {}
+
     bool m_thrown = false;
+    bool m_throw_was_defend = false;
     bool m_throw_decelerates = true;
     bool m_destroy_when_stopped = false;
     float m_throw_age = 0.f;
     float m_throw_deceleration_time = game_config::default_petal_throw_initial_deceleration;
     float m_throw_initial_speed = 0.f;
-    sf::Vector2f m_throw_direction = { 1.f, 0.f };
+    florrbt::Vector2f m_throw_direction = { 1.f, 0.f };
 };
 
 class CMissilePetal : public CThrownPetal
@@ -188,6 +205,26 @@ class CMissilePetal : public CThrownPetal
     bool m_has_fired_angle = false;
     float m_fired_angle = 0.f;
     float m_fired_lifetime = 0.f;
+};
+
+// Eou pheromone petal: a honey-like petal that collides with nothing. When a
+// throw fully decelerates it reports its position to the bound pheromone
+// group (team + group are stamped on spawn). Disguised as Honey on the wire.
+class CEouPheromonePetal final : public CThrownPetal
+{
+  public:
+    CEouPheromonePetal(float r, CFlower* owner, int slot, SPetalStats petal_stats,
+                       EPetalType type = ToPetalType(EModPetalType::EouPheromone))
+        : CThrownPetal(r, owner, slot, petal_stats, type)
+    {
+    }
+
+    void OnThrowStopped() override;
+    bool CanCollide() const override { return false; }
+    bool CollidesWithWalls() const override { return false; }
+
+    int m_team_id = 0;
+    int m_group_id = 0;
 };
 
 class CTrapperPetal final : public CPetal
@@ -286,7 +323,12 @@ class CYggdrasilPetal : public CPetal
     float m_revive_timer = 0.f;
 };
 
-using CPetalRegistry = TPrototypeRegistry<EPetalType, CPetalPrototype, petal_type_names.size()>;
+// Registry slots cover the natives plus the reserved mod petal range
+// (mod_petal_type.h). Slots from kModPetalTypeBase up are optional at
+// Finalize (mod content plus native Magnet, which sits inside the pinned
+// mod window at id 71 and is still registered unconditionally below).
+using CPetalRegistry = TPrototypeRegistry<EPetalType, CPetalPrototype, static_cast<std::size_t>(kPetalIdCapacity),
+                                          static_cast<std::size_t>(kModPetalTypeBase)>;
 namespace petal_registry_detail
 {
 inline CPetalRegistry& MutableRegistry()
@@ -340,6 +382,18 @@ template <EPetalType Type, class TBehavior, class TPetal = CPetal> bool Register
     CPetalPrototype prototype;
     prototype.m_p_behavior = std::make_unique<TBehavior>();
     return RegisterPetalPrototype<TPetal>(Type, std::move(prototype));
+}
+
+// Registers a controller-specific petal from the mod id space
+// (mod_petal_type.h). Unlike mod mobs these ids are client-visible wire ids,
+// so the manifest pins them forever and the id generator ships them to the
+// client tables.
+template <EModPetalType Type, class TBehavior, class TPetal = CPetal> bool RegisterModPetalDefinition()
+{
+    static_assert(IsModPetalTypeId(static_cast<int>(Type)), "mod petals must live in the reserved mod id range");
+    static_assert(!GetModPetalTypeName(static_cast<int>(Type)).empty(),
+                  "declare the mod petal in the mod_petal_type.h controller manifest first");
+    return RegisterPetalDefinition<ToPetalType(Type), TBehavior, TPetal>();
 }
 
 const CPetalPrototype* FindPetalPrototype(EPetalType type);

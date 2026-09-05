@@ -112,8 +112,8 @@ void ClearLivePetalFromSlot(const CPetalSlot* slot, CPetal* petal, CFlower* flow
 CPetal::CPetal(float r, CFlower* owner, int slot, SPetalStats petal_stats, EPetalType type)
     : CProjectile(owner->Pos().x, owner->Pos().y, r, owner,
                   MakePetalEntityType(static_cast<std::uint8_t>(type))),
-      m_base_petal_stats(petal_stats), m_final_petal_stats(petal_stats), m_max_slot_num(petal_stats.copy),
-      m_slot_index(slot)
+      m_base_petal_stats(petal_stats), m_final_petal_stats(petal_stats), m_petal_type(type),
+      m_max_slot_num(petal_stats.copy), m_slot_index(slot)
 {
     SkipWorldTick() = true;
     Mass() = petal_stats.mass;
@@ -238,7 +238,7 @@ void CMissilePetal::Tick(float dt)
         MarkForDestroy(EEntityRemovalReason::Expired);
 }
 
-void CThrownPetal::BeginThrow(sf::Vector2f direction, float speed, float deceleration_time, bool destroy_when_stopped,
+void CThrownPetal::BeginThrow(florrbt::Vector2f direction, float speed, float deceleration_time, bool destroy_when_stopped,
                               bool tick_from_world, bool decelerates)
 {
     float len = Length(direction);
@@ -285,9 +285,20 @@ void CThrownPetal::Tick(float dt)
     m_throw_age += dt;
     if (m_throw_decelerates && m_throw_age >= m_throw_deceleration_time)
     {
-        m_vel = { 0.f, 0.f };
-        if (m_destroy_when_stopped) Health() = 0.f;
+        if (m_vel.x != 0.f || m_vel.y != 0.f)
+        {
+            m_vel = { 0.f, 0.f };
+            if (m_destroy_when_stopped) Health() = 0.f;
+            OnThrowStopped();
+        }
     }
+}
+
+void CEouPheromonePetal::OnThrowStopped()
+{
+    CGameWorld* world = GameWorld();
+    IGameController* controller = world ? world->GetController() : nullptr;
+    if (controller) controller->OnPheromonePetalStopped(*world, m_team_id, m_group_id, Pos(), m_throw_was_defend);
 }
 
 void CPetalSlot::SpawnCopy(int copy_index, CFlower* flower)

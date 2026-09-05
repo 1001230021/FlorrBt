@@ -55,10 +55,10 @@ class CEntity
 
     // Reference accessors keep both `entity->Pos().x = v` and `entity->Health()`
     // styles uniform across the codebase; all state lives in the private section.
-    sf::Vector2f& Pos() { return m_pos; }
-    const sf::Vector2f& Pos() const { return m_pos; }
-    sf::Vector2f& PrevPos() { return m_prev_pos; }
-    const sf::Vector2f& PrevPos() const { return m_prev_pos; }
+    florrbt::Vector2f& Pos() { return m_pos; }
+    const florrbt::Vector2f& Pos() const { return m_pos; }
+    florrbt::Vector2f& PrevPos() { return m_prev_pos; }
+    const florrbt::Vector2f& PrevPos() const { return m_prev_pos; }
     float& Radius() { return m_radius; }
     const float& Radius() const { return m_radius; }
     bool& SkipWorldTick() { return m_skip_world_tick; }
@@ -136,8 +136,8 @@ class CEntity
     SEntityTypeInfo m_entity_type;
     EEntityRemovalReason m_removal_reason = EEntityRemovalReason::Despawned;
 
-    sf::Vector2f m_pos;
-    sf::Vector2f m_prev_pos;
+    florrbt::Vector2f m_pos;
+    florrbt::Vector2f m_prev_pos;
     float m_radius = 0.f;
 
     bool m_skip_world_tick = false;

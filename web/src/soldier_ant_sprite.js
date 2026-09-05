@@ -1,3 +1,4 @@
+import { drawSpriteImage } from "./sprite_raster_cache.js";
 const SOLDIER_ANT_VIEWBOX_SIZE = 110;
 const SOLDIER_ANT_BODY_RADIUS = 19;
 const SOLDIER_ANT_BASE_FACE_ANGLE = -Math.PI * 0.75;
@@ -70,12 +71,12 @@ export function drawSoldierAnt(
   ctx.rotate(rotation);
 
   if (isImageReady(head)) {
-    ctx.drawImage(head, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
+    drawSpriteImage(ctx, head, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
   }
   drawForelimbs(ctx, spriteSize, animation);
   drawWings(ctx, spriteSize, animation);
   if (isImageReady(abdomen)) {
-    ctx.drawImage(abdomen, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
+    drawSpriteImage(ctx, abdomen, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
   } else {
     drawFallback(ctx, radius, summoned);
   }

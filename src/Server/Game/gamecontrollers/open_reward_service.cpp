@@ -264,12 +264,29 @@ std::vector<lootable_player> FindLootablePlayers(COpenController& controller, CG
     return candidates;
 }
 
-sf::Vector2f DropSpreadOffset(size_t index, size_t count)
+florrbt::Vector2f DropSpreadOffset(size_t index, size_t count)
 {
     if (count <= 1) return { 0.f, 0.f };
     const float angle = 2.f * game_config::pi * static_cast<float>(index) / static_cast<float>(count);
     const float radius = std::max(0.f, game_config::open_drop_spread_radius);
     return { std::cos(angle) * radius, std::sin(angle) * radius };
+}
+
+// Unique mobs: repeated roll of the mob's Super-tier drop table (called
+// `unique_repeat_drop_rolls` times, default 25). Returns all rolled drops
+// concatenated; empty when the Super table is missing.
+std::vector<SDropRate> RollUniqueSuperRepeatDrops(EMobType mob_type)
+{
+    std::vector<SDropRate> result;
+    if (QueryDropRates(mob_type, ERarity::Super).empty()) return result;
+
+    const int rolls = std::max(0, game_config::unique_repeat_drop_rolls);
+    for (int i = 0; i < rolls; ++i)
+    {
+        std::vector<SDropRate> rolled = RollDrops(mob_type, ERarity::Super);
+        result.insert(result.end(), rolled.begin(), rolled.end());
+    }
+    return result;
 }
 } // namespace
 
@@ -299,7 +316,12 @@ void COpenRewardService::OnMobDefeated(COpenController& controller, CGameWorld& 
         return;
     }
 
-    const std::vector<SDropRate>& rates = QueryDropRates(mob.GetMobType(), mob.GetRarity());
+    // Unique mobs drop their "repeat unique" table: N rolls of the mob's
+    // Super-tier drops (config unique_repeat_drop_rolls, default 25).
+    const bool unique_mob = mob.GetRarity() == ERarity::Unique;
+    const std::vector<SDropRate>& rates =
+        unique_mob ? QueryDropRates(mob.GetMobType(), ERarity::Super)
+                   : QueryDropRates(mob.GetMobType(), mob.GetRarity());
     if (rates.empty())
     {
         if (log_loot_issues) LogSuperLootIssue(mob, "No drop table");
@@ -314,7 +336,8 @@ void COpenRewardService::OnMobDefeated(COpenController& controller, CGameWorld& 
             continue;
         }
 
-        std::vector<SDropRate> drops = RollDrops(mob.GetMobType(), mob.GetRarity());
+        std::vector<SDropRate> drops =
+            unique_mob ? RollUniqueSuperRepeatDrops(mob.GetMobType()) : RollDrops(mob.GetMobType(), mob.GetRarity());
         if (drops.empty())
         {
             if (log_loot_issues)
@@ -344,8 +367,13 @@ void COpenRewardService::OnMobDefeated(COpenController& controller, CGameWorld& 
         for (size_t i = 0; i < drops.size(); ++i)
         {
             const SDropRate& drop = drops[i];
+            florrbt::Vector2f velocity = mob.m_vel;
+            if (!std::isfinite(velocity.x) || !std::isfinite(velocity.y)) velocity = { 0.f, 0.f };
             auto entity = std::make_unique<CDrop>(&world, mob.Pos() + DropSpreadOffset(i, drops.size()), drop.type,
                                                   drop.rarity, lootable.player->GetId());
+            // Inertia: the drop glides from the dead mob's position (holding
+            // its velocity, decaying over 0.2s) to the final drop spot.
+            entity->BeginInertiaDrop(mob.Pos(), velocity, game_config::default_drop_inertia_delay);
             world.InsertEntity(std::move(entity));
         }
         if (log_loot_issues && mob.GetMobType() == EMobType::AntHole)

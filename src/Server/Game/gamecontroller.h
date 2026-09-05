@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "../../Shared/talent_type.h"
 #include "controller_params.h"
 #include <SFML/System/Vector2.hpp>
@@ -15,9 +15,11 @@ class CPlayer;
 class CPlayerFlower;
 class IGameWorldResolver;
 enum class EEntityRemovalReason : std::uint8_t;
+enum class EPetalType : int;
 struct STalentContext;
 class CSnapshotReader;
 class CSnapshotWriter;
+class CEouSlotProxy;
 
 enum class EPlayerSpawnReason : std::uint8_t
 {
@@ -32,7 +34,7 @@ class IGameController
     virtual void OnActivate(CGameWorld&) {}
     virtual void OnDeactivate(CGameWorld&) {}
     virtual void OnTick(CGameWorld& world, float dt) = 0;
-    virtual std::optional<sf::Vector2f> SelectPlayerSpawn(CGameWorld&, CPlayer&, EPlayerSpawnReason)
+    virtual std::optional<florrbt::Vector2f> SelectPlayerSpawn(CGameWorld&, CPlayer&, EPlayerSpawnReason)
     {
         return std::nullopt;
     }
@@ -58,6 +60,11 @@ class IGameController
     // Worlds where the player flower's petal loadout is locked: equip and
     // unequip requests from players are rejected outright.
     virtual bool LocksPetalLoadout() const { return false; }
+    // Fine-grained loadout rules applied after LocksPetalLoadout(): whether a
+    // player may equip the given petal type into a slot, and whether the petal
+    // currently in a slot may be unequipped back into the backpack.
+    virtual bool CanEquipPetalType(EPetalType type) const { return true; }
+    virtual bool CanUnequipPetalType(EPetalType type) const { return true; }
     // Construction-time parameters declared by this controller type; the
     // waiting room exposes them through /setting before the game world is
     // created. Values are validated (审查函数) and stored as overrides.
@@ -78,6 +85,21 @@ class IGameController
         (void)player;
         (void)args;
         return false;
+    }
+    // Slot proxy (eou-style worlds): logical skill slots disguised as vanilla
+    // petal slots on the wire. The snapshot service fills locked/empty player
+    // slots from this when non-null.
+    virtual const CEouSlotProxy* SlotProxy() const { return nullptr; }
+    // A pheromone petal finished its throw and reports its resting position;
+    // eou controllers forward it to the bound pheromone group as its new
+    // target (attack throw) or toggle the cells beneath it (defend throw).
+    // Default ignores the report.
+    virtual void OnPheromonePetalStopped(CGameWorld&, int team_id, int group_id, florrbt::Vector2f pos, bool defend)
+    {
+        (void)team_id;
+        (void)group_id;
+        (void)pos;
+        (void)defend;
     }
     // Post-collection snapshot cull: CSnapshotService::BuildSnapshot gathers
     // the candidates inside the player's view radius exactly as usual, then

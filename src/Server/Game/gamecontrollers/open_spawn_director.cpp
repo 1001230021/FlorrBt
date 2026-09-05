@@ -10,6 +10,7 @@
 #include "../gameworld.h"
 #include "../player.h"
 #include "../zone_mob_tools.h"
+#include "../../server.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -17,6 +18,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -26,7 +28,7 @@ constexpr std::string_view new_player_checkpoint_name = "new_players";
 
 struct SZoneBounds
 {
-    sf::Vector2f center = { 0.f, 0.f };
+    florrbt::Vector2f center = { 0.f, 0.f };
     float radius = 0.f;
     float min_x = 0.f;
     float min_y = 0.f;
@@ -50,7 +52,7 @@ struct SSingleSpawnZoneMob
 
 struct SPendingSpawn
 {
-    sf::Vector2f pos = { 0.f, 0.f };
+    florrbt::Vector2f pos = { 0.f, 0.f };
     float radius = 0.f;
 };
 
@@ -64,17 +66,35 @@ struct SSpawnZoneWork
     int current_mobs = 0;
     int population_limit = 0;
     bool single_spawn = false;
+    bool rare_only = false;
     const std::vector<SZoneMobEntry>* mob_entries = nullptr;
     float difficulty = 0.f;
 };
 
 struct SSpawnScratch
 {
-    std::vector<sf::Vector2f> player_positions;
+    std::vector<florrbt::Vector2f> player_positions;
     std::vector<size_t> active_zone_indices;
+    std::vector<size_t> rare_zone_indices;
     std::vector<SSpawnZoneWork> zone_work;
+    std::vector<SSpawnZoneWork> rare_zone_work;
     std::vector<SPendingSpawn> pending_spawns;
+    std::unordered_set<int> natural_rare_types;
 };
+
+// All open-world directors run on the same server thread. Cache the expensive
+// cross-world occupancy scan for one server tick, then extend the cache as a
+// director inserts a natural rare mob. Without this, N open-world instances
+// each scan all N worlds on the same tick.
+struct SNaturalRareTypeCache
+{
+    CServer* server = nullptr;
+    std::uint64_t tick = 0;
+    bool valid = false;
+    std::unordered_set<int> types;
+};
+
+SNaturalRareTypeCache g_natural_rare_type_cache;
 
 SZoneBounds BuildZoneBounds(const FlorrBtMap::Zone& zone)
 {
@@ -131,7 +151,71 @@ bool CountsForZoneDensity(const CMobBase* mob)
     return true;
 }
 
-bool PointInZoneBounds(const SZoneBounds& bounds, const sf::Vector2f& point)
+bool IsNaturalRareRarity(ERarity rarity)
+{
+    return rarity == ERarity::Eternal || rarity == ERarity::Unique;
+}
+
+// Collect the server-wide natural ET/Unique occupancy once per spawn pass.
+// This avoids scanning every world for every rarity roll and keeps the
+// uniqueness rule separate from console/summoned/precise spawn paths.
+void CollectNaturalRareMobTypes(CGameWorld& source_world, std::unordered_set<int>& result)
+{
+    result.clear();
+    CServer* server = CServer::GetInstance();
+    if (server)
+    {
+        const std::uint64_t tick = server->GetTick();
+        if (g_natural_rare_type_cache.valid && g_natural_rare_type_cache.server == server &&
+            g_natural_rare_type_cache.tick == tick)
+        {
+            result = g_natural_rare_type_cache.types;
+            return;
+        }
+
+        g_natural_rare_type_cache.server = server;
+        g_natural_rare_type_cache.tick = tick;
+        g_natural_rare_type_cache.valid = true;
+        g_natural_rare_type_cache.types.clear();
+    }
+
+    auto collect_world = [&result](CGameWorld* world) {
+        if (!world) return;
+        world->ForEachEntity([&](CEntity* entity) {
+            if (!entity || entity->IsMarkedForDes()) return;
+            const auto* mob = dynamic_cast<const CMobBase*>(entity);
+            if (!mob || mob->IsDead() || !mob->IsNaturallySpawned()) return;
+            if (IsNaturalRareRarity(mob->GetRarity()))
+                result.insert(static_cast<int>(mob->GetMobType()));
+        });
+    };
+
+    if (server)
+    {
+        for (CGameWorld* world : server->GetWorlds())
+            collect_world(world);
+    }
+    else
+    {
+        collect_world(&source_world);
+    }
+
+    if (server) g_natural_rare_type_cache.types = result;
+}
+
+void RememberNaturalRareMobType(const CMobBase& mob, std::unordered_set<int>& result)
+{
+    if (!IsNaturalRareRarity(mob.GetRarity())) return;
+
+    const int type = static_cast<int>(mob.GetMobType());
+    result.insert(type);
+    CServer* server = CServer::GetInstance();
+    if (server && g_natural_rare_type_cache.valid && g_natural_rare_type_cache.server == server &&
+        g_natural_rare_type_cache.tick == server->GetTick())
+        g_natural_rare_type_cache.types.insert(type);
+}
+
+bool PointInZoneBounds(const SZoneBounds& bounds, const florrbt::Vector2f& point)
 {
     return point.x >= bounds.min_x && point.x <= bounds.max_x && point.y >= bounds.min_y && point.y <= bounds.max_y;
 }
@@ -161,7 +245,7 @@ float SpawnRadiusFor(const CMobPrototype& proto, ERarity rarity)
     return std::max(0.f, proto.BuildFlowerStats(rarity).radius);
 }
 
-bool IsFarFromPendingSpawns(const sf::Vector2f& pos, float spawn_radius,
+bool IsFarFromPendingSpawns(const florrbt::Vector2f& pos, float spawn_radius,
                             const std::vector<SPendingSpawn>& pending_spawns)
 {
     for (const SPendingSpawn& pending : pending_spawns)
@@ -172,7 +256,7 @@ bool IsFarFromPendingSpawns(const sf::Vector2f& pos, float spawn_radius,
     return true;
 }
 
-bool CanSpawnAt(CGameWorld& world, const sf::Vector2f& pos, float spawn_radius, int nearby_mob_limit)
+bool CanSpawnAt(CGameWorld& world, const florrbt::Vector2f& pos, float spawn_radius, int nearby_mob_limit)
 {
     if (nearby_mob_limit <= 0 || world.CircleBlockedByWall(pos, spawn_radius)) return false;
 
@@ -204,7 +288,7 @@ bool CanSpawnAt(CGameWorld& world, const sf::Vector2f& pos, float spawn_radius, 
     return !too_close_to_mob;
 }
 
-void CollectPlayerFlowerPositions(CGameWorld& world, std::vector<sf::Vector2f>& positions)
+void CollectPlayerFlowerPositions(CGameWorld& world, std::vector<florrbt::Vector2f>& positions)
 {
     positions.clear();
     const CGameContext* context = world.GameContext();
@@ -270,7 +354,8 @@ struct COpenSpawnDirector::CImplementation
 
         constexpr ERarity naturally_spawned_rarities[] = {
             ERarity::Common, ERarity::Unusual, ERarity::Rare,  ERarity::Epic,    ERarity::Legendary,
-            ERarity::Mythic, ERarity::Ultra,   ERarity::Super, ERarity::Eternal, ERarity::Primordial,
+            ERarity::Mythic, ERarity::Ultra,   ERarity::Super, ERarity::Eternal, ERarity::Unique,
+            ERarity::Primordial,
         };
 
         if (difficulty <= 0) return ERarity::Common;
@@ -313,21 +398,21 @@ struct COpenSpawnDirector::CImplementation
         return weights.back().rarity;
     }
 
-    bool RandomPointInZone(const FlorrBtMap::Zone& zone, const SZoneBounds& bounds, sf::Vector2f& out_pos)
+    bool RandomPointInZone(const FlorrBtMap::Zone& zone, const SZoneBounds& bounds, florrbt::Vector2f& out_pos)
     {
         if (zone.vertices.empty()) return false;
         if (bounds.min_x >= bounds.max_x || bounds.min_y >= bounds.max_y) return false;
 
         std::uniform_real_distribution<float> random_x(bounds.min_x, bounds.max_x);
         std::uniform_real_distribution<float> random_y(bounds.min_y, bounds.max_y);
-        sf::Vector2f candidate = { random_x(rng), random_y(rng) };
+        florrbt::Vector2f candidate = { random_x(rng), random_y(rng) };
         if (!IsPointInZone(zone, candidate)) return false;
         out_pos = candidate;
         return true;
     }
 
     bool RandomPointInCheckpoint(const CGameWorld& world, const FlorrBtMap::Checkpoint& checkpoint,
-                                 sf::Vector2f& out_pos)
+                                 florrbt::Vector2f& out_pos)
     {
         if (checkpoint.w <= 0.f || checkpoint.h <= 0.f) return false;
         std::uniform_real_distribution<float> random_x(0.f, checkpoint.w);
@@ -336,7 +421,7 @@ struct COpenSpawnDirector::CImplementation
         for (int attempt = 0; attempt < attempts; ++attempt)
         {
             const FlorrBtMap::Point point = CheckpointLocalToWorldPoint(checkpoint, random_x(rng), random_y(rng));
-            sf::Vector2f candidate = { point.x, point.y };
+            florrbt::Vector2f candidate = { point.x, point.y };
             if (world.CircleBlockedByWall(candidate, game_config::mob_player_flower_radius)) continue;
             out_pos = candidate;
             return true;
@@ -344,7 +429,7 @@ struct COpenSpawnDirector::CImplementation
         return false;
     }
 
-    sf::Vector2f PickNewPlayerSpawnPosition(CGameWorld& world)
+    florrbt::Vector2f PickNewPlayerSpawnPosition(CGameWorld& world)
     {
         const FlorrBtMap* map = world.GetMap();
         if (map)
@@ -360,7 +445,7 @@ struct COpenSpawnDirector::CImplementation
             if (!candidates.empty())
             {
                 std::uniform_int_distribution<size_t> dist(0, candidates.size() - 1);
-                sf::Vector2f pos;
+                florrbt::Vector2f pos;
                 if (RandomPointInCheckpoint(world, *candidates[dist(rng)], pos)) return pos;
             }
         }
@@ -368,7 +453,7 @@ struct COpenSpawnDirector::CImplementation
         return { game_config::player_respawn_x, game_config::player_respawn_y };
     }
 
-    sf::Vector2f PickReturningPlayerSpawnPosition(CGameWorld& world)
+    florrbt::Vector2f PickReturningPlayerSpawnPosition(CGameWorld& world)
     {
         const FlorrBtMap* map = world.GetMap();
         if (map)
@@ -384,7 +469,7 @@ struct COpenSpawnDirector::CImplementation
             if (!candidates.empty())
             {
                 std::uniform_int_distribution<size_t> dist(0, candidates.size() - 1);
-                sf::Vector2f pos;
+                florrbt::Vector2f pos;
                 if (RandomPointInCheckpoint(world, *candidates[dist(rng)], pos)) return pos;
             }
         }
@@ -439,7 +524,7 @@ struct COpenSpawnDirector::CImplementation
     }
 
     bool RandomPointNearActivePlayerInZone(const FlorrBtMap::Zone& zone, const SZoneBounds& bounds,
-                                           const std::vector<sf::Vector2f>& player_positions, sf::Vector2f& out_pos)
+                                           const std::vector<florrbt::Vector2f>& player_positions, florrbt::Vector2f& out_pos)
     {
         if (player_positions.empty()) return false;
 
@@ -453,12 +538,12 @@ struct COpenSpawnDirector::CImplementation
         std::uniform_real_distribution<float> angle(0.f, 2.f * game_config::pi);
         std::uniform_real_distribution<float> unit(0.f, 1.f);
 
-        const sf::Vector2f& player_pos = player_positions[player_index(rng)];
+        const florrbt::Vector2f& player_pos = player_positions[player_index(rng)];
         if (DistanceSq(player_pos, bounds.center) > interest_radius_sq) return false;
 
         const float distance = std::sqrt(unit(rng)) * spawn_radius;
         const float direction = angle(rng);
-        const sf::Vector2f candidate = player_pos + sf::Vector2f{ std::cos(direction), std::sin(direction) } * distance;
+        const florrbt::Vector2f candidate = player_pos + florrbt::Vector2f{ std::cos(direction), std::sin(direction) } * distance;
         if (!IsPointInZone(zone, candidate)) return false;
 
         out_pos = candidate;
@@ -475,14 +560,14 @@ struct COpenSpawnDirector::CImplementation
     ESpawnPositionStatus PickSpawnPosition(CGameWorld& world, const FlorrBtMap::Zone& zone, const SZoneBounds& bounds,
                                             float spawn_radius, int nearby_mob_limit,
                                             const std::vector<SPendingSpawn>& pending_spawns,
-                                            const std::vector<sf::Vector2f>& player_positions, sf::Vector2f& out_pos)
+                                            const std::vector<florrbt::Vector2f>& player_positions, florrbt::Vector2f& out_pos)
     {
         bool found_zone_position = false;
         const int near_player_attempts =
             player_positions.empty() ? 0 : std::max(0, game_config::open_active_spawn_near_player_attempts);
         for (int attempt = 0; attempt < near_player_attempts; ++attempt)
         {
-            sf::Vector2f candidate;
+            florrbt::Vector2f candidate;
             if (!RandomPointNearActivePlayerInZone(zone, bounds, player_positions, candidate)) continue;
             found_zone_position = true;
 
@@ -496,7 +581,7 @@ struct COpenSpawnDirector::CImplementation
         const int attempts = std::max(1, game_config::open_spawn_position_attempts);
         for (int attempt = 0; attempt < attempts; ++attempt)
         {
-            sf::Vector2f candidate;
+            florrbt::Vector2f candidate;
             if (!RandomPointInZone(zone, bounds, candidate)) continue;
             found_zone_position = true;
 
@@ -510,14 +595,14 @@ struct COpenSpawnDirector::CImplementation
         return found_zone_position ? ESpawnPositionStatus::Blocked : ESpawnPositionStatus::NoPosition;
     }
 
-    bool ZoneIsNearPlayer(const SZoneBounds& bounds, const std::vector<sf::Vector2f>& player_positions) const
+    bool ZoneIsNearPlayer(const SZoneBounds& bounds, const std::vector<florrbt::Vector2f>& player_positions) const
     {
         if (player_positions.empty()) return false;
 
         const float interest_radius =
             bounds.radius + std::max(game_config::simulation_active_view_radius_cap, game_config::default_horizon);
         const float interest_radius_sq = interest_radius * interest_radius;
-        for (const sf::Vector2f& player_pos : player_positions)
+        for (const florrbt::Vector2f& player_pos : player_positions)
         {
             if (DistanceSq(player_pos, bounds.center) <= interest_radius_sq) return true;
         }
@@ -563,12 +648,17 @@ struct COpenSpawnDirector::CImplementation
         EnsureZoneCache(world, *map);
         auto& player_positions = scratch.player_positions;
         auto& active_zone_indices = scratch.active_zone_indices;
+        auto& rare_zone_indices = scratch.rare_zone_indices;
         auto& zone_work = scratch.zone_work;
+        auto& rare_zone_work = scratch.rare_zone_work;
         auto& pending_spawns = scratch.pending_spawns;
         CollectPlayerFlowerPositions(world, player_positions);
         active_zone_indices.clear();
+        rare_zone_indices.clear();
         zone_work.clear();
+        rare_zone_work.clear();
         pending_spawns.clear();
+        CollectNaturalRareMobTypes(world, scratch.natural_rare_types);
 
         const bool has_players = !player_positions.empty();
         const size_t zone_count = map->zones.size();
@@ -580,29 +670,25 @@ struct COpenSpawnDirector::CImplementation
         // Filling map-wide density targets here would therefore create permanent entities without serving a player.
         if (!has_players) return;
 
-        const size_t idle_zones_per_tick =
-            static_cast<size_t>(std::max(1, game_config::open_idle_spawn_zones_per_tick));
-        if (has_players)
+        active_zone_indices.reserve(zone_count);
+        rare_zone_indices.reserve(zone_count);
+        for (size_t zone_index = 0; zone_index < zone_count; ++zone_index)
         {
-            active_zone_indices.reserve(zone_count);
-            for (size_t zone_index = 0; zone_index < zone_count; ++zone_index)
-            {
-                if (ZoneIsNearPlayer(zones[zone_index].bounds, player_positions))
-                    active_zone_indices.push_back(zone_index);
-            }
+            if (ZoneIsNearPlayer(zones[zone_index].bounds, player_positions))
+                active_zone_indices.push_back(zone_index);
+            else if (has_players && map->zones[zone_index].difficulty >= game_config::open_rare_spawn_min_difficulty)
+                rare_zone_indices.push_back(zone_index);
         }
 
         const size_t zones_to_visit = has_players
                                           ? std::min(active_zone_indices.size(),
                                                      std::max<size_t>(1, game_config::open_active_spawn_zones_per_tick))
-                                          : std::min(zone_count, idle_zones_per_tick);
+                                          : 0;
 
         zone_work.reserve(zones_to_visit);
         for (size_t visit_index = 0; visit_index < zones_to_visit; ++visit_index)
         {
-            const size_t zone_index =
-                has_players ? active_zone_indices[(spawn_zone_cursor + visit_index) % active_zone_indices.size()]
-                            : (idle_spawn_zone_cursor + visit_index) % zone_count;
+            const size_t zone_index = active_zone_indices[(spawn_zone_cursor + visit_index) % active_zone_indices.size()];
             const FlorrBtMap::Zone& zone = map->zones[zone_index];
             const SZoneCache& cached_zone = zones[zone_index];
             const bool single_spawn_zone = IsSingleSpawnZone(zone);
@@ -623,7 +709,7 @@ struct COpenSpawnDirector::CImplementation
             const int population_limit = ZonePopulationLimit(zone);
             if (population_limit <= 0) continue;
             zone_work.push_back({ zone_index, &zone, cached_zone.bounds, target_mobs, nearby_mob_limit, 0,
-                                  population_limit, single_spawn_zone, mob_entries, difficulty });
+                                  population_limit, single_spawn_zone, false, mob_entries, difficulty });
         }
         CountMobsInSpawnZones(world, zone_work);
 
@@ -655,11 +741,14 @@ struct COpenSpawnDirector::CImplementation
                 if (mob_type == EMobType::None) continue;
 
                 ERarity rarity = PickRarityForDifficulty(work.difficulty);
+                if (IsNaturalRareRarity(rarity) &&
+                    scratch.natural_rare_types.contains(static_cast<int>(mob_type)))
+                    continue;
                 const CMobPrototype* proto = FindMobPrototype(mob_type);
                 if (!proto) continue;
 
                 const float spawn_radius = SpawnRadiusFor(*proto, rarity);
-                sf::Vector2f pos;
+                florrbt::Vector2f pos;
                 switch (PickSpawnPosition(world, zone, zones[zone_index].bounds, spawn_radius,
                                           work.nearby_mob_limit, pending_spawns, player_positions, pos))
                 {
@@ -671,13 +760,22 @@ struct COpenSpawnDirector::CImplementation
                     continue;
                 }
 
-                auto mob = CreateMob(mob_type, &world, pos, rarity);
+                auto mob = CreateMob(mob_type, &world, pos, rarity, true, true);
                 if (!mob) continue;
+
+                // A prototype rarity resolver may alter the final tier.
+                if (IsNaturalRareRarity(mob->GetRarity()) &&
+                    scratch.natural_rare_types.contains(static_cast<int>(mob->GetMobType())))
+                    continue;
 
                 CMobBase* raw_mob = dynamic_cast<CMobBase*>(world.InsertEntity(std::move(mob)));
                 if (!raw_mob) continue;
 
                 if (single_spawn_zone) RememberSingleSpawnZoneMob(zone_index, raw_mob);
+                // Reserve the type before the callback can perform any
+                // secondary work, so one natural ET/Unique cannot open a
+                // duplicate window within this tick.
+                RememberNaturalRareMobType(*raw_mob, scratch.natural_rare_types);
                 if (on_spawn) on_spawn(world, *raw_mob);
                 pending_spawns.push_back({ pos, spawn_radius });
                 for (SSpawnZoneWork& counted_work : zone_work)
@@ -691,14 +789,81 @@ struct COpenSpawnDirector::CImplementation
             }
         }
 
-        if (has_players && !active_zone_indices.empty())
+        // Only the rare path is allowed to sample an inactive advanced zone.
+        // It is intentionally bounded: this removes the proximity gate for ET
+        // and Unique without waking/populating every idle zone on the server.
+        const size_t rare_zones_to_visit =
+            std::min(rare_zone_indices.size(), std::max<size_t>(1, game_config::open_rare_spawn_zones_per_tick));
+        rare_zone_work.reserve(rare_zones_to_visit);
+        for (size_t visit_index = 0; visit_index < rare_zones_to_visit; ++visit_index)
+        {
+            const size_t zone_index = rare_zone_indices[(rare_spawn_zone_cursor + visit_index) % rare_zone_indices.size()];
+            const FlorrBtMap::Zone& zone = map->zones[zone_index];
+            if (IsSingleSpawnZone(zone)) continue;
+            const SZoneCache& cached_zone = zones[zone_index];
+            const SResolvedSpawnProfile* resolved =
+                cached_zone.spawn_profile.empty() ? nullptr : spawn_rules.Resolve(cached_zone.spawn_profile, environment);
+            const float effective_density_multiplier =
+                density_multiplier * (resolved ? resolved->density_multiplier : 1.f);
+            const std::vector<SZoneMobEntry>* mob_entries =
+                resolved ? &resolved->mob_entries : &cached_zone.mob_entries;
+            const int nearby_mob_limit = NearbyMobLimit(zone, effective_density_multiplier);
+            const int population_limit = ZonePopulationLimit(zone);
+            if (mob_entries->empty() || nearby_mob_limit <= 0 || population_limit <= 0) continue;
+
+            const float difficulty = zone.difficulty + (resolved ? resolved->difficulty_offset : 0.f);
+            rare_zone_work.push_back({ zone_index, &zone, cached_zone.bounds, 1, nearby_mob_limit, 0,
+                                       population_limit, false, true, mob_entries, difficulty });
+        }
+        CountMobsInSpawnZones(world, rare_zone_work);
+        for (SSpawnZoneWork& work : rare_zone_work)
+        {
+            if (work.current_mobs >= work.population_limit) continue;
+            const size_t zone_index = work.zone_index;
+            const FlorrBtMap::Zone& zone = *work.zone;
+            const std::vector<SZoneMobEntry>& mob_entries = *work.mob_entries;
+            const int rolls = std::max(1, game_config::open_rare_spawn_rolls_per_zone_tick);
+            for (int roll = 0; roll < rolls; ++roll)
+            {
+                const EMobType mob_type = PickZoneMobType(mob_entries, rng);
+                if (mob_type == EMobType::None) continue;
+                const ERarity rarity = PickRarityForDifficulty(work.difficulty);
+                if (!IsNaturalRareRarity(rarity) ||
+                    scratch.natural_rare_types.contains(static_cast<int>(mob_type)))
+                    continue;
+
+                const CMobPrototype* proto = FindMobPrototype(mob_type);
+                if (!proto) continue;
+                const float spawn_radius = SpawnRadiusFor(*proto, rarity);
+                florrbt::Vector2f pos;
+                if (PickSpawnPosition(world, zone, work.bounds, spawn_radius, work.nearby_mob_limit, pending_spawns,
+                                      player_positions, pos) != ESpawnPositionStatus::Found)
+                    continue;
+
+                auto mob = CreateMob(mob_type, &world, pos, rarity, true, true);
+                if (!mob || !IsNaturalRareRarity(mob->GetRarity()) ||
+                    scratch.natural_rare_types.contains(static_cast<int>(mob->GetMobType())))
+                    continue;
+
+                CMobBase* raw_mob = dynamic_cast<CMobBase*>(world.InsertEntity(std::move(mob)));
+                if (!raw_mob) continue;
+                RememberNaturalRareMobType(*raw_mob, scratch.natural_rare_types);
+                if (on_spawn) on_spawn(world, *raw_mob);
+                pending_spawns.push_back({ pos, spawn_radius });
+                ++work.current_mobs;
+                break;
+            }
+        }
+
+        if (!active_zone_indices.empty())
             spawn_zone_cursor = (spawn_zone_cursor + zones_to_visit) % active_zone_indices.size();
-        else if (!has_players) idle_spawn_zone_cursor = (idle_spawn_zone_cursor + zones_to_visit) % zone_count;
+        if (!rare_zone_indices.empty())
+            rare_spawn_zone_cursor = (rare_spawn_zone_cursor + rare_zones_to_visit) % rare_zone_indices.size();
     }
 
     float count = game_config::open_initial_spawn_delay;
     size_t spawn_zone_cursor = 0;
-    size_t idle_spawn_zone_cursor = 0;
+    size_t rare_spawn_zone_cursor = 0;
     std::mt19937 rng;
     std::vector<SSingleSpawnZoneMob> single_spawn_zone_mobs;
     std::vector<SZoneCache> zones;
@@ -733,7 +898,7 @@ void COpenSpawnDirector::SpawnMobs(CGameWorld& world, float density_multiplier, 
     m_impl->SpawnMobs(world, density_multiplier, on_spawn, environment);
 }
 
-std::optional<sf::Vector2f> COpenSpawnDirector::SelectPlayerSpawn(CGameWorld& world, bool use_new_player_spawn,
+std::optional<florrbt::Vector2f> COpenSpawnDirector::SelectPlayerSpawn(CGameWorld& world, bool use_new_player_spawn,
                                                                   EPlayerSpawnReason reason)
 {
     if (reason != EPlayerSpawnReason::Login) return std::nullopt;
@@ -747,7 +912,7 @@ void COpenSpawnDirector::CaptureSnapshot(CSnapshotWriter& writer) const
 {
     writer.Field("spawn_countdown", m_impl->count);
     writer.UInt64("spawn_zone_cursor", static_cast<std::uint64_t>(m_impl->spawn_zone_cursor));
-    writer.UInt64("idle_spawn_zone_cursor", static_cast<std::uint64_t>(m_impl->idle_spawn_zone_cursor));
+    writer.UInt64("rare_spawn_zone_cursor", static_cast<std::uint64_t>(m_impl->rare_spawn_zone_cursor));
     std::ostringstream rng_state;
     rng_state << m_impl->rng;
     writer.Field("spawn_rng", rng_state.str());
@@ -768,7 +933,10 @@ bool COpenSpawnDirector::RestoreSnapshot(const CSnapshotReader& reader, std::str
 {
     m_impl->count = reader.Float("spawn_countdown", game_config::open_initial_spawn_delay);
     m_impl->spawn_zone_cursor = static_cast<size_t>(reader.UInt64("spawn_zone_cursor"));
-    m_impl->idle_spawn_zone_cursor = static_cast<size_t>(reader.UInt64("idle_spawn_zone_cursor"));
+    // Accept snapshots written before the inactive rare-zone cursor was
+    // introduced; the old cursor has no semantic state to preserve.
+    m_impl->rare_spawn_zone_cursor = static_cast<size_t>(reader.UInt64(
+        "rare_spawn_zone_cursor", reader.UInt64("idle_spawn_zone_cursor")));
     if (const std::string rng_state = reader.String("spawn_rng"); !rng_state.empty())
     {
         std::istringstream input(rng_state);

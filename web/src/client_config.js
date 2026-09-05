@@ -1,4 +1,4 @@
-const clientConfigEntries = new Map();
+﻿const clientConfigEntries = new Map();
 const clientConfigAliases = new Map();
 
 registerClientConfig("dande_missile_scale", {
@@ -19,6 +19,24 @@ registerClientConfig("dande_missile_angle", {
     "dande_missile_angle_offset",
     "dandelion_missile_angle",
   ],
+});
+
+registerClientConfig("petal_label_max_font_px", {
+  prop: "petalLabelMaxFontPx",
+  defaultValue: 14,
+  min: 6,
+  max: 64,
+  aliases: ["petal_label_font", "petal_label_max_font"],
+});
+
+registerClientConfig("petal_label_max_width_px", {
+  prop: "petalLabelMaxWidthPx",
+  // Hard cap on the rendered petal-card name width: when a localized name
+  // would exceed this, the font shrinks until the text fits.
+  defaultValue: 45,
+  min: 16,
+  max: 300,
+  aliases: ["petal_label_width", "petal_label_max_width"],
 });
 
 registerClientConfig("dande_missile_offset", {
@@ -200,7 +218,6 @@ export const clientRuntimeConfig = Object.freeze({
   hurtFlashDuration: 0.14,
   hurtFlashInterval: 0.25,
   hurtFlashMinDelta: 0.002,
-  hurtFlashFilterEntityLimit: 32,
   missingEntityViewEdgeGrace: 48,
   mouseMoveDeadzonePx: 16,
   entityFrameMinScreenRadius: 8,
@@ -246,7 +263,7 @@ export const clientRuntimeConfig = Object.freeze({
   ownerRenderSnapBaseDistance: 120,
   serverFixedDt: 0.05,
   ownerBaseMaxVelocity: 150 * 1.25,
-  ownerBaseAcceleration: 300 * 1.25,
+  ownerBaseAcceleration: 900 * 1.25,
   ownerDiggingSpeedMultiplier: 0.5,
   ownerStopDampingPerTick: 0.9,
   ownerStopVelocityEpsilon: 0.00001,

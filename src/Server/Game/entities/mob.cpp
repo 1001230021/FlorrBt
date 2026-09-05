@@ -89,9 +89,9 @@ void CMobBase::UnregisterMovementTargetState(CState* state)
         m_movement_target_states.end());
 }
 
-sf::Vector2f CMobBase::ApplyMovementTargetStates(const sf::Vector2f& target_pos) const
+florrbt::Vector2f CMobBase::ApplyMovementTargetStates(const florrbt::Vector2f& target_pos) const
 {
-    sf::Vector2f result = target_pos;
+    florrbt::Vector2f result = target_pos;
     for (const CState* state : m_movement_target_states)
         if (state) result = state->ModifyMovementTarget(*this, result);
     return result;
@@ -184,11 +184,11 @@ void CMobBase::ApplyDamageDirect(float dmg, CEntity* attacker)
     }
 }
 
-void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
+void CMobBase::MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius)
 {
     const SMobStats* stats = GetFinalStats();
     if (!stats) return;
-    const sf::Vector2f effective_target_pos = ApplyMovementTargetStates(target_pos);
+    const florrbt::Vector2f effective_target_pos = ApplyMovementTargetStates(target_pos);
 
     float speed_multiplier = GetPincerSpeedMultiplier(this) * game_config::mob_velocity_multiplier;
     if (HasState<CDiggingState>()) speed_multiplier *= game_config::mob_digging_speed_multiplier;
@@ -205,9 +205,10 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
         m_vel *= next_speed / current_speed;
     }
 
-    sf::Vector2f delta = effective_target_pos - Pos();
+    florrbt::Vector2f delta = effective_target_pos - Pos();
     float len = Length(delta);
-    if (len <= Radius())
+    const float stop_distance = Radius() + std::max(0.f, target_radius);
+    if (len <= stop_distance)
     {
         m_vel *= game_config::mob_stop_damping;
         if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = { 0.f, 0.f };
@@ -234,7 +235,7 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
             FacingAngle() += angle_delta;
         }
 
-        sf::Vector2f forward(std::cos(FacingAngle()), std::sin(FacingAngle()));
+        florrbt::Vector2f forward(std::cos(FacingAngle()), std::sin(FacingAngle()));
         float speed = Length(m_vel);
         speed = std::min(max_velocity, speed + acceleration * dt);
         m_vel = forward * speed;
@@ -247,8 +248,8 @@ void CMobBase::MoveTowards(const sf::Vector2f& target_pos, float dt)
         HasFacing() = true;
     }
 
-    sf::Vector2f desired_vel = delta / len * max_velocity;
-    sf::Vector2f diff = desired_vel - m_vel;
+    florrbt::Vector2f desired_vel = delta / len * max_velocity;
+    florrbt::Vector2f diff = desired_vel - m_vel;
     float diff_len = Length(diff);
     float max_accel = acceleration * dt;
 
@@ -284,12 +285,14 @@ const CMobPrototype* FindMobPrototype(EMobType type)
     return MobRegistry().Find(type);
 }
 
-std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, sf::Vector2f pos, ERarity rarity,
-                                    bool resolve_special_rarity)
+std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, florrbt::Vector2f pos, ERarity rarity,
+                                    bool resolve_special_rarity, bool naturally_spawned)
 {
     const CMobPrototype* prototype = FindMobPrototype(type);
     if (!prototype || !prototype->m_factory) return nullptr;
     if (resolve_special_rarity && world && prototype->m_rarity_resolver)
         rarity = prototype->m_rarity_resolver(*world, pos, rarity);
-    return prototype->m_factory(world, pos, rarity);
+    std::unique_ptr<CMobBase> mob = prototype->m_factory(world, pos, rarity);
+    if (mob) mob->SetNaturallySpawned(naturally_spawned);
+    return mob;
 }

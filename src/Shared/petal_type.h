@@ -1,9 +1,13 @@
 #pragma once
 #include "entity_type.h"
+#include "mod_petal_type.h"
 #include <array>
 #include <cstdint>
 #include <string_view>
 
+// Native (vanilla / open-world) petals ONLY. Controller-specific petals live
+// in mod_petal_type.h (EModPetalType) and register through
+// RegisterModPetalDefinition; keep this enum free of controller content.
 enum class EPetalType : int
 {
     None = 0,
@@ -74,13 +78,19 @@ enum class EPetalType : int
     Lightning,
     Battery,
     Bulb,
-    Brush,
-    Eraser
+    // 68..70: pinned mod petal wire ids (mod_petal_type.h: Brush/Eraser/
+    // EouPheromone). Ids persist in accounts and hot-reload snapshots, so the
+    // holes below are permanent - never allocate natives inside them.
+    Magnet = 71,
 };
 
 using PetalType = EPetalType;
 
-inline constexpr std::array<std::string_view, 70> petal_type_names = {
+// Controller-specific ids map into the shared petal id space (they carry
+// their pinned wire id, so this is a pure value cast).
+constexpr EPetalType ToPetalType(EModPetalType type) { return static_cast<EPetalType>(type); }
+
+inline constexpr std::array<std::string_view, 72> petal_type_names = {
     "None",           "Air",         "AntEgg",        "Antennae", "Basic",     "BeetleEgg", "Bone",       "Bubble",
     "Carrot",         "Coin",        "Compass",       "Cogwheel", "Disc",      "Dust",      "GoldenLeaf", "Iris",
     "Lentil",         "Moon",        "Nullification", "Pincer",   "Relic",     "Rose",      "YinYang",    "Missile",
@@ -89,24 +99,60 @@ inline constexpr std::array<std::string_view, 70> petal_type_names = {
     "Leaf",           "Rock",        "Web",           "Cactus",   "Pollen",    "Corn",      "Rice",       "Basil",
     "Soil",           "Honey",       "Wax",           "ThirdEye", "Dandelion", "Orange",    "Shovel",     "Yucca",
     "WhiteFungus",    "BlackFungus", "Broccoli",      "Douli",     "Trapper",   "Amulet", "Plank", "Tomato",
-    "HallucinogenicMushroom", "Lightning", "Battery", "Bulb", "Brush", "Eraser",
+    "HallucinogenicMushroom", "Lightning", "Battery", "Bulb", "None", "None", "None", "Magnet",
 };
 
-static_assert(static_cast<size_t>(EPetalType::Eraser) + 1 == petal_type_names.size(),
+static_assert(static_cast<size_t>(EPetalType::Magnet) + 1 == petal_type_names.size(),
               "petal type names must stay aligned with EPetalType");
-static_assert(server_petal_entity_type_offset + petal_type_names.size() <= server_drop_entity_type_offset,
+// The mod petal holes must stay holes on the native side and must be filled
+// on the mod side; native Magnet (71) must never be shadowed by a mod entry.
+static_assert(petal_type_names[static_cast<size_t>(EModPetalType::Brush)] == "None" &&
+                  petal_type_names[static_cast<size_t>(EModPetalType::Eraser)] == "None" &&
+                  petal_type_names[static_cast<size_t>(EModPetalType::EouPheromone)] == "None",
+              "reserved mod petal slots must stay None in the native names table");
+static_assert(!GetModPetalTypeName(static_cast<int>(EModPetalType::Brush)).empty() &&
+                  !GetModPetalTypeName(static_cast<int>(EModPetalType::Eraser)).empty() &&
+                  !GetModPetalTypeName(static_cast<int>(EModPetalType::EouPheromone)).empty(),
+              "mod petal ids must be declared in the mod_petal_type.h manifest");
+static_assert(GetModPetalTypeName(static_cast<int>(EPetalType::Magnet)).empty(),
+              "native Magnet id must not appear in the mod petal manifest");
+// Wire budget is validated against the full id capacity, not just the natives.
+static_assert(server_petal_entity_type_offset + kPetalIdCapacity <= server_drop_entity_type_offset,
               "petal network IDs overlap the drop network ID range");
 static_assert(server_drop_entity_type_offset + petal_type_names.size() - 1 <= 255,
-              "drop network IDs no longer fit in uint8_t");
+              "native drop network IDs no longer fit in uint8_t");
+// Ground drops of mod petals ride the same u8 drop range: every currently
+// assigned mod petal id must stay droppable-safe. Ids 76..79 are slot-only.
+static_assert(server_drop_entity_type_offset + static_cast<int>(EModPetalType::EouPheromone) <= 255,
+              "assigned mod petal ids exceed the u8 drop range");
 
 inline std::string_view GetPetalTypeName(EPetalType type)
 {
-    size_t index = static_cast<size_t>(type);
-    if (index >= petal_type_names.size()) return "UnknownPetal";
-    return petal_type_names[index];
+    const size_t index = static_cast<size_t>(type);
+    if (index < petal_type_names.size())
+    {
+        const std::string_view name = petal_type_names[index];
+        // Reserved mod slots read "None" natively; fall through to the mod
+        // manifest so brush/eraser/pheromone keep their real names.
+        if (name != "None" || index == 0) return name;
+    }
+    if (index >= kPetalIdCapacity) return "UnknownPetal";
+    const std::string_view mod_name = GetModPetalTypeName(static_cast<int>(index));
+    return mod_name.empty() ? "UnknownPetal" : mod_name;
 }
 
 inline std::string_view GetPetalTypeName(uint8_t type) { return GetPetalTypeName(static_cast<EPetalType>(type)); }
+
+// Single validity check for numeric petal ids from the wire, persistence, or
+// console input: true for every native and declared mod petal id.
+inline bool IsKnownPetalTypeId(int value)
+{
+    if (value <= 0 || value >= kPetalIdCapacity) return false;
+    if (static_cast<size_t>(value) < petal_type_names.size() &&
+        petal_type_names[static_cast<size_t>(value)] != "None")
+        return true;
+    return !GetModPetalTypeName(value).empty();
+}
 
 inline bool PetalUsesBaseAndDefenseReach(EPetalType type)
 {
@@ -151,6 +197,8 @@ inline bool PetalIgnoresReachBonus(EPetalType type)
 inline bool MatchPetalTypeAlias(std::string_view text, EPetalType type)
 {
     if (text == GetPetalTypeName(type)) return true;
+    if (IsModPetalTypeId(static_cast<int>(type)))
+        return MatchModPetalTypeAlias(text, static_cast<int>(type));
 
     switch (type)
     {
@@ -262,10 +310,6 @@ inline bool MatchPetalTypeAlias(std::string_view text, EPetalType type)
         return text == "battery" || text == "btr";
     case EPetalType::Bulb:
         return text == "bulb";
-    case EPetalType::Brush:
-        return text == "brush";
-    case EPetalType::Eraser:
-        return text == "eraser" || text == "ers";
     default:
         return false;
     }

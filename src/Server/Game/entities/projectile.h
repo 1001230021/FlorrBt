@@ -15,7 +15,7 @@ class CProjectile : public CEntity
     {
     }
 
-    CProjectile(CGameWorld* world, sf::Vector2f pos, float r, CEntity* owner, SEntityTypeInfo entity_type)
+    CProjectile(CGameWorld* world, florrbt::Vector2f pos, float r, CEntity* owner, SEntityTypeInfo entity_type)
         : CEntity(world, pos.x, pos.y, r, entity_type), m_p_owner(owner), m_owner_id(owner ? owner->Id() : -1),
           m_owner_generation(owner ? owner->Generation() : 0)
     {
@@ -46,13 +46,13 @@ class CProjectile : public CEntity
     CEntity* m_p_owner = nullptr;
     int m_owner_id = -1;
     std::uint64_t m_owner_generation = 0;
-    sf::Vector2f m_vel = { 0.0f, 0.0f };
+    florrbt::Vector2f m_vel = { 0.0f, 0.0f };
 };
 
 class CMissile : public CProjectile
 {
   public:
-    CMissile(CGameWorld* world, sf::Vector2f pos, float radius, sf::Vector2f direction, float speed, float damage,
+    CMissile(CGameWorld* world, florrbt::Vector2f pos, float radius, florrbt::Vector2f direction, float speed, float damage,
              float health, float lifetime, CEntity* owner = nullptr,
              SEntityTypeInfo entity_type =
                  MakeProjectileEntityType(EProjectileType::Missile, server_missile_entity_type));
@@ -61,7 +61,7 @@ class CMissile : public CProjectile
     bool ApplyHit(CEntity* target);
     void AttachToOwner();
     bool RefreshAttachedTransform();
-    bool Fire(sf::Vector2f direction, float speed, float lifetime);
+    bool Fire(florrbt::Vector2f direction, float speed, float lifetime);
     bool IsAttachedToOwner() const { return m_attached_to_owner; }
     void RestoreAttachedToOwner(bool attached) { m_attached_to_owner = attached; }
 
@@ -71,7 +71,7 @@ class CMissile : public CProjectile
     float m_decay_base_health = 0.f;
 
   protected:
-    virtual sf::Vector2f AttachedDirection(const CEntity& owner) const;
+    virtual florrbt::Vector2f AttachedDirection(const CEntity& owner) const;
     virtual float AttachedOffsetMultiplier() const;
 
     bool m_attached_to_owner = false;
@@ -80,14 +80,14 @@ class CMissile : public CProjectile
 class CDandelionMissile : public CMissile
 {
   public:
-    CDandelionMissile(CGameWorld* world, sf::Vector2f pos, float radius, float attach_angle, float damage, float health,
+    CDandelionMissile(CGameWorld* world, florrbt::Vector2f pos, float radius, float attach_angle, float damage, float health,
                       float lifetime, ERarity rarity, CEntity* owner = nullptr);
 
     ERarity GetRarity() const { return m_rarity; }
     float GetAttachAngle() const { return m_attach_angle; }
 
   protected:
-    sf::Vector2f AttachedDirection(const CEntity& owner) const override;
+    florrbt::Vector2f AttachedDirection(const CEntity& owner) const override;
     float AttachedOffsetMultiplier() const override;
 
   private:
@@ -98,7 +98,7 @@ class CDandelionMissile : public CMissile
 class CPollenProjectile : public CProjectile
 {
   public:
-    CPollenProjectile(CGameWorld* world, sf::Vector2f pos, float radius, float damage, float health, float lifetime,
+    CPollenProjectile(CGameWorld* world, florrbt::Vector2f pos, float radius, float damage, float health, float lifetime,
                       float mass, CEntity* owner = nullptr,
                       SEntityTypeInfo entity_type =
                           MakeProjectileEntityType(EProjectileType::Pollen, server_pollen_entity_type));
@@ -118,14 +118,14 @@ class CPollenProjectile : public CProjectile
 class CTrapProjectile final : public CPollenProjectile
 {
   public:
-    CTrapProjectile(CGameWorld* world, sf::Vector2f pos, float radius, sf::Vector2f direction, float speed,
+    CTrapProjectile(CGameWorld* world, florrbt::Vector2f pos, float radius, florrbt::Vector2f direction, float speed,
                     float damage, float health, float lifetime, float mass, float deceleration_time, ERarity rarity,
                     CEntity* owner = nullptr);
 
     void Tick(float dt) override;
     ERarity GetRarity() const { return m_rarity; }
 
-    sf::Vector2f m_initial_velocity = { 0.f, 0.f };
+    florrbt::Vector2f m_initial_velocity = { 0.f, 0.f };
     float m_move_age = 0.f;
     float m_deceleration_time = 0.f;
 

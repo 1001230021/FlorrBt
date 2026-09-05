@@ -7,7 +7,7 @@
 class CBloodSacrificeRitual : public CEntity
 {
   public:
-    CBloodSacrificeRitual(CGameWorld* world, sf::Vector2f pos, EMobType mob_type, ERarity rarity, float timer);
+    CBloodSacrificeRitual(CGameWorld* world, florrbt::Vector2f pos, EMobType mob_type, ERarity rarity, float timer);
 
     void Tick(float dt) override;
     bool CanCollide() const override { return false; }

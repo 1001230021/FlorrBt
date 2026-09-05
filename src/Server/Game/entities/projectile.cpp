@@ -29,7 +29,7 @@ CEntity* CProjectile::GetOwner() const
     return world->GetEntity(m_owner_id);
 }
 
-CMissile::CMissile(CGameWorld* world, sf::Vector2f pos, float radius, sf::Vector2f direction, float speed, float damage,
+CMissile::CMissile(CGameWorld* world, florrbt::Vector2f pos, float radius, florrbt::Vector2f direction, float speed, float damage,
                    float health, float lifetime, CEntity* owner, SEntityTypeInfo entity_type)
     : CProjectile(world ? world : (owner ? owner->GameWorld() : nullptr), pos, radius, owner, entity_type),
       m_damage(std::max(0.f, damage)), m_lifetime(std::max(0.f, lifetime))
@@ -109,7 +109,7 @@ bool CMissile::RefreshAttachedTransform()
     CEntity* owner = GetOwner();
     if (!owner || owner->IsMarkedForDes() || owner->IsDead()) return false;
 
-    sf::Vector2f rear = AttachedDirection(*owner);
+    florrbt::Vector2f rear = AttachedDirection(*owner);
     if (LengthSq(rear) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
         rear = { 1.f, 0.f };
     Pos() = owner->Pos() + rear * (owner->Radius() * AttachedOffsetMultiplier());
@@ -120,7 +120,7 @@ bool CMissile::RefreshAttachedTransform()
     return true;
 }
 
-bool CMissile::Fire(sf::Vector2f direction, float speed, float lifetime)
+bool CMissile::Fire(florrbt::Vector2f direction, float speed, float lifetime)
 {
     float dir_len = Length(direction);
     if (dir_len <= game_config::entity_collision_epsilon || Health() <= 0.f || IsMarkedForDes()) return false;
@@ -141,9 +141,9 @@ bool CMissile::Fire(sf::Vector2f direction, float speed, float lifetime)
     return true;
 }
 
-sf::Vector2f CMissile::AttachedDirection(const CEntity& owner) const
+florrbt::Vector2f CMissile::AttachedDirection(const CEntity& owner) const
 {
-    sf::Vector2f facing = { std::cos(owner.FacingAngle()), std::sin(owner.FacingAngle()) };
+    florrbt::Vector2f facing = { std::cos(owner.FacingAngle()), std::sin(owner.FacingAngle()) };
     if (LengthSq(facing) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
         facing = { 1.f, 0.f };
     return -facing;
@@ -151,7 +151,7 @@ sf::Vector2f CMissile::AttachedDirection(const CEntity& owner) const
 
 float CMissile::AttachedOffsetMultiplier() const { return game_config::mob_hornet_missile_attach_offset; }
 
-CDandelionMissile::CDandelionMissile(CGameWorld* world, sf::Vector2f pos, float radius, float attach_angle,
+CDandelionMissile::CDandelionMissile(CGameWorld* world, florrbt::Vector2f pos, float radius, float attach_angle,
                                      float damage, float health, float lifetime, ERarity rarity, CEntity* owner)
     : CMissile(world, pos, radius, { std::cos(attach_angle), std::sin(attach_angle) }, 0.f, damage, health, lifetime,
                owner,
@@ -160,10 +160,10 @@ CDandelionMissile::CDandelionMissile(CGameWorld* world, sf::Vector2f pos, float 
 {
 }
 
-sf::Vector2f CDandelionMissile::AttachedDirection(const CEntity& owner) const
+florrbt::Vector2f CDandelionMissile::AttachedDirection(const CEntity& owner) const
 {
     float angle = owner.FacingAngle() + m_attach_angle;
-    sf::Vector2f direction = { std::cos(angle), std::sin(angle) };
+    florrbt::Vector2f direction = { std::cos(angle), std::sin(angle) };
     if (LengthSq(direction) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
         direction = { 1.f, 0.f };
     return direction;
@@ -171,7 +171,7 @@ sf::Vector2f CDandelionMissile::AttachedDirection(const CEntity& owner) const
 
 float CDandelionMissile::AttachedOffsetMultiplier() const { return game_config::mob_dandelion_missile_attach_offset; }
 
-CPollenProjectile::CPollenProjectile(CGameWorld* world, sf::Vector2f pos, float radius, float damage, float health,
+CPollenProjectile::CPollenProjectile(CGameWorld* world, florrbt::Vector2f pos, float radius, float damage, float health,
                                      float lifetime, float mass, CEntity* owner, SEntityTypeInfo entity_type)
     : CProjectile(world ? world : (owner ? owner->GameWorld() : nullptr), pos, radius, owner, entity_type),
       m_damage(std::max(0.f, damage)), m_lifetime(std::max(0.f, lifetime))
@@ -213,7 +213,7 @@ bool CPollenProjectile::ApplyHit(CEntity* target)
     return true;
 }
 
-CTrapProjectile::CTrapProjectile(CGameWorld* world, sf::Vector2f pos, float radius, sf::Vector2f direction,
+CTrapProjectile::CTrapProjectile(CGameWorld* world, florrbt::Vector2f pos, float radius, florrbt::Vector2f direction,
                                  float speed, float damage, float health, float lifetime, float mass,
                                  float deceleration_time, ERarity rarity, CEntity* owner)
     : CPollenProjectile(world, pos, radius, damage, health, lifetime, mass, owner,

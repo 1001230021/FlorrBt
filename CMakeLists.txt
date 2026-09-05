@@ -34,6 +34,24 @@ add_executable(${PROJECT_NAME}_Server ${SERVER_SOURCES} ${SHARED_SOURCES})
 target_include_directories(${PROJECT_NAME}_Server PRIVATE src)
 target_link_libraries(${PROJECT_NAME}_Server PRIVATE SFML::Graphics SFML::Network SFML::System tmj argon2)
 
+# Optional MySQL/MariaDB client for the account persistence backend
+# (account_backend mysql in server.cfg). Works with libmysql (MySQL zip) and
+# MariaDB Connector/C; without either the server builds with the JSON backend
+# only and account_backend=mysql fails at startup with a clear message.
+option(FLORRBT_WITH_MYSQL "Build the MySQL account persistence backend" ON)
+if(FLORRBT_WITH_MYSQL)
+    find_path(FLORRBT_MYSQL_INCLUDE_DIR NAMES mysql.h PATH_SUFFIXES mysql mariadb)
+    find_library(FLORRBT_MYSQL_LIBRARY NAMES libmysql mysqlclient mariadb libmariadb mariadbclient)
+    if(FLORRBT_MYSQL_INCLUDE_DIR AND FLORRBT_MYSQL_LIBRARY)
+        target_compile_definitions(${PROJECT_NAME}_Server PRIVATE FLORRBT_WITH_MYSQL)
+        target_include_directories(${PROJECT_NAME}_Server PRIVATE ${FLORRBT_MYSQL_INCLUDE_DIR})
+        target_link_libraries(${PROJECT_NAME}_Server PRIVATE ${FLORRBT_MYSQL_LIBRARY})
+        message(STATUS "MySQL account backend: enabled (${FLORRBT_MYSQL_LIBRARY})")
+    else()
+        message(STATUS "MySQL client library not found - building without the MySQL account backend")
+    endif()
+endif()
+
 add_executable(${PROJECT_NAME}_Launcher src/Launcher/main.cpp src/Engine/json_value.cpp)
 target_include_directories(${PROJECT_NAME}_Launcher PRIVATE src)
 if(WIN32)

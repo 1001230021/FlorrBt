@@ -1,3 +1,4 @@
+import { drawSpriteImage } from "./sprite_raster_cache.js";
 const LADYBUG_VIEWBOX_SIZE = 110;
 const LADYBUG_BODY_RADIUS = 27.5;
 const LADYBUG_BASE_FACE_ANGLE = -Math.PI * 0.75;
@@ -36,10 +37,11 @@ export function drawNormalLadybug(ctx, pos, radius, entityId, angle) {
     return;
   }
 
-  ctx.drawImage(baseImage, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
+  drawSpriteImage(ctx, baseImage, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
   drawPattern(ctx, spriteSize, entityId);
   if (isImageReady(outlineImage)) {
-    ctx.drawImage(
+    drawSpriteImage(
+      ctx,
       outlineImage,
       -spriteHalf,
       -spriteHalf,

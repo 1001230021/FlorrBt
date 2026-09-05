@@ -14,7 +14,7 @@
 #include <utility>
 #include <vector>
 
-CPortal::CPortal(CGameWorld* world, sf::Vector2f pos, float radius, std::string target_world)
+CPortal::CPortal(CGameWorld* world, florrbt::Vector2f pos, float radius, std::string target_world)
     : CEntity(world, pos.x, pos.y, std::max(game_config::portal_min_radius, radius),
               MakeEntityType(EEntityType::Portal, server_portal_entity_type)),
       m_target_world_name(std::move(target_world))
@@ -52,7 +52,7 @@ void CPortal::AttractAndTransferPlayer(CPlayer& player, float dt)
     if (!flower) return;
     if (flower->HasState<CInvincibleState>()) return;
 
-    sf::Vector2f delta = Pos() - flower->Pos();
+    florrbt::Vector2f delta = Pos() - flower->Pos();
     float dist_sq = LengthSq(delta);
     float attract_radius = Radius() * game_config::portal_attraction_radius_multiplier;
     if (dist_sq > attract_radius * attract_radius) return;
@@ -75,7 +75,7 @@ void CPortal::AttractAndTransferPlayer(CPlayer& player, float dt)
     }
 
     if (dist <= game_config::entity_collision_epsilon) return;
-    sf::Vector2f dir = delta / dist;
+    florrbt::Vector2f dir = delta / dist;
     float t = std::clamp(1.f - dist / attract_radius, 0.f, 1.f);
     float acceleration = game_config::portal_attraction_acceleration * t * t;
     flower->m_vel += dir * acceleration * dt;

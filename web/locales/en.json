@@ -47,7 +47,9 @@
       "craft": "Craft",
       "craftTitle": "Craft [C]",
       "settings": "Settings",
-      "settingsTitle": "Settings [Esc]"
+      "settingsTitle": "Settings [Esc]",
+      "bestiary": "Bestiary",
+      "bestiaryTitle": "Bestiary"
     },
     "chat": {
       "ariaLabel": "Chat",
@@ -96,7 +98,14 @@
         "set": "Show or change a client setting",
         "slider": "Open a slider for a client setting",
         "keyboard_control": "Enable or disable keyboard movement",
-        "mobile": "Set the mobile control mode"
+        "mobile": "Set the mobile control mode",
+        "bind": "Bind a key or mouse button to commands",
+        "unbind": "Remove a key or mouse button binding",
+        "unbindall": "Remove every binding on a device",
+        "render_scale": "Show or set the render resolution scale",
+        "bench": "Run the render benchmark on the login screen",
+        "freeze_log": "List recent freeze watchdog events (client stalls / server gaps)",
+        "reset": "Reset client config, key bindings or settings"
       }
     },
     "settings": {
@@ -113,7 +122,13 @@
       "holdDefense": "Hold defense",
       "email": "Email",
       "emailBound": "Bound",
-      "emailNotBound": "Not bound"
+      "emailNotBound": "Not bound",
+      "fullscreen": "Fullscreen",
+      "renderScale": "Render resolution",
+      "renderScaleModes": {
+        "auto": "Auto",
+        "native": "Native"
+      }
     },
     "inventory": {
       "title": "Inventory",
@@ -212,7 +227,8 @@
         "evolveHits": "Evolve hits",
         "chain": "Chain",
         "charges": "Charges",
-        "radius": "Radius"
+        "radius": "Radius",
+        "absorbRange": "Absorb range"
       },
       "values": {
         "corrupted": "Corrupted",
@@ -238,6 +254,10 @@
       "defend": "Defend",
       "swapLabel": "X",
       "swap": "Quick Swap"
+    },
+    "codex": {
+      "title": "Bestiary",
+      "close": "Close bestiary"
     }
   },
   "status": {
@@ -260,13 +280,16 @@
     "authSent": "Auth sent",
     "clientReady": "{app} web client ready",
     "mapLoading": "Loading map: {path}",
+    "mapLoadingt": "Loading map: {path}",
     "tileImageFailed": "Tile image failed: {path}",
     "mapLoaded": "Map loaded: {path} ({layers} layers, {tiles} tiles)",
     "mapLoadFailed": "Map load failed: {path} ({error})",
     "mapTilesReady": "Map tiles ready: {path} ({chunks} chunks on demand)",
     "player": "Player {id}",
     "authenticated": "Authenticated",
-    "authFailed": "Authentication failed"
+    "authFailed": "Authentication failed",
+    "renderScaleLowered": "Render resolution lowered to {scale}x to hold the frame budget",
+    "renderScaleRaised": "Render resolution raised back to {scale}x"
   },
   "commands": {
     "language": {
@@ -315,7 +338,44 @@
       "auto": "auto",
       "hitbox": "Hitbox debug {value}",
       "keyboard": "Keyboard control {value}",
-      "mobile": "Mobile controls {value}"
+      "mobile": "Mobile controls {value}",
+      "movement": "Movement mode: {value}"
+    },
+    "bind": {
+      "usage": "Usage: bind [keyboard|mouse] <key> <command> [+ command...]  |  bind list  |  bind commands",
+      "unknownCommand": "Unknown command: {command}",
+      "available": "Available commands: {commands}",
+      "bound": "Bound {device} {key} to: {commands}",
+      "empty": "No bindings.",
+      "listItem": "{device} {key} = {commands}",
+      "unbound": "{device} {key} is not bound"
+    },
+    "unbind": {
+      "usage": "Usage: unbind [keyboard|mouse] <key>",
+      "unbound": "Removed binding {device} {key}"
+    },
+    "unbindall": {
+      "usage": "Usage: unbindall [keyboard|mouse]",
+      "unbound": "Removed all {device} bindings"
+    },
+    "renderScale": {
+      "current": "Render scale: {mode} (effective {dpr}x)",
+      "changed": "Render scale set to {mode} (effective {dpr}x)"
+    },
+    "bench": {
+      "alreadyRunning": "A benchmark is already running",
+      "loggedOutOnly": "The benchmark only runs on the login screen",
+      "mapLoading": "Wait for the map to finish loading first",
+      "started": "Benchmark started: {entities} entities, {frames} frames",
+      "doneDraw": "Benchmark: draw avg {avg}ms, p50 {p50}ms, p95 {p95}ms, max {max}ms ({n} frames)",
+      "doneFrame": "Benchmark: {fps} fps at {px} ({visible} visible entities, render scale {dpr}x)"
+    },
+    "reset": {
+      "usage": "Usage: reset <config [name] | bindings | settings | all>",
+      "bindings": "Key bindings restored to defaults.",
+      "settings": "Client settings restored to defaults.",
+      "all": "Everything restored to defaults.",
+      "unknown": "Unknown reset target: {name}"
     }
   },
   "formats": {
@@ -409,7 +469,9 @@
       "battery": "Battery",
       "bulb": "Bulb",
       "brush": "Brush",
-      "eraser": "Eraser"
+      "eraser": "Eraser",
+      "eou_pheromone": "Pheromone",
+      "magnet": "Magnet"
     },
     "mobs": {
       "none": "None",
@@ -494,6 +556,48 @@
       "joinedYou": "You have joined {name}'s squad.",
       "joined": "{name} has joined the squad.",
       "inviteInvalid": "Invalid squad invite target."
+    }
+  },
+  "codex": {
+    "descriptions": {
+      "beetle": "One of the most common enemies; crawls slowly and deals contact damage.",
+      "bandage_beetle": "A beetle wrapped in bandages, tougher than a normal one.",
+      "normal_ladybug": "A round ladybug; slow, but its hits are no joke.",
+      "mecha_flower": "A mechanical flower, a regular sight in the garden.",
+      "normal_flower": "An ordinary flower; drops petals when defeated.",
+      "soldier_ant": "A soldier of the colony; appears in groups and swarms players.",
+      "soldier_fire_ant": "A fire ant soldier, stronger than a common soldier ant.",
+      "soldier_termite": "A termite soldier, a threat of the desert regions.",
+      "summoned_beetle": "A summoned beetle that fights for its master.",
+      "summoned_soldier_ant": "A summoned soldier ant under its master's command.",
+      "bee": "A busy bee that strikes with its stinger.",
+      "hornet": "A fierce hornet that fires missiles.",
+      "bumble_bee": "A chubby bumble bee with heavy contact damage.",
+      "rock": "A rock. Blocks the way and hurts to touch.",
+      "bubble": "A floating bubble; light but hard to pop. High-tier bubbles split when hit.",
+      "baby_ant": "A baby ant; fragile, but they come in numbers.",
+      "worker_ant": "A worker ant handling hauling and nest building.",
+      "queen_ant": "The ant queen, heart and guardian of the nest.",
+      "ant_hole": "An ant hole that keeps producing an ant army.",
+      "spider": "A spider that spits webs to slow its prey.",
+      "sandstorm": "A moving sandstorm that sweeps up everything.",
+      "dummy": "A training dummy, perfect for testing damage.",
+      "dandelion": "A dandelion that fires volleys of seeds.",
+      "ant_egg": "An ant egg; hatches into new ants.",
+      "fire_ant_egg": "A fire ant egg; hatches into fire ants.",
+      "termite_egg": "A termite egg; hatches into termites.",
+      "queen_ant_egg": "A queen ant egg; hatches into a new queen.",
+      "queen_fire_ant_egg": "A fire queen egg; hatches into a new fire queen.",
+      "baby_fire_ant": "A baby fire ant, quicker than a common baby ant.",
+      "worker_fire_ant": "A fire worker ant, stronger than a common worker.",
+      "fire_queen_ant": "The fire queen, heart of the fire ant colony.",
+      "baby_termite": "A baby termite; fragile, but they come in numbers.",
+      "worker_termite": "A termite worker building out the nest.",
+      "termite_overmind": "The termite overmind, ruler of the deep desert.",
+      "leaf_piece": "A cut leaf piece hauled around by leafcutter ants.",
+      "leafcutter_soldier": "A leafcutter soldier, a threat of the desert regions.",
+      "titan": "The Titan, one of the strongest beings.",
+      "firefly": "A firefly that retaliates with chain lightning when attacked."
     }
   }
 }

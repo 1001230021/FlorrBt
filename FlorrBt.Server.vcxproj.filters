@@ -159,6 +159,12 @@
     <ClInclude Include="src\Server\Persistence\account_store.h">
       <Filter>src\Server\Persistence</Filter>
     </ClInclude>
+    <ClInclude Include="src\Server\Persistence\account_migration.h">
+      <Filter>src\Server\Persistence</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server\Persistence\mysql_account_backend.h">
+      <Filter>src\Server\Persistence</Filter>
+    </ClInclude>
     <ClInclude Include="src\Server\Persistence\server_data_store.h">
       <Filter>src\Server\Persistence</Filter>
     </ClInclude>
@@ -287,6 +293,12 @@
       <Filter>src\Server\Game\systems</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Persistence\account_store.cpp">
+      <Filter>src\Server\Persistence</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Persistence\account_migration.cpp">
+      <Filter>src\Server\Persistence</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server\Persistence\mysql_account_backend.cpp">
       <Filter>src\Server\Persistence</Filter>
     </ClCompile>
     <ClCompile Include="src\Server\Persistence\server_data_store.cpp">

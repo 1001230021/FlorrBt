@@ -1,3 +1,4 @@
+import { drawSpriteImage } from "./sprite_raster_cache.js";
 const BEE_VIEWBOX_SIZE = 110;
 const BEE_EFFECTIVE_BOX = 91.667;
 const BEE_BASE_FACE_ANGLE = -Math.PI * 0.75;
@@ -132,7 +133,7 @@ export function drawPollen(ctx, pos, radius, entityId, time) {
   ctx.save();
   ctx.translate(pos.x, pos.y);
   if (image && isImageReady(image)) {
-    ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
+    drawSpriteImage(ctx, image, -size * 0.5, -size * 0.5, size, size);
   }
   ctx.restore();
 }
@@ -161,7 +162,7 @@ function drawInsect(ctx, pos, radius, entityId, angle, motion, time, options) {
   }
 
   if (isImageReady(base)) {
-    ctx.drawImage(base, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
+    drawSpriteImage(ctx, base, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
   } else {
     drawFallback(ctx, radius * spriteScale);
   }

@@ -47,7 +47,9 @@
       "craft": "合成",
       "craftTitle": "合成 [C]",
       "settings": "設置",
-      "settingsTitle": "設置 [Esc]"
+      "settingsTitle": "設置 [Esc]",
+      "bestiary": "生物圖鑑",
+      "bestiaryTitle": "生物圖鑑"
     },
     "chat": {
       "ariaLabel": "聊天",
@@ -68,7 +70,43 @@
       "close": "關閉滑塊"
     },
     "console": {
-      "placeholder": "控制檯"
+      "placeholder": "控制檯",
+      "searchPlaceholder": "搜尋中...",
+      "prompt": "> ",
+      "searchPrompt": "搜尋：",
+      "lines": "第 {first} - {last} 行（{state}）",
+      "following": "跟隨中",
+      "locked": "已鎖定",
+      "match": "第 {current} 個匹配 / 共 {total} 個",
+      "noResults": "無結果",
+      "helpPrefix": "說明：{text}",
+      "usage": "用法：{name} {params}",
+      "help": {
+        "version": "顯示用戶端版本",
+        "language": "查看或切換顯示語言",
+        "say": "在指定頻道傳送聊天訊息",
+        "g": "傳送全域聊天訊息",
+        "l": "傳送本地聊天訊息",
+        "whisper": "向指定玩家傳送私聊",
+        "map": "載入地圖",
+        "login_map": "設定登入畫面的地圖",
+        "login_map_x": "設定登入畫面鏡頭的 X 座標",
+        "login_map_y": "設定登入畫面鏡頭的 Y 座標",
+        "login_map_horizon": "設定登入畫面鏡頭的視界",
+        "hitbox": "開關碰撞箱除錯顯示",
+        "colorful_map": "開關彩色地圖渲染",
+        "set": "查看或修改用戶端設定項",
+        "slider": "為某個設定項開啟調節滑桿",
+        "keyboard_control": "啟用或停用鍵盤移動",
+        "mobile": "設定行動端操控模式",
+        "bind": "將按鍵或滑鼠按鈕綁定到指令",
+        "unbind": "移除某個按鍵或滑鼠按鈕的綁定",
+        "unbindall": "移除某個裝置的全部綁定",
+        "render_scale": "查看或設定渲染解析度倍率",
+        "bench": "在登入畫面執行渲染基準測試",
+        "freeze_log": "列出最近的凍結偵測記錄（客戶端卡頓/伺服器斷流）",
+        "reset": "重置用戶端設定、按鍵綁定或選項"
+      }
     },
     "settings": {
       "title": "設置",
@@ -84,7 +122,13 @@
       "holdDefense": "保持防禦",
       "email": "郵箱",
       "emailBound": "已綁定",
-      "emailNotBound": "未綁定"
+      "emailNotBound": "未綁定",
+      "fullscreen": "全螢幕",
+      "renderScale": "渲染解析度",
+      "renderScaleModes": {
+        "auto": "自動",
+        "native": "原生"
+      }
     },
     "inventory": {
       "title": "揹包",
@@ -183,7 +227,8 @@
         "evolveHits": "進化所需命中",
         "chain": "連鎖",
         "charges": "充能",
-        "radius": "半徑"
+        "radius": "半徑",
+        "absorbRange": "吸收範圍"
       },
       "values": {
         "corrupted": "腐化",
@@ -209,6 +254,10 @@
       "defend": "防禦",
       "swapLabel": "X",
       "swap": "快速換位"
+    },
+    "codex": {
+      "title": "生物圖鑑",
+      "close": "關閉生物圖鑑"
     }
   },
   "status": {
@@ -231,13 +280,16 @@
     "authSent": "已發送驗證",
     "clientReady": "{app} Web 客戶端已就緒",
     "mapLoading": "正在加載地圖：{path}",
+    "mapLoadingt": "正在加載地圖：{path}",
     "tileImageFailed": "圖塊圖片加載失敗：{path}",
     "mapLoaded": "地圖已加載：{path}（{layers} 個圖層，{tiles} 個圖塊）",
     "mapLoadFailed": "地圖加載失敗：{path}（{error}）",
     "mapTilesReady": "地圖圖塊已就緒：{path}（{chunks} 個區塊按需加載）",
     "player": "玩家 {id}",
     "authenticated": "驗證成功",
-    "authFailed": "驗證失敗"
+    "authFailed": "驗證失敗",
+    "renderScaleLowered": "為維持幀率，渲染解析度已自動降至 {scale}x",
+    "renderScaleRaised": "渲染解析度已自動回升至 {scale}x"
   },
   "commands": {
     "language": {
@@ -286,7 +338,44 @@
       "auto": "自動",
       "hitbox": "碰撞箱顯示已{value}",
       "keyboard": "鍵盤控制已{value}",
-      "mobile": "移動端控制：{value}"
+      "mobile": "移動端控制：{value}",
+      "movement": "移動方式：{value}"
+    },
+    "bind": {
+      "usage": "用法：bind [keyboard|mouse] <按鍵> <指令> [+ 指令...]  |  bind list  |  bind commands",
+      "unknownCommand": "未知指令：{command}",
+      "available": "可用指令：{commands}",
+      "bound": "已將 {device} {key} 綁定到：{commands}",
+      "empty": "沒有任何綁定。",
+      "listItem": "{device} {key} = {commands}",
+      "unbound": "{device} {key} 未綁定"
+    },
+    "unbind": {
+      "usage": "用法：unbind [keyboard|mouse] <按鍵>",
+      "unbound": "已移除綁定 {device} {key}"
+    },
+    "unbindall": {
+      "usage": "用法：unbindall [keyboard|mouse]",
+      "unbound": "已移除 {device} 的全部綁定"
+    },
+    "renderScale": {
+      "current": "渲染倍率：{mode}（實際 {dpr}x）",
+      "changed": "渲染倍率已設為 {mode}（實際 {dpr}x）"
+    },
+    "bench": {
+      "alreadyRunning": "基準測試已在執行",
+      "loggedOutOnly": "基準測試只能在登入畫面執行",
+      "mapLoading": "請先等待地圖載入完成",
+      "started": "基準測試開始：{entities} 個實體，{frames} 幀",
+      "doneDraw": "基準測試：繪製耗時平均 {avg}ms，p50 {p50}ms，p95 {p95}ms，最大 {max}ms（{n} 幀）",
+      "doneFrame": "基準測試：{fps} fps @ {px}（可見實體 {visible}，渲染倍率 {dpr}x）"
+    },
+    "reset": {
+      "usage": "用法：reset <config [名稱] | bindings | settings | all>",
+      "bindings": "按鍵綁定已恢復預設。",
+      "settings": "用戶端選項已恢復預設。",
+      "all": "全部已恢復預設。",
+      "unknown": "未知的重置目標：{name}"
     }
   },
   "formats": {
@@ -350,7 +439,7 @@
       "glass": "玻璃",
       "stinger": "毒刺",
       "broken_egg": "破碎的卵",
-      "light": "光",
+      "light": "輕",
       "leaf": "葉子",
       "rock": "岩石",
       "web": "蛛網",
@@ -380,7 +469,9 @@
       "battery": "電池",
       "bulb": "燈泡",
       "brush": "畫筆",
-      "eraser": "橡皮"
+      "eraser": "橡皮",
+      "eou_pheromone": "信息素",
+      "magnet": "磁鐵"
     },
     "mobs": {
       "none": "無",
@@ -465,6 +556,48 @@
       "joinedYou": "你加入了{name}的隊伍。",
       "joined": "{name}加入了隊伍。",
       "inviteInvalid": "無效的組隊邀請目標。"
+    }
+  },
+  "codex": {
+    "descriptions": {
+      "beetle": "最常見的敵人之一，緩慢爬行並造成撞擊傷害。",
+      "bandage_beetle": "裹著繃帶的甲蟲，比普通甲蟲更耐打。",
+      "normal_ladybug": "圓滾滾的瓢蟲，移動緩慢但攻擊不低。",
+      "mecha_flower": "機械花朵，花園裡的常客。",
+      "normal_flower": "普通花朵，被打倒後會掉落花瓣。",
+      "soldier_ant": "蟻群的士兵，成群出現並圍攻玩家。",
+      "soldier_fire_ant": "火蟻士兵，比普通兵蟻更強。",
+      "soldier_termite": "白蟻士兵，沙漠區域的威脅。",
+      "summoned_beetle": "被召喚的甲蟲，為牠的主人而戰。",
+      "summoned_soldier_ant": "被召喚的兵蟻，聽從主人指揮。",
+      "bee": "忙碌的蜜蜂，用尾針攻擊。",
+      "hornet": "凶猛的黃蜂，發射飛彈攻擊。",
+      "bumble_bee": "胖乎乎的大黃蜂，撞擊傷害高。",
+      "rock": "一塊石頭，擋路也傷人。",
+      "bubble": "漂浮的泡泡，輕巧但很難打破，高等級泡泡受擊時會分裂。",
+      "baby_ant": "幼蟻，脆弱但數量多。",
+      "worker_ant": "工蟻，負責搬運與建巢。",
+      "queen_ant": "蟻后，蟻穴的核心與守護者。",
+      "ant_hole": "蟻穴，持續產出螞蟻大軍。",
+      "spider": "蜘蛛，吐出蛛網減速獵物。",
+      "sandstorm": "移動的沙暴，席捲一切。",
+      "dummy": "訓練假人，適合測試傷害。",
+      "dandelion": "蒲公英，發射種子彈幕。",
+      "ant_egg": "蟻卵，孵化出新螞蟻。",
+      "fire_ant_egg": "火蟻卵，孵化出火蟻。",
+      "termite_egg": "白蟻卵，孵化出白蟻。",
+      "queen_ant_egg": "蟻后卵，孵化出新的蟻后。",
+      "queen_fire_ant_egg": "火蟻后卵，孵化出新的火蟻后。",
+      "baby_fire_ant": "幼火蟻，速度比普通幼蟻快。",
+      "worker_fire_ant": "火工蟻，比普通工蟻更強。",
+      "fire_queen_ant": "火蟻后，火蟻群的核心。",
+      "baby_termite": "幼白蟻，脆弱但數量多。",
+      "worker_termite": "白蟻工蟻，負責建設巢穴。",
+      "termite_overmind": "白蟻心智，沙漠深處的首領。",
+      "leaf_piece": "被切下的葉片，切葉蟻的搬運物。",
+      "leafcutter_soldier": "切葉蟻士兵，沙漠區域的威脅。",
+      "titan": "泰坦，最強的存在之一。",
+      "firefly": "螢火蟲，受到攻擊時會用連鎖閃電反擊。"
     }
   }
 }

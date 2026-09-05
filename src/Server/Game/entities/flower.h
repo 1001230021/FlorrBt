@@ -14,7 +14,7 @@ class CPetalSlot;
 class CFlower : public CAttackableMob<SFlowerStats>
 {
   public:
-    CFlower(CGameWorld* pworld, sf::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
+    CFlower(CGameWorld* pworld, florrbt::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
             const SFlowerStats& base = SFlowerStats{})
         : CAttackableMob(pworld, pos, r, mob_type, rarity, base)
     {
@@ -37,7 +37,7 @@ class CFlower : public CAttackableMob<SFlowerStats>
     const SFlowerStats* GetFinalStats() const override { return &m_final_stats; }
     float WallCollisionRadius() const override
     {
-        return std::max(0.f, Radius() * game_config::mob_wall_collision_radius_multiplier);
+        return std::clamp(Radius(), 0.f, game_config::mob_player_flower_radius);
     }
 
     int GetStartCopyIndex(int slot_index) const;
@@ -80,13 +80,13 @@ class CFlower : public CAttackableMob<SFlowerStats>
     void RestoreSlotCount(int count) { SetPetalSlotCount(count); }
 
     void InitSlots();
+    void SetPetalSlotCapacity(int capacity);
+    void SetPetalSlotCount(int count);
 
     int m_total_copies = 0;
 
   protected:
     void ClampShieldToMaxHealth();
-    void SetPetalSlotCapacity(int capacity);
-    void SetPetalSlotCount(int count);
     void ClearFinalStatsDirty() { m_final_stats_dirty = false; }
     void FinishFinalStatsRebuild()
     {
@@ -122,7 +122,7 @@ class CMechaFlower final : public CFlower
   public:
     using stats_type = SFlowerStats;
 
-    CMechaFlower(CGameWorld* pworld, sf::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
+    CMechaFlower(CGameWorld* pworld, florrbt::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
                  const SFlowerStats& base = SFlowerStats{});
 };
 
@@ -131,7 +131,7 @@ class CTitanFlower final : public CFlower
   public:
     using stats_type = SFlowerStats;
 
-    CTitanFlower(CGameWorld* pworld, sf::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
+    CTitanFlower(CGameWorld* pworld, florrbt::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
                  const SFlowerStats& base = SFlowerStats{})
         : CFlower(pworld, pos, r, mob_type, rarity, base)
     {
@@ -157,7 +157,7 @@ class CPlayerFlower : public CFlower
 {
   public:
     using stats_type = SFlowerStats;
-    CPlayerFlower(CGameWorld* pworld, sf::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
+    CPlayerFlower(CGameWorld* pworld, florrbt::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
                   const SFlowerStats& base = SFlowerStats{});
 
     void Tick(float dt) override;

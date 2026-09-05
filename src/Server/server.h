@@ -29,7 +29,7 @@ class CWeatherDiurnalSystem;
 class CServer : public IGameEventSink, public IGameWorldResolver
 {
   public:
-    using TTitanForgeCooldowns = std::array<float, petal_type_names.size()>;
+    using TTitanForgeCooldowns = std::array<float, static_cast<std::size_t>(kPetalIdCapacity)>;
 
     static constexpr int hot_reload_exit_code = 42;
     static constexpr int restore_failed_exit_code = 43;
@@ -60,7 +60,7 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     struct SChatEntry
     {
         CGameWorld* world = nullptr;
-        sf::Vector2f pos = { 0.f, 0.f };
+        florrbt::Vector2f pos = { 0.f, 0.f };
         EChatFlag flag = EChatFlag::Global;
         uint32_t player_id = 0;
         int target_player_id = -1;
@@ -104,7 +104,7 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     void MergeLegacyTitanForgeCooldownForRestore(float cooldown);
     CGameContext* GameContext() const { return m_p_game_context.get(); }
     const std::vector<SChatEntry>& GetChats() const { return m_chats; }
-    SChatEntry SubmitChat(CGameWorld* world, sf::Vector2f pos, EChatFlag flag, uint32_t player_id,
+    SChatEntry SubmitChat(CGameWorld* world, florrbt::Vector2f pos, EChatFlag flag, uint32_t player_id,
                           const std::string& player_name, const std::string& message, int target_player_id = -1);
     SChatEntry SubmitServerChat(const std::string& message);
     static bool MeetsPetalReportRarity(ERarity rarity, int min_rarity);

@@ -100,6 +100,10 @@ export function createGameConsole({
   let completionIndex = -1;
   let completionOffset = 0;
   let completionTarget = 0;
+  // Input snapshot the current candidate list was computed from. Tab-cycling
+  // reuses the list as long as the input hasn't changed.
+  let completionSnapshotValue = null;
+  let completionSnapshotCursor = -1;
 
   let searching = false;
   let searchMatches = [];
@@ -275,13 +279,19 @@ export function createGameConsole({
   // ------------------------------------------------------------------ completion
 
   function updateCompletion(resetChosen = true) {
+    const value = input.value;
+    const cursor = input.selectionStart ?? value.length;
+    // Keep the current candidate list while the input hasn't changed, so
+    // tabbing through candidates never recomputes/reorders them.
+    if (completion && completionSnapshotValue === value && completionSnapshotCursor === cursor)
+      return;
     completion = null;
     if (resetChosen) completionIndex = -1;
     if (searching) return;
-    const value = input.value;
+    completionSnapshotValue = value;
+    completionSnapshotCursor = cursor;
     if (!value) return;
 
-    const cursor = input.selectionStart ?? value.length;
     const { start, end } = wordRangeAt(value, cursor);
     const word = value.slice(start, end);
     const groupWords = commandGroupOf(value, cursor).trim().split(/\s+/).filter(Boolean);
@@ -406,8 +416,20 @@ export function createGameConsole({
 
   // ------------------------------------------------------------------ scrolling
 
-  function backlogCapacity() {
-    const bottom = canvas.clientHeight - PADDING - inputRowHeight() - INPUT_GAP;
+  // Vertical space reserved above the input row for the suggestion strip
+// (candidate row / search status / help block). The backlog bottom moves up
+// by this amount so console messages never overlap the suggestions.
+function suggestionReservedHeight() {
+  if (searching) return LINE_HEIGHT + PROMPT_GAP + 4;
+  if (!completion) return 0;
+  if (completion.kind === "help" && completion.spec) return LINE_HEIGHT * 2 + PROMPT_GAP + 4;
+  if (completion.candidates.length > 0) return LINE_HEIGHT + PROMPT_GAP + 4;
+  return 0;
+}
+
+function backlogCapacity() {
+    const bottom =
+      canvas.clientHeight - PADDING - inputRowHeight() - INPUT_GAP - suggestionReservedHeight();
     const top = STATUS_HEIGHT + PADDING;
     return Math.max(1, Math.floor((bottom - top) / LINE_HEIGHT));
   }
@@ -480,7 +502,8 @@ export function createGameConsole({
   // ------------------------------------------------------------------ selection
 
   function lineFromY(y) {
-    const bottom = canvas.clientHeight - PADDING - inputRowHeight() - INPUT_GAP;
+    const bottom =
+      canvas.clientHeight - PADDING - inputRowHeight() - INPUT_GAP - suggestionReservedHeight();
     if (y > bottom || y < STATUS_HEIGHT + PADDING) return -1;
     const capacity = backlogCapacity();
     const firstLine = Math.max(0, totalLines - capacity - scrollUp);
@@ -642,7 +665,7 @@ export function createGameConsole({
 
   function backlogBottomY() {
     return (
-      canvas.clientHeight - PADDING - inputRowHeight() - INPUT_GAP
+      canvas.clientHeight - PADDING - inputRowHeight() - INPUT_GAP - suggestionReservedHeight()
     );
   }
 
@@ -727,7 +750,7 @@ export function createGameConsole({
 
     const inputHeight = inputRowHeight();
     const inputTop = cssHeight - PADDING - inputHeight;
-    const backlogBottom = inputTop - INPUT_GAP;
+    const backlogBottom = inputTop - INPUT_GAP - suggestionReservedHeight();
 
     setFont(FONT_SIZE - 2);
     ctx.fillStyle = CONSOLE_COLORS.muted;

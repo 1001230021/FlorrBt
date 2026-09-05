@@ -2,79 +2,37 @@
 <svg
    viewBox="0 0 110 110"
    version="1.1"
-   id="svg4"
-   sodipodi:docname="1 (1).svg"
+   id="svg1"
+   sodipodi:docname="nullification.svg"
    inkscape:version="1.4.3 (0d15f75, 2025-12-25)"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns="http://www.w3.org/2000/svg"
-   xmlns:svg="http://www.w3.org/2000/svg">
+   xmlns:svg="http://www.w3.org/2000/svg" data-copy-distance="0">
   <defs
-     id="defs4" />
+     id="defs1" />
   <sodipodi:namedview
-     id="namedview4"
-     pagecolor="#ffffff"
-     bordercolor="#000000"
-     borderopacity="0.25"
-     inkscape:showpageshadow="2"
-     inkscape:pageopacity="0.0"
-     inkscape:pagecheckerboard="true"
-     inkscape:deskcolor="#d1d1d1"
-     showgrid="true"
-     inkscape:zoom="3.6045455"
-     inkscape:cx="9.1551072"
-     inkscape:cy="42.58512"
+     id="namedview1"
+     pagecolor="#505050"
+     bordercolor="#ffffff"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="1"
+     inkscape:deskcolor="#505050"
+     inkscape:zoom="3.5772727"
+     inkscape:cx="6.7090216"
+     inkscape:cy="52.973316"
      inkscape:window-width="1920"
      inkscape:window-height="1001"
      inkscape:window-x="-9"
      inkscape:window-y="-9"
      inkscape:window-maximized="1"
-     inkscape:current-layer="svg4">
-    <inkscape:grid
-       id="grid5"
-       units="px"
-       originx="0"
-       originy="0"
-       spacingx="55"
-       spacingy="55"
-       empcolor="#0099e5"
-       empopacity="0.30196078"
-       color="#0099e5"
-       opacity="0.14901961"
-       empspacing="10"
-       enabled="true"
-       visible="true" />
-    <inkscape:grid
-       id="grid6"
-       units="px"
-       originx="55"
-       originy="48"
-       spacingx="12"
-       spacingy="12"
-       empcolor="#0099e5"
-       empopacity="0.30196078"
-       color="#0099e5"
-       opacity="0.14901961"
-       empspacing="1"
-       enabled="true"
-       visible="true" />
-  </sodipodi:namedview>
-  <text
-     xml:space="preserve"
-     style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:12.8134px;line-height:0;font-family:Ubuntu;-inkscape-font-specification:'Ubuntu, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;writing-mode:lr-tb;direction:ltr;text-anchor:middle;fill:#ffffff;fill-opacity:1;stroke:#000000;stroke-width:1.53761;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1;paint-order:markers stroke fill"
-     x="54.484226"
-     y="83.773788"
-     id="text4"
-     transform="scale(1.0093182,0.99076783)"><tspan
-       sodipodi:role="line"
-       id="tspan2"
-       x="54.484226"
-       y="83.773788"
-       style="stroke-width:1.53761">Nullification</tspan></text>
+     inkscape:current-layer="svg1" />
   <circle
-     style="mix-blend-mode:normal;fill:#4d4d4d;fill-opacity:1;stroke:#4d4d4d;stroke-width:9;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1;paint-order:markers stroke fill;opacity:0.5"
+     style="opacity:0.5;mix-blend-mode:normal;fill:#4d4d4d;fill-opacity:1;stroke:#4d4d4d;stroke-width:9;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1;paint-order:markers stroke fill"
      id="path6"
-     cx="55"
-     cy="48"
+     cx="54.563534"
+     cy="54.865948"
      r="12" />
 </svg>

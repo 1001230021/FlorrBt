@@ -8,7 +8,7 @@ class CPlayer;
 class CPortal : public CEntity
 {
   public:
-    CPortal(CGameWorld* world, sf::Vector2f pos, float radius, std::string target_world);
+    CPortal(CGameWorld* world, florrbt::Vector2f pos, float radius, std::string target_world);
 
     void Tick(float dt) override;
     void TakeDamage(float, CEntity*, EDamageType) override {}

@@ -14,6 +14,11 @@ struct SAccountTalent
     int rank = 0;
 };
 
+inline bool operator==(const SAccountTalent& lhs, const SAccountTalent& rhs)
+{
+    return lhs.id == rhs.id && lhs.rarity == rhs.rarity && lhs.rank == rhs.rank;
+}
+
 // Bestiary entry: how many times a mob of a given rarity was defeated.
 struct SAccountCodexEntry
 {
@@ -21,6 +26,11 @@ struct SAccountCodexEntry
     uint8_t rarity = 0;
     uint32_t count = 0;
 };
+
+inline bool operator==(const SAccountCodexEntry& lhs, const SAccountCodexEntry& rhs)
+{
+    return lhs.mob_type == rhs.mob_type && lhs.rarity == rhs.rarity && lhs.count == rhs.count;
+}
 
 struct SPlayerAccount
 {
@@ -39,6 +49,18 @@ struct SPlayerAccount
     std::vector<SAccountTalent> talents;
     std::vector<SAccountCodexEntry> codex;
 };
+
+// Full-state comparison used by the MySQL backend's change detection and by
+// the migration tool's round-trip verification.
+inline bool operator==(const SPlayerAccount& lhs, const SPlayerAccount& rhs)
+{
+    return lhs.name == rhs.name && lhs.password == rhs.password && lhs.email == rhs.email &&
+           lhs.trusted_ip == rhs.trusted_ip && lhs.email_verified == rhs.email_verified && lhs.level == rhs.level &&
+           lhs.exp == rhs.exp && lhs.inventory == rhs.inventory && lhs.slots == rhs.slots &&
+           lhs.secondary_slots == rhs.secondary_slots && lhs.extra_json == rhs.extra_json &&
+           lhs.talent_points == rhs.talent_points && lhs.talents == rhs.talents && lhs.codex == rhs.codex;
+}
+inline bool operator!=(const SPlayerAccount& lhs, const SPlayerAccount& rhs) { return !(lhs == rhs); }
 
 struct SCraftResult
 {
@@ -109,6 +131,12 @@ class CAccountDataStore
     static bool Save(std::string* error = nullptr);
     static bool Flush(std::string* error = nullptr);
     static bool ShutDown(std::string* error = nullptr);
+    // Migration-tool helpers: copy of every loaded account / the current save
+    // generation, and a wholesale replacement of the loaded account list
+    // (queues a save; call Flush afterwards to wait for durability).
+    static std::vector<SPlayerAccount> SnapshotAccounts();
+    static std::uint64_t SnapshotGeneration();
+    static bool ImportAccounts(std::vector<SPlayerAccount> accounts, std::string* error = nullptr);
     class CSaveBatch
     {
       public:
@@ -177,6 +205,11 @@ class CAccountDataStore
                                     std::string* error = nullptr);
     static bool CraftItem(const std::string& name, uint8_t petal_type, uint8_t rarity, uint32_t count,
                           SCraftResult* result = nullptr);
+    // Sandbox rooms detach the player inventory/slots from the account: this
+    // clones the account's loadout+inventory into an ephemeral sandbox key.
+    // Sandbox keys are filtered out from disk saves, so in-world changes
+    // never leak back into the persistent account.
+    static bool SandboxCloneAccount(const std::string& sandbox_key, const std::string& source_account);
 
   private:
     static bool CommitRegistrationInternal(const std::string& name, const std::string& password_hash,

@@ -110,23 +110,23 @@ inline bool IsAboveRarity(ERarity rarity, ERarity threshold)
     return GetRaritySortRank(rarity) > GetRaritySortRank(threshold);
 }
 
-inline float Distance(sf::Vector2f v1, sf::Vector2f v2)
+inline float Distance(florrbt::Vector2f v1, florrbt::Vector2f v2)
 {
     float dx = v1.x - v2.x;
     float dy = v1.y - v2.y;
     return sqrtf(dx * dx + dy * dy);
 }
 
-inline float DistanceSq(sf::Vector2f v1, sf::Vector2f v2)
+inline float DistanceSq(florrbt::Vector2f v1, florrbt::Vector2f v2)
 {
     float dx = v1.x - v2.x;
     float dy = v1.y - v2.y;
     return dx * dx + dy * dy;
 }
 
-inline float Length(sf::Vector2f v) { return sqrtf(v.x * v.x + v.y * v.y); }
+inline float Length(florrbt::Vector2f v) { return sqrtf(v.x * v.x + v.y * v.y); }
 
-inline float LengthSq(sf::Vector2f v) { return v.x * v.x + v.y * v.y; }
+inline float LengthSq(florrbt::Vector2f v) { return v.x * v.x + v.y * v.y; }
 
 CPlayer* FindPlayerFromEntity(CEntity* entity, const std::vector<std::unique_ptr<CPlayer>>& players);
 CEntity* FindRootOwnerEntity(CEntity* entity);

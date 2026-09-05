@@ -392,42 +392,6 @@ size_t SnapshotBacklogSkipBytes()
     return std::clamp(configured, min_backlog, max_backlog);
 }
 
-bool SameSnapshotEntity(const ServerEntitySnap& lhs, const ServerEntitySnap& rhs)
-{
-    if (lhs.entity_id != rhs.entity_id || lhs.entity_type != rhs.entity_type || lhs.team != rhs.team ||
-        PackCoord(lhs.pos.x) != PackCoord(rhs.pos.x) || PackCoord(lhs.pos.y) != PackCoord(rhs.pos.y) ||
-        PackRadius(lhs.radius) != PackRadius(rhs.radius) || PackPercent(lhs.hp_percent) != PackPercent(rhs.hp_percent) ||
-        PackPercent(lhs.shield_percent) != PackPercent(rhs.shield_percent) || lhs.flags != rhs.flags ||
-        lhs.angle != rhs.angle || lhs.rarity != rhs.rarity || lhs.name != rhs.name ||
-        lhs.primary_slots.size() != rhs.primary_slots.size() || lhs.states.size() != rhs.states.size() ||
-        lhs.hallucinations != rhs.hallucinations)
-        return false;
-
-    for (size_t i = 0; i < lhs.primary_slots.size(); ++i)
-    {
-        if (lhs.primary_slots[i].petal_type != rhs.primary_slots[i].petal_type ||
-            lhs.primary_slots[i].rarity != rhs.primary_slots[i].rarity ||
-            lhs.primary_slots[i].visual_type != rhs.primary_slots[i].visual_type ||
-            lhs.primary_slots[i].copies.size() != rhs.primary_slots[i].copies.size())
-            return false;
-        for (size_t copy = 0; copy < lhs.primary_slots[i].copies.size(); ++copy)
-        {
-            const auto& lhs_copy = lhs.primary_slots[i].copies[copy];
-            const auto& rhs_copy = rhs.primary_slots[i].copies[copy];
-            if (lhs_copy.state != rhs_copy.state || lhs_copy.progress != rhs_copy.progress ||
-                lhs_copy.visual_value != rhs_copy.visual_value)
-                return false;
-        }
-    }
-    for (size_t i = 0; i < lhs.states.size(); ++i)
-    {
-        if (lhs.states[i].type != rhs.states[i].type || lhs.states[i].rarity != rhs.states[i].rarity ||
-            lhs.states[i].value != rhs.states[i].value)
-            return false;
-    }
-    return true;
-}
-
 bool IsSlotOperate(const ClientOperate& op)
 {
     return op.type == ClientOperate::Type::Equip || op.type == ClientOperate::Type::Unequip;
@@ -1417,7 +1381,7 @@ INetworkModule::SSnapshotHistoryEntry INetworkModule::PrepareSnapshotForSend(CPl
     for (const ServerEntitySnap& snap : msg.entities)
     {
         auto old_it = base_it->entities.find(snap.entity_id);
-        if (old_it == base_it->entities.end() || !SameSnapshotEntity(snap, old_it->second))
+        if (old_it == base_it->entities.end() || !SameServerEntitySnap(snap, old_it->second))
             delta.entities.push_back(snap);
     }
 
@@ -1622,7 +1586,7 @@ void INetworkModule::SendCodexDelta(CPlayer& player, uint8_t mob_type, uint8_t r
     QueueMessage(player, msg);
 }
 
-void INetworkModule::BroadcastLightningChain(CGameWorld& world, const std::vector<sf::Vector2f>& points)
+void INetworkModule::BroadcastLightningChain(CGameWorld& world, const std::vector<florrbt::Vector2f>& points)
 {
     ServerMessage msg;
     msg.type = ServerMessage::Type::LightningChain;
@@ -1658,7 +1622,7 @@ void INetworkModule::BroadcastTerrainDelta(CGameWorld& world, uint8_t layer, uin
     }
 }
 
-void INetworkModule::SendTerrainWallRemove(CPlayer& player, sf::Vector2f min_pos, sf::Vector2f max_pos)
+void INetworkModule::SendTerrainWallRemove(CPlayer& player, florrbt::Vector2f min_pos, florrbt::Vector2f max_pos)
 {
     ServerMessage msg;
     msg.type = ServerMessage::Type::TerrainWallRemove;
@@ -1667,7 +1631,7 @@ void INetworkModule::SendTerrainWallRemove(CPlayer& player, sf::Vector2f min_pos
     QueueMessage(player, msg);
 }
 
-void INetworkModule::BroadcastTerrainWallRemove(CGameWorld& world, sf::Vector2f min_pos, sf::Vector2f max_pos)
+void INetworkModule::BroadcastTerrainWallRemove(CGameWorld& world, florrbt::Vector2f min_pos, florrbt::Vector2f max_pos)
 {
     for (const auto& player : m_players)
     {
@@ -1917,6 +1881,43 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
 
     while (player.m_receive_buffer.size() >= 1)
     {
+        // Version gate: the first packet from a client must be the wire version
+        // triple. Old clients (or anything else) are rejected deterministically
+        // before any other packet is parsed, so protocol changes can never be
+        // misparsed by a stale client.
+        if (!player.IsAuthenticated() && !player.IsVersionVerified())
+        {
+            if (player.m_receive_buffer[0] == client_version_packet_type)
+            {
+                if (player.m_receive_buffer.size() < client_version_packet_size) return flush_slot_state();
+
+                bool version_ok = false;
+                ClientVersionPacket version_packet =
+                    ClientVersionPacket::parse(player.m_receive_buffer.data(), client_version_packet_size, &version_ok);
+                player.m_receive_buffer.erase(player.m_receive_buffer.begin(),
+                                              player.m_receive_buffer.begin() + client_version_packet_size);
+                if (version_ok && version_packet.MatchesServer())
+                {
+                    player.SetVersionVerified(true);
+                    continue;
+                }
+                LOG_WARN("network", "Player " + std::to_string(player.GetId()) +
+                                        " rejected: client version mismatch (" +
+                                        std::to_string(version_packet.major) + "." + std::to_string(version_packet.minor) +
+                                        "." + std::to_string(version_packet.patch) + ")");
+                QueueAuthResult(player, EAuthResultCode::Failed,
+                                "Outdated client version; refresh the page to reconnect");
+                FlushSendBuffer(player);
+                return EPlayerBufferResult::RequestedDisconnect;
+            }
+            LOG_WARN("network", "Player " + std::to_string(player.GetId()) +
+                                    " rejected: first packet is not the version handshake");
+            QueueAuthResult(player, EAuthResultCode::Failed,
+                            "Outdated client version; refresh the page to reconnect");
+            FlushSendBuffer(player);
+            return EPlayerBufferResult::RequestedDisconnect;
+        }
+
         if (ClientAuthRequest::IsPacketStart(player.m_receive_buffer[0]))
         {
             size_t packet_size =
@@ -1929,8 +1930,8 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                                           player.m_receive_buffer.begin() + packet_size);
             if (!ok)
             {
-                QueueAuthResult(player, EAuthResultCode::Failed, "Bad auth packet");
-                continue;
+                LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " sent a malformed auth packet");
+                return EPlayerBufferResult::RequestedDisconnect;
             }
 
             EPlayerBufferResult result = HandleAuthRequest(player, request);
@@ -1953,7 +1954,14 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                 QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
                 return EPlayerBufferResult::RequestedDisconnect;
             }
-            if (ok) HandleChatRequest(player, request);
+            if (ok)
+            {
+                HandleChatRequest(player, request);
+            } else
+            {
+                LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " sent a malformed chat packet");
+                return EPlayerBufferResult::RequestedDisconnect;
+            }
             continue;
         }
 
@@ -1977,6 +1985,10 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
             {
                 HandleSecondarySlotRequest(player, request);
                 queue_slot_state = true;
+            } else
+            {
+                LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " sent a malformed slot packet");
+                return EPlayerBufferResult::RequestedDisconnect;
             }
             continue;
         }
@@ -1996,7 +2008,14 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                 QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
                 return EPlayerBufferResult::RequestedDisconnect;
             }
-            if (ok) HandleCraftRequest(player, request);
+            if (ok)
+            {
+                HandleCraftRequest(player, request);
+            } else
+            {
+                LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " sent a malformed craft packet");
+                return EPlayerBufferResult::RequestedDisconnect;
+            }
             continue;
         }
 
@@ -2015,7 +2034,14 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                 QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
                 return EPlayerBufferResult::RequestedDisconnect;
             }
-            if (ok) HandleForgeRequest(player, request);
+            if (ok)
+            {
+                HandleForgeRequest(player, request);
+            } else
+            {
+                LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " sent a malformed forge packet");
+                return EPlayerBufferResult::RequestedDisconnect;
+            }
             continue;
         }
 
@@ -2034,7 +2060,14 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                 QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
                 return EPlayerBufferResult::RequestedDisconnect;
             }
-            if (ok) HandleTalentRequest(player, request);
+            if (ok)
+            {
+                HandleTalentRequest(player, request);
+            } else
+            {
+                LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " sent a malformed talent packet");
+                return EPlayerBufferResult::RequestedDisconnect;
+            }
             continue;
         }
 
@@ -2053,7 +2086,14 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                 QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
                 return EPlayerBufferResult::RequestedDisconnect;
             }
-            if (ok) HandleInputFrame(player, frame);
+            if (ok)
+            {
+                HandleInputFrame(player, frame);
+            } else
+            {
+                LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " sent a malformed input frame");
+                return EPlayerBufferResult::RequestedDisconnect;
+            }
             continue;
         }
 
@@ -2072,7 +2112,14 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                 QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
                 return EPlayerBufferResult::RequestedDisconnect;
             }
-            if (ok) HandleSnapshotAck(player, ack);
+            if (ok)
+            {
+                HandleSnapshotAck(player, ack);
+            } else
+            {
+                LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " sent a malformed snapshot ack");
+                return EPlayerBufferResult::RequestedDisconnect;
+            }
             continue;
         }
 
@@ -2198,8 +2245,7 @@ void INetworkModule::HandleForgeRequest(CPlayer& player, const ClientForgeReques
     result.rarity = request.rarity;
     result.consumed = forge_cost;
 
-    const bool valid_request = request.petal_type > static_cast<uint8_t>(EPetalType::None) &&
-                               request.petal_type < petal_type_names.size() && request.rarity == super_rarity &&
+    const bool valid_request = IsKnownPetalTypeId(request.petal_type) && request.rarity == super_rarity &&
                                request.count == forge_cost;
     if (valid_request) result.items.push_back({ request.petal_type, super_rarity, forge_cost });
 
@@ -2282,6 +2328,13 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
     if (m_player_auth_requests.contains(player.GetId()))
     {
         QueueAuthResult(player, EAuthResultCode::Failed, "Authentication already in progress");
+        return EPlayerBufferResult::Continue;
+    }
+
+    if (!IsValidUtf8(request.name))
+    {
+        LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " sent an invalid-UTF-8 account name");
+        QueueAuthResult(player, EAuthResultCode::Failed, "Invalid name encoding");
         return EPlayerBufferResult::Continue;
     }
 

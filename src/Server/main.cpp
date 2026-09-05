@@ -1,6 +1,7 @@
 #include "../Engine/logger.h"
 #include "../Shared/game_config.h"
 #include "../Shared/version.h"
+#include "Persistence/account_migration.h"
 #include "server.h"
 #include <chrono>
 #include <cstdint>
@@ -195,6 +196,10 @@ int main(int argc, char** argv)
     }
 
     NormalizeServerWorkingDirectory();
+    // Account migration tool modes (json <-> mysql); exits without starting
+    // the game server when one of the --migrate-accounts-* flags is present.
+    if (const std::optional<int> migration_exit = RunAccountMigrationFromArgs(argc, argv))
+        return *migration_exit;
     std::set_terminate(LogTerminate);
 #ifdef _WIN32
     SetUnhandledExceptionFilter(LogUnhandledSehException);

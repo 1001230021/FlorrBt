@@ -138,7 +138,7 @@ inline EMobType PickZoneMobType(const std::vector<EMobType>& mob_types)
     return PickZoneMobType(mob_types, ZoneMobRng());
 }
 
-inline bool IsPointInZone(const FlorrBtMap::Zone& zone, const sf::Vector2f& pos)
+inline bool IsPointInZone(const FlorrBtMap::Zone& zone, const florrbt::Vector2f& pos)
 {
     const auto& vertices = zone.vertices;
     if (vertices.size() < 3) return false;

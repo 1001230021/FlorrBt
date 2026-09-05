@@ -252,9 +252,11 @@ bool CPlayer::TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rari
 
     auto* flower = dynamic_cast<CFlower*>(GetEntity());
     if (!flower) return false;
-    if (CGameWorld* world = flower->GameWorld())
-        if (IGameController* controller = world->GetController())
-            if (controller->LocksPetalLoadout()) return false;
+    IGameController* controller = nullptr;
+    if (CGameWorld* world = flower->GameWorld()) controller = world->GetController();
+    if (controller && (controller->LocksPetalLoadout() ||
+                       !controller->CanEquipPetalType(static_cast<EPetalType>(petal_type))))
+        return false;
 
     auto& slots = flower->GetSlots();
     if (slot_index >= slots.size()) return false;
@@ -264,7 +266,11 @@ bool CPlayer::TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rari
 
     const CPetalPrototype* proto = FindPetalPrototype(static_cast<EPetalType>(petal_type));
     if (!proto || !proto->m_p_behavior) return false;
-    if (slot.m_p_proto && !flower->CanUnequipPetal(slot_index)) return false;
+    if (slot.m_p_proto)
+    {
+        if (controller && !controller->CanUnequipPetalType(slot.m_p_proto->m_type)) return false;
+        if (!flower->CanUnequipPetal(slot_index)) return false;
+    }
     if (!CAccountDataStore::TakeItem(m_account_name, petal_type, rarity, 1)) return false;
 
     if (slot.m_p_proto)
@@ -284,15 +290,16 @@ bool CPlayer::TryUnequipPetal(uint8_t slot_index)
 
     auto* flower = dynamic_cast<CFlower*>(GetEntity());
     if (!flower) return false;
-    if (CGameWorld* world = flower->GameWorld())
-        if (IGameController* controller = world->GetController())
-            if (controller->LocksPetalLoadout()) return false;
 
     auto& slots = flower->GetSlots();
     if (slot_index >= slots.size()) return false;
 
     CPetalSlot& slot = slots[slot_index];
     if (!slot.m_p_proto) return false;
+    if (CGameWorld* world = flower->GameWorld())
+        if (IGameController* controller = world->GetController())
+            if (controller->LocksPetalLoadout() || !controller->CanUnequipPetalType(slot.m_p_proto->m_type))
+                return false;
     if (!flower->CanUnequipPetal(slot_index)) return false;
 
     uint8_t old_type = static_cast<uint8_t>(slot.m_p_proto->m_type);
@@ -341,7 +348,7 @@ bool CPlayer::ObtainPetalCard(uint8_t petal_type, uint8_t rarity, uint32_t count
     if (add_to_inventory) CAccountDataStore::AddItem(m_account_name, petal_type, rarity, count);
 
     auto* flower = dynamic_cast<CPlayerFlower*>(GetEntity());
-    int per_card_exp = PetalCardExpForRarity(card_rarity);
+    std::int64_t per_card_exp = PetalCardExpForRarity(card_rarity);
     if (flower && per_card_exp > 0)
     {
         const std::uint64_t max_exp = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());

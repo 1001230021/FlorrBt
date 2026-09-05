@@ -5,7 +5,9 @@
 #endif
 
 #include "account_store.h"
+#include "mysql_account_backend.h"
 #include "../../Engine/json_value.h"
+#include "../../Shared/game_config.h"
 #include "../../Shared/petal_type.h"
 #include "../../Shared/rarity.h"
 #include "../../Shared/tools.h"
@@ -38,6 +40,10 @@ std::filesystem::path g_account_path;
 std::vector<SPlayerAccount> g_accounts;
 int g_save_batch_depth = 0;
 bool g_save_batch_dirty = false;
+// Captured once in Load (before the save worker starts) so the worker thread
+// never reads the mutable config string. Changing account_backend at runtime
+// therefore requires a restart, which is the only safe interpretation anyway.
+bool g_backend_is_mysql = false;
 
 struct SAccountSaveSnapshot
 {
@@ -560,12 +566,21 @@ bool CAccountDataStore::Load(const std::filesystem::path& path, std::string* err
     g_accounts.clear();
     g_save_batch_depth = 0;
     g_save_batch_dirty = false;
+    g_backend_is_mysql = game_config::account_backend == "mysql";
 
     bool create_fresh_file = false;
     std::uint64_t loaded_generation = 0;
     std::string load_warning;
 
-    if (!std::filesystem::exists(path))
+    if (g_backend_is_mysql)
+    {
+        std::string mysql_error;
+        if (!mysql_account_backend::LoadAll(g_accounts, loaded_generation, &mysql_error))
+        {
+            if (error) *error = "Failed to load accounts from MySQL: " + mysql_error;
+            return false;
+        }
+    } else if (!std::filesystem::exists(path))
     {
         create_fresh_file = true;
     } else
@@ -765,9 +780,33 @@ bool CAccountDataStore::ShutDown(std::string* error)
         }
     }
     if (g_save_worker.joinable()) g_save_worker.join();
+    // Drop the MySQL change-detection cache so a later Load starts fresh.
+    if (g_backend_is_mysql) mysql_account_backend::ResetPublishState();
 
     if (!flushed && error) *error = flush_error;
     return flushed;
+}
+
+std::vector<SPlayerAccount> CAccountDataStore::SnapshotAccounts() { return g_accounts; }
+
+std::uint64_t CAccountDataStore::SnapshotGeneration()
+{
+    std::lock_guard<std::mutex> lock(g_save_mutex);
+    return g_next_save_generation;
+}
+
+bool CAccountDataStore::ImportAccounts(std::vector<SPlayerAccount> accounts, std::string* error)
+{
+    {
+        std::lock_guard<std::mutex> lock(g_save_mutex);
+        if (!g_save_worker_running)
+        {
+            if (error) *error = "Account data store is not loaded";
+            return false;
+        }
+    }
+    g_accounts = std::move(accounts);
+    return Save(error);
 }
 
 namespace
@@ -911,6 +950,10 @@ bool QueueAccountSave(std::uint64_t* generation, std::string* error)
 bool WriteAccountData(const SAccountSaveSnapshot& snapshot, std::string* error)
 {
     if (error) error->clear();
+    // MySQL backend: durably publish through the database instead of the
+    // JSON file. Runs on the save worker thread, same as the file path.
+    if (g_backend_is_mysql)
+        return mysql_account_backend::PublishSnapshot(snapshot.accounts, snapshot.generation, error);
     if (snapshot.path.empty())
     {
         if (error) *error = "Account data path is empty";
@@ -936,9 +979,13 @@ bool WriteAccountData(const SAccountSaveSnapshot& snapshot, std::string* error)
     }
 
     file << "{\n  \"generation\": \"" << snapshot.generation << "\",\n  \"accounts\": [\n";
+    size_t saved_account_count = 0;
     for (size_t i = 0; i < snapshot.accounts.size(); ++i)
     {
         const SPlayerAccount& account = snapshot.accounts[i];
+        // Sandbox-room accounts are ephemeral: they never reach the disk.
+        if (account.name.rfind("@sandbox:", 0) == 0) continue;
+        if (saved_account_count++ > 0) file << ",\n";
         file << "    {\n";
         file << "      \"name\": \"" << EscapeJsonString(account.name) << "\",\n";
         file << "      \"password\": \"" << EscapeJsonString(account.password) << "\",\n";
@@ -970,7 +1017,7 @@ bool WriteAccountData(const SAccountSaveSnapshot& snapshot, std::string* error)
         }
         file << "],\n";
         file << "      \"extra\": " << (account.extra_json.empty() ? "{}" : account.extra_json) << "\n";
-        file << "    }" << (i + 1 == snapshot.accounts.size() ? "\n" : ",\n");
+        file << "    }\n";
     }
     file << "  ]\n}\n";
     file.flush();
@@ -1812,4 +1859,40 @@ const SPlayerAccount* CAccountDataStore::FindAccountConst(const std::string& nam
     auto it = std::find_if(g_accounts.begin(), g_accounts.end(),
                            [&name](const SPlayerAccount& account) { return account.name == name; });
     return it == g_accounts.end() ? nullptr : &*it;
+}
+
+bool CAccountDataStore::SandboxCloneAccount(const std::string& sandbox_key, const std::string& source_account)
+{
+    if (sandbox_key.empty() || source_account.empty()) return false;
+
+    const SPlayerAccount* source = FindAccountConst(source_account);
+    if (!source) return false;
+
+    const std::string normalized_key = source_account.empty() ? sandbox_key : sandbox_key;
+
+    SPlayerAccount* existing = FindAccount(normalized_key);
+    if (existing)
+    {
+        // Refresh from the persistent account on every world enter.
+        existing->inventory = source->inventory;
+        existing->slots = source->slots;
+        existing->secondary_slots = source->secondary_slots;
+        return true;
+    }
+
+    SPlayerAccount sandbox;
+    sandbox.name = normalized_key;
+    sandbox.password = source->password;
+    sandbox.email = source->email;
+    sandbox.email_verified = source->email_verified;
+    sandbox.level = source->level;
+    sandbox.exp = source->exp;
+    sandbox.talent_points = source->talent_points;
+    sandbox.talents = source->talents;
+    sandbox.inventory = source->inventory;
+    sandbox.slots = source->slots;
+    sandbox.secondary_slots = source->secondary_slots;
+    sandbox.codex = source->codex;
+    g_accounts.push_back(std::move(sandbox));
+    return true;
 }

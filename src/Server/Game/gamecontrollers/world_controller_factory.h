@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "../controller_params.h"
 #include <array>
@@ -15,6 +15,9 @@ inline constexpr std::string_view weather_diurnal_open = "world_controller.weath
 inline constexpr std::string_view waiting = "world_controller.waiting";
 inline constexpr std::string_view mutable_terrain = "world_controller.mutable_terrain";
 inline constexpr std::string_view pvp = "world_controller.pvp";
+inline constexpr std::string_view ant_kingdom = "world_controller.ant_kingdom";
+inline constexpr std::string_view deathmatch = "world_controller.deathmatch";
+inline constexpr std::string_view sandbox = "world_controller.sandbox";
 }
 
 namespace map_declarations
@@ -55,6 +58,12 @@ inline std::string_view ControllerKeyForName(std::string_view name)
         return world_controller_keys::mutable_terrain;
     if (name == "pvp" || name == "ant_hel" || name == "ant_hel_pvp" || name == "ant_pvp")
         return world_controller_keys::pvp;
+    if (name == "ant_kingdom" || name == "eou")
+        return world_controller_keys::ant_kingdom;
+    if (name == "deathmatch" || name == "dm")
+        return world_controller_keys::deathmatch;
+    if (name == "sandbox" || name == "sand_box" || name == "sb")
+        return world_controller_keys::sandbox;
     return {};
 }
 } // namespace map_declarations

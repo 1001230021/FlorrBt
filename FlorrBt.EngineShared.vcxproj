@@ -85,6 +85,8 @@
     <ClInclude Include="src\Shared\game_config.h" />
     <ClInclude Include="src\Shared\inventory.h" />
     <ClInclude Include="src\Shared\mob_type.h" />
+    <ClInclude Include="src\Shared\mod_mob_type.h" />
+    <ClInclude Include="src\Shared\mod_petal_type.h" />
     <ClInclude Include="src\Shared\network_msg.h" />
     <ClInclude Include="src\Shared\petal_type.h" />
     <ClInclude Include="src\Shared\rarity.h" />

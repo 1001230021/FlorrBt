@@ -19,5 +19,14 @@ add_executable(FlorrBt_Tests
 )
 target_include_directories(FlorrBt_Tests PRIVATE .. ../src)
 
+# The snapshot comparison test needs SFML (ServerEntitySnap stores sf::Vector2f).
+# It is skipped when SFML is not on the include path (e.g. minimal standalone
+# configs); the main build (which fetches SFML) picks it up via this variable.
+set(FLORRBT_SFML_INCLUDE_DIR "" CACHE PATH "Directory containing SFML/System/Vector2.hpp")
+if(FLORRBT_SFML_INCLUDE_DIR)
+    target_sources(FlorrBt_Tests PRIVATE test_snapshot_compare.cpp test_version_packet.cpp)
+    target_include_directories(FlorrBt_Tests PRIVATE ${FLORRBT_SFML_INCLUDE_DIR})
+endif()
+
 enable_testing()
 add_test(NAME weather_diurnal COMMAND FlorrBt_Tests)

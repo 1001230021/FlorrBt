@@ -2,21 +2,21 @@
 <svg
    viewBox="0 0 110 110"
    version="1.1"
-   id="svg4"
+   id="svg1"
    sodipodi:docname="hallucinogenic_mushroom.svg"
    inkscape:version="1.4.3 (0d15f75, 2025-12-25)"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns:xlink="http://www.w3.org/1999/xlink"
    xmlns="http://www.w3.org/2000/svg"
-   xmlns:svg="http://www.w3.org/2000/svg">
+   xmlns:svg="http://www.w3.org/2000/svg" data-copy-distance="0">
   <defs
-     id="defs4">
+     id="defs1">
     <radialGradient
        id="bewitchCapBase"
        cx="56.598957"
        cy="32.723675"
-       r="25.840661"
+       r="25.84066"
        gradientTransform="matrix(1.126969,-0.11228347,0.13796588,1.3847388,-27.868747,6.6973131)"
        fx="56.598957"
        fy="32.723675"
@@ -38,11 +38,52 @@
          stop-color="#9c8bd8"
          id="stop4" />
     </radialGradient>
+    <inkscape:path-effect
+       effect="bspline"
+       id="path-effect3"
+       is_visible="true"
+       lpeversion="1.3"
+       weight="33.333333"
+       steps="2"
+       helper_size="0"
+       apply_no_weight="true"
+       apply_with_weight="true"
+       only_selected="false"
+       uniform="false" />
+    <inkscape:path-effect
+       effect="bspline"
+       id="path-effect4"
+       is_visible="true"
+       lpeversion="1.3"
+       weight="33.333333"
+       steps="2"
+       helper_size="0"
+       apply_no_weight="true"
+       apply_with_weight="true"
+       only_selected="false"
+       uniform="false" />
+    <clipPath
+       id="bewitchCapClip">
+      <path
+         d="m 40.427544,43.141241 c 3.547423,3.056995 10.249794,5.410999 16.854345,5.410999 6.60455,0 13.110623,-2.353956 16.788901,-5.296578 3.678277,-2.942622 4.528317,-6.473556 1.209694,-14.565766 C 71.96186,20.597687 64.474971,7.9451721 57.2492,7.8307371 50.023429,7.716302 43.059643,20.139959 39.773715,28.232169 c -3.285927,8.09221 -2.893594,11.852076 0.653829,14.909072 z"
+         transform="matrix(0.7159874,0.65955369,-0.65955369,0.7159874,40.791308,-20.778916)"
+         id="path13" />
+    </clipPath>
+    <radialGradient
+       inkscape:collect="always"
+       xlink:href="#bewitchPink"
+       id="radialGradient3166"
+       cx="70"
+       cy="23"
+       r="31"
+       fx="70"
+       fy="23"
+       gradientUnits="userSpaceOnUse" />
     <radialGradient
        id="bewitchPink"
-       cx="50%"
-       cy="50%"
-       r="50%">
+       cx="0.5"
+       cy="0.5"
+       r="0.5">
       <stop
          offset="0"
          stop-color="#ff86c8"
@@ -107,119 +148,6 @@
          stop-opacity="0"
          id="stop13" />
     </radialGradient>
-    <clipPath
-       id="bewitchCapClip">
-      <path
-         d="m 40.427544,43.141241 c 3.547423,3.056995 10.249794,5.410999 16.854345,5.410999 6.60455,0 13.110623,-2.353956 16.788901,-5.296578 3.678277,-2.942622 4.528317,-6.473556 1.209694,-14.565766 C 71.96186,20.597687 64.474971,7.9451721 57.2492,7.8307371 50.023429,7.716302 43.059643,20.139959 39.773715,28.232169 c -3.285927,8.09221 -2.893594,11.852076 0.653829,14.909072 z"
-         transform="matrix(0.7159874,0.65955369,-0.65955369,0.7159874,40.791308,-20.778916)"
-         id="path13" />
-    </clipPath>
-    <inkscape:path-effect
-       effect="bspline"
-       id="path-effect4"
-       is_visible="true"
-       lpeversion="1.3"
-       weight="33.333333"
-       steps="2"
-       helper_size="0"
-       apply_no_weight="true"
-       apply_with_weight="true"
-       only_selected="false"
-       uniform="false" />
-    <inkscape:path-effect
-       effect="bspline"
-       id="path-effect3"
-       is_visible="true"
-       lpeversion="1.3"
-       weight="33.333333"
-       steps="2"
-       helper_size="0"
-       apply_no_weight="true"
-       apply_with_weight="true"
-       only_selected="false"
-       uniform="false" />
-    <inkscape:path-effect
-       effect="bspline"
-       id="path-effect8"
-       is_visible="true"
-       lpeversion="1.3"
-       weight="33.333333"
-       steps="2"
-       helper_size="0"
-       apply_no_weight="true"
-       apply_with_weight="true"
-       only_selected="false"
-       uniform="false" />
-    <inkscape:path-effect
-       effect="bspline"
-       id="path-effect7"
-       is_visible="true"
-       lpeversion="1.3"
-       weight="33.333333"
-       steps="2"
-       helper_size="0"
-       apply_no_weight="true"
-       apply_with_weight="true"
-       only_selected="false"
-       uniform="false" />
-    <inkscape:path-effect
-       effect="bspline"
-       id="path-effect2"
-       is_visible="true"
-       lpeversion="1.3"
-       weight="33.333333"
-       steps="2"
-       helper_size="0"
-       apply_no_weight="true"
-       apply_with_weight="true"
-       only_selected="false"
-       uniform="false" />
-    <inkscape:path-effect
-       effect="bspline"
-       id="path-effect1"
-       is_visible="true"
-       lpeversion="1.3"
-       weight="33.333333"
-       steps="2"
-       helper_size="0"
-       apply_no_weight="true"
-       apply_with_weight="true"
-       only_selected="false"
-       uniform="false" />
-    <inkscape:path-effect
-       effect="bspline"
-       id="path-effect2-0"
-       is_visible="true"
-       lpeversion="1.3"
-       weight="33.333333"
-       steps="2"
-       helper_size="0"
-       apply_no_weight="true"
-       apply_with_weight="true"
-       only_selected="false"
-       uniform="false" />
-    <inkscape:path-effect
-       effect="bspline"
-       id="path-effect8-1"
-       is_visible="true"
-       lpeversion="1.3"
-       weight="33.333333"
-       steps="2"
-       helper_size="0"
-       apply_no_weight="true"
-       apply_with_weight="true"
-       only_selected="false"
-       uniform="false" />
-    <radialGradient
-       inkscape:collect="always"
-       xlink:href="#bewitchPink"
-       id="radialGradient3166"
-       cx="70"
-       cy="23"
-       r="31"
-       fx="70"
-       fy="23"
-       gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#bewitchPink"
@@ -230,93 +158,81 @@
        fx="57"
        fy="44"
        gradientUnits="userSpaceOnUse" />
+    <radialGradient
+       id="radialGradient16"
+       cx="0.5"
+       cy="0.5"
+       r="0.5">
+      <stop
+         offset="0"
+         stop-color="#ff86c8"
+         stop-opacity="0.92"
+         id="stop14" />
+      <stop
+         offset="0.62"
+         stop-color="#ee65bb"
+         stop-opacity="0.46"
+         id="stop15" />
+      <stop
+         offset="1"
+         stop-color="#ee65bb"
+         stop-opacity="0"
+         id="stop16" />
+    </radialGradient>
+    <filter
+       inkscape:collect="always"
+       style="color-interpolation-filters:sRGB"
+       id="filter1"
+       x="-0.16416355"
+       y="-0.18078771"
+       width="1.3283271"
+       height="1.3615754">
+      <feGaussianBlur
+         inkscape:collect="always"
+         stdDeviation="5.9509286"
+         id="feGaussianBlur1" />
+    </filter>
   </defs>
   <sodipodi:namedview
-     id="namedview4"
-     pagecolor="#ffffff"
-     bordercolor="#000000"
-     borderopacity="0.25"
-     inkscape:showpageshadow="2"
-     inkscape:pageopacity="0.0"
-     inkscape:pagecheckerboard="true"
-     inkscape:deskcolor="#d1d1d1"
-     showgrid="true"
-     inkscape:zoom="3.6045455"
-     inkscape:cx="43.00126"
-     inkscape:cy="32.59773"
+     id="namedview1"
+     pagecolor="#505050"
+     bordercolor="#ffffff"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="1"
+     inkscape:deskcolor="#505050"
+     inkscape:zoom="7.1545455"
+     inkscape:cx="34.034307"
+     inkscape:cy="55.139771"
      inkscape:window-width="1920"
      inkscape:window-height="1001"
      inkscape:window-x="-9"
      inkscape:window-y="-9"
      inkscape:window-maximized="1"
-     inkscape:current-layer="svg4">
-    <inkscape:grid
-       id="grid5"
-       units="px"
-       originx="0"
-       originy="0"
-       spacingx="55"
-       spacingy="55"
-       empcolor="#0099e5"
-       empopacity="0.30196078"
-       color="#0099e5"
-       opacity="0.14901961"
-       empspacing="10"
-       enabled="true"
-       visible="true" />
-    <inkscape:grid
-       id="grid6"
-       units="px"
-       originx="55"
-       originy="48"
-       spacingx="12"
-       spacingy="12"
-       empcolor="#0099e5"
-       empopacity="0.30196078"
-       color="#0099e5"
-       opacity="0.14901961"
-       empspacing="1"
-       enabled="true"
-       visible="true" />
-  </sodipodi:namedview>
-  <text
-     xml:space="preserve"
-     style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:15.0507px;line-height:0;font-family:Ubuntu;-inkscape-font-specification:'Ubuntu Bold';text-align:center;writing-mode:lr-tb;direction:ltr;text-anchor:middle;fill:#ffffff;fill-opacity:1;stroke:#000000;stroke-width:1.80608;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1;paint-order:markers stroke fill"
-     x="54.753563"
-     y="86.506729"
-     id="text4"><tspan
-       sodipodi:role="line"
-       id="tspan4"
-       x="54.753563"
-       y="86.506729"
-       style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:15.0507px;line-height:0;font-family:Ubuntu;-inkscape-font-specification:'Ubuntu Bold';text-align:center;text-anchor:middle;fill:#ffffff;fill-opacity:1;stroke:#000000;stroke-width:1.80608;stroke-dasharray:none;stroke-opacity:1;paint-order:markers stroke fill">Mushroom</tspan><tspan
-       sodipodi:role="line"
-       x="54.753563"
-       y="86.506729"
-       style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:15.0507px;line-height:0;font-family:Ubuntu;-inkscape-font-specification:'Ubuntu Bold';text-align:center;text-anchor:middle;fill:#ffffff;fill-opacity:1;stroke:#000000;stroke-width:1.80608;stroke-dasharray:none;stroke-opacity:1;paint-order:markers stroke fill"
-       id="tspan1" /></text>
+     inkscape:current-layer="svg1" />
   <path
-     style="mix-blend-mode:normal;fill:url(#bewitchCapBase);fill-opacity:1;stroke:#e3e3e3;stroke-width:4.38276;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:0.620155;paint-order:markers fill stroke"
+     style="mix-blend-mode:normal;fill:url(#bewitchCapBase);fill-opacity:1;stroke:#a6a6a6;stroke-width:6.47461;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:0.39591837;paint-order:markers fill stroke"
      d="m 54.012377,27.333139 c -2.648307,-0.0327 -5.427339,0.490417 -7.241956,6.359312 -1.814617,5.868896 -2.664656,17.082881 -1.879957,23.442214 0.784699,6.359333 3.204043,7.863249 6.718841,8.043076 3.514798,0.179827 8.124721,-0.96448 9.988335,-7.291106 1.863614,-6.326625 0.980881,-17.834855 -0.719301,-23.883578 -1.700181,-6.048722 -4.217656,-6.637223 -6.865962,-6.669918 z"
      id="path3"
      inkscape:path-effect="#path-effect3"
      inkscape:original-d="m 54.143157,26.777322 c -2.779087,0.523122 -5.558119,1.046234 -8.337262,1.569366 -0.850091,11.214659 -1.70013,22.428644 -2.550221,33.643303 2.419489,1.504007 4.838833,3.007923 7.258322,4.511929 4.610107,-1.144352 9.22003,-2.288659 13.830045,-3.432989 C 63.461254,51.56001 62.578521,40.05178 61.695734,28.542859 59.178158,27.954335 56.660683,27.365835 54.143157,26.777322 Z"
      sodipodi:nodetypes="ccccccc"
-     transform="matrix(0.47434561,0.60939499,-0.60939499,0.47434561,53.696757,-7.732098)" />
+     transform="matrix(0.47434561,0.60939499,-0.60939499,0.47434561,51.174188,7.388805)" />
   <path
-     style="mix-blend-mode:normal;fill:#ffffff;fill-opacity:1;stroke:#dadada;stroke-width:4.109;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:0.542636;paint-order:markers fill stroke"
+     style="mix-blend-mode:normal;fill:#ffffff;fill-opacity:1;stroke:#a7a7a7;stroke-width:6.07019;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:0.39591837;paint-order:markers fill stroke"
      d="m 40.427544,43.141241 c 3.547423,3.056995 10.249794,5.410999 16.854345,5.410999 6.60455,0 13.110623,-2.353956 16.788901,-5.296578 3.678277,-2.942622 4.528317,-6.473556 1.209694,-14.565766 C 71.96186,20.597687 64.474971,7.9451721 57.2492,7.8307371 50.023429,7.716302 43.059643,20.139959 39.773715,28.232169 c -3.285927,8.09221 -2.893594,11.852076 0.653829,14.909072 z"
      id="path4"
      inkscape:path-effect="#path-effect4"
      inkscape:original-d="m 37.272463,43.844186 c 6.702504,2.354051 13.404875,4.708054 20.107513,7.062151 6.506463,-2.354097 13.012536,-4.708053 19.519,-7.06215 C 77.749067,40.31304 78.599107,36.782106 79.449198,33.25096 71.96186,20.597687 64.474971,7.9451724 56.987634,-4.7081006 50.023429,7.7163018 43.059643,20.139959 36.095438,32.564362 c 0.392349,3.760017 0.784683,7.519883 1.177025,11.279824 z"
      sodipodi:nodetypes="ccccccc"
-     transform="matrix(0.60582849,0.55807744,-0.55807744,0.60582849,43.288895,-14.752717)" />
+     transform="matrix(0.60582849,0.55807744,-0.55807744,0.60582849,40.766326,0.36818608)" />
   <g
      clip-path="url(#bewitchCapClip)"
      pointer-events="none"
      id="g16"
-     style="mix-blend-mode:normal"
-     transform="matrix(0.84614407,0,0,0.84614407,8.7735698,2.8292396)">
+     style="mix-blend-mode:normal;filter:url(#filter1);opacity:1"
+     transform="matrix(0.84614407,0,0,0.84614407,6.2510005,17.950143)">
     <circle
        cx="70"
        cy="23"

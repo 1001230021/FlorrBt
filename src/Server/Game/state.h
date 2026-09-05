@@ -16,7 +16,7 @@ class CState
 
     virtual void Tick(float dt) = 0;
     virtual bool AffectsMovementTarget() const { return false; }
-    virtual sf::Vector2f ModifyMovementTarget(const CMobBase&, const sf::Vector2f& target_pos) const
+    virtual florrbt::Vector2f ModifyMovementTarget(const CMobBase&, const florrbt::Vector2f& target_pos) const
     {
         return target_pos;
     }

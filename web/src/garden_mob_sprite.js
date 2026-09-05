@@ -1,3 +1,4 @@
+import { drawSpriteImage } from "./sprite_raster_cache.js";
 const SVG_VIEWBOX_SIZE = 110;
 const SVG_CLIP_X = 9.167;
 const SVG_CLIP_SIZE = 91.667;
@@ -38,7 +39,7 @@ export function drawBubble(ctx, pos, radius, entityId) {
   ctx.save();
   ctx.translate(pos.x, pos.y);
   if (isImageReady(image)) {
-    ctx.drawImage(image, -half, -half, size, size);
+    drawSpriteImage(ctx, image, -half, -half, size, size);
   } else {
     ctx.strokeStyle = BUBBLE_FALLBACK_STROKE;
     ctx.fillStyle = BUBBLE_FALLBACK_FILL;
@@ -190,7 +191,7 @@ export function drawLeafPiece(ctx, pos, radius, entityId, angle) {
   ctx.translate(pos.x, pos.y);
   ctx.rotate(Number.isFinite(angle) ? angle : fallbackAngle);
   if (isImageReady(image)) {
-    ctx.drawImage(image, -half, -half, size, size);
+    drawSpriteImage(ctx, image, -half, -half, size, size);
   } else {
     drawFallbackLeafPiece(ctx, radius);
   }
@@ -344,7 +345,7 @@ export function drawAntHole(ctx, pos, radius) {
   ctx.save();
   ctx.translate(pos.x, pos.y);
   if (isImageReady(image)) {
-    ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
+    drawSpriteImage(ctx, image, -size * 0.5, -size * 0.5, size, size);
   } else {
     ctx.fillStyle = "#946d00";
     ctx.strokeStyle = "#6b4f00";
@@ -368,7 +369,7 @@ function drawSvgMob(ctx, src, pos, radius, angle, options = {}) {
   if (Number.isFinite(angle) && Number.isFinite(options.faceAngle))
     ctx.rotate(angle - options.faceAngle);
   if (isImageReady(image)) {
-    ctx.drawImage(image, -half, -half, size, size);
+    drawSpriteImage(ctx, image, -half, -half, size, size);
   } else {
     drawFallbackAnt(ctx, radius);
   }
@@ -416,7 +417,7 @@ export function drawDandelion(
   ctx.translate(radius * offsetX, radius * offsetY);
   ctx.rotate(angleOffset);
   if (isImageReady(image)) {
-    ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
+    drawSpriteImage(ctx, image, -size * 0.5, -size * 0.5, size, size);
   } else {
     drawFallbackDandelion(ctx, radius);
   }
@@ -443,7 +444,7 @@ export function drawSandstorm(ctx, pos, radius, entityId, time) {
     ctx.rotate(basePhase + layer.phase + t * layer.speed);
     ctx.globalAlpha *= layer.alpha;
     if (isImageReady(image)) {
-      ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
+      drawSpriteImage(ctx, image, -size * 0.5, -size * 0.5, size, size);
     } else {
       drawFallbackSandstorm(ctx, radius, layer.scale);
     }
@@ -473,7 +474,7 @@ export function drawPortal(ctx, pos, radius, entityId, time, angle = 0) {
     ctx.rotate(basePhase + layer.phase + t * layer.speed);
     ctx.globalAlpha *= layer.alpha;
     if (isImageReady(image)) {
-      ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
+      drawSpriteImage(ctx, image, -size * 0.5, -size * 0.5, size, size);
     } else {
       drawFallbackPortal(ctx, radius, layer.scale);
     }
@@ -515,11 +516,11 @@ function drawGardenAnt(
 
   if (isImageReady(abdomen) || isImageReady(head)) {
     if (isImageReady(abdomen))
-      ctx.drawImage(abdomen, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
+      drawSpriteImage(ctx, abdomen, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
     drawAnimatedParts(ctx, wings, spriteSize, animation.wing, "fill");
     drawAnimatedParts(ctx, forelimbs, spriteSize, forelimbAmount, "stroke");
     if (isImageReady(head))
-      ctx.drawImage(head, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
+      drawSpriteImage(ctx, head, -spriteHalf, -spriteHalf, spriteSize, spriteSize);
   } else {
     drawFallbackAnt(ctx, radius);
   }
@@ -944,7 +945,7 @@ export function drawFirefly(ctx, pos, radius, entityId, angle, motion, time) {
   ctx.fill();
 
   if (isImageReady(body)) {
-    ctx.drawImage(body, -half, -half, spriteSize, spriteSize);
+    drawSpriteImage(ctx, body, -half, -half, spriteSize, spriteSize);
   } else {
     ctx.fillStyle = "#f9ec77";
     ctx.beginPath();

@@ -10,14 +10,14 @@ bool RegisterPetals(std::string& error)
     }
 
     RegisterPetalDefinition<EPetalType::Air, CAirBehavior>();
-    RegisterPetalDefinition<EPetalType::Brush, CBrushBehavior>();
-    RegisterPetalDefinition<EPetalType::Eraser, CBrushBehavior>();
+    // Mod petals (controller content, ids from mod_petal_type.h).
+    RegisterModPetalDefinition<EModPetalType::Brush, CBrushBehavior>();
+    RegisterModPetalDefinition<EModPetalType::Eraser, CBrushBehavior>();
     RegisterPetalDefinition<EPetalType::AntEgg, CAntEggBehavior, CBeetleEggPetal>();
     RegisterPetalDefinition<EPetalType::Antennae, CAntennaeBehavior>();
     RegisterPetalDefinition<EPetalType::Basic, CBasicBehavior>();
     RegisterPetalDefinition<EPetalType::BeetleEgg, CBeetleEggBehavior, CBeetleEggPetal>();
-    RegisterPetalDefinition<EPetalType::Bone, CBoneBehavior>();
-    RegisterPetalDefinition<EPetalType::Bubble, CBubbleBehavior>();
+    RegisterPetalDefinition<EPetalType::Bone, CBoneBehavior>();    RegisterPetalDefinition<EPetalType::Bubble, CBubbleBehavior>();
     RegisterPetalDefinition<EPetalType::Carrot, CCarrotBehavior, CMissilePetal>();
     RegisterPetalDefinition<EPetalType::Coin, CCoinBehavior>();
     RegisterPetalDefinition<EPetalType::Compass, CCompassBehavior, CCompassPetal>();
@@ -60,6 +60,7 @@ bool RegisterPetals(std::string& error)
     RegisterPetalDefinition<EPetalType::Basil, CBasilBehavior, CBasilPetal>();
     RegisterPetalDefinition<EPetalType::Soil, CSoilBehavior>();
     RegisterPetalDefinition<EPetalType::Honey, CHoneyBehavior, CThrownPetal>();
+    RegisterModPetalDefinition<EModPetalType::EouPheromone, CEouPheromoneBehavior, CEouPheromonePetal>();
     RegisterPetalDefinition<EPetalType::Wax, CWaxBehavior>();
     RegisterPetalDefinition<EPetalType::ThirdEye, CThirdEyeBehavior>();
     RegisterPetalDefinition<EPetalType::Dandelion, CDandelionBehavior>();
@@ -78,6 +79,7 @@ bool RegisterPetals(std::string& error)
     RegisterPetalDefinition<EPetalType::Lightning, CLightningBehavior>();
     RegisterPetalDefinition<EPetalType::Battery, CBatteryBehavior, CBatteryPetal>();
     RegisterPetalDefinition<EPetalType::Bulb, CBulbBehavior>();
+    RegisterPetalDefinition<EPetalType::Magnet, CMagnetBehavior>();
 
     return registry.Finalize(error);
 }

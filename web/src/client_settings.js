@@ -28,6 +28,14 @@ export function normalizeMobileControlMode(value) {
   return "auto";
 }
 
+export function normalizeRenderScaleMode(value) {
+  if (value === "native") return "native";
+  const number = Number(value);
+  if (Number.isFinite(number) && number > 0)
+    return Math.min(4, Math.max(0.75, Math.round(number * 4) / 4));
+  return "auto";
+}
+
 export function normalizeMovementMode(value) {
   const text = String(value || "").trim().toLowerCase();
   if (text === "keyboard" || text === "keys") return "keyboard";
@@ -122,6 +130,8 @@ export function loadClientSettings() {
   state.clientConfig = normalizeClientConfig(saved.clientConfig);
   state.holdAttack = saved.holdAttack === true;
   state.holdDefense = saved.holdDefense === true;
+  state.fullscreen = saved.fullscreen === true;
+  state.renderScaleMode = normalizeRenderScaleMode(saved.renderScaleMode);
   if ((saved.version || 0) < titanHalfScaleConfigVersion) {
     state.clientConfig = {
       ...state.clientConfig,
@@ -145,6 +155,22 @@ export function loadClientSettings() {
   }
 }
 
+// Restores the gameplay/display preferences to their shipped defaults.
+// Deliberately leaves the account name, server URL, language, saved loadout
+// presets and the tunables owned by `set` alone -- those are either identity
+// or have their own reset path (`reset config`).
+export function resetClientPreferences() {
+  state.movementMode = normalizeMovementMode("");
+  state.mobileControlMode = normalizeMobileControlMode("auto");
+  state.holdAttack = false;
+  state.holdDefense = false;
+  state.renderScaleMode = normalizeRenderScaleMode("auto");
+  state.loginMapName = loginMapDefaultName;
+  state.loginMapX = loginMapDefaultX;
+  state.loginMapY = loginMapDefaultY;
+  state.loginMapHorizon = loginMapDefaultHorizon;
+}
+
 export function saveClientSettings() {
   localStorage.setItem(
     settingsKey,
@@ -157,6 +183,8 @@ export function saveClientSettings() {
       mobileControlMode: state.mobileControlMode,
       holdAttack: state.holdAttack,
       holdDefense: state.holdDefense,
+      fullscreen: state.fullscreen,
+      renderScaleMode: state.renderScaleMode,
       loadoutPresets: normalizeLoadoutPresets(state.loadoutPresets),
       activeLoadoutPreset: state.activeLoadoutPreset,
       loginMapName: state.loginMapName,

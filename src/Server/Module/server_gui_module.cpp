@@ -142,34 +142,40 @@ std::vector<std::string> WorldIdsAndMapNames()
     return values;
 }
 
-std::vector<std::string> EntityRefs(std::string_view prefix)
+// Game thread only: enumerates live worlds/entities for the completion
+// snapshot the GUI thread consumes.
+void CollectEntityRefs(std::vector<std::string>& stubs, std::vector<std::string>& refs)
 {
-    std::vector<std::string> refs;
     CServer* server = CServer::GetInstance();
-    if (!server) return refs;
+    if (!server) return;
 
-    const size_t separator = prefix.find(':');
-    if (separator == std::string_view::npos)
+    for (const CGameWorld* world : server->GetWorlds())
     {
-        for (const std::string& world_id : WorldIds())
-            refs.push_back(world_id + ":");
-        return refs;
+        if (!world) continue;
+        const std::string world_id = std::to_string(world->GetId());
+        stubs.push_back(world_id + ":");
+        world->ForEachEntity([&](const CEntity* entity) {
+            if (entity) refs.push_back(world_id + ":" + std::to_string(entity->Id()));
+        });
     }
-    const std::string world_prefix(prefix.substr(0, separator));
-    if (world_prefix.empty() || !IsUnsignedInteger(world_prefix)) return refs;
-
-    std::uint32_t world_id = 0;
-    const char* begin = world_prefix.data();
-    const char* end = begin + world_prefix.size();
-    const auto [ptr, error] = std::from_chars(begin, end, world_id);
-    if (error != std::errc{} || ptr != end) return refs;
-    CGameWorld* world = server->FindWorldById(world_id);
-    if (!world) return refs;
-
-    world->ForEachEntity([&](const CEntity* entity) {
-        if (entity) refs.push_back(std::to_string(world_id) + ":" + std::to_string(entity->Id()));
-    });
+    std::sort(stubs.begin(), stubs.end());
     std::sort(refs.begin(), refs.end());
+}
+
+// GUI thread: entity completion against the published snapshot. Keeps the old
+// two-step behavior (list "world:" stubs until a world is typed).
+std::vector<std::string> EntityRefsFromSnapshot(std::string_view prefix,
+                                                const IServerGuiModule::SCompletionSnapshot& snapshot)
+{
+    const size_t separator = prefix.find(':');
+    if (separator == std::string_view::npos) return snapshot.entity_ref_stubs;
+
+    const std::string world_prefix(prefix.substr(0, separator + 1));
+    std::vector<std::string> refs;
+    for (const std::string& ref : snapshot.entity_refs)
+    {
+        if (ref.rfind(world_prefix, 0) == 0) refs.push_back(ref);
+    }
     return refs;
 }
 
@@ -219,7 +225,8 @@ std::string CompletionKindAt(const CConsole& console, const std::string& command
     return argument_index < kinds.size() ? kinds[argument_index] : std::string{};
 }
 
-std::vector<std::string> CompletionCandidates(std::string_view kind, std::string_view prefix, CConsole& console)
+std::vector<std::string> CompletionCandidates(std::string_view kind, std::string_view prefix, CConsole& console,
+                                              const IServerGuiModule::SCompletionSnapshot& snapshot)
 {
     if (kind == "command") return console.CommandNames();
     if (kind == "config") return game_config::ConfigNames();
@@ -228,14 +235,14 @@ std::vector<std::string> CompletionCandidates(std::string_view kind, std::string
     if (kind == "mob") return MobNames();
     if (kind == "player" || kind == "target")
     {
-        std::vector<std::string> candidates = PlayerNames();
-        std::vector<std::string> refs = EntityRefs(prefix);
+        std::vector<std::string> candidates = snapshot.players;
+        std::vector<std::string> refs = EntityRefsFromSnapshot(prefix, snapshot);
         candidates.insert(candidates.end(), refs.begin(), refs.end());
         return candidates;
     }
-    if (kind == "entity") return EntityRefs(prefix);
-    if (kind == "world") return WorldIds();
-    if (kind == "world_or_map") return WorldIdsAndMapNames();
+    if (kind == "entity") return EntityRefsFromSnapshot(prefix, snapshot);
+    if (kind == "world") return snapshot.world_ids;
+    if (kind == "world_or_map") return snapshot.world_ids_and_maps;
     if (kind == "bool") return { "0", "1" };
     if (kind == "channel") return { "global", "local", "server", "whisper" };
     if (kind == "weather_action") return { "status", "set", "env", "derive", "auto", "time" };
@@ -345,8 +352,72 @@ IServerGuiModule::log_line::log_line(ELogPriority line_priority, sf::String line
 
 bool IServerGuiModule::Init()
 {
-    if (!game_config::gui_console_enabled) return true;
-    return OpenGui();
+    if (game_config::gui_console_enabled) StartGuiThread();
+    return true;
+}
+
+void IServerGuiModule::StartGuiThread()
+{
+    if (m_thread.joinable()) return;
+
+    m_stop_requested = false;
+    m_thread_exited = false;
+    RefreshCompletionSnapshot();
+    // The sink only enqueues raw lines; the GUI thread wraps and lays them
+    // out. Installed before the thread starts so no line can slip past.
+    if (m_log_sink_id == 0)
+    {
+        m_log_sink_id =
+            CLogger::AddSink([this](const std::string& sender, ELogPriority priority, const std::string& msg) {
+                PushLine(sender, priority, msg);
+            });
+    }
+    m_thread = std::thread([this]() { ThreadLoop(); });
+}
+
+void IServerGuiModule::StopGuiThread()
+{
+    if (m_log_sink_id != 0)
+    {
+        CLogger::RemoveSink(m_log_sink_id);
+        m_log_sink_id = 0;
+    }
+    if (m_thread.joinable())
+    {
+        m_stop_requested = true;
+        m_thread.join();
+    }
+    m_thread_exited = false;
+}
+
+void IServerGuiModule::ThreadLoop()
+{
+    if (!OpenGui())
+    {
+        m_thread_exited = true;
+        return;
+    }
+
+    sf::Clock frame_clock;
+    while (!m_stop_requested)
+    {
+        if (!ProcessEvents()) break;
+        DrainPendingLogLines();
+
+        const float frame_rate = static_cast<float>(std::max(1u, game_config::gui_console_framerate_limit));
+        const float render_interval = 1.f / frame_rate;
+        m_render_accumulator =
+            std::min(m_render_accumulator + frame_clock.restart().asSeconds(), render_interval * 2.f);
+        if (m_render_accumulator >= render_interval)
+        {
+            m_render_accumulator -= render_interval;
+            Render();
+        }
+        sf::sleep(sf::milliseconds(3));
+    }
+
+    CloseGui();
+    m_thread_exited = true;
 }
 
 bool IServerGuiModule::OpenGui()
@@ -367,10 +438,6 @@ bool IServerGuiModule::OpenGui()
         return false;
     }
 
-    m_log_sink_id = CLogger::AddSink([this](const std::string& sender, ELogPriority priority, const std::string& msg) {
-        PushLine(sender, priority, msg);
-    });
-
     PushLine("graphical", ELogPriority::Info, "Server GUI console started.");
     PushLine("graphical", ELogPriority::Info, "Press Tab to complete command names.");
     return true;
@@ -380,23 +447,61 @@ void IServerGuiModule::Tick(float dt)
 {
     if (!game_config::gui_console_enabled)
     {
-        CloseGui();
+        StopGuiThread();
         return;
     }
 
-    if (!m_window.isOpen() && !OpenGui())
+    if (m_thread_exited)
     {
+        // The window was closed (X button / Escape) or failed to open: fold
+        // the finished thread and reflect that in the config flag.
+        StopGuiThread();
         game_config::gui_console_enabled = false;
         return;
     }
 
+    if (!m_thread.joinable()) StartGuiThread();
+
+    // Commands typed in the GUI run here, on the game thread, exactly like
+    // lines typed into the OS console.
+    std::vector<std::string> commands;
+    {
+        std::lock_guard<std::mutex> lock(m_pending_commands_mutex);
+        commands.swap(m_pending_commands);
+    }
+    for (const std::string& line : commands)
+    {
+        m_console.ExecuteLine(line);
+    }
+
+    m_snapshot_refresh_timer -= dt;
+    if (m_snapshot_refresh_timer <= 0.f)
+    {
+        RefreshCompletionSnapshot();
+        m_snapshot_refresh_timer = 1.f;
+    }
+}
+
+void IServerGuiModule::RefreshCompletionSnapshot()
+{
+    SCompletionSnapshot snapshot;
+    snapshot.players = PlayerNames();
+    snapshot.world_ids = WorldIds();
+    snapshot.world_ids_and_maps = WorldIdsAndMapNames();
+    CollectEntityRefs(snapshot.entity_ref_stubs, snapshot.entity_refs);
+
+    std::lock_guard<std::mutex> lock(m_snapshot_mutex);
+    m_completion_snapshot = std::move(snapshot);
+}
+
+// GUI thread. Returns false when the user asked to close the console.
+bool IServerGuiModule::ProcessEvents()
+{
     while (const std::optional event = m_window.pollEvent())
     {
         if (event->is<sf::Event::Closed>())
         {
-            game_config::gui_console_enabled = false;
-            CloseGui();
-            return;
+            return false;
         }
 
         if (const auto* resized = event->getIf<sf::Event::Resized>())
@@ -429,9 +534,7 @@ void IServerGuiModule::Tick(float dt)
                 continue;
             } else if (key->code == sf::Keyboard::Key::Escape)
             {
-                game_config::gui_console_enabled = false;
-                CloseGui();
-                return;
+                return false;
             } else if (key->code == sf::Keyboard::Key::Enter)
             {
                 ResetCompletion();
@@ -546,37 +649,48 @@ void IServerGuiModule::Tick(float dt)
         }
     }
 
-    const float frame_rate = static_cast<float>(std::max(1u, game_config::gui_console_framerate_limit));
-    const float render_interval = 1.f / frame_rate;
-    m_render_accumulator = std::min(m_render_accumulator + std::max(0.f, dt), render_interval * 2.f);
-    if (m_render_accumulator >= render_interval)
-    {
-        m_render_accumulator -= render_interval;
-        Render();
-    }
+    return true;
 }
 
-void IServerGuiModule::ShutDown() { CloseGui(); }
+void IServerGuiModule::ShutDown() { StopGuiThread(); }
 
 void IServerGuiModule::CloseGui()
 {
-    if (m_log_sink_id != 0)
-    {
-        CLogger::RemoveSink(m_log_sink_id);
-        m_log_sink_id = 0;
-    }
     if (m_window.isOpen()) m_window.close();
     m_render_accumulator = 0.f;
 }
 
+// Called from the logger on arbitrary threads: only formats and enqueues.
 void IServerGuiModule::PushLine(std::string sender, ELogPriority priority, std::string text)
+{
+    std::string formatted = CLogger::FormatLine(sender, priority, text);
+    std::lock_guard<std::mutex> lock(m_pending_lines_mutex);
+    if (m_pending_lines.size() >= 4096) m_pending_lines.erase(m_pending_lines.begin());
+    m_pending_lines.push_back({ priority, std::move(formatted) });
+}
+
+void IServerGuiModule::DrainPendingLogLines()
+{
+    std::vector<pending_log_line> pending;
+    {
+        std::lock_guard<std::mutex> lock(m_pending_lines_mutex);
+        pending.swap(m_pending_lines);
+    }
+    for (const pending_log_line& line : pending)
+    {
+        AppendLine(line.priority, line.formatted);
+    }
+}
+
+// GUI thread: wraps a formatted line to the window width and lays it out.
+void IServerGuiModule::AppendLine(ELogPriority priority, const std::string& formatted)
 {
     const bool was_at_bottom = m_first_visible_line >= MaxFirstVisibleLine();
     const float max_text_width =
         OutputRect().size.x - game_config::gui_console_padding * game_config::gui_console_text_wrap_padding_multiplier -
         game_config::gui_console_scrollbar_width;
 
-    sf::String full_sf_text = FromUtf8(CLogger::FormatLine(sender, priority, text));
+    sf::String full_sf_text = FromUtf8(formatted);
     sf::String wrapped_sf_text =
         WrapText(full_sf_text, m_font, game_config::gui_console_character_size, max_text_width);
 
@@ -606,8 +720,13 @@ void IServerGuiModule::ExecuteInput()
     if (m_input.isEmpty()) return;
 
     const std::string input = ToUtf8(m_input);
-    PushLine("graphical", ELogPriority::Debug, "> " + input);
-    m_console.ExecuteLine(input);
+    AppendLine(ELogPriority::Debug, CLogger::FormatLine("graphical", ELogPriority::Debug, "> " + input));
+    {
+        // Executed by Tick on the game thread: console commands touch game
+        // state and must never run from the GUI thread.
+        std::lock_guard<std::mutex> lock(m_pending_commands_mutex);
+        m_pending_commands.push_back(input);
+    }
     m_input.clear();
     m_cursor_index = 0;
 }
@@ -629,8 +748,15 @@ void IServerGuiModule::CompleteCommand()
         const size_t token_index = TokenIndexAt(input, replace_begin);
         if (token_index == 0) source = m_console.CommandNames();
         else
-            source =
-                CompletionCandidates(CompletionKindAt(m_console, command, input, token_index - 1), prefix, m_console);
+        {
+            SCompletionSnapshot snapshot;
+            {
+                std::lock_guard<std::mutex> lock(m_snapshot_mutex);
+                snapshot = m_completion_snapshot;
+            }
+            source = CompletionCandidates(CompletionKindAt(m_console, command, input, token_index - 1), prefix,
+                                          m_console, snapshot);
+        }
         if (source.empty()) return;
 
         m_completion_matches.clear();

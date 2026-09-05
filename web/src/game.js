@@ -1,9 +1,10 @@
-import {
+﻿import {
   AuthMode,
   AuthResultCode,
   ChatFlag,
   EmailPolicy,
   FULL_SNAPSHOT_BASE_ID,
+  NETWORK_DROP_TYPE_OFFSET,
   NETWORK_PETAL_TYPE_OFFSET,
   PetalNames,
   PetalSlotCopyState,
@@ -28,6 +29,7 @@ import {
   packStateRequest,
   packTalentRequest,
   packUnequip,
+  packVersion,
   parseServerMessage,
   petalTypeFromEntity,
   petalTypeName,
@@ -70,6 +72,10 @@ import {
 } from "./garden_mob_sprite.js";
 import { drawSpider, drawSpiderWeb } from "./spider_sprite.js";
 import {
+  drawSpriteImage,
+  setSpriteWhiteTint,
+} from "./sprite_raster_cache.js";
+import {
   dom,
   emptySlot,
   loadoutPresetCount,
@@ -80,18 +86,27 @@ import {
 import { createChatUi } from "./chat_ui.js";
 import { applyChatReplacement } from "./chat_replacement.js";
 import {
+  executeBinding,
+  heldInputSources,
+  initBindingContext,
+  inputKeyCandidates,
+  inputKeyFromEvent,
+  loadBindings,
+  mouseKeyFromButton,
+  pruneStaleInputHolds,
+  releaseInputHolds,
+} from "./bindings.js";
+import {
   loadClientSettings,
   normalizeMovementMode,
   normalizeMobileControlMode,
+  normalizeRenderScaleMode,
   saveClientSettings,
 } from "./client_settings.js";
 import {
   clientRuntimeConfig,
   formatClientConfigValue,
-  getClientConfigEntry,
   getClientConfigValue,
-  listClientConfigEntries,
-  resetClientConfig,
   setClientConfigValue,
 } from "./client_config.js";
 import { createConsoleUi } from "./console_ui.js";
@@ -108,10 +123,8 @@ import {
 import { createTextInput, isTextInputActive } from "./text_input.js";
 import {
   applyDocumentTranslations,
-  changeLanguage,
   compareLocalized,
   getAvailableLocales,
-  getCurrentLocale,
   getLocale,
   initI18n,
   t,
@@ -138,7 +151,6 @@ import {
   fireAntEggType,
   fireflyType,
   fireQueenAntType,
-  hallucinogenicMushroomLiveViewBox,
   hallucinogenicMushroomLiveVisualScale,
   flagAntennae,
   flagAttacking,
@@ -253,6 +265,7 @@ import {
   spiderType,
   stateCorruption,
   stateDigging,
+  stateDropStack,
   stateHallucinogenic,
   stateInvincible,
   stateBanSlot,
@@ -263,7 +276,6 @@ import {
   stingerSplitIconMinRarity,
   titanType,
   trapProjectileType,
-  trapperLivePetalViewBox,
   summonedBeetleType,
   summonedSoldierAntType,
   queenAntEggType,
@@ -273,11 +285,11 @@ import {
   workerAntType,
   workerFireAntType,
   workerTermiteType,
-  waxLivePetalViewBox,
   waxLivePetalVisualScale,
   worldDropSizeScale,
   worldPetalSizeScale,
 } from "./game_ids.js";
+import { PETAL_ICON_IDS } from "./generated_ids.js";
 import { collectSceneRenderPasses } from "./scene_passes.js";
 import {
   TalentId,
@@ -296,6 +308,7 @@ import {
   refreshLocalizedUi,
   saveSettings,
   setHeldAction,
+  setFullscreen,
   setLoadingScreenVisible,
   setMobileControlMode,
   setMovementMode,
@@ -303,6 +316,7 @@ import {
   toggleBackpack,
   toggleConsole,
   toggleCraft,
+  toggleFullscreen,
   toggleSettings,
   toggleTalent,
   updatePlayUiVisibility,
@@ -316,18 +330,27 @@ import {
   toggleCodex,
 } from "./ui_codex.js";
 import {
+  debugNumber,
   drawGrid,
   lerpAngle,
   normalizeAngle,
   resizeCanvas,
   screenToWorld,
   smoothFactor,
-  updateDebugInfo,
-  updateRenderPositions,
   worldLengthToScreen,
   worldScale,
   worldToScreen,
 } from "./camera.js";
+import {
+  initOwnerPrediction,
+  playerSnapHasPetal,
+  resetOwnerPredictionTiming,
+  syncEntityRenderToSnapshot,
+  transformOwnerHallucinationVector,
+  updateEntitySnapshotVelocity,
+  updateOwnerPredictionTiming,
+  updateRenderPositions,
+} from "./sim_entities.js";
 import {
   assetImage,
   attachPetalInfoTooltip,
@@ -343,16 +366,57 @@ import {
   petalBaseCopy,
   petalBasePath,
   petalCopyLayout,
+  petalDisplayName,
   petalHasMultiCopyVisual,
   petalIconPath,
+  ensurePetalCopyDistanceData,
+  petalBaseImage,
   petalLabelIconUrls,
   petalTypeFromSnap,
   preloadAssets,
   rarityLevel,
+  recordLivePetalCopyCount,
   raritySortRank,
   syncPetalInfoTooltipHover,
   transformedPetalImages,
 } from "./petal_info.js";
+import {
+  initFreezeWatchdog,
+  noteConnectionReset,
+  noteServerSnapshot,
+} from "./freeze_watchdog.js";
+import { drawOutlinedText } from "./render_text.js";
+import {
+  executeClientCommand,
+  executeLanguageCommand,
+  initClientCommands,
+} from "./console_commands.js";
+import {
+  dispatchServerMessage,
+  notifyConnectionReset,
+  registerConnectionReset,
+  registerMessageHandler,
+} from "./net_messages.js";
+import { sendBytes, sendPacketBatch } from "./net_outbound.js";
+import {
+  noteFrameDrawn,
+  requestRedraw,
+  setRedrawHandler,
+} from "./render_invalidate.js";
+import {
+  extractBandageOverlaySvg,
+  extractMimicLabelSvg,
+  extractPetalLabelSvg,
+  measureSvgContentBox,
+  stripLivePetalLabel,
+} from "./petal_svg.js";
+import {
+  initRenderScale,
+  noteSceneDrawCost,
+  sceneDrawCostEma,
+  setRenderScaleMode,
+  updateAdaptiveRenderScale,
+} from "./render_scale.js";
 
 const {
   canvas,
@@ -524,6 +588,23 @@ ui.settingsUi = new SettingsPanel({
       setValue: (value) => setMovementMode(value),
     },
     {
+      id: "render-scale",
+      type: "choice",
+      labelKey: "ui.settings.renderScale",
+      getValue: () => String(state.renderScaleMode),
+      options: () => [
+        { value: "auto", labelKey: "ui.settings.renderScaleModes.auto" },
+        { value: "native", labelKey: "ui.settings.renderScaleModes.native" },
+        { value: "0.75", label: "0.75x" },
+        { value: "1", label: "1x" },
+        { value: "1.5", label: "1.5x" },
+        { value: "2", label: "2x" },
+        { value: "3", label: "3x" },
+        { value: "4", label: "4x" },
+      ],
+      setValue: (value) => setRenderScaleMode(value),
+    },
+    {
       id: "hold-attack",
       type: "toggle",
       labelKey: "ui.settings.holdAttack",
@@ -536,6 +617,13 @@ ui.settingsUi = new SettingsPanel({
       labelKey: "ui.settings.holdDefense",
       getValue: () => state.holdDefense,
       setValue: (value) => setHeldAction("defense", value),
+    },
+    {
+      id: "fullscreen",
+      type: "toggle",
+      labelKey: "ui.settings.fullscreen",
+      getValue: () => !!document.fullscreenElement,
+      setValue: (value) => setFullscreen(!!value),
     },
   ],
 });
@@ -551,8 +639,7 @@ ui.consoleUiPanel = new UiPanel({
 ui.chatUi = createChatUi({
   beforeOpen: () => {
     if (state.consoleOpen) toggleConsole(false);
-    state.attacking = false;
-    state.defending = false;
+    releaseInputHolds();
     state.digging = false;
     ui.mobileControls?.reset();
     sendNeutralGameplayState();
@@ -583,11 +670,16 @@ ui.mysteryAudio = createMysteryAudio({
 });
 
 const defaultMapName = clientRuntimeConfig.loginMapDefaultName;
+// Input bindings (keyboard/mouse -> builtin command chains), persisted in
+// localStorage and editable via the bind/unbind console commands.
+const bindings = loadBindings();
+// Ad-hoc redraws (map chunks, icon decodes) coalesce in render_invalidate.js.
+setRedrawHandler(drawScene);
 ui.mapRenderer = createMapRenderer({
   ctx,
   defaultMapName,
   addConsoleLine: (text, kind = "") => addConsoleLine(text, kind),
-  requestDraw: () => requestAnimationFrame(drawScene),
+  requestDraw: requestRedraw,
   // The loading screen only hides once both the map and every texture asset
   // have finished loading.
   setLoadingVisible: (visible) => {
@@ -633,7 +725,6 @@ const {
   hurtFlashDuration,
   hurtFlashInterval,
   hurtFlashMinDelta,
-  hurtFlashFilterEntityLimit,
   missingEntityViewEdgeGrace,
   mouseMoveDeadzonePx,
   entityFrameMinScreenRadius,
@@ -745,14 +836,12 @@ const ownerMovementTalentMultiplierByRarity = Object.freeze({
   9: 2,
 });
 let currentRenderTimeSeconds = 0;
-export let currentVisibleEntityCount = 0;
-export let currentRenderLoad = 0;
-// Batched hit-flash: flashing entities are collected per frame and redrawn
-// once in a dedicated pass, grouped by quantized flash strength so the whole
-// pass switches ctx.filter at most 4 times (per-entity filter/composite
-// switching was what caused the lag with large groups of mobs hit at once).
-// Pixel-sized (distant) entities and non-sprite effect entities use a cheap
-// white dot overlay instead of a sprite redraw.
+let currentVisibleEntityCount = 0;
+let currentRenderLoad = 0;
+// Batched hit-flash: flashing entities are collected per frame and re-blitted
+// once in a dedicated pass as pre-tinted white rasters (no ctx.filter — see
+// drawHurtFlashPass). Pixel-sized (distant) entities and non-sprite effect
+// entities use a cheap white dot overlay instead of a sprite redraw.
 const currentHurtFlashSprites = [];
 const currentHurtFlashOverlays = [];
 let entityVisualOnlyRenderDepth = 0;
@@ -843,10 +932,8 @@ function setEmailBindingPanel(open, { required = false } = {}) {
   );
   if (open) {
     authPanel.classList.add("hidden");
-    state.keys.clear();
+    releaseInputHolds();
     state.localMoveInput = { x: 0, y: 0 };
-    state.attacking = false;
-    state.defending = false;
     state.digging = false;
     if (state.authenticated)
       sendNeutralGameplayState({ includeInput: true });
@@ -1023,6 +1110,9 @@ function openConnection(wsUrl, automatic, generation) {
     state.connected = true;
     setStatus(t(automatic ? "status.reconnected" : "status.connected"), true);
     if (!automatic) addConsoleLine(t("status.connectedBridge"));
+    // Version handshake must be the first packet; the server rejects stale
+    // clients before parsing anything else.
+    sendBytes(packVersion());
     const mode = automatic ? AuthMode.Login : pendingAuthMode ?? selectedAuthMode();
     pendingAuthMode = null;
     if (activeAuthMode === null) setAuthRequestPending(mode);
@@ -1041,6 +1131,7 @@ function openConnection(wsUrl, automatic, generation) {
 
   ws.addEventListener("close", () => {
     if (state.ws !== ws || generation !== connectionGeneration) return;
+    notifyConnectionReset();
     state.ws = null;
     state.connected = false;
     state.authenticated = false;
@@ -1077,6 +1168,7 @@ function closeSocket(sendDisconnect = true) {
   reconnectAttempt = 0;
   cancelReconnect();
   connectionGeneration += 1;
+  notifyConnectionReset();
   if (state.ws && state.ws.readyState === WebSocket.OPEN && sendDisconnect) {
     sendBytes(packChores(false, false, false, true));
   }
@@ -1092,32 +1184,10 @@ function closeSocket(sendDisconnect = true) {
   loadLoginMap();
 }
 
-export function sendBytes(bytes) {
-  if (!bytes || !state.ws || state.ws.readyState !== WebSocket.OPEN)
-    return false;
-  state.ws.send(bytes);
-  return true;
-}
-
 function sendNeutralGameplayState({ includeInput = false } = {}) {
   if (!state.connected || !state.authenticated) return false;
   if (includeInput) sendBytes(packInput(0, 0));
   return sendBytes(packChores(false, false, false, false, false));
-}
-
-function sendPacketBatch(...packets) {
-  const parts = packets.filter((packet) => packet && packet.length > 0);
-  if (parts.length === 0) return false;
-  if (parts.length === 1) return sendBytes(parts[0]);
-
-  const totalBytes = parts.reduce((sum, packet) => sum + packet.length, 0);
-  const out = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const packet of parts) {
-    out.set(packet, offset);
-    offset += packet.length;
-  }
-  return sendBytes(out);
 }
 
 function sendAuth(mode = AuthMode.Login) {
@@ -1184,7 +1254,7 @@ function receiveBytes(bytes) {
       latestSnapshot = null;
       pendingSnapshot = null;
     }
-    handleServerMessage(msg);
+    dispatchServerMessage(msg);
   }
   if (latestSnapshot) {
     applySnapshotAndAck(latestSnapshot);
@@ -1192,314 +1262,313 @@ function receiveBytes(bytes) {
   }
 }
 
-function handleServerMessage(msg) {
-  if (!msg || msg.type === 0xff) return;
+// Server message handlers. Registered against net_messages.js so extracted
+// modules can own their handlers later without a central switch.
+registerMessageHandler(ServerType.Welcome, (msg) => {
+  const previousOwner = state.entities.get(state.ownerEntityId);
+  const previousOwnerWasDead =
+    !!previousOwner && (previousOwner.snapshot.flags & flagDead) !== 0;
+  resetNetworkScene({
+    resetRunCollection:
+      !state.authenticated ||
+      !state.runCollectionBaseline ||
+      state.wasOwnerDead ||
+      previousOwnerWasDead,
+  });
+  state.playerId = msg.playerId;
+  state.ownerEntityId = msg.ownerEntityId;
+  state.serverTickInterval =
+    msg.tickRate > 0 ? 1 / msg.tickRate : serverFixedDt;
+  resetOwnerPredictionTiming(state.serverTickInterval);
+  if (msg.mapName) loadMap(msg.mapName);
+  state.weatherEnabled = msg.weatherEnabled !== false;
+  setStatus(t("status.player", { id: msg.playerId }), true);
+  return;
+});
 
-  if (msg.type === ServerType.Welcome) {
-    const previousOwner = state.entities.get(state.ownerEntityId);
-    const previousOwnerWasDead =
-      !!previousOwner && (previousOwner.snapshot.flags & flagDead) !== 0;
-    resetNetworkScene({
-      resetRunCollection:
-        !state.authenticated ||
-        !state.runCollectionBaseline ||
-        state.wasOwnerDead ||
-        previousOwnerWasDead,
+registerMessageHandler(ServerType.AuthResult, (msg) => {
+  const resultCode = msg.resultCode ?? AuthResultCode.Failed;
+  const completesAuthentication =
+    resultCode === AuthResultCode.Authenticated ||
+    resultCode === AuthResultCode.EmailBound;
+  const informational =
+    resultCode === AuthResultCode.VerificationCodeSending ||
+    resultCode === AuthResultCode.VerificationCodeSent;
+  const wasAuthenticated = state.authenticated;
+  const bindingPanelOpen = !emailBindingPanel.classList.contains("hidden");
+  if (
+    Number.isInteger(msg.emailPolicy) &&
+    msg.emailPolicy >= EmailPolicy.Disabled &&
+    msg.emailPolicy <= EmailPolicy.Required
+  )
+    state.emailPolicy = msg.emailPolicy;
+  if (typeof msg.emailBound === "boolean")
+    state.emailBound = msg.emailBound;
+  if (resultCode !== AuthResultCode.VerificationCodeSending)
+    clearAuthRequestPending();
+
+  const bindingCompletedWhilePlaying =
+    wasAuthenticated && resultCode === AuthResultCode.EmailBound;
+  state.authenticated =
+    completesAuthentication ||
+    (wasAuthenticated && (bindingPanelOpen || informational));
+  setStatus(
+    msg.message ||
+      t(completesAuthentication ? "status.authenticated" : "status.authFailed"),
+    completesAuthentication || informational,
+  );
+  if (bindingCompletedWhilePlaying) {
+    state.emailBound = true;
+    verificationCodeField.clear();
+    setEmailBindingPanel(false);
+  } else if (completesAuthentication) {
+    passwordField.clear();
+    verificationCodeField.clear();
+    setAuthUiMode(AuthUiMode.Login);
+    setEmailBindingPanel(false);
+    const resumed = resumingConnection;
+    reconnectArmed = true;
+    reconnectAttempt = 0;
+    cancelReconnect();
+    resumingConnection = false;
+    state.ownerStateLoaded = false;
+    state.inventoryLoaded = false;
+    if (!resumed) {
+      state.runCollectionBaseline = null;
+      state.runCollectionBaselinePending = true;
+      state.squadMemberNames.clear();
+    }
+    renderInventoryPanel();
+    if (state.craftOpen) renderCraftPanel();
+    sendBytes(packStateRequest());
+    authPanel.classList.add("hidden");
+  } else if (resultCode === AuthResultCode.EmailBindingRequired) {
+    state.authenticated = false;
+    state.emailBound = false;
+    reconnectArmed = false;
+    resumingConnection = false;
+    passwordField.clear();
+    verificationCodeField.clear();
+    setEmailBindingPanel(true, { required: true });
+    loadLoginMap();
+  } else if (informational) {
+    if (!wasAuthenticated) {
+      reconnectArmed = false;
+      resumingConnection = false;
+    }
+    if (resultCode === AuthResultCode.VerificationCodeSent)
+      verificationCodeField.focus();
+  } else if (
+    bindingPanelOpen &&
+    (wasAuthenticated || state.emailBindingRequired)
+  ) {
+    state.authenticated = wasAuthenticated;
+    if (state.emailPolicy === EmailPolicy.Disabled)
+      setEmailBindingPanel(false);
+  } else {
+    state.authenticated = false;
+    reconnectArmed = false;
+    resumingConnection = false;
+    setEmailBindingPanel(false);
+    authPanel.classList.remove("hidden");
+    loadLoginMap();
+  }
+  updatePlayUiVisibility();
+  addConsoleLine(
+    msg.message ||
+      t(completesAuthentication ? "status.authenticated" : "status.authFailed"),
+    resultCode === AuthResultCode.Failed ? "error" : "",
+  );
+  return;
+});
+
+registerMessageHandler(ServerType.Snapshot, (msg) => {
+  const resolved = resolveSnapshot(msg);
+  if (resolved) applySnapshotAndAck(resolved);
+  else requestFullSnapshot();
+  pendingSnapshot = null;
+  return;
+});
+
+registerMessageHandler(ServerType.Environment, (msg) => {
+  state.environment = {
+    received: true,
+    anchorServerTick: Number.isSafeInteger(msg.anchorServerTick)
+      ? msg.anchorServerTick
+      : 0,
+    timeOfDay: clamp(msg.timeOfDay || 0, 0, 1),
+    dayDurationSeconds: Math.max(0.001, msg.dayDurationSeconds || 21600),
+    fixedDtSeconds: Math.max(0.000001, msg.fixedDtSeconds || serverFixedDt),
+    weatherIntensity: Array.isArray(msg.weatherIntensity)
+      ? msg.weatherIntensity.map((value) => clamp(value / 255, 0, 1))
+      : [1, 0, 0, 0],
+    windDirection: Number.isFinite(msg.windDirection)
+      ? (clamp(msg.windDirection / 255, 0, 1) * 360) % 360
+      : 0,
+    windSpeed: Number.isFinite(msg.windSpeed)
+      ? clamp(msg.windSpeed / 255, 0, 1) * 20
+      : 0,
+    receivedAt: performance.now(),
+  };
+  return;
+});
+
+registerMessageHandler(ServerType.CodexFull, (msg) => {
+  state.codex = new Map();
+  for (const entry of msg.codexEntries || []) {
+    if (!entry.mobType || !entry.rarity) continue;
+    state.codex.set(codexKey(entry.mobType, entry.rarity), entry.count || 0);
+  }
+  renderCodexPanel();
+  return;
+});
+
+registerMessageHandler(ServerType.CodexDelta, (msg) => {
+  for (const entry of msg.codexDeltaEntries || []) {
+    if (!entry.mobType || !entry.rarity) continue;
+    state.codex.set(codexKey(entry.mobType, entry.rarity), entry.count);
+  }
+  renderCodexPanel();
+  return;
+});
+
+registerMessageHandler(ServerType.CodexLoot, (msg) => {
+  state.codexLoot = new Map();
+  for (const entry of msg.codexLootEntries || []) {
+    const key = codexKey(entry.mobType, entry.mobRarity);
+    if (!state.codexLoot.has(key)) state.codexLoot.set(key, []);
+    state.codexLoot.get(key).push({
+      petalType: entry.petalType,
+      dropRarity: entry.dropRarity,
+      dropRate: entry.dropRate,
     });
-    state.playerId = msg.playerId;
-    state.ownerEntityId = msg.ownerEntityId;
-    state.serverTickInterval =
-      msg.tickRate > 0 ? 1 / msg.tickRate : serverFixedDt;
-    resetOwnerPredictionTiming(state.serverTickInterval);
-    if (msg.mapName) loadMap(msg.mapName);
-    state.weatherEnabled = msg.weatherEnabled !== false;
-    setStatus(t("status.player", { id: msg.playerId }), true);
-    return;
   }
+  return;
+});
 
-  if (msg.type === ServerType.AuthResult) {
-    const resultCode = msg.resultCode ?? AuthResultCode.Failed;
-    const completesAuthentication =
-      resultCode === AuthResultCode.Authenticated ||
-      resultCode === AuthResultCode.EmailBound;
-    const informational =
-      resultCode === AuthResultCode.VerificationCodeSending ||
-      resultCode === AuthResultCode.VerificationCodeSent;
-    const wasAuthenticated = state.authenticated;
-    const bindingPanelOpen = !emailBindingPanel.classList.contains("hidden");
-    if (
-      Number.isInteger(msg.emailPolicy) &&
-      msg.emailPolicy >= EmailPolicy.Disabled &&
-      msg.emailPolicy <= EmailPolicy.Required
-    )
-      state.emailPolicy = msg.emailPolicy;
-    if (typeof msg.emailBound === "boolean")
-      state.emailBound = msg.emailBound;
-    if (resultCode !== AuthResultCode.VerificationCodeSending)
-      clearAuthRequestPending();
-
-    const bindingCompletedWhilePlaying =
-      wasAuthenticated && resultCode === AuthResultCode.EmailBound;
-    state.authenticated =
-      completesAuthentication ||
-      (wasAuthenticated && (bindingPanelOpen || informational));
-    setStatus(
-      msg.message ||
-        t(completesAuthentication ? "status.authenticated" : "status.authFailed"),
-      completesAuthentication || informational,
-    );
-    if (bindingCompletedWhilePlaying) {
-      state.emailBound = true;
-      verificationCodeField.clear();
-      setEmailBindingPanel(false);
-    } else if (completesAuthentication) {
-      passwordField.clear();
-      verificationCodeField.clear();
-      setAuthUiMode(AuthUiMode.Login);
-      setEmailBindingPanel(false);
-      const resumed = resumingConnection;
-      reconnectArmed = true;
-      reconnectAttempt = 0;
-      cancelReconnect();
-      resumingConnection = false;
-      state.ownerStateLoaded = false;
-      state.inventoryLoaded = false;
-      if (!resumed) {
-        state.runCollectionBaseline = null;
-        state.runCollectionBaselinePending = true;
-        state.squadMemberNames.clear();
-      }
-      renderInventoryPanel();
-      if (state.craftOpen) renderCraftPanel();
-      sendBytes(packStateRequest());
-      authPanel.classList.add("hidden");
-    } else if (resultCode === AuthResultCode.EmailBindingRequired) {
-      state.authenticated = false;
-      state.emailBound = false;
-      reconnectArmed = false;
-      resumingConnection = false;
-      passwordField.clear();
-      verificationCodeField.clear();
-      setEmailBindingPanel(true, { required: true });
-      loadLoginMap();
-    } else if (informational) {
-      if (!wasAuthenticated) {
-        reconnectArmed = false;
-        resumingConnection = false;
-      }
-      if (resultCode === AuthResultCode.VerificationCodeSent)
-        verificationCodeField.focus();
-    } else if (
-      bindingPanelOpen &&
-      (wasAuthenticated || state.emailBindingRequired)
-    ) {
-      state.authenticated = wasAuthenticated;
-      if (state.emailPolicy === EmailPolicy.Disabled)
-        setEmailBindingPanel(false);
-    } else {
-      state.authenticated = false;
-      reconnectArmed = false;
-      resumingConnection = false;
-      setEmailBindingPanel(false);
-      authPanel.classList.remove("hidden");
-      loadLoginMap();
-    }
-    updatePlayUiVisibility();
-    addConsoleLine(
-      msg.message ||
-        t(completesAuthentication ? "status.authenticated" : "status.authFailed"),
-      resultCode === AuthResultCode.Failed ? "error" : "",
-    );
-    return;
+registerMessageHandler(ServerType.LightningChain, (msg) => {
+  if (Array.isArray(msg.lightningPoints) && msg.lightningPoints.length > 1) {
+    pushLightningChain(msg.lightningPoints);
   }
+  return;
+});
 
-  if (msg.type === ServerType.Snapshot) {
-    const resolved = resolveSnapshot(msg);
-    if (resolved) applySnapshotAndAck(resolved);
-    else requestFullSnapshot();
-    pendingSnapshot = null;
-    return;
-  }
-
-  if (msg.type === ServerType.Environment) {
-    state.environment = {
-      received: true,
-      anchorServerTick: Number.isSafeInteger(msg.anchorServerTick)
-        ? msg.anchorServerTick
-        : 0,
-      timeOfDay: clamp(msg.timeOfDay || 0, 0, 1),
-      dayDurationSeconds: Math.max(0.001, msg.dayDurationSeconds || 21600),
-      fixedDtSeconds: Math.max(0.000001, msg.fixedDtSeconds || serverFixedDt),
-      weatherIntensity: Array.isArray(msg.weatherIntensity)
-        ? msg.weatherIntensity.map((value) => clamp(value / 255, 0, 1))
-        : [1, 0, 0, 0],
-      windDirection: Number.isFinite(msg.windDirection)
-        ? (clamp(msg.windDirection / 255, 0, 1) * 360) % 360
-        : 0,
-      windSpeed: Number.isFinite(msg.windSpeed)
-        ? clamp(msg.windSpeed / 255, 0, 1) * 20
-        : 0,
-      receivedAt: performance.now(),
-    };
-    return;
-  }
-
-  if (msg.type === ServerType.CodexFull) {
-    state.codex = new Map();
-    for (const entry of msg.codexEntries || []) {
-      if (!entry.mobType || !entry.rarity) continue;
-      state.codex.set(codexKey(entry.mobType, entry.rarity), entry.count || 0);
-    }
-    renderCodexPanel();
-    return;
-  }
-
-  if (msg.type === ServerType.CodexDelta) {
-    for (const entry of msg.codexDeltaEntries || []) {
-      if (!entry.mobType || !entry.rarity) continue;
-      state.codex.set(codexKey(entry.mobType, entry.rarity), entry.count);
-    }
-    renderCodexPanel();
-    return;
-  }
-
-  if (msg.type === ServerType.CodexLoot) {
-    state.codexLoot = new Map();
-    for (const entry of msg.codexLootEntries || []) {
-      const key = codexKey(entry.mobType, entry.mobRarity);
-      if (!state.codexLoot.has(key)) state.codexLoot.set(key, []);
-      state.codexLoot.get(key).push({
-        petalType: entry.petalType,
-        dropRarity: entry.dropRarity,
-        dropRate: entry.dropRate,
+registerMessageHandler(ServerType.TerrainWallRemove, (msg) => {
+  if (!state.map || !state.map.layers) {
+    if (pendingTerrainDeltas.length < pendingTerrainDeltaLimit)
+      pendingTerrainDeltas.push({
+        wallRemove: true,
+        wallRemoveMin: msg.wallRemoveMin,
+        wallRemoveMax: msg.wallRemoveMax,
       });
-    }
     return;
   }
-
-  if (msg.type === ServerType.LightningChain) {
-    if (Array.isArray(msg.lightningPoints) && msg.lightningPoints.length > 1) {
-      pushLightningChain(msg.lightningPoints);
-    }
-    return;
-  }
-
-  if (msg.type === ServerType.TerrainWallRemove) {
-    if (!state.map || !state.map.layers) {
-      if (pendingTerrainDeltas.length < pendingTerrainDeltaLimit)
-        pendingTerrainDeltas.push({
-          wallRemove: true,
-          wallRemoveMin: msg.wallRemoveMin,
-          wallRemoveMax: msg.wallRemoveMax,
-        });
-      return;
-    }
-    if (
-      ui.mapRenderer.applyWallRemove(
-        msg.wallRemoveMin,
-        msg.wallRemoveMax,
-      )
+  if (
+    ui.mapRenderer.applyWallRemove(
+      msg.wallRemoveMin,
+      msg.wallRemoveMax,
     )
-      minimapCache = null;
+  )
+    minimapCache = null;
+  return;
+});
+
+registerMessageHandler(ServerType.TerrainDelta, (msg) => {
+  // The map loads asynchronously after Welcome: buffer deltas that arrive
+  // early so the connect-time history replay is never dropped.
+  if (!state.map || !state.map.layers) {
+    if (pendingTerrainDeltas.length < pendingTerrainDeltaLimit)
+      pendingTerrainDeltas.push({
+        layer: msg.terrainLayer,
+        row: msg.terrainRow,
+        col: msg.terrainCol,
+        gid: msg.terrainGid,
+      });
     return;
   }
-
-  if (msg.type === ServerType.TerrainDelta) {
-    // The map loads asynchronously after Welcome: buffer deltas that arrive
-    // early so the connect-time history replay is never dropped.
-    if (!state.map || !state.map.layers) {
-      if (pendingTerrainDeltas.length < pendingTerrainDeltaLimit)
-        pendingTerrainDeltas.push({
-          layer: msg.terrainLayer,
-          row: msg.terrainRow,
-          col: msg.terrainCol,
-          gid: msg.terrainGid,
-        });
-      return;
+  if (
+    ui.mapRenderer.applyTerrainDelta(
+      msg.terrainLayer,
+      msg.terrainRow,
+      msg.terrainCol,
+      msg.terrainGid,
+    )
+  ) {
+    minimapCache = null;
+    const map = state.map;
+    if (map?.tileWidth && map?.tileHeight) {
+      emitTerrainDust(
+        {
+          x: (msg.terrainCol + 0.5) * map.tileWidth,
+          y: (msg.terrainRow + 0.5) * map.tileHeight,
+        },
+        Math.max(map.tileWidth, map.tileHeight),
+      );
     }
-    if (
-      ui.mapRenderer.applyTerrainDelta(
-        msg.terrainLayer,
-        msg.terrainRow,
-        msg.terrainCol,
-        msg.terrainGid,
-      )
-    ) {
-      minimapCache = null;
-      const map = state.map;
-      if (map?.tileWidth && map?.tileHeight) {
-        emitTerrainDust(
-          {
-            x: (msg.terrainCol + 0.5) * map.tileWidth,
-            y: (msg.terrainRow + 0.5) * map.tileHeight,
-          },
-          Math.max(map.tileWidth, map.tileHeight),
-        );
-      }
-    }
-    return;
   }
+  return;
+});
 
-  if (msg.type === ServerType.OwnerState) {
-    const previousMovementMultiplier = state.ownerMovementMultiplier || 1;
-    state.ownerLevel = Math.max(1, msg.level || 1);
-    state.ownerExpProgress = clamp(msg.expProgress || 0, 0, 1);
-    state.talentPoints = Math.max(0, msg.talentPoints || 0);
-    state.talents = msg.talents || [];
-    const movementMultiplier = ownerMovementTalentMultiplier(state.talents);
-    state.ownerMovementMultiplier = movementMultiplier;
-    if (movementMultiplier !== previousMovementMultiplier) {
-      const owner = state.entities.get(state.ownerEntityId);
-      if (owner?.snapshot) initOwnerPrediction(owner, owner.snapshot, true);
-    }
-    updateQuickActionButtons();
-    const primaryCount = Math.max(
-      1,
-      (msg.ownerSlots || []).length || state.ownerSlots.length || 5,
-    );
-    state.ownerSlots = normalizeSlots(msg.ownerSlots, primaryCount);
-    state.secondarySlots = normalizeSlots(msg.secondarySlots, primaryCount);
-    state.selectedSlot = clamp(
-      state.selectedSlot,
-      0,
-      state.ownerSlots.length - 1,
-    );
-    state.ownerStateLoaded = true;
-    pruneSlotTransactions();
-    maybeCaptureRunCollectionBaseline();
-    renderInventoryPanel();
-    if (state.craftOpen) renderCraftPanel();
-    if (state.talentOpen) renderTalentPanel();
-    return;
+registerMessageHandler(ServerType.OwnerState, (msg) => {
+  const previousMovementMultiplier = state.ownerMovementMultiplier || 1;
+  state.ownerLevel = Math.max(1, msg.level || 1);
+  state.ownerExpProgress = clamp(msg.expProgress || 0, 0, 1);
+  state.talentPoints = Math.max(0, msg.talentPoints || 0);
+  state.talents = msg.talents || [];
+  const movementMultiplier = ownerMovementTalentMultiplier(state.talents);
+  state.ownerMovementMultiplier = movementMultiplier;
+  if (movementMultiplier !== previousMovementMultiplier) {
+    const owner = state.entities.get(state.ownerEntityId);
+    if (owner?.snapshot) initOwnerPrediction(owner, owner.snapshot, true);
   }
+  updateQuickActionButtons();
+  const primaryCount = Math.max(
+    1,
+    (msg.ownerSlots || []).length || state.ownerSlots.length || 5,
+  );
+  state.ownerSlots = normalizeSlots(msg.ownerSlots, primaryCount);
+  state.secondarySlots = normalizeSlots(msg.secondarySlots, primaryCount);
+  state.selectedSlot = clamp(
+    state.selectedSlot,
+    0,
+    state.ownerSlots.length - 1,
+  );
+  state.ownerStateLoaded = true;
+  pruneSlotTransactions();
+  maybeCaptureRunCollectionBaseline();
+  scheduleInventoryUiRender();
+  return;
+});
 
-  if (msg.type === ServerType.Inventory) {
-    state.inventory = msg.inventory || [];
-    state.inventoryLoaded = true;
-    pruneSlotTransactions();
-    maybeCaptureRunCollectionBaseline();
-    renderInventoryPanel();
-    if (state.craftOpen) renderCraftPanel();
-    return;
-  }
+registerMessageHandler(ServerType.Inventory, (msg) => {
+  state.inventory = msg.inventory || [];
+  state.inventoryLoaded = true;
+  pruneSlotTransactions();
+  maybeCaptureRunCollectionBaseline();
+  // First load pre-warms the hidden list so the first backpack open only
+  // diffs instead of building every card from scratch.
+  scheduleInventoryUiRender({
+    forceInventory: inventoryList.childElementCount === 0,
+  });
+  return;
+});
 
-  if (msg.type === ServerType.CraftResult) {
-    handleCraftResult(msg);
-    return;
-  }
+registerMessageHandler(ServerType.CraftResult, (msg) => {
+  handleCraftResult(msg);
+  return;
+});
 
-  if (msg.type === ServerType.Chat) {
-    const chat = consumeSquadMetadata(msg.chat);
-    if (chat.message) chat.message = applyChatReplacement(chat.message);
-    if (chat.message) {
-      ui.mysteryAudio.handleChat(chat);
-      ui.chatUi.append(chat);
-    }
-    addConsoleLine(
-      `${msg.chat.playerName || msg.chat.playerId}: ${chat.message || ""}`,
-    );
+registerMessageHandler(ServerType.Chat, (msg) => {
+  const chat = consumeSquadMetadata(msg.chat);
+  if (chat.message) chat.message = applyChatReplacement(chat.message);
+  if (chat.message) {
+    ui.mysteryAudio.handleChat(chat);
+    ui.chatUi.append(chat);
   }
-}
+  addConsoleLine(
+    `${msg.chat.playerName || msg.chat.playerId}: ${chat.message || ""}`,
+  );
+});
 
 function resetNetworkScene({ resetRunCollection = true } = {}) {
   pendingSnapshot = null;
@@ -1537,6 +1606,7 @@ function resetNetworkScene({ resetRunCollection = true } = {}) {
   state.ownerSlotRuntime = [];
   state.inventoryLoaded = false;
   state.localMoveInput = { x: 0, y: 0 };
+  releaseInputHolds();
   state.ownerMovementMultiplier = 1;
   state.predictionDebug = {
     errorDistance: 0,
@@ -1612,6 +1682,7 @@ function requestFullSnapshot() {
 
 function applySnapshotAndAck(msg) {
   if (!applySnapshot(msg)) return false;
+  noteServerSnapshot();
   sendBytes(packSnapshotAck(msg.snapshotId));
   return true;
 }
@@ -2112,8 +2183,13 @@ function applySnapshot(msg) {
   if (
     nextOwnerEntityId !== previousOwnerEntityId &&
     (previousOwnerWasDead || state.wasOwnerDead || !state.runCollectionBaseline)
-  )
+  ) {
     startRunCollectionBaseline();
+    // Around a death/respawn an optimistic loadout swap (e.g. primary yy
+    // moved to secondary while dying) must not re-apply over the server's
+    // authoritative slots: drop unconfirmed transactions.
+    state.slotTransactions = [];
+  }
   state.ownerEntityId = nextOwnerEntityId;
   const nextViewRadius = msg.viewRadius || state.viewRadius;
   if (nextViewRadius > 0) setTargetViewRadius(nextViewRadius, snapshotNowMs);
@@ -2300,6 +2376,7 @@ function syncOwnerSlotRuntimeFromSnapshot(ownerSnap) {
       .filter((entityState) => entityState?.type === stateBanSlot)
       .map((entityState) => entityState.value),
   );
+  const previousRuntime = state.ownerSlotRuntime || [];
   state.ownerSlotRuntime = ownerSnap.primarySlots.map((slot, index) => ({
     petalType: slot?.petalType || 0,
     rarity: slot?.rarity || 0,
@@ -2311,34 +2388,30 @@ function syncOwnerSlotRuntimeFromSnapshot(ownerSnap) {
       visual: Number.isFinite(copy?.visual) ? copy.visual : null,
     })),
   }));
+
+  // Copy counts come from the server (one entry per copy, recharging ones
+  // included). Remember them per type+rarity and rebuild the cards whenever
+  // a slot's live count differs from what is currently rendered.
+  let copyCountsChanged = false;
+  state.ownerSlotRuntime.forEach((runtime, index) => {
+    const count = runtime.copies.length;
+    if (!runtime.petalType || !runtime.rarity || count <= 0) return;
+    if (
+      recordLivePetalCopyCount(runtime.petalType, runtime.rarity, count, index)
+    )
+      copyCountsChanged = true;
+    const previous = previousRuntime[index];
+    if (
+      previous &&
+      previous.petalType === runtime.petalType &&
+      previous.rarity === runtime.rarity &&
+      (previous.copies || []).length !== count
+    )
+      copyCountsChanged = true;
+  });
+  if (copyCountsChanged) scheduleInventoryUiRender();
+
   updateOwnerSlotRuntimeOverlays();
-}
-
-function syncEntityRenderToSnapshot(entity, snap) {
-  if (!entity || !snap?.pos) return;
-  if (!entity.renderPos) entity.renderPos = { x: snap.pos.x, y: snap.pos.y };
-  else {
-    entity.renderPos.x = snap.pos.x;
-    entity.renderPos.y = snap.pos.y;
-  }
-  if (Number.isFinite(snap.angle)) entity.renderAngle = snap.angle;
-}
-
-function updateEntitySnapshotVelocity(entity, snap, previousSnapshot) {
-  if (!entity || !snap?.pos || !previousSnapshot?.pos) return;
-  const dt = Math.max(
-    ownerPredictionSpeedSampleMinDt,
-    (entity.snapshotAt || 0) - (entity.lastSnapshotAt || 0),
-  );
-  const sample = {
-    x: (snap.pos.x - previousSnapshot.pos.x) / dt,
-    y: (snap.pos.y - previousSnapshot.pos.y) / dt,
-  };
-  const previous = entity.snapshotVelocity || { x: sample.x, y: sample.y };
-  entity.snapshotVelocity = {
-    x: previous.x + (sample.x - previous.x) * entitySnapshotVelocityBlend,
-    y: previous.y + (sample.y - previous.y) * entitySnapshotVelocityBlend,
-  };
 }
 
 function ownerMovementTalentMultiplier(talents) {
@@ -2351,102 +2424,6 @@ function ownerMovementTalentMultiplier(talents) {
     );
   }
   return multiplier;
-}
-
-function resetOwnerPredictionTiming(tickInterval = serverFixedDt) {
-  const safeTickInterval = clamp(tickInterval || serverFixedDt, 0.001, 0.25);
-  const ticksPerSnapshot = Math.max(
-    1,
-    Math.ceil(packetInterval / safeTickInterval - 0.000001),
-  );
-  const expectedSnapshotInterval = ticksPerSnapshot * safeTickInterval;
-  state.ownerPredictionTiming = {
-    expectedSnapshotInterval,
-    snapshotInterval: expectedSnapshotInterval,
-    simulationScale: 1,
-    samples: [],
-    lastSnapshotAt: 0,
-    lastSnapshotId: -1,
-  };
-}
-
-function updateOwnerPredictionTiming(snapshotId, snapshotNow) {
-  const timing = state.ownerPredictionTiming;
-  if (!timing || !Number.isFinite(snapshotNow)) return;
-
-  const idDelta = snapshotId - timing.lastSnapshotId;
-  const elapsed = snapshotNow - timing.lastSnapshotAt;
-  if (
-    timing.lastSnapshotId >= 0 &&
-    idDelta > 0 &&
-    idDelta <= 120 &&
-    elapsed > 0
-  ) {
-    const sample = elapsed / idDelta;
-    const expected = timing.expectedSnapshotInterval;
-    if (sample >= expected * 0.5 && sample <= Math.max(2, expected * 12)) {
-      timing.samples.push(sample);
-      if (timing.samples.length > ownerPredictionTimingSampleCount)
-        timing.samples.shift();
-
-      const sorted = [...timing.samples].sort((a, b) => a - b);
-      const middle = Math.floor(sorted.length / 2);
-      timing.snapshotInterval =
-        sorted.length % 2 === 0
-          ? (sorted[middle - 1] + sorted[middle]) * 0.5
-          : sorted[middle];
-
-      if (timing.samples.length >= 3) {
-        const targetScale = clamp(
-          expected / timing.snapshotInterval,
-          ownerPredictionMinTickScale,
-          1,
-        );
-        const blend = targetScale < timing.simulationScale ? 0.32 : 0.08;
-        timing.simulationScale +=
-          (targetScale - timing.simulationScale) * blend;
-      }
-    }
-  }
-
-  timing.lastSnapshotAt = snapshotNow;
-  timing.lastSnapshotId = snapshotId;
-}
-
-function initOwnerPrediction(
-  entity,
-  snap = entity?.snapshot,
-  forceSnap = false,
-) {
-  if (!entity || !snap?.pos) return null;
-  const prediction = entity.ownerPrediction || {};
-  const shouldSnap =
-    forceSnap ||
-    !prediction.pos ||
-    !Number.isFinite(prediction.pos.x) ||
-    !Number.isFinite(prediction.pos.y);
-
-  if (shouldSnap) {
-    prediction.pos = { x: snap.pos.x, y: snap.pos.y };
-    prediction.vel = { x: 0, y: 0 };
-    prediction.correction = { x: 0, y: 0 };
-    prediction.lastServerPos = { x: snap.pos.x, y: snap.pos.y };
-    prediction.lastSnapshotAt = entity.snapshotAt || performance.now() / 1000;
-    prediction.staleTime = 0;
-    prediction.snapped = true;
-    entity.renderPos = { x: snap.pos.x, y: snap.pos.y };
-    entity.serverRenderPos = { x: snap.pos.x, y: snap.pos.y };
-  } else {
-    if (!prediction.vel) prediction.vel = { x: 0, y: 0 };
-    if (!prediction.correction) prediction.correction = { x: 0, y: 0 };
-    if (!prediction.lastServerPos)
-      prediction.lastServerPos = { x: snap.pos.x, y: snap.pos.y };
-  }
-
-  entity.ownerPrediction = prediction;
-  if (!Number.isFinite(entity.renderAngle) && Number.isFinite(snap.angle))
-    entity.renderAngle = snap.angle;
-  return prediction;
 }
 
 function handleOwnerSnapshot(entity, snap, snapshotNow, wasDead, isDead) {
@@ -2494,250 +2471,6 @@ function handleOwnerSnapshot(entity, snap, snapshotNow, wasDead, isDead) {
   };
 }
 
-export function stepOwnerPrediction(entity, dt) {
-  const snap = entity?.snapshot;
-  if (!snap?.pos || dt <= 0) return;
-  const prediction = initOwnerPrediction(entity, snap, false);
-  if (!prediction) return;
-
-  const staleNow = Math.max(
-    0,
-    performance.now() / 1000 -
-      (prediction.lastSnapshotAt || entity.snapshotAt || 0),
-  );
-  prediction.staleTime = staleNow;
-  const timing = state.ownerPredictionTiming;
-  const snapshotInterval = Math.max(
-    timing?.expectedSnapshotInterval || 0,
-    timing?.snapshotInterval || 0,
-  );
-  const staleGrace = Math.max(
-    ownerPredictionSnapshotStaleMin,
-    snapshotInterval * 2.5,
-  );
-  const staleFadeDuration = Math.max(0.08, snapshotInterval);
-  const staleMultiplier =
-    staleNow <= staleGrace
-      ? 1
-      : clamp(1 - (staleNow - staleGrace) / staleFadeDuration, 0, 1);
-  const simulationScale = timing?.simulationScale || 1;
-  const simulationDt = dt * simulationScale;
-  const diggingMultiplier =
-    entityHasState(snap, stateDigging) ? ownerDiggingSpeedMultiplier : 1;
-  const speedScale = state.ownerMovementMultiplier || 1;
-  const maxVelocity =
-    ownerBaseMaxVelocity * diggingMultiplier * speedScale * staleMultiplier;
-  const acceleration =
-    ownerBaseAcceleration * diggingMultiplier * speedScale * staleMultiplier;
-
-  let vel = prediction.vel || { x: 0, y: 0 };
-  const speed = Math.hypot(vel.x, vel.y);
-  if (speed > maxVelocity && ownerSlowToMaxVelocityTime > 0) {
-    const slowAmount =
-      ((speed - maxVelocity) * simulationDt) / ownerSlowToMaxVelocityTime;
-    const nextSpeed = Math.max(maxVelocity, speed - slowAmount);
-    const scale = speed > 0 ? nextSpeed / speed : 0;
-    vel = { x: vel.x * scale, y: vel.y * scale };
-  }
-
-  const move = transformOwnerHallucinationVector(
-    snap,
-    state.localMoveInput || { x: 0, y: 0 },
-  );
-  const moveLength = Math.hypot(move.x, move.y);
-  if (moveLength > 0.0001 && maxVelocity > 0 && acceleration > 0) {
-    const desired = {
-      x: (move.x / moveLength) * maxVelocity,
-      y: (move.y / moveLength) * maxVelocity,
-    };
-    const diff = { x: desired.x - vel.x, y: desired.y - vel.y };
-    const diffLength = Math.hypot(diff.x, diff.y);
-    const maxAccel = acceleration * simulationDt;
-    if (diffLength <= maxAccel || diffLength <= 0.000001) {
-      vel = desired;
-    } else {
-      vel = {
-        x: vel.x + (diff.x / diffLength) * maxAccel,
-        y: vel.y + (diff.y / diffLength) * maxAccel,
-      };
-    }
-  } else {
-    const tickInterval = state.serverTickInterval || serverFixedDt;
-    const damping = Math.pow(
-      ownerStopDampingPerTick,
-      simulationDt / tickInterval,
-    );
-    vel = { x: vel.x * damping, y: vel.y * damping };
-    if (vel.x * vel.x + vel.y * vel.y <= ownerStopVelocityEpsilon)
-      vel = { x: 0, y: 0 };
-  }
-
-  prediction.vel = vel;
-  const radius = Math.max(0, Number(snap.radius) || 0);
-  const predictedStart = { x: prediction.pos.x, y: prediction.pos.y };
-  const predictedEnd = {
-    x: predictedStart.x + vel.x * simulationDt,
-    y: predictedStart.y + vel.y * simulationDt,
-  };
-  const predictedMotion = resolveOwnerPredictedMotion(
-    predictedStart,
-    predictedEnd,
-    radius,
-  );
-  prediction.pos = predictedMotion.pos;
-  if (predictedMotion.normals?.length) {
-    for (const normal of predictedMotion.normals) {
-      const intoWall = vel.x * normal.x + vel.y * normal.y;
-      if (intoWall < 0) {
-        vel = {
-          x: vel.x - normal.x * intoWall,
-          y: vel.y - normal.y * intoWall,
-        };
-      }
-    }
-    prediction.vel = vel;
-  }
-
-  const correctionDistance = Math.hypot(
-    prediction.correction?.x || 0,
-    prediction.correction?.y || 0,
-  );
-  if (correctionDistance > 0) {
-    const correctionRate =
-      correctionDistance >= ownerPredictionHardCorrectionDistance
-        ? ownerPredictionHardCorrectionRate
-        : ownerPredictionSoftCorrectionRate;
-    const amount = smoothFactor(correctionRate, dt);
-    const correctionStart = { x: prediction.pos.x, y: prediction.pos.y };
-    const correctionEnd = {
-      x: correctionStart.x + prediction.correction.x * amount,
-      y: correctionStart.y + prediction.correction.y * amount,
-    };
-    prediction.pos = resolveOwnerPredictedMotion(
-      correctionStart,
-      correctionEnd,
-      radius,
-    ).pos;
-    prediction.correction.x *= 1 - amount;
-    prediction.correction.y *= 1 - amount;
-    if (Math.hypot(prediction.correction.x, prediction.correction.y) < 0.01)
-      prediction.correction = { x: 0, y: 0 };
-  }
-
-  entity.renderPos = { x: prediction.pos.x, y: prediction.pos.y };
-  entity.serverRenderPos = { x: snap.pos.x, y: snap.pos.y };
-  if (Number.isFinite(snap.angle)) {
-    if (!Number.isFinite(entity.renderAngle)) entity.renderAngle = snap.angle;
-    else
-      entity.renderAngle = lerpAngle(
-        entity.renderAngle,
-        snap.angle,
-        smoothFactor(ownerAngleLerpRate, dt),
-      );
-  }
-
-  state.predictionDebug = {
-    errorDistance: Math.hypot(
-      snap.pos.x - prediction.pos.x,
-      snap.pos.y - prediction.pos.y,
-    ),
-    speedScale,
-    tickScale: simulationScale,
-    snapshotInterval,
-    staleTime: prediction.staleTime || 0,
-    snapped: !!prediction.snapped,
-  };
-  prediction.snapped = false;
-}
-
-export function stepEntityRenderToSnapshot(entity, dt, isOwner = false) {
-  const snap = entity?.snapshot;
-  if (!snap?.pos) return;
-
-  if (
-    !entity.renderPos ||
-    !Number.isFinite(entity.renderPos.x) ||
-    !Number.isFinite(entity.renderPos.y)
-  ) {
-    syncEntityRenderToSnapshot(entity, snap);
-    return;
-  }
-
-  const petalType = isPetalEntity(snap.entityType)
-    ? petalTypeFromEntity(snap.entityType)
-    : 0;
-  const target = entityInterpolationTarget(entity, snap, isOwner, petalType);
-  const dx = target.x - entity.renderPos.x;
-  const dy = target.y - entity.renderPos.y;
-  const dist = Math.hypot(dx, dy);
-  const snapDistance =
-    (isOwner ? ownerRenderSnapBaseDistance : renderSnapBaseDistance) +
-    Math.max(0, snap.radius || 0) * 3;
-  if (dist >= snapDistance) {
-    syncEntityRenderToSnapshot(entity, snap);
-  } else if (dist > 0) {
-    const renderRate =
-      petalType > 0
-        ? petalRenderLerpRate
-        : isOwner
-          ? ownerRenderLerpRate
-          : entityRenderLerpRate;
-    const factor = smoothFactor(renderRate, dt);
-    entity.renderPos.x += dx * factor;
-    entity.renderPos.y += dy * factor;
-  }
-
-  if (Number.isFinite(snap.angle)) {
-    if (!Number.isFinite(entity.renderAngle)) {
-      entity.renderAngle = snap.angle;
-    } else {
-      const angleRate =
-        petalType > 0
-          ? petalAngleLerpRate
-          : isOwner
-            ? ownerAngleLerpRate
-            : entityAngleLerpRate;
-      entity.renderAngle = lerpAngle(
-        entity.renderAngle,
-        snap.angle,
-        smoothFactor(angleRate, dt),
-      );
-    }
-  }
-}
-
-function entityInterpolationTarget(entity, snap, isOwner, petalType = 0) {
-  if (isOwner || !entity?.snapshotVelocity || !snap?.pos)
-    return snap?.pos || { x: 0, y: 0 };
-
-  const age = Math.max(0, performance.now() / 1000 - (entity.snapshotAt || 0));
-  if (petalType === petalYinYangType) return snap.pos;
-  const maxLead =
-    petalType > 0 ? petalExtrapolateMaxSeconds : entityExtrapolateMaxSeconds;
-  const lead = Math.min(maxLead, age + serverFixedDt);
-  const vx = entity.snapshotVelocity.x || 0;
-  const vy = entity.snapshotVelocity.y || 0;
-  let ex = vx * lead;
-  let ey = vy * lead;
-  const distance = Math.hypot(ex, ey);
-  const maxDistance =
-    petalType > 0
-      ? Math.max(
-          petalExtrapolateMaxDistance,
-          Math.max(0, snap.radius || 0) * 0.4,
-        )
-      : Math.max(
-          entityExtrapolateMaxDistance,
-          Math.max(0, snap.radius || 0) * 1.5,
-        );
-  if (distance > maxDistance && distance > 0) {
-    const scale = maxDistance / distance;
-    ex *= scale;
-    ey *= scale;
-  }
-  return { x: snap.pos.x + ex, y: snap.pos.y + ey };
-}
-
 function shouldFadeMissingEntity(entity) {
   const owner = state.entities.get(state.ownerEntityId);
   if (!entity?.snapshot) return false;
@@ -2768,12 +2501,11 @@ function isNullVisualEntity(entity) {
 }
 
 function readKeyboardMoveInput() {
-  let x = 0;
-  let y = 0;
-  if (state.keys.has("a") || state.keys.has("arrowleft")) x -= 1;
-  if (state.keys.has("d") || state.keys.has("arrowright")) x += 1;
-  if (state.keys.has("w") || state.keys.has("arrowup")) y -= 1;
-  if (state.keys.has("s") || state.keys.has("arrowdown")) y += 1;
+  // Arrow keys are default *bindings* now, so everything that can move the
+  // flower flows through the same hold set.
+  const { x: rawX, y: rawY } = state.moveVector;
+  let x = rawX;
+  let y = rawY;
 
   const length = Math.hypot(x, y);
   if (length > 1) {
@@ -2843,7 +2575,15 @@ function estimateInputTargetTick() {
 }
 
 function flushInput(dt) {
-  if (!state.connected || !state.authenticated || isTyping() || isOwnerDead()) {
+  // Safety net for releases that never arrive: a physically held key keeps
+  // repeating, so a hold that has gone quiet is a keyup we never received.
+  pruneStaleInputHolds(performance.now());
+  const typing = isTyping();
+  // Focus landing in a text field swallows the keyup of anything still held,
+  // so hand the keyboard over cleanly instead of latching movement on.
+  if (typing) releaseInputHolds({ device: "keyboard" });
+
+  if (!state.connected || !state.authenticated || typing || isOwnerDead()) {
     state.localMoveInput = { x: 0, y: 0 };
     return;
   }
@@ -2859,12 +2599,10 @@ function flushInput(dt) {
   const attacking =
     state.holdAttack ||
     state.attacking ||
-    state.keys.has("space") ||
     !!ui.mobileControls?.isAttacking();
   const defending =
     state.holdDefense ||
     state.defending ||
-    state.keys.has("shift") ||
     !!ui.mobileControls?.isDefending();
   const digging = false;
   const effectiveAttacking = attacking;
@@ -2954,11 +2692,9 @@ export function renderDeathOverlayContent() {
 
 function requestRevive() {
   if (!state.connected || !state.authenticated || !isOwnerDead()) return;
-  state.attacking = false;
-  state.defending = false;
+  releaseInputHolds();
   state.digging = false;
   ui.mobileControls?.reset();
-  state.keys.clear();
   sendBytes(packChores(false, false, true, false, false));
 }
 
@@ -2982,414 +2718,6 @@ function closeChat() {
 
 function submitChat() {
   ui.chatUi.submit();
-}
-
-function executeClientCommand(line) {
-  const args = splitCommand(line.trim());
-  if (args.length === 0) return;
-
-  const name = args.shift().replace(/^\//, "").toLowerCase();
-  if (name === "version" || name === "ver") {
-    addConsoleLine(appDisplayName);
-    return;
-  }
-  if (
-    name === "change_language" ||
-    name === "change-language" ||
-    name === "language" ||
-    name === "lang"
-  ) {
-    void executeLanguageCommand(args);
-    return;
-  }
-  if (name === "say") {
-    if (args.length < 2) return;
-    const flagText = String(args.shift()).toLowerCase();
-    const message = args.join(" ").trim();
-    if (!message) return;
-    if (flagText === "global" || flagText === "g")
-      sendChat(ChatFlag.Global, message);
-    else if (flagText === "local" || flagText === "l")
-      sendChat(ChatFlag.Local, message);
-    else if (flagText === "squad" || flagText === "sq")
-      sendChat(ChatFlag.Local, `/sq ${message}`);
-    else if (flagText === "whisper" || flagText === "w")
-      sendChat(ChatFlag.Whisper, `/whisper ${message}`);
-    return;
-  }
-  if (name === "g") {
-    const message = args.join(" ").trim();
-    if (message) sendChat(ChatFlag.Global, message);
-    return;
-  }
-  if (name === "l") {
-    const message = args.join(" ").trim();
-    if (message) sendChat(ChatFlag.Local, message);
-    return;
-  }
-  if (name === "whisper" || name === "w") {
-    const message = args.join(" ").trim();
-    if (message) sendChat(ChatFlag.Whisper, `/whisper ${message}`);
-    return;
-  }
-  if (name === "map") {
-    const mapName = args.join(" ").trim() || defaultMapName;
-    loadMap(mapName);
-    return;
-  }
-  if (name === "login_map" || name === "loginmap") {
-    void executeLoginMapCommand(args);
-    return;
-  }
-  if (
-    name === "login_map_x" ||
-    name === "login_map_y" ||
-    name === "login_map_horizon"
-  ) {
-    executeLoginMapViewCommand(name, args);
-    return;
-  }
-  if (name === "hitbox" || name === "hitboxes") {
-    state.debugHitbox = args.length
-      ? args[0] !== "0" && args[0].toLowerCase() !== "off"
-      : !state.debugHitbox;
-    addConsoleLine(
-      t("commands.toggle.hitbox", {
-        value: t(
-          state.debugHitbox ? "commands.toggle.on" : "commands.toggle.off",
-        ),
-      }),
-    );
-    return;
-  }
-  if (name === "colorful_map") {
-    executeClientSetCommand(["colorful_map", ...args]);
-    return;
-  }
-  if (name === "set") {
-    executeClientSetCommand(args);
-    return;
-  }
-  if (name === "slider") {
-    executeClientSliderCommand(args);
-    return;
-  }
-  if (name === "keyboard_control") {
-    if (args.length) {
-      const value = String(args[0]).toLowerCase();
-      const enabled = !(
-        value === "0" ||
-        value === "off" ||
-        value === "false"
-      );
-      setMovementMode(enabled ? "keyboard" : "mouse");
-    }
-    addConsoleLine(
-      t("commands.toggle.keyboard", {
-        value: t(
-          state.movementMode === "keyboard"
-            ? "commands.toggle.on"
-            : "commands.toggle.off",
-        ),
-      }),
-    );
-    return;
-  }
-  if (name === "mobile" || name === "mobile_mode" || name === "touch") {
-    if (args.length) {
-      const value = String(args[0]).toLowerCase();
-      if (value === "toggle") {
-        setMobileControlMode(state.mobileControlMode === "on" ? "off" : "on");
-      } else {
-        setMobileControlMode(value);
-      }
-    } else {
-      addConsoleLine(
-        t("commands.toggle.mobile", { value: state.mobileControlMode }),
-      );
-    }
-    return;
-  }
-
-  sendChat(ChatFlag.Local, `/${line}`);
-}
-
-async function executeLanguageCommand(args) {
-  const current = getCurrentLocale();
-  if (!args.length) {
-    addConsoleLine(
-      t("commands.language.current", {
-        locale: current?.id || getLocale(),
-        label: current?.label || getLocale(),
-      }),
-    );
-    addConsoleLine(
-      t("commands.language.available", {
-        languages: getAvailableLocales()
-          .map((entry) => entry.id + " (" + entry.label + ")")
-          .join(", "),
-      }),
-    );
-    addConsoleLine(t("commands.language.usage"));
-    return;
-  }
-
-  const requested = args.join(" ").trim();
-  const result = await changeLanguage(requested);
-  if (!result.ok) {
-    addConsoleLine(
-      t(
-        result.reason === "unknown"
-          ? "commands.language.unknown"
-          : "commands.language.loadFailed",
-        { language: requested },
-      ),
-      "error",
-    );
-    return;
-  }
-
-  state.locale = result.locale;
-  saveSettings();
-  refreshLocalizedUi();
-  addConsoleLine(
-    t("commands.language.changed", {
-      locale: result.entry?.id || result.locale,
-      label: result.entry?.label || result.locale,
-    }),
-  );
-}
-
-async function executeLoginMapCommand(args) {
-  if (state.authenticated) {
-    addConsoleLine(t("commands.loginMap.loggedOutOnly"), "error");
-    return;
-  }
-
-  if (!args.length) {
-    addConsoleLine(
-      t("commands.loginMap.current", {
-        map: state.loginMapName || defaultMapName,
-      }),
-    );
-    addConsoleLine(t("commands.loginMap.usage"));
-    return;
-  }
-
-  const input = args.join(" ").trim();
-  const requestedMap =
-    input.toLowerCase() === "reset"
-      ? defaultMapName
-      : appendMapExtension(input);
-  const previousMap = state.loginMapName || defaultMapName;
-  const loadedMap = await loadMap(requestedMap);
-
-  if (!loadedMap) {
-    addConsoleLine(
-      t("commands.loginMap.unchanged", { map: previousMap }),
-      "error",
-    );
-    if (!state.authenticated) await loadMap(previousMap);
-    return;
-  }
-
-  state.loginMapName = requestedMap;
-  saveSettings();
-  addConsoleLine(t("commands.loginMap.changed", { map: requestedMap }));
-}
-
-function appendMapExtension(mapName) {
-  const normalized = String(mapName || "").trim();
-  if (!normalized || /\.[^/\\]+$/.test(normalized)) return normalized;
-  return `${normalized}.tmj`;
-}
-
-function executeLoginMapViewCommand(name, args) {
-  if (state.authenticated) {
-    addConsoleLine(t("commands.loginMap.viewLoggedOutOnly"), "error");
-    return;
-  }
-
-  const definitions = {
-    login_map_x: {
-      property: "loginMapX",
-      defaultValue: loginMapDefaultX,
-    },
-    login_map_y: {
-      property: "loginMapY",
-      defaultValue: loginMapDefaultY,
-    },
-    login_map_horizon: {
-      property: "loginMapHorizon",
-      defaultValue: loginMapDefaultHorizon,
-      minimum: 0,
-    },
-  };
-  const definition = definitions[name];
-  if (!definition) return;
-
-  if (!args.length) {
-    addConsoleLine(
-      t("commands.config.value", {
-        name,
-        value: formatClientConfigValue(state[definition.property]),
-      }),
-    );
-    return;
-  }
-
-  const rawValue = String(args[0] || "").trim().toLowerCase();
-  const value =
-    rawValue === "reset" ? definition.defaultValue : Number(rawValue);
-  if (
-    !Number.isFinite(value) ||
-    (Number.isFinite(definition.minimum) && value < definition.minimum)
-  ) {
-    addConsoleLine(
-      t("commands.config.invalid", { name, value: args[0] }),
-      "error",
-    );
-    return;
-  }
-
-  state[definition.property] = value;
-  applyLoginMapView();
-  saveSettings();
-  addConsoleLine(
-    t("commands.config.value", {
-      name,
-      value: formatClientConfigValue(value),
-    }),
-  );
-}
-
-function executeClientSliderCommand(args) {
-  if (args.length < 3) {
-    addConsoleLine(t("commands.slider.usage"), "error");
-    return;
-  }
-
-  const key = args[0];
-  const entry = getClientConfigEntry(key);
-  if (!entry) {
-    addConsoleLine(t("commands.config.unknown", { name: key }), "error");
-    return;
-  }
-
-  const start = Number(args[1]);
-  const end = Number(args[2]);
-  const explicitStep = args.length >= 4 ? Number(args[3]) : NaN;
-  if (!Number.isFinite(start) || !Number.isFinite(end) || start === end) {
-    addConsoleLine(
-      t("commands.slider.invalidRange", { name: entry.name }),
-      "error",
-    );
-    return;
-  }
-
-  const span = Math.abs(end - start);
-  const step =
-    Number.isFinite(explicitStep) && explicitStep > 0
-      ? explicitStep
-      : span / 200;
-  state.slider = {
-    name: entry.name,
-    min: Math.min(start, end),
-    max: Math.max(start, end),
-    step,
-  };
-  renderSliderPanel();
-  addConsoleLine(
-    t("commands.slider.opened", {
-      name: entry.name,
-      start: formatClientConfigValue(state.slider.min),
-      end: formatClientConfigValue(state.slider.max),
-      step: formatClientConfigValue(step),
-    }),
-  );
-}
-
-function executeClientSetCommand(args) {
-  if (!args.length) {
-    for (const entry of listClientConfigEntries()) {
-      const value = getClientConfigValue(state.clientConfig, entry.name);
-      addConsoleLine(
-        t("commands.config.value", {
-          name: entry.name,
-          value: formatClientConfigValue(value),
-        }),
-      );
-    }
-    return;
-  }
-
-  const key = args.shift();
-  if (String(key || "").toLowerCase() === "reset") {
-    const result = resetClientConfig(state.clientConfig, args[0]);
-    if (!result.ok) {
-      addConsoleLine(t("commands.config.unknown", { name: result.name }));
-      return;
-    }
-    state.clientConfig = result.config;
-    saveSettings();
-    requestAnimationFrame(drawScene);
-    addConsoleLine(
-      t(
-        result.name === "all"
-          ? "commands.config.resetAll"
-          : "commands.config.resetOne",
-        { name: result.name },
-      ),
-    );
-    return;
-  }
-
-  if (!args.length) {
-    const entry = getClientConfigEntry(key);
-    if (!entry) {
-      addConsoleLine(t("commands.config.unknown", { name: key }));
-      return;
-    }
-    const value = getClientConfigValue(state.clientConfig, entry.name);
-    addConsoleLine(
-      t("commands.config.value", {
-        name: entry.name,
-        value: formatClientConfigValue(value),
-      }),
-    );
-    return;
-  }
-
-  const rawValue = String(args[0] || "")
-    .trim()
-    .toLowerCase();
-  const result =
-    rawValue === "reset"
-      ? resetClientConfig(state.clientConfig, key)
-      : setClientConfigValue(state.clientConfig, key, rawValue);
-  if (!result.ok) {
-    addConsoleLine(
-      t(
-        result.error === "unknown"
-          ? "commands.config.unknown"
-          : "commands.config.invalid",
-        { name: result.name, value: args[0] },
-      ),
-    );
-    return;
-  }
-
-  state.clientConfig = result.config;
-  saveSettings();
-  requestAnimationFrame(drawScene);
-  addConsoleLine(
-    t("commands.config.value", {
-      name: result.name,
-      value: formatClientConfigValue(
-        getClientConfigValue(state.clientConfig, result.name),
-      ),
-    }),
-  );
 }
 
 export function closeSliderPanel() {
@@ -3451,30 +2779,6 @@ function sendChat(flag, message) {
   if (packet) sendBytes(packet);
 }
 
-function splitCommand(text) {
-  const out = [];
-  let current = "";
-  let quote = "";
-  for (const ch of text) {
-    if ((ch === '"' || ch === "'") && !quote) {
-      quote = ch;
-      continue;
-    }
-    if (ch === quote) {
-      quote = "";
-      continue;
-    }
-    if (/\s/.test(ch) && !quote) {
-      if (current) out.push(current);
-      current = "";
-      continue;
-    }
-    current += ch;
-  }
-  if (current) out.push(current);
-  return out;
-}
-
 function renderChat(now = performance.now()) {
   ui.chatUi.render(now);
 }
@@ -3511,12 +2815,30 @@ export function renderInventoryPanel(options = {}) {
   );
 
   if (state.backpackOpen || forceInventory) {
-    inventoryList.replaceChildren();
     renderInventoryGroups(
       inventoryList,
       inventoryPanelItems(display.inventory),
     );
   }
+}
+
+let inventoryUiRenderQueued = false;
+let inventoryUiRenderForce = false;
+
+// Server messages arrive in bursts (loot pickups touch the inventory many
+// times per second): collapse the panel rebuild work to one render per frame.
+function scheduleInventoryUiRender(options = {}) {
+  inventoryUiRenderForce = inventoryUiRenderForce || !!options.forceInventory;
+  if (inventoryUiRenderQueued) return;
+  inventoryUiRenderQueued = true;
+  requestAnimationFrame(() => {
+    inventoryUiRenderQueued = false;
+    const forceInventory = inventoryUiRenderForce;
+    inventoryUiRenderForce = false;
+    renderInventoryPanel({ forceInventory });
+    if (state.craftOpen) renderCraftPanel();
+    if (state.talentOpen) renderTalentPanel();
+  });
 }
 
 function slotButtonRenderKey(slot, index, kind, primaryForVisual) {
@@ -3526,7 +2848,17 @@ function slotButtonRenderKey(slot, index, kind, primaryForVisual) {
   const visualType = slotHasItem(slot)
     ? slotVisualPetalType(slot, index, kind, primaryForVisual)
     : 0;
-  return `${kind}:${petalType}:${rarity}:${count}:${visualType}`;
+  // The copy count participates: when the server-sent live count differs
+  // from what the card shows, the key changes and the stack rebuilds.
+  const copy = slotHasItem(slot)
+    ? effectivePetalCardCopy(visualType || petalType, rarity, {
+        kind,
+        slotIndex: index,
+      })
+    : 0;
+  // The display name participates: language switches rebuild the label.
+  const name = slotHasItem(slot) ? petalDisplayName(visualType || petalType) : "";
+  return `${kind}:${petalType}:${rarity}:${count}:${visualType}:${copy}:${name}`;
 }
 
 function renderSlotRow(container, slots, kind, primaryForVisual) {
@@ -3946,49 +3278,94 @@ function renderInventoryGroups(container, items) {
   const groups = groupInventoryItems(items);
   container.classList.toggle("hidden", groups.length === 0);
 
-  for (const group of groups) {
-    const section = document.createElement("section");
-    section.className = "inventory-group";
-
-    if (group.showHeader) {
-      const header = document.createElement("div");
-      header.className = "inventory-group-title";
-      header.style.color = rarityColor(group.rarity, 1);
-      header.textContent = rarityName(group.rarity);
-      section.appendChild(header);
-    }
-
-    const grid = document.createElement("div");
-    grid.className = "inventory-grid";
-    for (const item of group.items) {
-      const variants = inventoryItemVariants(item);
-      const button = document.createElement("button");
-      button.className = `inventory-item${variants.length > 1 ? " type-stacked" : ""}`;
-      button.type = "button";
-      button.title = variants
-        .map(
-          (variant) =>
-            formatPetalItem(
-              variant.petalType,
-              variant.rarity,
-              variant.count,
-            ),
-        )
-        .join("\n");
-      button.appendChild(makeInventoryTypeStack(item));
-      attachPetalInfoTooltip(button, item.petalType, item.rarity);
-      button.addEventListener("pointerdown", (event) =>
-        beginDrag(event, button, "inventory", -1, item),
-      );
-      button.addEventListener("click", () => {
-        if (shouldSuppressClick()) return;
-        equipFromInventory(item);
-      });
-      grid.appendChild(button);
-    }
-    section.appendChild(grid);
-    container.appendChild(section);
+  // Keyed diff: sections whose data did not change are reused as-is, so
+  // reopening the panel or a single count change never rebuilds the whole
+  // list (and re-decodes its hundreds of petal images).
+  const existing = new Map();
+  for (const child of Array.from(container.children)) {
+    const childKey = child.dataset.groupKey;
+    if (childKey && !existing.has(childKey)) existing.set(childKey, child);
+    else child.remove();
   }
+
+  const orderedSections = [];
+  for (const group of groups) {
+    // The key covers every stacked variant (not just the representative) so
+    // a hidden-layer count change still refreshes the reused card.
+    const key =
+      (group.showHeader ? "h:" + String(group.rarity) : "n:") +
+      ":" +
+      group.items
+        .map((item) =>
+          inventoryItemVariants(item)
+            .map(
+              (variant) =>
+                `${variant.petalType}:${variant.rarity}:${variant.count}:${effectivePetalCardCopy(variant.petalType, variant.rarity)}:${petalDisplayName(variant.petalType)}`,
+            )
+            .join("|"),
+        )
+        .join(",");
+    let section = existing.get(key);
+    if (section) existing.delete(key);
+    else section = makeInventoryGroupSection(group, key);
+    orderedSections.push(section);
+  }
+
+  for (const leftover of existing.values()) leftover.remove();
+
+  let cursor = container.firstElementChild;
+  for (const section of orderedSections) {
+    if (section === cursor) {
+      cursor = cursor.nextElementSibling;
+      continue;
+    }
+    container.insertBefore(section, cursor);
+  }
+}
+
+function makeInventoryGroupSection(group, key) {
+  const section = document.createElement("section");
+  section.className = "inventory-group";
+  section.dataset.groupKey = key;
+
+  if (group.showHeader) {
+    const header = document.createElement("div");
+    header.className = "inventory-group-title";
+    header.style.color = rarityColor(group.rarity, 1);
+    header.textContent = rarityName(group.rarity);
+    section.appendChild(header);
+  }
+
+  const grid = document.createElement("div");
+  grid.className = "inventory-grid";
+  for (const item of group.items) {
+    const variants = inventoryItemVariants(item);
+    const button = document.createElement("button");
+    button.className = `inventory-item${variants.length > 1 ? " type-stacked" : ""}`;
+    button.type = "button";
+    button.title = variants
+      .map(
+        (variant) =>
+          formatPetalItem(
+            variant.petalType,
+            variant.rarity,
+            variant.count,
+          ),
+      )
+      .join("\n");
+    button.appendChild(makeInventoryTypeStack(item));
+    attachPetalInfoTooltip(button, item.petalType, item.rarity);
+    button.addEventListener("pointerdown", (event) =>
+      beginDrag(event, button, "inventory", -1, item),
+    );
+    button.addEventListener("click", () => {
+      if (shouldSuppressClick()) return;
+      equipFromInventory(item);
+    });
+    grid.appendChild(button);
+  }
+  section.appendChild(grid);
+  return section;
 }
 
 function renderCraftMatrix() {
@@ -4616,30 +3993,6 @@ function ownerHasPetal(petalType, rarity = null) {
   return slotsHavePetal(displayOwnerSlots(), petalType, rarity);
 }
 
-function ownerCollidesWithWalls() {
-  // Driven by the nullification STATE the server reports, not by what petal
-  // is equipped: the null petal only provides the state, and the client's
-  // wall phasing follows primordial nullification from the snapshot.
-  const owner = state.entities.get(state.ownerEntityId);
-  const snap = owner?.snapshot;
-  if (!snap) return true;
-  const nullState = entityState(snap, stateNullification);
-  return !(nullState && nullState.rarity >= rarityPrimordial);
-}
-
-function resolveOwnerPredictedMotion(start, end, radius) {
-  if (!ownerCollidesWithWalls()) {
-    return { pos: { x: end.x, y: end.y }, normals: [] };
-  }
-  return ui.mapRenderer.resolvePredictedCircleMotion(start, end, radius);
-}
-
-export function playerSnapHasPetal(snap, petalType) {
-  return (snap.primarySlots || []).some(
-    (slot) => slotHasItem(slot) && slot.petalType === petalType,
-  );
-}
-
 function equipFromInventory(item) {
   if (!state.authenticated || !slotHasItem(item)) return;
   // Click-to-equip: fill use slots 0-9 first (smallest index first), then
@@ -4758,13 +4111,101 @@ function clearSecondarySlot(index) {
   renderInventoryPanel();
 }
 
+let lastSlotSwapAt = 0;
+
+function launchPetalFlight(fromButton, toButton, slot, done) {
+  if (!fromButton || !toButton || !slotHasItem(slot)) {
+    done?.();
+    return;
+  }
+  const fromRect = fromButton.getBoundingClientRect();
+  const toRect = toButton.getBoundingClientRect();
+  if (!fromRect.width || !toRect.width) {
+    done?.();
+    return;
+  }
+
+  const ghost = document.createElement("div");
+  ghost.className = "petal-flight";
+  ghost.appendChild(
+    makePetalStack(slot.petalType, slot.rarity, 0, undefined, {}),
+  );
+  document.body.appendChild(ghost);
+
+  const startSize = fromRect.width;
+  const endSize = toRect.width;
+  const startX = fromRect.left + fromRect.width / 2 - startSize / 2;
+  const startY = fromRect.top + fromRect.height / 2 - startSize / 2;
+  const endX = toRect.left + toRect.width / 2 - endSize / 2;
+  const endY = toRect.top + toRect.height / 2 - endSize / 2;
+  ghost.style.left = `${startX}px`;
+  ghost.style.top = `${startY}px`;
+  ghost.style.width = `${startSize}px`;
+  ghost.style.height = `${startSize}px`;
+
+  const durationMs = 100;
+  const startTime = performance.now();
+  const tick = (now) => {
+    const t = Math.min(1, (now - startTime) / durationMs);
+    const k = 1 - Math.pow(1 - t, 3);
+    ghost.style.left = `${startX + (endX - startX) * k}px`;
+    ghost.style.top = `${startY + (endY - startY) * k}px`;
+    const size = startSize + (endSize - startSize) * k;
+    ghost.style.width = `${size}px`;
+    ghost.style.height = `${size}px`;
+    if (t < 1) requestAnimationFrame(tick);
+    else {
+      ghost.remove();
+      done?.();
+    }
+  };
+  requestAnimationFrame(tick);
+}
+
+function animateSlotSwapFlight(index, done) {
+  const primaryButton = primarySlots.children[index];
+  const secondaryButton = secondarySlots.children[index];
+  const sourcePrimary = displayOwnerSlots()[index];
+  const sourceSecondary = displaySecondarySlots()[index];
+  const hasPrimary = slotHasItem(sourcePrimary);
+  const hasSecondary = slotHasItem(sourceSecondary);
+  if (!hasPrimary && !hasSecondary) {
+    done?.();
+    return;
+  }
+
+  // While the flight is in the air the destination slots show no petal
+  // cards; they only render once the swap settles.
+  primaryButton?.classList.add("slot-swap-hidden");
+  secondaryButton?.classList.add("slot-swap-hidden");
+
+  let pending = (hasPrimary ? 1 : 0) + (hasSecondary ? 1 : 0);
+  const landed = () => {
+    pending -= 1;
+    if (pending > 0) return;
+    primaryButton?.classList.remove("slot-swap-hidden");
+    secondaryButton?.classList.remove("slot-swap-hidden");
+    done?.();
+  };
+  if (hasPrimary)
+    launchPetalFlight(primaryButton, secondaryButton, sourcePrimary, landed);
+  if (hasSecondary)
+    launchPetalFlight(secondaryButton, primaryButton, sourceSecondary, landed);
+}
+
 function quickSwapSlot(index) {
+  const now = performance.now();
+  if (now - lastSlotSwapAt < 100) return;
+  lastSlotSwapAt = now;
+
   const display = makeDisplaySlotState();
   const ownerSlots = display.ownerSlots;
   const secondarySlots = display.secondarySlots;
   const inventory = display.inventory;
   if (index < 0 || index >= ownerSlots.length) return;
   if (!state.authenticated) return;
+
+  animateSlotSwapFlight(index, () => renderInventoryPanel());
 
   const oldPrimary = copySlot(ownerSlots[index]);
   const oldSecondary = copySlot(secondarySlots[index]);
@@ -4783,7 +4224,6 @@ function quickSwapSlot(index) {
     ownerSlots[index] = emptySlot();
     secondarySlots[index] = oldPrimary;
     enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [oldPrimary]);
-    renderInventoryPanel();
     return;
   }
   if (!hasPrimary && hasSecondary) {
@@ -4796,7 +4236,6 @@ function quickSwapSlot(index) {
     enqueueSlotTransaction(ownerSlots, secondarySlots, inventory, [
       oldSecondary,
     ]);
-    renderInventoryPanel();
     return;
   }
 
@@ -4812,7 +4251,6 @@ function quickSwapSlot(index) {
     oldPrimary,
     oldSecondary,
   ]);
-  renderInventoryPanel();
 }
 
 function quickSwapAllSlots() {
@@ -5117,6 +4555,9 @@ function moveSecondaryToSecondary(fromIndex, toIndex) {
 function beginDrag(event, element, source, index, item) {
   if (event.button !== 0 || !slotHasItem(item)) return;
   if (!state.authenticated && source !== "inventory") return;
+  // Remember whether the backpack was open before this drag: a plain click
+  // (no movement) must keep the panel and the click-to-equip behavior; only
+  // a real drag folds it away (see updateDrag).
   state.drag = {
     source,
     index,
@@ -5129,6 +4570,7 @@ function beginDrag(event, element, source, index, item) {
     y: event.clientY,
     targetElement: null,
     ghost: null,
+    backpackWasOpen: state.backpackOpen,
   };
 }
 
@@ -5144,6 +4586,9 @@ function updateDrag(event) {
     drag.element.classList.add("dragging");
     drag.ghost = makeDragGhost(drag.item);
     document.body.appendChild(drag.ghost);
+    // Fold the backpack away only once a real drag starts, so the drop slots
+    // are visible; it is re-raised at drag end (any outcome).
+    if (drag.backpackWasOpen && state.backpackOpen) toggleBackpack(false);
   }
 
   if (!drag.active) return;
@@ -5169,6 +4614,11 @@ function finishDrag() {
   }
 
   clearDrag();
+  // Re-raise the backpack even when the drag was invalid or dropped nowhere.
+  if (drag.backpackWasOpen) {
+    drag.backpackWasOpen = false;
+    if (!state.backpackOpen) toggleBackpack(true);
+  }
 }
 
 function clearDrag() {
@@ -5429,7 +4879,7 @@ function emitTerrainDust(center, tileSize, count = 14) {
     state.particles.splice(0, state.particles.length - particleMaxCount);
 }
 
-export function updateParticles(dt) {
+function updateParticles(dt) {
   if (!state.particles.length) return;
   for (let i = state.particles.length - 1; i >= 0; i -= 1) {
     const particle = state.particles[i];
@@ -5439,7 +4889,8 @@ export function updateParticles(dt) {
       particle.lifetime || particleLifetimeSeconds,
     );
     if (particle.age >= lifetime) {
-      state.particles.splice(i, 1);
+      const last = state.particles.pop();
+      if (i < state.particles.length) state.particles[i] = last;
       continue;
     }
     if (particle.kind === "portal") {
@@ -5462,32 +4913,25 @@ export function updateParticles(dt) {
   }
 }
 
-// Batched sprite-level hit-flash pass: every flashing entity keeps its full
-// sprite white-flash (same brightness/saturate look as before) but sprites
-// are redrawn grouped by quantized flash strength, so ctx.filter changes at
-// most 4 times per frame instead of once per entity.
-const HURT_FLASH_BUCKETS = 4;
+// Sprite-level hit-flash pass. The old implementation redrew every flashing
+// entity through ctx.filter (brightness/saturate), which forces an
+// intermediate surface per filtered draw — hitting a whole pack at once
+// stalled the frame. Now the raster cache substitutes pre-tinted white
+// copies of its bitmaps (built once per sprite bucket), so the flash is a
+// plain alpha-blended blit of the same sprites: no filters anywhere.
+// Vector-drawn details redraw over themselves at flash alpha, which leaves
+// them visually unchanged — only the bitmap body whitens, like florr.
 function drawHurtFlashPass() {
   if (!currentHurtFlashSprites.length) return;
-  const buckets = Array.from({ length: HURT_FLASH_BUCKETS }, () => []);
+  setSpriteWhiteTint(true);
   for (const entry of currentHurtFlashSprites) {
-    const bucket = Math.min(
-      HURT_FLASH_BUCKETS - 1,
-      Math.floor(entry.flash * HURT_FLASH_BUCKETS),
-    );
-    buckets[bucket].push(entry.entity);
-  }
-  currentHurtFlashSprites.length = 0;
-
-  for (let bucket = 0; bucket < buckets.length; bucket += 1) {
-    if (!buckets[bucket].length) continue;
-    const strength = (bucket + 0.5) / HURT_FLASH_BUCKETS;
     ctx.save();
-    ctx.filter = `brightness(${1 + strength * 3.5}) saturate(${1 - strength * 0.92})`;
-    for (const entity of buckets[bucket])
-      drawEntity(entity, { visualOnly: true });
+    ctx.globalAlpha = clamp(entry.flash, 0, 1);
+    drawEntity(entry.entity, { visualOnly: true });
     ctx.restore();
   }
+  setSpriteWhiteTint(false);
+  currentHurtFlashSprites.length = 0;
 }
 
 // Batched hit-flash pass: all non-priority flashing entities are drawn here
@@ -6013,52 +5457,6 @@ function flowerMobVisualScale(entityType) {
 function flowerMobCullScale(entityType) {
   if (entityType !== titanType && entityType !== dummyType) return 1;
   return Math.max(1, flowerMobVisualScale(entityType) * 1.35);
-}
-
-function transformHallucinationVector(vector, parameters) {
-  const vx = Number(vector?.x) || 0;
-  const vy = Number(vector?.y) || 0;
-  const originalLength = Math.hypot(vx, vy);
-  if (originalLength <= 0.000001 || !Array.isArray(parameters)) return vector;
-
-  const value = (index) => {
-    const parameter = Number(parameters[index]);
-    return Number.isFinite(parameter) ? parameter : 0;
-  };
-  const angle = value(0);
-  const scaleX = Math.exp(clamp(value(1), -4, 4));
-  const scaleY = Math.exp(clamp(value(2), -4, 4));
-  const shear = clamp(value(3), -8, 8);
-  const localX = scaleX * vx + shear * vy;
-  const localY = scaleY * vy;
-  const cosine = Math.cos(angle);
-  const sine = Math.sin(angle);
-  const transformedX =
-    cosine * localX - sine * localY + clamp(value(4), -8, 8) * originalLength;
-  const transformedY =
-    sine * localX + cosine * localY + clamp(value(5), -8, 8) * originalLength;
-  const transformedLength = Math.hypot(transformedX, transformedY);
-  if (!Number.isFinite(transformedLength) || transformedLength <= 0.000001)
-    return vector;
-
-  const preserveLength = originalLength / transformedLength;
-  return {
-    x: transformedX * preserveLength,
-    y: transformedY * preserveLength,
-  };
-}
-
-function transformOwnerHallucinationVector(snap, vector) {
-  if (
-    !entityHasState(snap, stateHallucinogenic) ||
-    !Array.isArray(snap?.hallucinations)
-  )
-    return vector;
-
-  let transformed = vector;
-  for (const parameters of snap.hallucinations)
-    transformed = transformHallucinationVector(transformed, parameters);
-  return transformed;
 }
 
 function activeOwnerHallucinationEntity() {
@@ -6817,6 +6215,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.rarity,
       pos,
       radius * deathScale,
+      dropStackCountFromSnap(snap),
     );
     ctx.restore();
     return;
@@ -7113,7 +6512,7 @@ function drawFlowerBody(bodyKind, radius, snap) {
   ctx.save();
   ctx.filter = flowerBodyFilter(snap, bodyKind === "mecha", ctx.filter);
   if (imageReady(image)) {
-    ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
+    drawSpriteImage(ctx, image, -size * 0.5, -size * 0.5, size, size);
   } else if (bodyKind === "mecha") {
     drawMechaFlowerFallback(radius);
   } else {
@@ -7156,7 +6555,7 @@ function drawMobSvg(src, pos, radius, angle) {
   if (Number.isFinite(angle)) ctx.rotate(angle);
 
   if (imageReady(image)) {
-    ctx.drawImage(image, -size * 0.5, -size * 0.5, size, size);
+    drawSpriteImage(ctx, image, -size * 0.5, -size * 0.5, size, size);
   } else {
     ctx.fillStyle = "#7f678f";
     ctx.beginPath();
@@ -7184,7 +6583,7 @@ function drawBandagePetalLayer(radius) {
   ctx.arc(0, 0, radius * 1.08, 0, Math.PI * 2);
   ctx.clip();
   if (imageReady(icon)) {
-    ctx.drawImage(icon, -size * 0.5, -size * 0.5 + offsetY, size, size);
+    drawSpriteImage(ctx, icon, -size * 0.5, -size * 0.5 + offsetY, size, size);
   } else {
     drawBandagePetalLayerFallback(radius);
   }
@@ -7227,7 +6626,7 @@ function drawAntennaeOverlay(radius) {
   ctx.translate(0, -radius);
   ctx.globalAlpha *= 0.92;
   if (imageReady(icon)) {
-    ctx.drawImage(icon, -size * 0.5, -size * 0.5, size, size);
+    drawSpriteImage(ctx, icon, -size * 0.5, -size * 0.5, size, size);
   } else {
     ctx.strokeStyle = "#111";
     ctx.lineWidth = Math.max(2, radius * 0.14);
@@ -7259,7 +6658,7 @@ function drawDouliOverlay(radius) {
   ctx.translate(0, radius * douliOverlayOffsetYScale);
   ctx.rotate(douliOverlayAngle);
   if (imageReady(icon)) {
-    ctx.drawImage(icon, -size * 0.5, -size * 0.5, size, size);
+    drawSpriteImage(ctx, icon, -size * 0.5, -size * 0.5, size, size);
   }
   ctx.restore();
 }
@@ -7272,7 +6671,7 @@ function drawThirdEyeOverlay(radius) {
   ctx.translate(0, offsetY);
   ctx.globalAlpha *= 0.96;
   if (imageReady(icon)) {
-    ctx.drawImage(icon, -size * 0.5, -size * 0.5, size, size);
+    drawSpriteImage(ctx, icon, -size * 0.5, -size * 0.5, size, size);
   } else {
     ctx.fillStyle = "#f4f0e9";
     ctx.strokeStyle = "#322a35";
@@ -7660,7 +7059,8 @@ function drawTrapProjectile(pos, radius, angle) {
   ctx.rotate(Number.isFinite(angle) ? angle : 0);
 
   if (imageReady(image)) {
-    ctx.drawImage(
+    drawSpriteImage(
+      ctx,
       image,
       -imageSize * 0.5,
       -imageSize * 0.5,
@@ -7814,14 +7214,13 @@ function drawDustParticlePetal(size, rarity) {
   ctx.restore();
 }
 
-function drawDropPetalCard(petalType, rarity, pos, radius) {
+function drawDropPetalCard(petalType, rarity, pos, radius, stackCount = 1) {
   const size = radius * worldDropSizeScale;
   if (size < 0.5) return;
   const base = petalBaseImage(rarity);
   const copy = effectivePetalCardCopy(petalType, rarity);
   const splitLabel = copy > 1;
   const icon = petalCardIconImage(petalType, rarity, { stripped: splitLabel });
-  const label = splitLabel ? petalLabelImage(petalType, rarity) : null;
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
@@ -7834,10 +7233,73 @@ function drawDropPetalCard(petalType, rarity, pos, radius) {
   }
 
   drawPetalCardCopies(icon, size, rarity, copy, petalType);
-  if (splitLabel && imageReady(label)) {
-    drawCenteredImage(label, size, petalCardIconScale);
-  }
+  drawPetalCardName(petalType, size);
+  if (stackCount > 1) drawDropStackBadge(size, stackCount);
 
+  ctx.restore();
+}
+
+function dropStackCountFromSnap(snap) {
+  const state = (snap.states || []).find(
+    (entityState) => entityState?.type === stateDropStack,
+  );
+  return state ? Math.max(1, state.value || 0) : 1;
+}
+
+// Canvas twin of the inventory cards' .petal-count badge: a black pill with
+// the stack count in the card's top-right corner, proportional to card size.
+function drawDropStackBadge(size, stackCount) {
+  const text = `x${formatShortCount(stackCount)}`;
+  const fontSize = Math.max(5, size * 0.19);
+  ctx.save();
+  ctx.font = `800 ${fontSize}px Florr UI, Sarasa SC, Segoe UI, sans-serif`;
+  const textWidth = ctx.measureText(text).width;
+  const padX = fontSize * 0.4;
+  const pillWidth = textWidth + padX * 2;
+  const pillHeight = fontSize * 1.35;
+  const x = size * 0.52 - pillWidth;
+  const y = -size * 0.52;
+  ctx.fillStyle = "#000000";
+  ctx.beginPath();
+  ctx.roundRect(x, y, pillWidth, pillHeight, pillHeight / 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, x + pillWidth / 2, y + pillHeight * 0.52);
+  ctx.restore();
+}
+
+function drawPetalCardName(petalType, size) {
+  if (!petalType) return;
+  const name = petalDisplayName(petalType);
+  if (!name) return;
+
+  // Matches the DOM card proportions: text bottom sits ~22% above the card
+  // bottom; font size cap and width cap come from the client config.
+  ctx.save();
+  ctx.font = `900 100px Florr UI, Sarasa SC, Segoe UI, sans-serif`;
+  const widthAt100 = Math.max(1, ctx.measureText(name).width);
+  const sizeFactor = size / 56;
+  const maxFontPx = getClientConfigValue(state.clientConfig, "petal_label_max_font_px") ?? 14;
+  const maxWidthPx = getClientConfigValue(state.clientConfig, "petal_label_max_width_px") ?? 45;
+  const fontSize = Math.min(
+    maxFontPx * sizeFactor,
+    Math.max(1, (maxWidthPx * sizeFactor) / (widthAt100 / 100)),
+  );
+  ctx.font = `900 ${fontSize}px Florr UI, Sarasa SC, Segoe UI, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.lineJoin = "round";
+  // The card is drawn centered on the origin; the label baseline sits 84% of
+  // the way down the card => +0.34 * size in origin-local coordinates.
+  const x = 0;
+  const y = size * 0.34;
+  ctx.lineWidth = Math.max(1.2, fontSize * 0.18);
+  ctx.strokeStyle = "#000000";
+  ctx.fillStyle = "#ffffff";
+  ctx.strokeText(name, x, y);
+  ctx.fillText(name, x, y);
   ctx.restore();
 }
 
@@ -7967,43 +7429,56 @@ function livePetalIconImage(
   return image;
 }
 
+// Live-petal crops are computed from the actual art bounds so art revamps
+// can't skew them again: the viewBox is a square centered on the measured
+// content, never smaller than minSide (which preserves each petal's tuned
+// apparent size — content only fills more of the frame when it used to be
+// clipped, like the mushroom was).
+function measuredLiveViewBox(svgMarkup, minSide) {
+  const box = measureSvgContentBox(svgMarkup);
+  if (!box) return null;
+  const side = Math.max(minSide, Math.max(box.w, box.h) * 1.02);
+  const centerX = box.x + box.w / 2;
+  const centerY = box.y + box.h / 2;
+  return `${(centerX - side / 2).toFixed(2)} ${(centerY - side / 2).toFixed(2)} ${side.toFixed(2)} ${side.toFixed(2)}`;
+}
+
 function extractSingleAntEggLiveSvg(svgText) {
-  return extractFirstLivePetalPathsSvg(svgText, 2, "18 10 74 74");
+  return extractFirstLivePetalPathsSvg(svgText, 2, 74);
 }
 
 function extractWaxLiveSvg(svgText) {
-  return extractFirstLivePetalPathsSvg(svgText, 2, waxLivePetalViewBox);
+  return extractFirstLivePetalPathsSvg(svgText, 2, 52);
 }
 
 function extractDandelionLiveSvg(svgText) {
-  return extractFirstLivePetalPathsSvg(svgText, 3, "22 14 68 68");
+  return extractFirstLivePetalPathsSvg(svgText, 3, 68);
 }
 
 function extractTrapperLiveSvg(svgText) {
-  return cropLivePetalSvg(svgText, trapperLivePetalViewBox);
+  return cropLivePetalSvg(svgText, 110);
 }
 
 function extractHallucinogenicMushroomLiveSvg(svgText) {
-  return cropLivePetalSvg(svgText, hallucinogenicMushroomLiveViewBox);
+  return cropLivePetalSvg(svgText, 52);
 }
 
-function cropLivePetalSvg(svgText, viewBox) {
+function cropLivePetalSvg(svgText, minSide) {
   if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
     return stripLivePetalLabel(svgText);
 
-  const doc = new DOMParser().parseFromString(
-    stripLivePetalLabel(svgText),
-    "image/svg+xml",
-  );
+  const stripped = stripLivePetalLabel(svgText);
+  const doc = new DOMParser().parseFromString(stripped, "image/svg+xml");
   const root = doc.documentElement;
-  if (!root || root.tagName.toLowerCase() !== "svg")
-    return stripLivePetalLabel(svgText);
+  if (!root || root.tagName.toLowerCase() !== "svg") return stripped;
 
+  const viewBox = measuredLiveViewBox(stripped, minSide);
+  if (!viewBox) return stripped;
   root.setAttribute("viewBox", viewBox);
   return new XMLSerializer().serializeToString(root);
 }
 
-function extractFirstLivePetalPathsSvg(svgText, pathCount, viewBox) {
+function extractFirstLivePetalPathsSvg(svgText, pathCount, minSide) {
   if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
     return stripLivePetalLabel(svgText);
 
@@ -8017,6 +7492,9 @@ function extractFirstLivePetalPathsSvg(svgText, pathCount, viewBox) {
 
   const serializer = new XMLSerializer();
   const body = paths.map((node) => serializer.serializeToString(node)).join("");
+  const contentSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 110 110">${body}</svg>`;
+  const viewBox = measuredLiveViewBox(contentSvg, minSide);
+  if (!viewBox) return stripLivePetalLabel(svgText);
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">${body}</svg>`;
 }
 
@@ -8083,152 +7561,11 @@ function thirdEyeOverlayImage() {
   return transformedPetalImage(src, stripLivePetalLabel, "third-eye-overlay");
 }
 
-export function stripLivePetalLabel(svgText) {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
-    return svgText;
-
-  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
-  const root = doc.documentElement;
-  if (!root || root.tagName.toLowerCase() !== "svg") return svgText;
-
-  root.querySelectorAll("text").forEach((node) => node.remove());
-
-  const paths = Array.from(root.querySelectorAll("path"));
-  const remove = new Set();
-  for (let i = 0; i < paths.length - 1; i += 1) {
-    const outline = paths[i];
-    const fill = paths[i + 1];
-    if (isLabelOutlinePath(outline) && isMatchingLabelFillPath(outline, fill)) {
-      remove.add(outline);
-      remove.add(fill);
-      i += 1;
-    }
-  }
-  remove.forEach((node) => node.remove());
-
-  return new XMLSerializer().serializeToString(root);
-}
-
-function extractBandageOverlaySvg(svgText) {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
-    return svgText;
-
-  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
-  const root = doc.documentElement;
-  if (!root || root.tagName.toLowerCase() !== "svg") return svgText;
-
-  root.querySelectorAll("text").forEach((node) => node.remove());
-  root.querySelectorAll("path[fill-opacity]").forEach((node) => node.remove());
-
-  const paths = Array.from(root.querySelectorAll("path"));
-  const remove = new Set();
-  for (let i = 0; i < paths.length - 1; i += 1) {
-    const outline = paths[i];
-    const fill = paths[i + 1];
-    if (isLabelOutlinePath(outline) && isMatchingLabelFillPath(outline, fill)) {
-      remove.add(outline);
-      remove.add(fill);
-      i += 1;
-    }
-  }
-  remove.forEach((node) => node.remove());
-
-  return new XMLSerializer().serializeToString(root);
-}
-
-export function extractPetalLabelSvg(svgText) {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 110 110"></svg>`;
-
-  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
-  const root = doc.documentElement;
-  if (!root || root.tagName.toLowerCase() !== "svg")
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 110 110"></svg>`;
-
-  const serializer = new XMLSerializer();
-  const labelNodes = [];
-  root.querySelectorAll("text").forEach((node) => labelNodes.push(node));
-
-  const paths = Array.from(root.querySelectorAll("path"));
-  for (let i = 0; i < paths.length - 1; i += 1) {
-    const outline = paths[i];
-    const fill = paths[i + 1];
-    if (isLabelOutlinePath(outline) && isMatchingLabelFillPath(outline, fill)) {
-      labelNodes.push(outline, fill);
-      i += 1;
-    }
-  }
-
-  const viewBox = root.getAttribute("viewBox") || "0 0 110 110";
-  const body = labelNodes
-    .map((node) => serializer.serializeToString(node))
-    .join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">${body}</svg>`;
-}
-
-export function extractMimicLabelSvg(svgText) {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
-    return svgText;
-
-  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
-  const root = doc.documentElement;
-  if (!root || root.tagName.toLowerCase() !== "svg") return svgText;
-
-  const paths = Array.from(root.querySelectorAll("path"));
-  const labelPaths = [];
-  for (let i = 0; i < paths.length - 1; i += 1) {
-    const outline = paths[i];
-    const fill = paths[i + 1];
-    if (isLabelOutlinePath(outline) && isMatchingLabelFillPath(outline, fill)) {
-      labelPaths.push(outline, fill);
-      i += 1;
-    }
-  }
-
-  const serializer = new XMLSerializer();
-  const body = labelPaths
-    .map((node) => serializer.serializeToString(node))
-    .join("");
-  if (!body) return svgText;
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="24 68 64 22">${body}</svg>`;
-}
-
-function isLabelOutlinePath(path) {
-  const stroke = normalizeColorAttr(path.getAttribute("stroke"));
-  const fill = normalizeColorAttr(path.getAttribute("fill"));
-  const strokeWidth = Number.parseFloat(
-    path.getAttribute("stroke-width") || "0",
-  );
-  return (
-    (stroke === "#000" || stroke === "#000000") &&
-    (!fill || fill === "none") &&
-    strokeWidth >= 1.5
-  );
-}
-
-function isMatchingLabelFillPath(outline, fill) {
-  if (!fill) return false;
-  const color = normalizeColorAttr(fill.getAttribute("fill"));
-  return (
-    (color === "#fff" || color === "#ffffff") &&
-    outline.getAttribute("d") === fill.getAttribute("d")
-  );
-}
-
-function normalizeColorAttr(value) {
-  return String(value || "")
-    .trim()
-    .toLowerCase();
-}
-
-export function petalBaseImage(rarity) {
-  return assetImage(petalBasePath(rarity));
-}
 
 function drawCenteredImage(image, size, scale) {
   const drawSize = size * scale;
   if (drawSize < 0.5) return;
-  ctx.drawImage(image, -drawSize * 0.5, -drawSize * 0.5, drawSize, drawSize);
+  drawSpriteImage(ctx, image, -drawSize * 0.5, -drawSize * 0.5, drawSize, drawSize);
 }
 
 function drawPetalCardShadow(size) {
@@ -8458,30 +7795,6 @@ function drawLayeredCapsuleBar(x, y, width, height, members, fill, border = 5) {
   drawLayeredSolidProgressBar(innerX, innerY, innerW, innerH, members, fill);
 }
 
-function drawOutlinedText(
-  text,
-  x,
-  y,
-  {
-    font = "700 14px Segoe UI, Microsoft YaHei, sans-serif",
-    fill = "#fff",
-    stroke = "#050506",
-    lineWidth = 4,
-    align = "center",
-    baseline = "middle",
-  } = {},
-) {
-  ctx.font = font;
-  ctx.textAlign = align;
-  ctx.textBaseline = baseline;
-  ctx.lineJoin = "round";
-  ctx.lineWidth = lineWidth;
-  ctx.strokeStyle = stroke;
-  ctx.fillStyle = fill;
-  ctx.strokeText(text, x, y);
-  ctx.fillText(text, x, y);
-}
-
 function hitboxStyleForSnap(snap) {
   if (isBloodSacrificeEffectSnap(snap)) {
     return { stroke: "rgba(118, 0, 0, 0.96)", fill: "rgba(118, 0, 0, 0.13)" };
@@ -8563,7 +7876,7 @@ function drawMobFrame(snap, pos, radius) {
   const strokeColor = "#050506";
 
   drawOutlinedText(mobDisplayName(snap), x, y - Math.max(1, radius * 0.05), {
-    font: `800 ${textSize}px Segoe UI, Microsoft YaHei, sans-serif`,
+    font: `800 ${textSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
     fill: playerNameColor(snap, "#f7f7f7"),
     stroke: strokeColor,
     lineWidth: Math.max(1.1, textSize * 0.42),
@@ -8587,7 +7900,7 @@ function drawMobFrame(snap, pos, radius) {
     x + width,
     y + barHeight + Math.max(1, radius * 0.05),
     {
-      font: `800 ${textSize}px Segoe UI, Microsoft YaHei, sans-serif`,
+      font: `800 ${textSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
       fill: labelColor,
       stroke: strokeColor,
       lineWidth: Math.max(1.1, textSize * 0.42),
@@ -8600,7 +7913,7 @@ function drawMobFrame(snap, pos, radius) {
 function drawEntityLabel(snap, pos, radius) {
   if (!snap.name || radius < entityFrameMinScreenRadius) return;
   if (shouldSkipMobFrame(snap, radius)) return;
-  ctx.font = "12px Segoe UI, Microsoft YaHei, sans-serif";
+  ctx.font = "12px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "bottom";
   ctx.fillStyle = playerNameColor(snap, "rgba(39, 50, 65, 0.86)");
@@ -8772,7 +8085,7 @@ function drawBossBars(entities) {
 
     ctx.save();
     drawOutlinedText(title, x + width * 0.5, y - labelGap, {
-      font: `900 ${titleFontSize}px Segoe UI, Microsoft YaHei, sans-serif`,
+      font: `900 ${titleFontSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
       fill: "#f7f7f7",
       lineWidth: bossBarTitleOutlinePx * scale,
       baseline: "bottom",
@@ -8803,7 +8116,7 @@ function drawBossBars(entities) {
       x + width * 0.5,
       y + height + labelGap,
       {
-        font: `900 ${rarityFontSize}px Segoe UI, Microsoft YaHei, sans-serif`,
+        font: `900 ${rarityFontSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
         fill: rarityFill,
         lineWidth: bossBarRarityOutlinePx * scale,
         baseline: "top",
@@ -8886,13 +8199,13 @@ function drawSelfHud() {
     true,
   );
   drawOutlinedText(name, healthX + healthW * 0.5, healthY + healthH * 0.5, {
-    font: `900 ${26 * scale}px Segoe UI, Microsoft YaHei, sans-serif`,
+    font: `900 ${26 * scale}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
     fill: "#f7f7f7",
     lineWidth: 5 * scale,
   });
 
   drawOutlinedText(`Lvl ${level}`, expX + expW * 0.5, expY + expH * 0.5, {
-    font: `900 ${15.5 * scale}px Segoe UI, Microsoft YaHei, sans-serif`,
+    font: `900 ${15.5 * scale}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
     fill: levelColor,
     lineWidth: 3.8 * scale,
   });
@@ -8923,7 +8236,7 @@ function drawSquadHud() {
     const health = clamp(snap.hpPercent || 0, 0, 1);
     const level = Math.max(1, snap.rarity || 1);
     const levelText = `Lvl ${level}`;
-    const levelFont = `900 ${11.5 * scale}px Segoe UI, Microsoft YaHei, sans-serif`;
+    const levelFont = `900 ${11.5 * scale}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`;
     const levelX = healthX + healthW - 5 * scale;
 
     drawCapsuleBar(
@@ -8968,13 +8281,13 @@ function drawSquadHud() {
       healthW - levelWidth - 16 * scale,
     );
     let nameSize = 14 * scale;
-    ctx.font = `900 ${nameSize}px Segoe UI, Microsoft YaHei, sans-serif`;
+    ctx.font = `900 ${nameSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`;
     const measuredNameWidth = ctx.measureText(snap.name || "Player").width;
     if (measuredNameWidth > maxNameWidth)
       nameSize = Math.max(9 * scale, nameSize * (maxNameWidth / measuredNameWidth));
 
     drawOutlinedText(snap.name || "Player", healthX + 6 * scale, centerY, {
-      font: `900 ${nameSize}px Segoe UI, Microsoft YaHei, sans-serif`,
+      font: `900 ${nameSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
       fill: "#f7f7f7",
       lineWidth: 3 * scale,
       align: "left",
@@ -8988,8 +8301,16 @@ function drawSquadHud() {
   }
 }
 
+function mobileUiScale() {
+  // Mirrors the CSS --mob-scale formula; only on the mobile-ui layout.
+  if (!document.body.classList.contains("mobile-ui")) return 1;
+  const vw = state.canvasWidth || window.innerWidth;
+  return clamp(vw / 678, 0.566, 0.848);
+}
+
 function minimapLayout() {
-  const y = minimapMarginPx;
+  const s = mobileUiScale();
+  const y = minimapMarginPx * s;
   const maxByScreen = Math.max(
     96,
     Math.min(
@@ -8998,22 +8319,22 @@ function minimapLayout() {
     ),
   );
   const localSize = clamp(
-    Math.min(state.canvasWidth * 0.28, minimapLocalMaxPx, maxByScreen),
+    Math.min(state.canvasWidth * 0.28, minimapLocalMaxPx * s, maxByScreen),
     104,
-    minimapLocalMaxPx,
+    minimapLocalMaxPx * s,
   );
   const fullSize = clamp(
     Math.min(
       state.canvasWidth * 0.38,
       state.canvasHeight * 0.42,
-      minimapFullMaxPx,
+      minimapFullMaxPx * s,
       maxByScreen,
     ),
     132,
-    minimapFullMaxPx,
+    minimapFullMaxPx * s,
   );
   const size = state.minimapMode === "full" ? fullSize : localSize;
-  return { x: state.canvasWidth - minimapMarginPx - size, y, size };
+  return { x: state.canvasWidth - minimapMarginPx * s - size, y, size };
 }
 
 function minimapWorldBounds(map) {
@@ -9051,6 +8372,7 @@ function drawMinimap() {
   minimapHitRect = layout;
   const bounds = minimapWorldBounds(map);
   const scale = layout.size / Math.max(bounds.width, bounds.height, 1);
+  const s = mobileUiScale();
   const cache = getMinimapCache(map);
 
   ctx.save();
@@ -9082,12 +8404,12 @@ function drawMinimap() {
 
     ctx.fillStyle = "#f17cab";
     ctx.strokeStyle = "rgba(45, 24, 38, 0.88)";
-    ctx.lineWidth = state.minimapMode === "full" ? 1.5 : 1.8;
+    ctx.lineWidth = state.minimapMode === "full" ? 1.5 * s : 1.8 * s;
     ctx.beginPath();
     ctx.arc(
       teammateX,
       teammateY,
-      state.minimapMode === "full" ? 3.5 : 4,
+      state.minimapMode === "full" ? 3.5 * s : 4 * s,
       0,
       Math.PI * 2,
     );
@@ -9100,13 +8422,44 @@ function drawMinimap() {
         teammateX,
         teammateY - 6,
         {
-          font: "800 10px Segoe UI, Microsoft YaHei, sans-serif",
+          font: "800 10px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif",
           fill: "#f17cab",
           stroke: "rgba(26, 21, 27, 0.94)",
           lineWidth: 3,
           baseline: "bottom",
         },
       );
+  }
+
+  // Portals: yellow minimap dots styled like the self/teammate dots.
+  for (const entity of state.entities.values()) {
+    const snap = entity?.snapshot;
+    if (!snap || snap.entityType !== portalType) continue;
+    const portalPos = entity.renderPos || snap.pos;
+    if (!portalPos) continue;
+    const portalX = layout.x + (portalPos.x - bounds.left) * scale;
+    const portalY = layout.y + (portalPos.y - bounds.top) * scale;
+    if (
+      portalX < layout.x ||
+      portalX > layout.x + layout.size ||
+      portalY < layout.y ||
+      portalY > layout.y + layout.size
+    )
+      continue;
+
+    ctx.fillStyle = "#ffd84f";
+    ctx.strokeStyle = "rgba(45, 24, 38, 0.88)";
+    ctx.lineWidth = state.minimapMode === "full" ? 1.5 * s : 1.8 * s;
+    ctx.beginPath();
+    ctx.arc(
+      portalX,
+      portalY,
+      state.minimapMode === "full" ? 3.5 * s : 4 * s,
+      0,
+      Math.PI * 2,
+    );
+    ctx.fill();
+    ctx.stroke();
   }
 
   const owner = state.entities.get(state.ownerEntityId);
@@ -9121,7 +8474,7 @@ function drawMinimap() {
   ) {
     ctx.fillStyle = "#ffd84f";
     ctx.beginPath();
-    ctx.arc(px, py, state.minimapMode === "full" ? 3 : 4, 0, Math.PI * 2);
+    ctx.arc(px, py, state.minimapMode === "full" ? 3 * s : 4 * s, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -9533,6 +8886,19 @@ function drawEntityWithHallucinationGhosts(entity, hallucinationOwner) {
 }
 
 function drawEntityPass(entities, hallucinationOwner = null) {
+  if (benchPhaseTimes) {
+    // Benchmark mode: attribute draw time per entity type ("t<id>" keys).
+    for (const entity of entities) {
+      const entityStart = performance.now();
+      drawEntityWithHallucinationGhosts(entity, hallucinationOwner);
+      const key = `t${entity.snapshot?.entityType ?? -1}`;
+      benchPhaseTimes.set(
+        key,
+        (benchPhaseTimes.get(key) || 0) + (performance.now() - entityStart),
+      );
+    }
+    return;
+  }
   for (const entity of entities)
     drawEntityWithHallucinationGhosts(entity, hallucinationOwner);
 }
@@ -9821,7 +9187,7 @@ function drawMobLightMask(lightContext, darknessAlpha, now) {
     state.map.tileHeight || 512,
   );
   // Light rings scale with each entity's own radius.
-  // - Player flower (radius 18) clears one tile — the current look.
+  // - Player flower (radius 18) clears one tile 鈥?the current look.
   // - Common firefly (radius 12) clears exactly half of the player's ring,
   //   and higher-rarity fireflies scale up proportionally.
   const flowerBaseRadius = 18;
@@ -9836,7 +9202,7 @@ function drawMobLightMask(lightContext, darknessAlpha, now) {
   const bulbDetectRadiusWorldUnits = 300;
   const bulbDetectRadiusStepWorldUnits = 300;
 
-  // Rings are keyed by entity id, so a ring tracks its entity exactly — fast
+  // Rings are keyed by entity id, so a ring tracks its entity exactly 鈥?fast
   // movement never breaks it. A ring fades in from radius 0 over 0.2s when
   // its entity first appears, and fades out over 0.2s in place when the
   // entity dies or despawns (drops out of the expected set).
@@ -10034,13 +9400,6 @@ function drawWeatherEffects(now = performance.now()) {
   applyWeatherSmoothing(dt);
   const env = state.environment;
 
-  // East-west wind component: 90° = east (streaks lean right as they fall),
-  // 270° = west (streaks lean left).
-  const windSpeed = clamp(env.windSpeed || 0, 0, 20);
-  const directionRad = ((env.windDirection || 0) * Math.PI) / 180;
-  const windX = Math.sin(directionRad);
-  const drift = windX * (0.18 + 0.055 * windSpeed);
-
   ctx.save();
   ctx.filter = "none";
   ctx.globalAlpha = 1;
@@ -10054,35 +9413,60 @@ function drawWeatherEffects(now = performance.now()) {
     ctx.fillRect(0, 0, state.canvasWidth, state.canvasHeight);
   }
 
-  // (2) Rain: two depth layers. Slower spawn rate than before so the streaks
-  // read as atmosphere instead of noise; the far layer is smaller + dimmer.
+  // (2) Rain: two depth layers. Drops spawn just outside the screen and fall
+  // along a wind-driven tilt fixed at spawn:
+  //   - mostly north/south wind -> streaks lean toward the screen center
+  //   - mostly east/west wind   -> the left half leans left and the right half
+  //     leans right, fanning outward to at most 45掳
+  // Each drop disappears at a random spot once it has fallen at least into the
+  // lower half of the screen: some land between mid-screen and the bottom edge,
+  // others keep going and fall off the bottom (or a side).
   if (actualRain > 0.005) {
+    const windSpeed = clamp(env.windSpeed || 0, 0, 20);
+    const directionRad = ((env.windDirection || 0) * Math.PI) / 180;
+    const windX = Math.sin(directionRad); // east/west component, -1..1
+    const windY = Math.cos(directionRad); // north/south component, -1..1
+    // Full lean once wind speed reaches 12.
+    const windStrength = clamp(windSpeed / 12, 0, 1);
+    // >0 leans outward (E/W dominant), <0 leans toward center (N/S dominant).
+    const lateralStrength = (Math.abs(windX) - Math.abs(windY)) * windStrength;
+    const halfWidth = Math.max(1, state.canvasWidth / 2);
+
     const spawnPerSecond = 30 + 200 * actualRain;
     const spawnCount = Math.round(
       spawnPerSecond * dt * (0.7 + Math.random() * 0.6),
     );
+    const spawnMargin = 300;
     for (let i = 0; i < spawnCount; i += 1) {
       const isFar = Math.random() < 0.35;
+      const x =
+        Math.random() * (state.canvasWidth + spawnMargin * 2) - spawnMargin;
+      const p = clamp((x - halfWidth) / halfWidth, -1, 1);
+      const leanX = clamp(p * lateralStrength, -1, 1);
       rainDrops.push({
         layer: isFar ? "far" : "near",
-        x: Math.random() * (state.canvasWidth + 240) - 120,
+        x,
         y: -Math.random() * 500,
+        leanX,
         speed: isFar
           ? 720 + Math.random() * 220
           : 1000 + Math.random() * 360 + windSpeed * 45,
         length: isFar
           ? 8 + Math.random() * 5
           : 16 + Math.random() * 8 + windSpeed * 0.8,
+        targetY:
+          state.canvasHeight * 0.5 +
+          Math.random() * (state.canvasHeight * 0.6 + 60),
       });
     }
     const cap = Math.floor(160 + 360 * actualRain);
     if (rainDrops.length > cap) rainDrops.splice(0, rainDrops.length - cap);
 
-    // Advance every drop once per frame.
+    // Advance every drop once per frame along its fixed tilt.
     for (let i = 0; i < rainDrops.length; i += 1) {
       const drop = rainDrops[i];
       drop.y += drop.speed * dt;
-      drop.x += drop.speed * drift * dt;
+      drop.x += drop.speed * drop.leanX * dt;
     }
 
     ctx.lineCap = "round";
@@ -10096,7 +9480,7 @@ function drawWeatherEffects(now = performance.now()) {
       const drop = rainDrops[i];
       if (drop.layer !== "far") continue;
       ctx.moveTo(drop.x, drop.y - drop.length);
-      ctx.lineTo(drop.x - drift * drop.length, drop.y);
+      ctx.lineTo(drop.x - drop.leanX * drop.length, drop.y);
     }
     ctx.stroke();
 
@@ -10108,13 +9492,19 @@ function drawWeatherEffects(now = performance.now()) {
       const drop = rainDrops[i];
       if (drop.layer !== "near") continue;
       ctx.moveTo(drop.x, drop.y - drop.length);
-      ctx.lineTo(drop.x - drift * drop.length, drop.y);
+      ctx.lineTo(drop.x - drop.leanX * drop.length, drop.y);
     }
     ctx.stroke();
 
-    // Cull drops that left the screen.
+    // Cull drops that reached their random landing spot, or ran off a side.
+    const sideMargin = 400;
     for (let i = rainDrops.length - 1; i >= 0; i -= 1) {
-      if (rainDrops[i].y - rainDrops[i].length > state.canvasHeight + 60) {
+      const drop = rainDrops[i];
+      if (
+        drop.y >= drop.targetY ||
+        drop.x < -sideMargin ||
+        drop.x > state.canvasWidth + sideMargin
+      ) {
         rainDrops.splice(i, 1);
       }
     }
@@ -10141,9 +9531,24 @@ function drawWeatherEffects(now = performance.now()) {
 }
 
 export function drawScene(now = performance.now()) {
+  noteFrameDrawn(now);
   currentRenderTimeSeconds = now / 1000;
+  // Per-phase timing, only while the render benchmark is active.
+  let phaseStart = benchPhaseTimes ? performance.now() : 0;
+  const mark = benchPhaseTimes
+    ? (name) => {
+        const phaseEnd = performance.now();
+        benchPhaseTimes.set(
+          name,
+          (benchPhaseTimes.get(name) || 0) + (phaseEnd - phaseStart),
+        );
+        phaseStart = phaseEnd;
+      }
+    : null;
+
   updateBloodSacrificeScreenShake(now);
   drawGrid();
+  mark?.("grid");
   const scale = worldScale();
   const passes = collectSceneRenderPasses({
     scale,
@@ -10156,16 +9561,20 @@ export function drawScene(now = performance.now()) {
   currentHurtFlashOverlays.length = 0;
   prepareFrameRenderCaches(passes);
   const hallucinationOwner = activeOwnerHallucinationEntity();
+  mark?.("collect");
 
   drawEntityPass(passes.ground, hallucinationOwner);
   drawEntityPass(passes.underlay, hallucinationOwner);
   drawEntityPass(passes.world, hallucinationOwner);
+  mark?.("world");
   drawEntityPass(passes.petals, hallucinationOwner);
   if (passes.owner)
     drawEntityWithHallucinationGhosts(passes.owner, hallucinationOwner);
   drawEntityPass(passes.overlays, hallucinationOwner);
+  mark?.("petals");
   drawHurtFlashPass();
   drawHurtFlashOverlays();
+  mark?.("hurtFlash");
   drawParticlePass();
   if (state.weatherEnabled) {
     drawDiurnalLighting(now);
@@ -10174,12 +9583,314 @@ export function drawScene(now = performance.now()) {
   drawLightningChains(now);
   drawBloodSacrificeVisionDarkness();
   drawCheckpointZoneOutlines();
+  mark?.("weather");
   drawSceneHitboxes(passes);
   drawBossBars(passes.bosses);
+  mark?.("bossBars");
   drawSelfHud();
   drawSquadHud();
+  mark?.("hud");
   drawMinimap();
   updateDeathOverlay();
+  mark?.("minimap");
+}
+
+// ---- Render benchmark ------------------------------------------------------
+// Spawns a deterministic synthetic scene on the login map and measures the
+// CPU cost of drawScene per frame. Console: `bench [entities] [frames]`.
+// Headless/automation: open the client with `?bench=240&benchFrames=600`
+// (optional `&benchScale=2`) and poll document.title for "BENCH_DONE".
+let benchRun = null;
+let benchPhaseTimes = null;
+
+function benchRng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a += 0x6d2b79f5;
+    let t0 = a;
+    t0 = Math.imul(t0 ^ (t0 >>> 15), t0 | 1);
+    t0 ^= t0 + Math.imul(t0 ^ (t0 >>> 7), t0 | 61);
+    return ((t0 ^ (t0 >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const benchMobTypes = [
+  beetleType,
+  beeType,
+  hornetType,
+  bumbleBeeType,
+  spiderType,
+  normalLadybugType,
+  soldierAntType,
+  babyAntType,
+  workerAntType,
+  queenAntType,
+  rockType,
+  bubbleType,
+  sandstormType,
+  dandelionType,
+  fireflyType,
+  dummyType,
+];
+
+const benchPetalTypes = [
+  petalBasicType,
+  petalStingerType,
+  petalRoseType,
+  petalCactusType,
+  petalWingType,
+  petalIrisType,
+  petalMissileType,
+  petalLeafType,
+  petalSawbladeType,
+  petalLightType,
+];
+
+function makeBenchEntity(rng, entityId, center, spread) {
+  const roll = rng();
+  const anchorX = center.x + (rng() * 2 - 1) * spread.x;
+  const anchorY = center.y + (rng() * 2 - 1) * spread.y;
+  const snap = {
+    entityId,
+    team: rng() < 0.5 ? 1 : 2,
+    pos: { x: anchorX, y: anchorY },
+    hpPercent: 0.35 + rng() * 0.65,
+    shieldPercent: rng() < 0.25 ? rng() * 0.6 : 0,
+    flags: rng() < 0.2 ? flagAttacking : rng() < 0.2 ? flagDefending : 0,
+    angle: rng() * Math.PI * 2,
+    rarity: 1 + Math.floor(rng() * 8),
+    name: "",
+    primarySlots: [],
+    states: [],
+    hallucinations: [],
+  };
+
+  if (roll < 0.12) {
+    snap.entityType = playerFlowerType;
+    snap.radius = 18 + rng() * 8;
+    snap.name = `Bench${String(entityId % 97).padStart(2, "0")}`;
+    for (let slot = 0; slot < 5; slot += 1) {
+      snap.primarySlots.push({
+        petalType: benchPetalTypes[Math.floor(rng() * benchPetalTypes.length)],
+        rarity: 1 + Math.floor(rng() * 8),
+        visualType: PetalSlotVisualType.None,
+        copies: [],
+      });
+    }
+  } else if (roll < 0.55) {
+    snap.entityType = benchMobTypes[Math.floor(rng() * benchMobTypes.length)];
+    snap.radius =
+      snap.entityType === rockType || snap.entityType === sandstormType
+        ? 26 + rng() * 34
+        : snap.entityType === queenAntType
+          ? 40 + rng() * 20
+          : 14 + rng() * 18;
+  } else if (roll < 0.85) {
+    snap.entityType =
+      NETWORK_PETAL_TYPE_OFFSET +
+      benchPetalTypes[Math.floor(rng() * benchPetalTypes.length)];
+    snap.radius = 6 + rng() * 6;
+  } else {
+    snap.entityType =
+      NETWORK_DROP_TYPE_OFFSET +
+      benchPetalTypes[Math.floor(rng() * benchPetalTypes.length)];
+    snap.radius = 10 + rng() * 5;
+  }
+
+  return {
+    snapshot: snap,
+    anchor: { x: anchorX, y: anchorY },
+    orbitRadius: 20 + rng() * 120,
+    orbitSpeed: (0.2 + rng() * 1.1) * (rng() < 0.5 ? -1 : 1),
+    orbitPhase: rng() * Math.PI * 2,
+    spin: (rng() * 2 - 1) * 2.4,
+  };
+}
+
+function startRenderBenchmark(options = {}) {
+  if (benchRun) {
+    addConsoleLine(t("commands.bench.alreadyRunning"), "error");
+    return;
+  }
+  if (state.authenticated) {
+    addConsoleLine(t("commands.bench.loggedOutOnly"), "error");
+    return;
+  }
+  if (state.mapLoadPromise) {
+    addConsoleLine(t("commands.bench.mapLoading"), "error");
+    return;
+  }
+
+  const entityCount = clamp(
+    Math.floor(Number(options.entities) || 240),
+    10,
+    2000,
+  );
+  const frames = clamp(Math.floor(Number(options.frames) || 600), 60, 100000);
+  const rng = benchRng(0x5eed + entityCount);
+  const center = { x: state.camera.x, y: state.camera.y };
+  const spreadBase = Math.max(600, state.viewRadius || 1200);
+  const spread = { x: spreadBase * 0.95, y: spreadBase * 0.7 };
+
+  const run = {
+    ids: [],
+    entities: [],
+    frames,
+    warmupLeft: 60,
+    samples: [],
+    startedAt: performance.now(),
+    lastFlashIndex: -1,
+  };
+  for (let index = 0; index < entityCount; index += 1) {
+    const record = makeBenchEntity(rng, 60001 + index, center, spread);
+    const now = performance.now() / 1000;
+    state.entities.set(record.snapshot.entityId, {
+      snapshot: record.snapshot,
+      renderPos: { x: record.snapshot.pos.x, y: record.snapshot.pos.y },
+      renderAngle: record.snapshot.angle,
+      snapshotMove: 0,
+      snapshotVelocity: { x: 0, y: 0 },
+      snapshotAt: now,
+      lastSnapshotAt: now,
+      missingSnapshotCount: 0,
+      playerPrimarySlotRarity:
+        record.snapshot.entityType === playerFlowerType
+          ? highestSlotRarity(record.snapshot.primarySlots)
+          : 0,
+      motionBlend: 0,
+      dying: false,
+      deathAge: 0,
+      hurtFlashAge: hurtFlashDuration,
+      hurtFlashReadyAt: 0,
+      deathAngle: null,
+      particleBurstNextAt: null,
+      bloodSacrificeAngle: null,
+      bloodSacrificeSweepNextAt: null,
+      bloodSacrificeSweeps: [],
+    });
+    run.ids.push(record.snapshot.entityId);
+    run.entities.push(record);
+  }
+
+  benchRun = run;
+  benchPhaseTimes = new Map();
+  document.title = `BENCH_RUNNING ${entityCount}`;
+  addConsoleLine(
+    t("commands.bench.started", { entities: entityCount, frames }),
+  );
+}
+
+function benchFrameUpdate(now) {
+  const run = benchRun;
+  if (!run) return;
+  const elapsed = (now - run.startedAt) / 1000;
+  const snapshotNow = now / 1000;
+  for (const record of run.entities) {
+    const entity = state.entities.get(record.snapshot.entityId);
+    if (!entity) continue;
+    const angle = record.orbitPhase + elapsed * record.orbitSpeed;
+    const snap = entity.snapshot;
+    snap.pos.x = record.anchor.x + Math.cos(angle) * record.orbitRadius;
+    snap.pos.y = record.anchor.y + Math.sin(angle) * record.orbitRadius;
+    snap.angle = normalizeAngle(record.snapshot.angle + elapsed * record.spin);
+    entity.renderPos.x = snap.pos.x;
+    entity.renderPos.y = snap.pos.y;
+    entity.renderAngle = snap.angle;
+    entity.snapshotMove = 1.2;
+    entity.snapshotAt = snapshotNow;
+  }
+  // Exercise the hurt-flash path: one entity flashes every 100ms.
+  const flashIndex = Math.floor(elapsed * 10) % run.entities.length;
+  if (flashIndex !== run.lastFlashIndex) {
+    run.lastFlashIndex = flashIndex;
+    const entity = state.entities.get(run.entities[flashIndex].snapshot.entityId);
+    if (entity) entity.hurtFlashAge = 0;
+  }
+}
+
+function benchRecordFrame(costMs) {
+  const run = benchRun;
+  if (!run) return;
+  if (run.warmupLeft > 0) {
+    run.warmupLeft -= 1;
+    // Phase times only aggregate over measured frames.
+    if (run.warmupLeft === 0) benchPhaseTimes = new Map();
+    return;
+  }
+  run.samples.push(costMs);
+  if (run.samples.length >= run.frames) finishRenderBenchmark();
+}
+
+function finishRenderBenchmark() {
+  const run = benchRun;
+  if (!run) return;
+  benchRun = null;
+  for (const id of run.ids) state.entities.delete(id);
+
+  const samples = run.samples.slice().sort((a, b) => a - b);
+  const pick = (q) =>
+    samples[Math.min(samples.length - 1, Math.floor(samples.length * q))] || 0;
+  const avg = samples.reduce((sum, value) => sum + value, 0) /
+    Math.max(1, samples.length);
+  const stats = {
+    n: samples.length,
+    avg: avg.toFixed(2),
+    p50: pick(0.5).toFixed(2),
+    p95: pick(0.95).toFixed(2),
+    max: (samples[samples.length - 1] || 0).toFixed(2),
+    fps: state.fps.toFixed(1),
+    dpr: state.dpr.toFixed(2),
+    px: `${Math.round(state.canvasWidth * state.dpr)}x${Math.round(state.canvasHeight * state.dpr)}`,
+    visible: currentVisibleEntityCount,
+  };
+  const phases = Array.from(benchPhaseTimes || [])
+    .map(([name, totalMs]) => [name, totalMs / Math.max(1, samples.length)])
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, ms]) => `${name}:${ms.toFixed(2)}`)
+    .join(",");
+  benchPhaseTimes = null;
+  const summary =
+    `BENCH_DONE n=${stats.n} avg=${stats.avg} p50=${stats.p50} p95=${stats.p95} ` +
+    `max=${stats.max} fps=${stats.fps} dpr=${stats.dpr} px=${stats.px} ` +
+    `visible=${stats.visible} phases=${phases}`;
+  document.title = summary;
+  addConsoleLine(t("commands.bench.doneDraw", stats));
+  addConsoleLine(t("commands.bench.doneFrame", stats));
+  if (phases) addConsoleLine(`phases(ms/frame): ${phases}`);
+}
+
+function updateDebugInfo() {
+  if (!debugInfo) return;
+  if (!state.consoleOpen) {
+    debugInfo.textContent = "";
+    return;
+  }
+
+  const owner = state.entities.get(state.ownerEntityId);
+  const ownerPos = owner?.renderPos || owner?.snapshot?.pos || null;
+  const ownerSnap = owner?.snapshot || null;
+  const mouseWorld = state.mouse.seen ? screenToWorld(state.mouse) : null;
+  const map = state.map;
+  const chunkCache = map?.chunkCache?.size || 0;
+  const chunkQueue = map?.chunkBuildQueue?.length || 0;
+  const visibleChunks = map?.visibleChunkKeys?.size || 0;
+  const chunkProfile = map?.chunkProfileLabel || "-";
+  const held = heldInputSources();
+  const inputMode =
+    state.movementMode +
+    (held.length ? `[${held.map((hold) => hold.key).join("+")}]` : "");
+  const socketState = state.ws
+    ? ["connecting", "open", "closing", "closed"][state.ws.readyState] ||
+      state.ws.readyState
+    : "none";
+  const prediction = state.predictionDebug || {};
+
+  debugInfo.textContent = [
+    `pos (${debugNumber(ownerPos?.x)}, ${debugNumber(ownerPos?.y)})  id ${state.ownerEntityId || "-"}  hp ${debugNumber(ownerSnap?.hpPercent * 100, 0)}%`,
+    `cam (${debugNumber(state.camera.x)}, ${debugNumber(state.camera.y)})  mouse ${mouseWorld ? `(${debugNumber(mouseWorld.x)}, ${debugNumber(mouseWorld.y)})` : "(-, -)"}`,
+    `view ${debugNumber(state.viewRadius, 0)}  scale ${debugNumber(worldScale(), 4)}  fps ${debugNumber(state.fps, 1)}  dpr ${debugNumber(state.dpr, 2)}  pred err ${debugNumber(prediction.errorDistance)} mmt ${debugNumber(prediction.speedScale, 2)} tick ${debugNumber(prediction.tickScale, 2)} pkt ${debugNumber((prediction.snapshotInterval || 0) * 1000, 0)}ms stale ${debugNumber(prediction.staleTime, 2)}${prediction.snapped ? " snap" : ""}`,
+    `entities ${state.entities.size}/${currentVisibleEntityCount}  render load ${currentRenderLoad}  map ${map?.path || "-"}  chunks ${chunkCache}/${visibleChunks} q${chunkQueue} ${chunkProfile}  input ${inputMode}  ws ${socketState}`,
+  ].join("\n");
 }
 
 function tick(now) {
@@ -10191,8 +9902,10 @@ function tick(now) {
       state.fps <= 0 ? instantFps : state.fps + (instantFps - state.fps) * 0.08;
   }
   flushPendingSnapshot();
+  if (benchRun) benchFrameUpdate(now);
   updateViewRadius(now);
   flushInput(dt);
+  updateParticles(dt);
   updateRenderPositions(dt);
   ui.mysteryAudio.updateProximity({
     enabled: state.authenticated,
@@ -10200,9 +9913,17 @@ function tick(now) {
     entities: state.entities.values(),
     viewRadius: state.viewRadius,
   });
-  if (!state.mapLoadPromise) drawScene(now);
+  if (!state.mapLoadPromise) {
+    const drawStart = performance.now();
+    drawScene(now);
+    const drawCostMs = performance.now() - drawStart;
+    noteSceneDrawCost(drawCostMs);
+    if (benchRun) benchRecordFrame(drawCostMs);
+  }
   updateChatVisibility(now);
   updateDebugInfo();
+  updateAdaptiveRenderScale(!!benchRun);
+
   requestAnimationFrame(tick);
 }
 
@@ -10210,20 +9931,113 @@ function isUiTarget(target) {
   return target && target.closest && target.closest(".ui");
 }
 
-function inputKeyFromEvent(event) {
-  if (event.code === "Space") return "space";
-  return String(event.key || "").toLowerCase();
+// The game surface the builtin input commands drive. Movement/attack/defend
+// arrive as absolute state recomputed by bindings.js from its live hold set,
+// so a dropped keyup can never leave input stuck on.
+const inputCtx = {
+  setMoveVector(vector) {
+    state.moveVector = { x: vector.x, y: vector.y };
+  },
+  setAttacking(active) {
+    state.attacking = !!active;
+  },
+  setDefending(active) {
+    state.defending = !!active;
+  },
+  toggleBackpack: () => toggleBackpack(),
+  toggleCraft: () => toggleCraft(),
+  toggleTalent: () => toggleTalent(),
+  toggleCodex: () => toggleCodex(),
+  toggleSettings: () => toggleSettings(),
+  toggleConsole: () => toggleConsole(),
+  toggleFullscreen: () => void toggleFullscreen(),
+  toggleMinimap: () => toggleMinimapMode(),
+  closeTopPanel: () => closeTopPanel(),
+  openChat: (prefix) => openChat(prefix),
+  quickSwapAllSlots: () => quickSwapAllSlots(),
+  saveActiveLoadoutPreset: () => saveActiveLoadoutPreset(),
+  toggleAlt: () => {
+    state.altFeaturesEnabled = !state.altFeaturesEnabled;
+  },
+  selectSlot: (index) => {
+    state.selectedSlot = index;
+    quickSwapSlot(index);
+  },
+  selectLoadoutPreset: (index) => selectLoadoutPreset(index),
+};
+initBindingContext(inputCtx);
+
+// `close` (Escape by default): dismiss whatever window is on top, and open
+// settings when there is nothing to dismiss.
+function closeTopPanel() {
+  if (state.chatOpen) return closeChat();
+  if (state.backpackOpen) return toggleBackpack(false);
+  if (state.craftOpen) return toggleCraft(false);
+  if (state.talentOpen) return toggleTalent(false);
+  if (state.codexOpen) return toggleCodex(false);
+  if (state.settingsOpen) return toggleSettings(false);
+  return toggleSettings(true);
+}
+
+let softKeyboardShiftTimer = null;
+
+function softKeyboardApplyShift() {
+  if (!document.body.classList.contains("mobile-ui")) return;
+  const el = document.activeElement;
+  if (!el || !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
+    softKeyboardClearShift();
+    return;
+  }
+  const rect = el.getBoundingClientRect();
+  const vv = window.visualViewport;
+  const viewportBottom = vv ? vv.height : state.canvasHeight;
+  if (rect.bottom > viewportBottom - 12) {
+    const shift = rect.bottom - viewportBottom + 12;
+    document.body.style.setProperty("--input-shift", `${-shift}px`);
+    document.body.classList.add("input-shift-active");
+  } else {
+    softKeyboardClearShift();
+  }
+}
+
+function softKeyboardClearShift() {
+  document.body.classList.remove("input-shift-active");
+  document.body.style.removeProperty("--input-shift");
+}
+
+function bindSoftKeyboardViewport() {
+  window.visualViewport?.addEventListener("resize", () => {
+    if (softKeyboardShiftTimer) clearTimeout(softKeyboardShiftTimer);
+    // Keyboard heights animate in; re-evaluate slightly after it settles.
+    softKeyboardShiftTimer = setTimeout(softKeyboardApplyShift, 120);
+  });
+  window.visualViewport?.addEventListener("scroll", () => {
+    if (softKeyboardShiftTimer) clearTimeout(softKeyboardShiftTimer);
+    softKeyboardShiftTimer = setTimeout(softKeyboardApplyShift, 120);
+  });
+  document.addEventListener("focusout", softKeyboardClearShift);
 }
 
 function setupEvents() {
-  window.addEventListener("pointerdown", () => ui.mysteryAudio.unlock(), {
-    capture: true,
-    passive: true,
-  });
   window.addEventListener("keydown", () => ui.mysteryAudio.unlock(), {
     capture: true,
   });
   window.addEventListener("resize", resizeCanvas);
+  document.addEventListener("fullscreenchange", () => {
+    state.fullscreen = !!document.fullscreenElement;
+    saveSettings();
+    if (state.settingsOpen) ui.settingsUi?.render();
+  });
+  bindSoftKeyboardViewport();
+  const slotCollapseBtn = document.getElementById("slotCollapseBtn");
+  slotCollapseBtn?.addEventListener("click", () => {
+    state.slotPanelCollapsed = !state.slotPanelCollapsed;
+    document.body.classList.toggle("slots-collapsed", state.slotPanelCollapsed);
+    slotCollapseBtn.setAttribute(
+      "aria-pressed",
+      state.slotPanelCollapsed ? "true" : "false",
+    );
+  });
   connectBtn.addEventListener("click", connectAndAuth);
   sendCodeBtn.addEventListener("click", requestVerificationCode);
   bindEmailBtn.addEventListener("click", confirmEmailBinding);
@@ -10321,110 +10135,37 @@ function setupEvents() {
       }
       return;
     }
-    if (event.key === "F1") {
-      event.preventDefault();
-      toggleConsole();
-      return;
-    }
-    if (isTyping()) return;
     const key = inputKeyFromEvent(event);
-    if (key === "z") {
-      event.preventDefault();
-      toggleBackpack();
-      return;
-    }
-    if (key === "c") {
-      event.preventDefault();
-      toggleCraft();
-      return;
-    }
-    if (key === "x") {
-      event.preventDefault();
-      toggleTalent();
-      return;
-    }
-    if (key === "m") {
-      event.preventDefault();
-      toggleMinimapMode();
-      return;
-    }
-    if (key === "enter") {
-      event.preventDefault();
-      openChat("");
-      return;
-    }
-    if (key === "/") {
-      event.preventDefault();
-      openChat("/");
-      return;
-    }
-    if (key === "escape") {
-      // Close whichever window is open; if none is, open settings.
-      if (state.chatOpen) {
-        closeChat();
-        return;
+    // Every gameplay action is a bound builtin command; while a text field has
+    // the keyboard only `whileTyping` commands (the console toggle) may fire.
+    const executed = executeBinding(bindings, "keyboard", inputKeyCandidates(event), "down", {
+      repeat: event.repeat,
+      typing: isTyping(),
+      now: event.timeStamp,
+    });
+    if (executed > 0) {
+      // Keep the page from scrolling/menu-jacking on keys with browser defaults.
+      if (
+        key === "space" ||
+        key === "shift" ||
+        key === "alt" ||
+        key === "/" ||
+        key === "f1" ||
+        /^[0-9]$/.test(key)
+      ) {
+        event.preventDefault();
       }
-      if (state.backpackOpen) {
-        toggleBackpack(false);
-        return;
-      }
-      if (state.craftOpen) {
-        toggleCraft(false);
-        return;
-      }
-      if (state.talentOpen) {
-        toggleTalent(false);
-        return;
-      }
-      if (state.codexOpen) {
-        toggleCodex(false);
-        return;
-      }
-      if (state.settingsOpen) {
-        toggleSettings(false);
-        return;
-      }
-      toggleSettings(true);
-      return;
     }
-    if (key === "alt") {
-      event.preventDefault();
-      if (!event.repeat) {
-        state.altFeaturesEnabled = !state.altFeaturesEnabled;
-        state.keys.delete("alt");
-      }
-      return;
-    }
-    if (key === "r") {
-      event.preventDefault();
-      if (!event.repeat) quickSwapAllSlots();
-      return;
-    }
-    if (key === "o") {
-      event.preventDefault();
-      if (!event.repeat) saveActiveLoadoutPreset();
-      return;
-    }
-    if (key === "space" || key === "shift") event.preventDefault();
-    const slotIndex = slotIndexFromKey(key);
-    if (slotIndex !== null && state.keys.has("l")) {
-      event.preventDefault();
-      if (!event.repeat) selectLoadoutPreset(slotIndex);
-      return;
-    }
-    const ownerSlots = displayOwnerSlots();
-    if (slotIndex !== null && slotIndex < ownerSlots.length) {
-      state.selectedSlot = slotIndex;
-      quickSwapSlot(slotIndex);
-      return;
-    }
-    state.keys.add(key);
   });
 
   window.addEventListener("keyup", (event) => {
     const key = inputKeyFromEvent(event);
     if (key === "alt") event.preventDefault();
-    state.keys.delete(key);
+    // Releases always run, typing or not: letting go can only ever stop an
+    // action, and swallowing it is exactly how movement used to stick on.
+    executeBinding(bindings, "keyboard", inputKeyCandidates(event), "up", {
+      now: event.timeStamp,
+    });
   });
 
   window.addEventListener(
@@ -10439,13 +10180,17 @@ function setupEvents() {
   window.addEventListener("pointerup", finishDrag);
   window.addEventListener("pointercancel", clearDrag);
 
-  window.addEventListener("blur", () => {
-    state.keys.clear();
-    state.attacking = false;
-    state.defending = false;
+  // Focus loss and tab hiding both swallow the keyup that would have released
+  // whatever is held, so drop every hold source explicitly.
+  const releaseAllInput = () => {
+    releaseInputHolds();
     state.digging = false;
     ui.mobileControls?.reset();
     sendNeutralGameplayState({ includeInput: true });
+  };
+  window.addEventListener("blur", releaseAllInput);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") releaseAllInput();
   });
 
   window.addEventListener("mousedown", (event) => {
@@ -10457,14 +10202,35 @@ function setupEvents() {
       return;
     }
     if (isUiTarget(event.target)) return;
-    if (event.button === 0) state.attacking = true;
-    if (event.button === 2) state.defending = true;
+    const buttonKey = mouseKeyFromButton(event.button);
+    if (buttonKey)
+      executeBinding(bindings, "mouse", buttonKey, "down", {
+        typing: isTyping(),
+        now: event.timeStamp,
+      });
   });
 
   window.addEventListener("mouseup", (event) => {
-    if (event.button === 0) state.attacking = false;
-    if (event.button === 2) state.defending = false;
+    const buttonKey = mouseKeyFromButton(event.button);
+    if (buttonKey)
+      executeBinding(bindings, "mouse", buttonKey, "up", { now: event.timeStamp });
   });
+
+  // The wheel has no press/release of its own: each notch fires the bound
+  // chain as a single down+up pair so one-shot commands work naturally.
+  window.addEventListener(
+    "wheel",
+    (event) => {
+      if (isUiTarget(event.target) || state.mouse.inUi) return;
+      const wheelKey = event.deltaY < 0 ? "wheelup" : event.deltaY > 0 ? "wheeldown" : null;
+      if (!wheelKey) return;
+      const typing = isTyping();
+      if (executeBinding(bindings, "mouse", wheelKey, "down", { typing }) > 0)
+        event.preventDefault();
+      executeBinding(bindings, "mouse", wheelKey, "up", {});
+    },
+    { passive: false },
+  );
 
   window.addEventListener("contextmenu", (event) => {
     if (!isUiTarget(event.target)) event.preventDefault();
@@ -10486,8 +10252,57 @@ document.title = appDisplayName;
 const appVersionElement = document.getElementById("appVersion");
 if (appVersionElement) appVersionElement.textContent = `v${appVersion}`;
 
+function warmPetalImage(image) {
+  if (!image || imageReady(image)) return Promise.resolve();
+  return new Promise((resolve) => {
+    image.addEventListener("load", resolve, { once: true });
+    image.addEventListener("error", resolve, { once: true });
+  });
+}
+
+// Pre-heats every petal card visual while the loading screen is still up:
+// rarity backgrounds, original icons and the unlabeled/stripped transforms
+// used by drops, slots and live visuals. Cards then never refetch or decode
+// during gameplay. Petals without dedicated art (brush/eraser map onto basic;
+// eou_pheromone is proxy-only) are skipped.
+function warmPetalCardImages() {
+  const jobs = [];
+  for (let rarity = 0; rarity <= 18; rarity += 1) {
+    const base = petalBaseImage(rarity);
+    if (base) jobs.push(warmPetalImage(base));
+  }
+  for (let petalType = 0; petalType < PETAL_ICON_IDS.length; petalType += 1) {
+    const iconId = PETAL_ICON_IDS[petalType];
+    if (
+      !iconId ||
+      iconId === "brush" ||
+      iconId === "eraser" ||
+      iconId === "eou_pheromone"
+    )
+      continue;
+    const src = petalIconPath(petalType);
+    if (!src) continue;
+    // Original icon (inventory / slot DOM cards).
+    jobs.push(warmPetalImage(assetImage(src)));
+    // Stripped transform (drops, split-label cards) and its label extract.
+    jobs.push(warmPetalImage(transformedPetalImage(src, stripLivePetalLabel, "card-stripped")));
+    jobs.push(warmPetalImage(transformedPetalImage(src, extractPetalLabelSvg, "card-label")));
+    // Live slot visual (world/slot rendering cache).
+    jobs.push(warmPetalImage(livePetalIconImage(petalType)));
+  }
+  return Promise.allSettled(jobs);
+}
+
 loadSettings();
-assetsPreloadPromise = preloadAssets();
+// Kick the game fonts now so canvas text (and its raster cache) can use them
+// from the first frames instead of falling back to system fonts.
+if (document.fonts?.load) {
+  void document.fonts.load('900 16px "Florr UI"', "FlorrBt");
+  void document.fonts.load('700 16px "Sarasa SC"', "花瓣");
+  void document.fonts.load('400 16px "Sarasa SC"', "花瓣");
+}
+assetsPreloadPromise = preloadAssets().then(() => warmPetalCardImages());
+void ensurePetalCopyDistanceData();
 await initI18n(state.locale);
 state.locale = getLocale();
 applyDocumentTranslations();
@@ -10499,5 +10314,68 @@ renderInventoryPanel();
 initCustomScrollbars();
 setStatus(t("status.disconnected"));
 addConsoleLine(t("status.clientReady", { app: appDisplayName }));
+initRenderScale({ addConsoleLine, saveSettings });
+// Per-connection state owned by other modules resets through this hook when
+// the socket goes away (remote close or local disconnect).
+registerConnectionReset(noteConnectionReset);
+// Console command handlers live in console_commands.js; they receive the
+// game-bound surface here instead of importing this module (no new cycles).
+initClientCommands({
+  addConsoleLine,
+  saveSettings,
+  refreshLocalizedUi,
+  setMovementMode,
+  setMobileControlMode,
+  sendChat,
+  startRenderBenchmark,
+  loadMap,
+  applyLoginMapView,
+  renderSliderPanel,
+  requestRedraw,
+  bindings,
+});
+initFreezeWatchdog({
+  addConsoleLine,
+  sampleContext: () => ({
+    entities: state.entities.size,
+    chunkQueue: state.map?.chunkBuildQueue?.length || 0,
+    dpr: Number((state.dpr || 1).toFixed(2)),
+    drawEma: Number(sceneDrawCostEma().toFixed(1)),
+    ws: state.ws ? state.ws.readyState : -1,
+  }),
+});
 loadLoginMap();
+
+// Automation hook: `?bench=240&benchFrames=600` (optional `&benchScale=2`)
+// runs the render benchmark once the login map and assets are ready and
+// reports the result via document.title ("BENCH_DONE ...").
+const startupParams = new URLSearchParams(window.location.search);
+if (startupParams.has("bench")) {
+  const benchScale = startupParams.get("benchScale");
+  if (benchScale) {
+    // Session-only override: automation must not persist into settings.
+    state.renderScaleMode = normalizeRenderScaleMode(benchScale);
+    resizeCanvas();
+  }
+  const benchEntities = Number(startupParams.get("bench")) || undefined;
+  const benchFrames = Number(startupParams.get("benchFrames")) || undefined;
+  const waitForBenchReady = () => {
+    if (state.mapLoadPromise) {
+      window.setTimeout(waitForBenchReady, 200);
+      return;
+    }
+    (assetsPreloadPromise || Promise.resolve()).then(() =>
+      window.setTimeout(
+        () =>
+          startRenderBenchmark({
+            entities: benchEntities,
+            frames: benchFrames,
+          }),
+        800,
+      ),
+    );
+  };
+  waitForBenchReady();
+}
+
 requestAnimationFrame(tick);

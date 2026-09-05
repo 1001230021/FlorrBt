@@ -37,7 +37,7 @@ class CSnapshotWriter
     void Field(std::string_view key, double value) const;
     void Field(std::string_view key, const char* value) const;
     void Field(std::string_view key, std::string_view value) const;
-    void Field(std::string_view key, sf::Vector2f value) const;
+    void Field(std::string_view key, florrbt::Vector2f value) const;
     void UInt64(std::string_view key, std::uint64_t value) const;
     void Int64(std::string_view key, std::int64_t value) const;
     void Node(std::string_view key, json_t* value) const;
@@ -61,7 +61,7 @@ class CSnapshotReader
     float Float(std::string_view key, float fallback = 0.f) const;
     double Double(std::string_view key, double fallback = 0.0) const;
     std::string String(std::string_view key, std::string fallback = {}) const;
-    sf::Vector2f Vector2(std::string_view key, sf::Vector2f fallback = {}) const;
+    florrbt::Vector2f Vector2(std::string_view key, florrbt::Vector2f fallback = {}) const;
     std::uint64_t UInt64(std::string_view key, std::uint64_t fallback = 0) const;
     std::int64_t Int64(std::string_view key, std::int64_t fallback = 0) const;
 

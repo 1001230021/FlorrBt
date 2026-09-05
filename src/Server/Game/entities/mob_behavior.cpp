@@ -8,6 +8,7 @@
 #include "../states/states.h"
 #include "../../HotReload/snapshot_archive.h"
 #include "flower.h"
+#include "eou_mob.h"
 #include "mob.h"
 #include "petals/petal.h"
 #include "petals/petal_slot.h"
@@ -129,16 +130,16 @@ SFlowerStats NormalFlowerBaseStats()
     return stats;
 }
 
-float DotProduct(sf::Vector2f lhs, sf::Vector2f rhs) { return lhs.x * rhs.x + lhs.y * rhs.y; }
+float DotProduct(florrbt::Vector2f lhs, florrbt::Vector2f rhs) { return lhs.x * rhs.x + lhs.y * rhs.y; }
 
-sf::Vector2f NormalizeOrZero(sf::Vector2f value)
+florrbt::Vector2f NormalizeOrZero(florrbt::Vector2f value)
 {
     float len = Length(value);
     if (len <= game_config::entity_collision_epsilon) return { 0.f, 0.f };
     return value / len;
 }
 
-sf::Vector2f GetEntityVelocity(CEntity* entity)
+florrbt::Vector2f GetEntityVelocity(CEntity* entity)
 {
     if (auto* mob = dynamic_cast<CMobBase*>(entity)) return mob->m_vel;
     if (auto* projectile = dynamic_cast<CProjectile*>(entity)) return projectile->m_vel;
@@ -219,19 +220,19 @@ float DummyInitialReportDelay(const CEntity* attacker)
     return delay;
 }
 
-sf::Vector2f GetHornetShotDirection(CEntity* shooter, CEntity* target, float missile_speed, ERarity rarity)
+florrbt::Vector2f GetHornetShotDirection(CEntity* shooter, CEntity* target, float missile_speed, ERarity rarity)
 {
     if (!shooter || !target) return { 0.f, 0.f };
 
-    sf::Vector2f direct = NormalizeOrZero(target->Pos() - shooter->Pos());
+    florrbt::Vector2f direct = NormalizeOrZero(target->Pos() - shooter->Pos());
     if (GetLevel(rarity) <= GetLevel(ERarity::Legendary) || missile_speed <= game_config::entity_collision_epsilon)
         return direct;
 
-    sf::Vector2f target_vel = GetEntityVelocity(target);
+    florrbt::Vector2f target_vel = GetEntityVelocity(target);
     if (LengthSq(target_vel) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
         return direct;
 
-    sf::Vector2f relative_pos = target->Pos() - shooter->Pos();
+    florrbt::Vector2f relative_pos = target->Pos() - shooter->Pos();
     float a = DotProduct(target_vel, target_vel) - missile_speed * missile_speed;
     float b = 2.f * DotProduct(relative_pos, target_vel);
     float c = DotProduct(relative_pos, relative_pos);
@@ -255,8 +256,8 @@ sf::Vector2f GetHornetShotDirection(CEntity* shooter, CEntity* target, float mis
 
     if (t <= game_config::entity_collision_epsilon) return direct;
 
-    sf::Vector2f lead_pos = target->Pos() + target_vel * t;
-    sf::Vector2f lead_dir = NormalizeOrZero(lead_pos - shooter->Pos());
+    florrbt::Vector2f lead_pos = target->Pos() + target_vel * t;
+    florrbt::Vector2f lead_dir = NormalizeOrZero(lead_pos - shooter->Pos());
     return LengthSq(lead_dir) > game_config::entity_collision_epsilon ? lead_dir : direct;
 }
 
@@ -382,7 +383,7 @@ class CBeeMob : public CBasicMob
         return true;
     }
 
-    void MoveTowards(const sf::Vector2f& target_pos, float dt) override
+    void MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius = -1.f) override
     {
         const SMobStats* stats = GetFinalStats();
         if (!stats) return;
@@ -403,24 +404,28 @@ class CBeeMob : public CBasicMob
             m_vel *= next_speed / current_speed;
         }
 
-        sf::Vector2f delta = target_pos - Pos();
+        // Movement-target states (hallucination distortion) must apply here
+        // too: this override replaces CMobBase::MoveTowards, which is where
+        // the hook normally runs.
+        const florrbt::Vector2f effective_target_pos = ApplyMovementTargetStates(target_pos);
+        florrbt::Vector2f delta = effective_target_pos - Pos();
         float len = Length(delta);
-        if (len <= Radius())
+        if (len <= Radius() + std::max(0.f, target_radius))
         {
             m_vel *= game_config::mob_stop_damping;
             if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = { 0.f, 0.f };
             return;
         }
 
-        sf::Vector2f forward = delta / len;
-        sf::Vector2f left(-forward.y, forward.x);
+        florrbt::Vector2f forward = delta / len;
+        florrbt::Vector2f left(-forward.y, forward.x);
         float near_factor =
             std::clamp((len - Radius()) / std::max(game_config::mob_bee_wave_near_range_min,
                                                    Radius() * game_config::mob_bee_wave_near_range_radius_multiplier),
                        game_config::mob_bee_wave_near_factor_min, 1.f);
         float wave = std::sin(m_wave_timer * game_config::mob_bee_wave_frequency) * game_config::mob_bee_wave_strength *
                      near_factor;
-        sf::Vector2f desired_dir = forward + left * wave;
+        florrbt::Vector2f desired_dir = forward + left * wave;
         float desired_len = Length(desired_dir);
         if (desired_len <= game_config::entity_collision_epsilon) desired_dir = forward;
         else desired_dir /= desired_len;
@@ -428,8 +433,8 @@ class CBeeMob : public CBasicMob
         FacingAngle() = std::atan2(desired_dir.y, desired_dir.x);
         HasFacing() = true;
 
-        sf::Vector2f desired_vel = desired_dir * max_velocity;
-        sf::Vector2f diff = desired_vel - m_vel;
+        florrbt::Vector2f desired_vel = desired_dir * max_velocity;
+        florrbt::Vector2f diff = desired_vel - m_vel;
         float diff_len = Length(diff);
         float max_accel = acceleration * dt;
         if (diff_len <= max_accel)
@@ -456,6 +461,7 @@ class CFireflyMob : public CBasicMob
         CBasicMob::CaptureRuntimeSnapshot(writer);
         writer.Field("wave_timer", m_wave_timer);
         writer.Field("lightning_cooldown", m_lightning_cooldown);
+        writer.Field("active_lightning_cooldown", m_active_lightning_cooldown);
     }
 
     bool RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override
@@ -463,6 +469,7 @@ class CFireflyMob : public CBasicMob
         if (!CBasicMob::RestoreRuntimeSnapshot(reader, version, error)) return false;
         m_wave_timer = reader.Float("wave_timer", m_wave_timer);
         m_lightning_cooldown = reader.Float("lightning_cooldown", m_lightning_cooldown);
+        m_active_lightning_cooldown = reader.Float("active_lightning_cooldown", m_active_lightning_cooldown);
         return true;
     }
 
@@ -470,10 +477,12 @@ class CFireflyMob : public CBasicMob
     {
         CBasicMob::Tick(dt);
         if (m_lightning_cooldown > 0.f) m_lightning_cooldown = std::max(0.f, m_lightning_cooldown - dt);
+        if (m_active_lightning_cooldown > 0.f) m_active_lightning_cooldown = std::max(0.f, m_active_lightning_cooldown - dt);
+        if (IsSuperPlus() && m_active_lightning_cooldown <= 0.f) TryFireActiveLightning();
     }
 
     // Bee flight: wavy approach toward the target (shared with the bee).
-    void MoveTowards(const sf::Vector2f& target_pos, float dt) override
+    void MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius = -1.f) override
     {
         const SMobStats* stats = GetFinalStats();
         if (!stats) return;
@@ -494,24 +503,28 @@ class CFireflyMob : public CBasicMob
             m_vel *= next_speed / current_speed;
         }
 
-        sf::Vector2f delta = target_pos - Pos();
+        // Movement-target states (hallucination distortion) must apply here
+        // too: this override replaces CMobBase::MoveTowards, which is where
+        // the hook normally runs.
+        const florrbt::Vector2f effective_target_pos = ApplyMovementTargetStates(target_pos);
+        florrbt::Vector2f delta = effective_target_pos - Pos();
         float len = Length(delta);
-        if (len <= Radius())
+        if (len <= Radius() + std::max(0.f, target_radius))
         {
             m_vel *= game_config::mob_stop_damping;
             if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = { 0.f, 0.f };
             return;
         }
 
-        sf::Vector2f forward = delta / len;
-        sf::Vector2f left(-forward.y, forward.x);
+        florrbt::Vector2f forward = delta / len;
+        florrbt::Vector2f left(-forward.y, forward.x);
         float near_factor =
             std::clamp((len - Radius()) / std::max(game_config::mob_bee_wave_near_range_min,
                                                    Radius() * game_config::mob_bee_wave_near_range_radius_multiplier),
                        game_config::mob_bee_wave_near_factor_min, 1.f);
         float wave = std::sin(m_wave_timer * game_config::mob_bee_wave_frequency) * game_config::mob_bee_wave_strength *
                      near_factor;
-        sf::Vector2f desired_dir = forward + left * wave;
+        florrbt::Vector2f desired_dir = forward + left * wave;
         float desired_len = Length(desired_dir);
         if (desired_len <= game_config::entity_collision_epsilon) desired_dir = forward;
         else desired_dir /= desired_len;
@@ -519,8 +532,8 @@ class CFireflyMob : public CBasicMob
         FacingAngle() = std::atan2(desired_dir.y, desired_dir.x);
         HasFacing() = true;
 
-        sf::Vector2f desired_vel = desired_dir * max_velocity;
-        sf::Vector2f diff = desired_vel - m_vel;
+        florrbt::Vector2f desired_vel = desired_dir * max_velocity;
+        florrbt::Vector2f diff = desired_vel - m_vel;
         float diff_len = Length(diff);
         float max_accel = acceleration * dt;
         if (diff_len <= max_accel)
@@ -540,10 +553,59 @@ class CFireflyMob : public CBasicMob
         if (dmg <= 0.f || m_lightning_cooldown > 0.f) return;
         if (!GameWorld()) return;
 
+        // Super- retaliation is selective: only mob attackers trigger it
+        // (players can whack a low firefly for free). Super and Super+ accept
+        // any attacker; Super+ additionally attacks on its own in Tick.
+        if (GetRaritySortRank(GetRarity()) < GetRaritySortRank(ERarity::Super) && !IsMobAttacker(attacker)) return;
+
+        FireChainLightning();
+    }
+
+    bool IsSuperPlus() const { return GetRaritySortRank(GetRarity()) > GetRaritySortRank(ERarity::Super); }
+
+    static bool IsMobAttacker(const CEntity* attacker)
+    {
+        if (!attacker || dynamic_cast<const CPlayerFlower*>(attacker)) return false;
+        return dynamic_cast<const CMobBase*>(attacker) != nullptr;
+    }
+
+    void FireChainLightning()
+    {
         m_lightning_cooldown = game_config::mob_firefly_lightning_cooldown_seconds;
         const float lightning = FireflyLightningDamage(GetRarity());
         const int bounces = FireflyLightningBounces(GetRarity());
         GameWorld()->ChainLightning(*this, lightning, bounces, this);
+    }
+
+    // Super+ only: fires chain lightning at the nearest hostile target inside
+    // lightning range, without needing to be hit first.
+    void TryFireActiveLightning()
+    {
+        m_active_lightning_cooldown = game_config::mob_firefly_active_lightning_interval_seconds;
+        CGameWorld* world = GameWorld();
+        if (!world || IsDead() || IsMarkedForDes()) return;
+
+        const float range = game_config::WorldUnits(256.f);
+        const float query_radius = Radius() + range + game_config::WorldUnits(256.f);
+        CMobBase* best = nullptr;
+        float best_dist_sq = std::numeric_limits<float>::max();
+        world->GetSpatialGrid().ForEachInRange(Pos(), query_radius, [&](const CEntity* entity) {
+            const auto* mob = dynamic_cast<const CMobBase*>(entity);
+            if (!mob || mob == this || mob->IsMarkedForDes() || mob->IsDead()) return;
+            if (mob->Team() == Team()) return;
+            if (mob->HasState<CNullificationState>()) return;
+
+            const float dist_sq = DistanceSq(Pos(), mob->Pos());
+            const float edge = std::sqrt(dist_sq) - mob->Radius() - Radius();
+            if (edge > range) return;
+            if (dist_sq < best_dist_sq)
+            {
+                best_dist_sq = dist_sq;
+                best = const_cast<CMobBase*>(mob);
+            }
+        });
+        if (!best) return;
+        FireChainLightning();
     }
 
     static float FireflyLightningDamage(ERarity rarity)
@@ -562,6 +624,7 @@ class CFireflyMob : public CBasicMob
   private:
     float m_wave_timer = 0.f;
     float m_lightning_cooldown = 0.f;
+    float m_active_lightning_cooldown = 0.f;
 };
 
 class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
@@ -661,7 +724,7 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
         return true;
     }
 
-    bool TryCastMissileInDirection(sf::Vector2f direction) override
+    bool TryCastMissileInDirection(florrbt::Vector2f direction) override
     {
         if (m_attack_timer > 0.f || m_attack_windup_timer > 0.f || m_special_windup_timer > 0.f ||
             m_missile_generation_suppressed || !GameWorld())
@@ -745,15 +808,15 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
         return FindLoadedMissile();
     }
 
-    sf::Vector2f LoadedMissileDirection() const
+    florrbt::Vector2f LoadedMissileDirection() const
     {
-        sf::Vector2f facing = { std::cos(FacingAngle()), std::sin(FacingAngle()) };
+        florrbt::Vector2f facing = { std::cos(FacingAngle()), std::sin(FacingAngle()) };
         if (LengthSq(facing) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
             facing = { 1.f, 0.f };
         return -facing;
     }
 
-    sf::Vector2f LoadedMissilePosition() const
+    florrbt::Vector2f LoadedMissilePosition() const
     {
         return Pos() + LoadedMissileDirection() * (Radius() * game_config::mob_hornet_missile_attach_offset);
     }
@@ -828,14 +891,14 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
 
         CEntity* target =
             m_attack_target_id >= 0 ? GameWorld()->GetEntity(m_attack_target_id, m_attack_target_generation) : nullptr;
-        sf::Vector2f rear_direction = { std::cos(FacingAngle()), std::sin(FacingAngle()) };
+        florrbt::Vector2f rear_direction = { std::cos(FacingAngle()), std::sin(FacingAngle()) };
         float missile_speed = HornetMissileSpeed(GetRarity());
         if (m_has_attack_direction)
         {
             rear_direction = m_attack_direction;
         } else if (target && !target->IsMarkedForDes() && !target->IsDead())
         {
-            sf::Vector2f shot_direction = GetHornetShotDirection(this, target, missile_speed, GetRarity());
+            florrbt::Vector2f shot_direction = GetHornetShotDirection(this, target, missile_speed, GetRarity());
             if (LengthSq(shot_direction) >
                 game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
                 rear_direction = shot_direction;
@@ -847,11 +910,11 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
             return;
         }
 
-        sf::Vector2f recoil_direction = -rear_direction;
+        florrbt::Vector2f recoil_direction = -rear_direction;
         FacingAngle() = std::atan2(recoil_direction.y, recoil_direction.x);
         HasFacing() = true;
 
-        sf::Vector2f spawn_pos =
+        florrbt::Vector2f spawn_pos =
             Pos() + rear_direction * (Radius() * game_config::mob_hornet_rear_spawn_radius_multiplier);
         missile->Pos() = spawn_pos;
         missile->PrevPos() = spawn_pos;
@@ -883,7 +946,7 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
     std::uint64_t m_attack_target_generation = 0;
     int m_loaded_missile_id = -1;
     std::uint64_t m_loaded_missile_generation = 0;
-    sf::Vector2f m_attack_direction = { 1.f, 0.f };
+    florrbt::Vector2f m_attack_direction = { 1.f, 0.f };
     bool m_has_attack_direction = false;
     bool m_missile_generation_suppressed = false;
 };
@@ -893,7 +956,7 @@ class CDandelionMob : public CAttackableBasicMob
   public:
     static constexpr int missile_capacity = 32;
 
-    CDandelionMob(CGameWorld* pworld, sf::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
+    CDandelionMob(CGameWorld* pworld, florrbt::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
                   const SMobStats& stats)
         : CAttackableBasicMob(pworld, pos, r, mob_type, rarity, stats)
     {
@@ -1078,9 +1141,9 @@ class CDandelionMob : public CAttackableBasicMob
             if (FindMissile(i)) continue;
 
             float attach_angle = 2.f * game_config::pi * static_cast<float>(i) / static_cast<float>(count);
-            sf::Vector2f direction = { std::cos(FacingAngle() + attach_angle),
+            florrbt::Vector2f direction = { std::cos(FacingAngle() + attach_angle),
                                        std::sin(FacingAngle() + attach_angle) };
-            sf::Vector2f pos = Pos() + direction * (Radius() * game_config::mob_dandelion_missile_attach_offset);
+            florrbt::Vector2f pos = Pos() + direction * (Radius() * game_config::mob_dandelion_missile_attach_offset);
             auto missile = std::make_unique<CDandelionMissile>(world, pos, radius, attach_angle, damage, health,
                                                                lifetime, GetRarity(), this);
             missile->Team() = Team();
@@ -1130,7 +1193,7 @@ class CDandelionMob : public CAttackableBasicMob
             CDandelionMissile* missile = FindMissile(index);
             if (!missile) continue;
 
-            sf::Vector2f direction = missile->Pos() - Pos();
+            florrbt::Vector2f direction = missile->Pos() - Pos();
             if (LengthSq(direction) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
             {
                 float angle = FacingAngle() + missile->GetAttachAngle();
@@ -1350,7 +1413,7 @@ class CQueenAntMob : public CAttackableBasicMob
         if (m_attack_timer > 0.f || m_attack_windup_timer > 0.f || m_attack_recovery_timer > 0.f) return false;
         if (CountOwnedSummonedSoldierAnts(GameWorld(), this) >= game_config::mob_queen_ant_max_summons) return false;
 
-        sf::Vector2f delta = target->Pos() - Pos();
+        florrbt::Vector2f delta = target->Pos() - Pos();
         if (LengthSq(delta) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
         {
             FacingAngle() = std::atan2(delta.y, delta.x);
@@ -1374,12 +1437,12 @@ class CQueenAntMob : public CAttackableBasicMob
             return;
         }
 
-        sf::Vector2f forward = { std::cos(FacingAngle()), std::sin(FacingAngle()) };
+        florrbt::Vector2f forward = { std::cos(FacingAngle()), std::sin(FacingAngle()) };
         if (LengthSq(forward) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
             forward = { 1.f, 0.f };
 
         ERarity spawn_rarity = PreviousRarity(GetRarity());
-        sf::Vector2f spawn_pos = Pos() - forward * (Radius() * game_config::mob_hornet_rear_spawn_radius_multiplier);
+        florrbt::Vector2f spawn_pos = Pos() - forward * (Radius() * game_config::mob_hornet_rear_spawn_radius_multiplier);
         EMobType egg_type =
             GetMobType() == EMobType::FireQueenAnt ? EMobType::QueenFireAntEgg : EMobType::QueenAntEgg;
         auto spawned = CreateMob(egg_type, world, spawn_pos, spawn_rarity);
@@ -1413,7 +1476,7 @@ class CQueenAntMob : public CAttackableBasicMob
 class CAntHoleMob : public CBasicMob
 {
   public:
-    CAntHoleMob(CGameWorld* pworld, sf::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
+    CAntHoleMob(CGameWorld* pworld, florrbt::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
                 const SMobStats& stats)
         : CBasicMob(pworld, pos, r, mob_type, rarity, stats)
     {
@@ -1508,7 +1571,7 @@ class CAntHoleMob : public CBasicMob
         }
     }
 
-    bool CanPhysicallyCollideWith(const CEntity*) const override { return false; }
+    bool CanPhysicallyCollideWith(const CEntity*) const override { return true; }
     bool IsDead() const override { return m_pending_death_cleanup || CBasicMob::IsDead(); }
     bool CanCollide() const override { return !m_pending_death_cleanup && CBasicMob::CanCollide(); }
     bool IsVisible() const override { return !m_pending_death_cleanup && CBasicMob::IsVisible(); }
@@ -1666,8 +1729,8 @@ class CAntHoleMob : public CBasicMob
         if (queued.type == EMobType::None || !GameWorld()) return;
 
         float angle = GetLimitedRng(-game_config::pi, game_config::pi);
-        sf::Vector2f dir = { std::cos(angle), std::sin(angle) };
-        sf::Vector2f spawn_pos = Pos() + dir * (Radius() + game_config::mob_ant_hole_spawn_offset);
+        florrbt::Vector2f dir = { std::cos(angle), std::sin(angle) };
+        florrbt::Vector2f spawn_pos = Pos() + dir * (Radius() + game_config::mob_ant_hole_spawn_offset);
         auto mob = CreateMob(queued.type, GameWorld(), spawn_pos, queued.rarity);
         if (!mob) return;
 
@@ -1950,7 +2013,7 @@ class CRockMob : public CAttackableBasicMob
             float angle = GetLimitedRng(-game_config::pi, game_config::pi);
             float distance = GetLimitedRng(0.f, std::max(game_config::entity_collision_epsilon,
                                                          Radius() * game_config::mob_rock_spawn_radius_multiplier));
-            sf::Vector2f pos = Pos() + sf::Vector2f(std::cos(angle), std::sin(angle)) * distance;
+            florrbt::Vector2f pos = Pos() + florrbt::Vector2f(std::cos(angle), std::sin(angle)) * distance;
 
             auto rock = CreateMob(EMobType::Rock, world, pos, rarity);
             if (!rock) continue;
@@ -2053,7 +2116,7 @@ class CBubbleMob : public CAttackableBasicMob
                 GetLimitedRng(game_config::entity_collision_epsilon,
                               std::max(game_config::entity_collision_epsilon,
                                        Radius() * game_config::mob_bubble_spawn_radius_multiplier));
-            sf::Vector2f pos = Pos() + sf::Vector2f(std::cos(angle), std::sin(angle)) * distance;
+            florrbt::Vector2f pos = Pos() + florrbt::Vector2f(std::cos(angle), std::sin(angle)) * distance;
 
             auto bubble = CreateMob(EMobType::Bubble, world, pos, child_rarity);
             if (!bubble) continue;
@@ -2071,7 +2134,7 @@ class CBubbleMob : public CAttackableBasicMob
 class CDummyMob : public CBasicMob
 {
   public:
-    CDummyMob(CGameWorld* pworld, sf::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
+    CDummyMob(CGameWorld* pworld, florrbt::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
               const SMobStats& stats)
         : CBasicMob(pworld, pos, r, mob_type, rarity, stats), m_anchor_pos(pos)
     {
@@ -2163,7 +2226,7 @@ class CDummyMob : public CBasicMob
         Health() = DummyMaxHealth();
     }
 
-    bool CanPhysicallyCollideWith(const CEntity*) const override { return false; }
+    bool CanPhysicallyCollideWith(const CEntity*) const override { return true; }
 
   private:
     struct SDummyDamageReport
@@ -2218,7 +2281,7 @@ class CDummyMob : public CBasicMob
                         m_reports.end());
     }
 
-    sf::Vector2f m_anchor_pos;
+    florrbt::Vector2f m_anchor_pos;
     std::vector<SDummyDamageReport> m_reports;
 };
 
@@ -2841,7 +2904,7 @@ bool RegisterMobs(std::string& error)
             stats.acceleration = 0.f;
             return stats;
         };
-        proto.m_rarity_resolver = [](CGameWorld& world, sf::Vector2f pos, ERarity) {
+        proto.m_rarity_resolver = [](CGameWorld& world, florrbt::Vector2f pos, ERarity) {
             return world.GetSpawnZoneRarity(pos);
         };
         RegisterMobPrototype<EMobType::Dummy, CDummyMob>(std::move(proto));
@@ -2877,7 +2940,7 @@ bool RegisterMobs(std::string& error)
         proto.m_base_flower_stats.horizon = game_config::default_player_flower_horizon;
         proto.m_base_flower_stats.max_absorb_range = game_config::default_absorb_range;
         proto.m_base_flower_stats.max_velocity = game_config::default_max_velocity;
-        proto.m_base_flower_stats.acceleration = game_config::default_acceleration;
+        proto.m_base_flower_stats.acceleration = game_config::mob_player_flower_acceleration;
         proto.m_base_flower_stats.petal_rotation_speed = game_config::mob_player_flower_petal_rotation_speed;
         proto.m_flower_stats_factory = [base_stats = proto.m_base_flower_stats](ERarity) { return base_stats; };
         proto.m_controller_factory = [](ERarity) { return std::make_unique<CPlayerController>(); };
@@ -2935,7 +2998,7 @@ bool RegisterMobs(std::string& error)
             return stats;
         };
         proto.m_controller_factory = [](ERarity) { return std::make_unique<CNeutralMeleeController>(); };
-        proto.m_rarity_resolver = [](CGameWorld& world, sf::Vector2f pos, ERarity) {
+        proto.m_rarity_resolver = [](CGameWorld& world, florrbt::Vector2f pos, ERarity) {
             return world.GetSpawnZoneRarity(pos);
         };
         proto.m_allow_skip_tick = false;
@@ -3058,5 +3121,123 @@ bool RegisterMobs(std::string& error)
     }
 
     registry.MarkUnsupported(EMobType::Gambler, "Reserved type with no implementation");
+    if (!RegisterEouMobs(error)) return false;
     return registry.Finalize(error);
+}
+
+bool RegisterEouMobs(std::string& error)
+{
+    {
+        // EOU worker ant: vanilla worker ant as visual proxy.
+        CMobPrototype proto;
+        proto.m_team = game_config::mob_worker_ant_team;
+        proto.m_base_stats.max_health = game_config::mob_worker_ant_max_health;
+        proto.m_base_stats.armor = game_config::mob_worker_ant_armor;
+        proto.m_base_stats.damage = game_config::mob_worker_ant_damage;
+        proto.m_base_stats.radius = game_config::mob_worker_ant_radius;
+        proto.m_base_stats.mass = game_config::mob_worker_ant_mass;
+        proto.m_base_stats.horizon = game_config::default_horizon;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = game_config::default_max_velocity;
+        proto.m_base_stats.acceleration = game_config::default_acceleration;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(base_stats, rarity);
+        };
+        if (!RegisterModMob<EModMobType::EouWorker, CEouWorkerAnt>(std::move(proto), EMobType::WorkerAnt))
+        {
+            error = "Failed to register eou worker ant prototype";
+            return false;
+        }
+    }
+    {
+        // EOU neutral food/corpse: visually proxied as a leaf piece
+        // on the wire until the client gets a dedicated proxy.
+        CMobPrototype proto;
+        proto.m_team = 0;
+        proto.m_base_stats.max_health = game_config::eou_food_mob_max_health;
+        proto.m_base_stats.armor = game_config::eou_food_mob_armor;
+        proto.m_base_stats.damage = 0.f;
+        proto.m_base_stats.radius = game_config::eou_food_mob_radius;
+        proto.m_base_stats.mass = game_config::eou_food_mob_mass;
+        proto.m_base_stats.horizon = 0.f;
+        proto.m_base_stats.max_absorb_range = 0.f;
+        proto.m_base_stats.max_velocity = 0.f;
+        proto.m_base_stats.acceleration = 0.f;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(base_stats, rarity);
+        };
+        if (!RegisterModMob<EModMobType::EouFood, CEouFoodMob>(std::move(proto), EMobType::LeafPiece))
+        {
+            error = "Failed to register eou food prototype";
+            return false;
+        }
+    }
+    {
+        // EOU cell (storage/hatchery): visually an ant hole for now.
+        CMobPrototype proto;
+        proto.m_team = 0;
+        proto.m_base_stats.max_health = game_config::eou_food_mob_max_health;
+        proto.m_base_stats.armor = game_config::eou_food_mob_armor;
+        proto.m_base_stats.damage = 0.f;
+        proto.m_base_stats.radius = game_config::eou_cell_size;
+        proto.m_base_stats.mass = game_config::eou_food_mob_mass;
+        proto.m_base_stats.horizon = 0.f;
+        proto.m_base_stats.max_absorb_range = 0.f;
+        proto.m_base_stats.max_velocity = 0.f;
+        proto.m_base_stats.acceleration = 0.f;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(base_stats, rarity);
+        };
+        if (!RegisterModMob<EModMobType::EouCell, CEouCellMob>(std::move(proto), EMobType::AntHole))
+        {
+            error = "Failed to register eou cell prototype";
+            return false;
+        }
+    }
+    {
+        // EOU egg: visually an ant egg.
+        CMobPrototype proto;
+        proto.m_team = 0;
+        proto.m_base_stats.max_health = game_config::eou_food_mob_max_health;
+        proto.m_base_stats.armor = game_config::eou_food_mob_armor;
+        proto.m_base_stats.damage = 0.f;
+        proto.m_base_stats.radius = game_config::eou_egg_size_start;
+        proto.m_base_stats.mass = game_config::eou_food_mob_mass;
+        proto.m_base_stats.horizon = 0.f;
+        proto.m_base_stats.max_absorb_range = 0.f;
+        proto.m_base_stats.max_velocity = 0.f;
+        proto.m_base_stats.acceleration = 0.f;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(base_stats, rarity);
+        };
+        if (!RegisterModMob<EModMobType::EouEgg, CEouEggMob>(std::move(proto), EMobType::AntEgg))
+        {
+            error = "Failed to register eou egg prototype";
+            return false;
+        }
+    }
+    {
+        // EOU queen: visually the vanilla queen ant. Stationary; her
+        // death loses the match for her team.
+        CMobPrototype proto;
+        proto.m_team = 0;
+        proto.m_base_stats.max_health = game_config::eou_queen_max_health;
+        proto.m_base_stats.armor = game_config::eou_queen_armor;
+        proto.m_base_stats.damage = game_config::eou_queen_damage;
+        proto.m_base_stats.radius = game_config::eou_queen_radius;
+        proto.m_base_stats.mass = game_config::eou_queen_mass;
+        proto.m_base_stats.horizon = game_config::default_horizon;
+        proto.m_base_stats.max_absorb_range = 0.f;
+        proto.m_base_stats.max_velocity = 0.f;
+        proto.m_base_stats.acceleration = 0.f;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(base_stats, rarity);
+        };
+        if (!RegisterModMob<EModMobType::EouQueen, CEouQueenMob>(std::move(proto), EMobType::QueenAnt))
+        {
+            error = "Failed to register eou queen prototype";
+            return false;
+        }
+    }
+    return true;
 }

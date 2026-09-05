@@ -14,7 +14,7 @@ class COpenController : public IGameController
     COpenController() = default;
     void OnActivate(CGameWorld& world) override;
     void OnTick(CGameWorld& world, float dt) override;
-    std::optional<sf::Vector2f> SelectPlayerSpawn(CGameWorld& world, CPlayer& player,
+    std::optional<florrbt::Vector2f> SelectPlayerSpawn(CGameWorld& world, CPlayer& player,
                                                   EPlayerSpawnReason reason) override;
     void OnEntityRemoved(CGameWorld& world, CEntity& entity, EEntityRemovalReason reason) override;
     void OnMobDefeated(CGameWorld& world, CMobBase& mob) override;
@@ -33,6 +33,10 @@ class COpenController : public IGameController
 
   protected:
     virtual const SWeatherDiurnalSnapshot* SpawnEnvironment() const { return nullptr; }
+    // Sandbox and derived controllers may keep spawn-director bookkeeping
+    // in sync while overriding the reward path.
+    COpenSpawnDirector& SpawnDirector() { return m_spawn_director; }
+    const COpenSpawnDirector& SpawnDirector() const { return m_spawn_director; }
 
   private:
     void InitializePreciseSpawns(CGameWorld& world);

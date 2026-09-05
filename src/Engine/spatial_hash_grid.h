@@ -13,7 +13,7 @@
 template <typename TObject, typename TId = int> class CSpatialHashGrid
 {
   public:
-    using position_getter = std::function<sf::Vector2f(const TObject&)>;
+    using position_getter = std::function<florrbt::Vector2f(const TObject&)>;
     using id_getter = std::function<TId(const TObject&)>;
     using resolver = std::function<TObject*(TId)>;
     using valid_filter = std::function<bool(const TObject&)>;
@@ -46,7 +46,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         const TId id = m_get_id(*object);
         RemoveTracked(id);
 
-        const sf::Vector2f pos = m_get_position(*object);
+        const florrbt::Vector2f pos = m_get_position(*object);
         const std::uint64_t cell = HashCell(CellX(pos.x), CellY(pos.y));
         std::vector<TId>& ids = m_grid[cell];
         m_tracked[id] = { cell, ids.size() };
@@ -68,7 +68,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
             return;
         }
 
-        const sf::Vector2f pos = m_get_position(*object);
+        const florrbt::Vector2f pos = m_get_position(*object);
         const std::uint64_t cell = HashCell(CellX(pos.x), CellY(pos.y));
         auto tracked = m_tracked.find(id);
         if (tracked != m_tracked.end() && tracked->second.cell == cell) return;
@@ -125,7 +125,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         if (!object || !IsValid(*object)) return;
 
         TId id = m_get_id(*object);
-        sf::Vector2f pos = m_get_position(*object);
+        florrbt::Vector2f pos = m_get_position(*object);
         int cell_x = CellX(pos.x);
         int cell_y = CellY(pos.y);
         m_grid[HashCell(cell_x, cell_y)].push_back(id);
@@ -141,7 +141,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         }
 
         TId id = m_get_id(*object);
-        sf::Vector2f pos = m_get_position(*object);
+        florrbt::Vector2f pos = m_get_position(*object);
         int min_cell_x = CellX(pos.x - radius);
         int max_cell_x = CellX(pos.x + radius);
         int min_cell_y = CellY(pos.y - radius);
@@ -177,7 +177,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         }
     }
 
-    TObject* FindClosest(const sf::Vector2f& center, float max_range, query_filter filter = nullptr) const
+    TObject* FindClosest(const florrbt::Vector2f& center, float max_range, query_filter filter = nullptr) const
     {
         query_guard guard(*this);
         TObject* target = nullptr;
@@ -218,7 +218,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         return target;
     }
 
-    std::vector<TObject*> QueryRange(const sf::Vector2f& center, float radius, query_filter filter = nullptr) const
+    std::vector<TObject*> QueryRange(const florrbt::Vector2f& center, float radius, query_filter filter = nullptr) const
     {
         std::vector<TObject*> result;
         if (radius <= 0.f) return result;
@@ -230,7 +230,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
         return result;
     }
 
-    template <typename TVisitor> void ForEachInRange(const sf::Vector2f& center, float radius, TVisitor visitor) const
+    template <typename TVisitor> void ForEachInRange(const florrbt::Vector2f& center, float radius, TVisitor visitor) const
     {
         if (radius <= 0.f) return;
         query_guard guard(*this);
@@ -247,14 +247,14 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
     }
 
     template <typename TVisitor>
-    void ForEachInRangeBroadphase(const sf::Vector2f& center, float radius, TVisitor visitor) const
+    void ForEachInRangeBroadphase(const florrbt::Vector2f& center, float radius, TVisitor visitor) const
     {
         std::unordered_set<TId> visited;
         ForEachInRangeBroadphase(center, radius, visited, visitor);
     }
 
     template <typename TVisitor>
-    void ForEachInRangeBroadphase(const sf::Vector2f& center, float radius, std::unordered_set<TId>& visited,
+    void ForEachInRangeBroadphase(const florrbt::Vector2f& center, float radius, std::unordered_set<TId>& visited,
                                   TVisitor visitor) const
     {
         if (radius <= 0.f) return;
@@ -332,7 +332,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
     }
 
     template <typename TVisitor>
-    void VisitCellsInRange(const sf::Vector2f& center, float radius, TVisitor visitor) const
+    void VisitCellsInRange(const florrbt::Vector2f& center, float radius, TVisitor visitor) const
     {
         int min_cell_x = CellX(center.x - radius);
         int max_cell_x = CellX(center.x + radius);

@@ -1,5 +1,6 @@
 import { dom, state } from "./app_context.js";
 import { clientCommandSpecs } from "./client_commands_spec.js";
+import { builtinCommandNames, inputKeyNames } from "./bindings.js";
 import { listClientConfigEntries } from "./client_config.js";
 import { createGameConsole } from "./game_console.js";
 import { getAvailableLocales, t } from "./i18n.js";
@@ -13,6 +14,15 @@ const defaultCompletionSources = Object.freeze({
   config: () => listClientConfigEntries().map((entry) => entry.name),
   locale: () => getAvailableLocales().map((entry) => entry.id),
   mobile_mode: () => ["on", "off", "auto", "toggle"],
+  bind_device: () => ["keyboard", "mouse"],
+  bind_cmd: () => builtinCommandNames(),
+  bind_key: () => inputKeyNames(),
+  // First token of `bind`/`unbind`: an explicit device or the key itself.
+  bind_target: () => ["keyboard", "mouse", ...inputKeyNames()],
+  // Second token: still a key when a device was given, already a command
+  // otherwise -- offer both rather than guessing wrong.
+  bind_key_cmd: () => [...inputKeyNames(), ...builtinCommandNames()],
+  reset_target: () => ["config", "bindings", "settings", "all"],
 });
 
 export function createConsoleUi({

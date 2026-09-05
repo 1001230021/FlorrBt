@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "../../Engine/logger.h"
 #include "../../Engine/map_tools.h"
 #include "../../Engine/spatial_hash_grid.h"
@@ -20,13 +20,13 @@ class CMobBase;
 
 struct CActiveTickView
 {
-    sf::Vector2f center;
+    florrbt::Vector2f center;
     float radius = 0.f;
 };
 
 struct CPlayerTickView
 {
-    sf::Vector2f center;
+    florrbt::Vector2f center;
     float horizon = 0.f;
     float radius = 0.f;
 };
@@ -89,7 +89,7 @@ class CGameWorld
     void DestroyProjectilesOwnedBy(int owner_id);
     void DestroySummonedMobsOwnedBy(int owner_id, std::uint64_t owner_generation = 0);
     CEntity* TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& target_world,
-                                         std::optional<sf::Vector2f> target_pos = std::nullopt,
+                                         std::optional<florrbt::Vector2f> target_pos = std::nullopt,
                                          std::optional<std::string> from = std::nullopt);
     CEntity* TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& target_world, const std::string& from);
 
@@ -103,9 +103,9 @@ class CGameWorld
     bool IsCarriedEntity(const CEntity& carried);
     void QueueEntityForCleanup(CEntity* entity);
     void QueuePsionicDamage(CMobBase* receiver, float damage, CEntity* attacker, EDamageType damage_type);
-    CEntity* FindClosestEntity(const sf::Vector2f& center, float max_range,
+    CEntity* FindClosestEntity(const florrbt::Vector2f& center, float max_range,
                                std::function<bool(const CEntity*)> filter = nullptr) const;
-    CEntity* FindClosestEntityByEdge(const sf::Vector2f& center, float max_edge_range,
+    CEntity* FindClosestEntityByEdge(const florrbt::Vector2f& center, float max_edge_range,
                                      std::function<bool(const CEntity*)> filter = nullptr) const;
 
     template <typename TVisitor> void ForEachEntity(TVisitor visitor) const
@@ -125,7 +125,7 @@ class CGameWorld
     float GetMaxEntityRadius() const { return m_normal_entity_radius_limit; }
     std::size_t GetPlayerCount() const;
     template <typename TVisitor>
-    void ForEachEntityInEdgeRange(const sf::Vector2f& center, float edge_range, TVisitor visitor) const
+    void ForEachEntityInEdgeRange(const florrbt::Vector2f& center, float edge_range, TVisitor visitor) const
     {
         if (edge_range <= 0.f) return;
 
@@ -148,13 +148,16 @@ class CGameWorld
     const FlorrBtMap* GetMap() const { return m_map.get(); }
     const std::string& GetMapPath() const { return m_map_path; }
     std::string GetMapName() const;
-    ERarity GetSpawnZoneRarity(const sf::Vector2f& pos) const;
-    bool SegmentBlockedByWall(sf::Vector2f start, sf::Vector2f end) const;
-    bool CircleBlockedByWall(sf::Vector2f center, float radius) const;
-    bool SweptCircleBlockedByWall(sf::Vector2f start, sf::Vector2f end, float radius) const;
+    ERarity GetSpawnZoneRarity(const florrbt::Vector2f& pos) const;
+    bool SegmentBlockedByWall(florrbt::Vector2f start, florrbt::Vector2f end) const;
+    bool CircleBlockedByWall(florrbt::Vector2f center, float radius) const;
+    bool SweptCircleBlockedByWall(florrbt::Vector2f start, florrbt::Vector2f end, float radius) const;
     // Removes native map walls whose bounding box intersects the given world
     // rect and rebuilds the wall grid. Returns the number of walls removed.
-    int RemoveWallsInRect(sf::Vector2f min_pos, sf::Vector2f max_pos);
+    int RemoveWallsInRect(florrbt::Vector2f min_pos, florrbt::Vector2f max_pos);
+    // Precise wall removal by id (used by the wall board). Re-numbers the
+    // remaining walls and rebuilds the wall grid. Returns the removed count.
+    int RemoveWallsByIds(const std::vector<int>& ids);
 
     // Chain lightning: starting at `origin`, repeatedly strikes the closest mob
     // matching the filter (default: enemy mobs without nullification, not struck
@@ -234,7 +237,7 @@ class CGameWorld
 
     struct SPendingPsionicDamage
     {
-        sf::Vector2f origin = { 0.f, 0.f };
+        florrbt::Vector2f origin = { 0.f, 0.f };
         int team = 0;
         std::unordered_map<SPsionicSourceKey, float, SPsionicSourceKeyHash> damage_by_source;
     };
@@ -249,7 +252,7 @@ class CGameWorld
     void SyncLargeEntityMembership(CEntity* entity);
     void RemoveLargeEntity(CEntity* entity);
     void SpawnMapPortals();
-    std::optional<sf::Vector2f> FindWarpPoint(const std::string& from) const;
+    std::optional<florrbt::Vector2f> FindWarpPoint(const std::string& from) const;
     FlorrBtMap::Wall* GetWall(int id) const;
     void BuildWallGrid();
     void CollectActiveEntitiesForTick();

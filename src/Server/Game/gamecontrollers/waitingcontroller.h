@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "../controller_params.h"
 #include "../gamecontroller.h"
 #include <cstddef>
@@ -41,7 +41,7 @@ class CWaitingController : public IGameController
     void OnActivate(CGameWorld& world) override;
     void OnDeactivate(CGameWorld& world) override;
     void OnTick(CGameWorld& world, float dt) override;
-    std::optional<sf::Vector2f> SelectPlayerSpawn(CGameWorld& world, CPlayer& player,
+    std::optional<florrbt::Vector2f> SelectPlayerSpawn(CGameWorld& world, CPlayer& player,
                                                   EPlayerSpawnReason reason) override;
     void OnPlayerEntityReady(CGameWorld& world, CPlayer& player, CPlayerFlower& flower,
                              EPlayerSpawnReason reason) override;

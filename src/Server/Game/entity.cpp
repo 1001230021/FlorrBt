@@ -23,7 +23,7 @@ void CEntity::CancelDestroy()
 
 bool CEntity::IsCollision(const CEntity& other) const
 {
-    sf::Vector2f diff = Pos() - other.Pos();
+    florrbt::Vector2f diff = Pos() - other.Pos();
     float dist_sq = diff.x * diff.x + diff.y * diff.y;
     float radius_sum = Radius() + other.Radius();
     return dist_sq <= radius_sum * radius_sum;
@@ -46,12 +46,12 @@ void CEntity::OnCollision(CEntity* other)
 {
     if (!other) return;
 
-    sf::Vector2f diff = Pos() - other->Pos();
+    florrbt::Vector2f diff = Pos() - other->Pos();
     float dist = std::sqrt(diff.x * diff.x + diff.y * diff.y);
     float overlap = (Radius() + other->Radius()) - dist;
     if (overlap <= 0.0f) return;
 
-    sf::Vector2f normal;
+    florrbt::Vector2f normal;
     if (dist > game_config::entity_collision_epsilon)
     {
         normal = diff / dist;

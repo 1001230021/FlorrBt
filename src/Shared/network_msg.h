@@ -3,6 +3,7 @@
 #include "inventory.h"
 #include "state_type.h"
 #include "talent_type.h"
+#include "version.h"
 #include <SFML/System/Vector2.hpp>
 #include <algorithm>
 #include <array>
@@ -30,6 +31,10 @@ constexpr uint8_t client_state_request_packet_type = 0xf5;
 constexpr uint8_t client_forge_packet_type = 0xf6;
 constexpr uint8_t client_snapshot_ack_packet_type = 0xf7;
 constexpr uint8_t client_input_frame_packet_type = 0xf8;
+// First packet a client must send after connecting; carries the wire version
+// triple. Old clients that never send it are rejected with "Outdated version".
+constexpr uint8_t client_version_packet_type = 0xfb;
+constexpr size_t client_version_packet_size = 4;
 constexpr size_t client_compact_packet_size = 1;
 constexpr size_t client_extended_packet_size = 3;
 constexpr size_t client_auth_header_size = 6;
@@ -191,6 +196,40 @@ struct ClientOperate
         default:
             return 0;
         }
+    }
+};
+
+struct ClientVersionPacket
+{
+    uint8_t major = 0;
+    uint8_t minor = 0;
+    uint8_t patch = 0;
+
+    static bool IsPacketStart(uint8_t value) { return value == client_version_packet_type; }
+
+    static size_t GetPacketSize(const uint8_t* data, size_t len)
+    {
+        if (!data || len < client_version_packet_size) return 0;
+        if (!IsPacketStart(data[0])) return 0;
+        return client_version_packet_size;
+    }
+
+    static ClientVersionPacket parse(const uint8_t* data, size_t len, bool* ok = nullptr)
+    {
+        ClientVersionPacket packet;
+        if (ok) *ok = false;
+        if (!data || len < client_version_packet_size) return packet;
+        if (!IsPacketStart(data[0])) return packet;
+        packet.major = data[1];
+        packet.minor = data[2];
+        packet.patch = data[3];
+        if (ok) *ok = true;
+        return packet;
+    }
+
+    bool MatchesServer() const
+    {
+        return major == florrbt::version_major && minor == florrbt::version_minor && patch == florrbt::version_patch;
     }
 };
 
@@ -1003,26 +1042,40 @@ struct SEntityStateSnap
     uint8_t value = 0;
 };
 
+// Single source of truth for ServerEntitySnap: the struct layout below and the
+// dedup comparison SameServerEntitySnap() are BOTH generated from this table, so
+// adding a snapshot field is one row and the diff can never forget it. Each row:
+//   X(member, type, default-init, comparator)
+// Note: types must contain no commas (macro args split on commas); alias any
+// comma-bearing template types first.
+using SnapHallucinationArray = std::array<float, entity_hallucination_parameter_count>;
+
+#define PER_SNAPSHOT_FIELD(X)                                                             \
+    X(entity_id, net_entity_id, = 0, snap_eq::Scalar)                                      \
+    X(entity_type, uint8_t, = 0, snap_eq::Scalar)                                          \
+    X(team, uint8_t, = 0, snap_eq::Scalar)                                                 \
+    X(pos, florrbt::Vector2f, = {}, snap_eq::Pos)                                               \
+    X(radius, float, = 0.f, snap_eq::Radius)                                               \
+    X(hp_percent, float, = 1.f, snap_eq::Percent)                                          \
+    X(shield_percent, float, = 0.f, snap_eq::Percent)                                      \
+    X(flags, uint16_t, = 0, snap_eq::Scalar)                                               \
+    X(angle, int16_t, = 0, snap_eq::Scalar)                                                \
+    X(rarity, uint8_t, = 0, snap_eq::Scalar)                                               \
+    X(name, std::string, , snap_eq::Name)                                                  \
+    X(primary_slots, std::vector<SOwnerPetalSlot>, , snap_eq::OwnerSlots)                  \
+    X(states, std::vector<SEntityStateSnap>, , snap_eq::States)                            \
+    X(hallucinations, std::vector<SnapHallucinationArray>, , snap_eq::Hallucinations)
+
 struct ServerEntitySnap
 {
-    net_entity_id entity_id = 0;
-    uint8_t entity_type = 0;
-    uint8_t team = 0;
-    sf::Vector2f pos = { 0.f, 0.f };
-    float radius = 0.f;
-    float hp_percent = 1.f;
-    float shield_percent = 0.f;
-    uint16_t flags = 0;
-    int16_t angle = 0;
-    uint8_t rarity = 0;
-    std::string name;
-    std::vector<SOwnerPetalSlot> primary_slots;
-    std::vector<SEntityStateSnap> states;
-    // Owner-only: clamped effective hallucinogenic affine parameters per active state (stack
-    // order), so the afflicted client can preview distorted movement and render scene ghosts.
-    std::vector<std::array<float, entity_hallucination_parameter_count>> hallucinations;
+#define SNAPSHOT_FIELD_MEMBER(member, type, def, cmp) type member def;
+    // Owner-only hallucinations carry clamped effective hallucinogenic affine
+    // parameters per active state (stack order) so the afflicted client can
+    // preview distorted movement and render scene ghosts.
+    PER_SNAPSHOT_FIELD(SNAPSHOT_FIELD_MEMBER)
+#undef SNAPSHOT_FIELD_MEMBER
 
-    static bool CanPackCompact(const ServerEntitySnap& snap, sf::Vector2f origin, net_entity_id owner_entity_id)
+    static bool CanPackCompact(const ServerEntitySnap& snap, florrbt::Vector2f origin, net_entity_id owner_entity_id)
     {
         if (snap.entity_id == owner_entity_id) return false;
         if ((snap.flags & static_cast<uint16_t>(ServerEntityFlag::Owner)) != 0) return false;
@@ -1032,7 +1085,7 @@ struct ServerEntitySnap
     }
 
     static bool parse(const uint8_t* data, size_t len, size_t& offset, ServerEntitySnap& snap,
-                      sf::Vector2f origin = { 0.f, 0.f }, bool has_origin = false)
+                      florrbt::Vector2f origin = { 0.f, 0.f }, bool has_origin = false)
     {
         if (!data || offset + server_entity_format_size > len) return false;
 
@@ -1051,7 +1104,7 @@ struct ServerEntitySnap
             snap.team = data[offset++];
             float rel_x = UnpackRelativeCoord(static_cast<net_relative_coord>(ReadU16(data, offset)));
             float rel_y = UnpackRelativeCoord(static_cast<net_relative_coord>(ReadU16(data, offset)));
-            snap.pos = sf::Vector2f(origin.x + rel_x, origin.y + rel_y);
+            snap.pos = florrbt::Vector2f(origin.x + rel_x, origin.y + rel_y);
             snap.radius = UnpackRadius(ReadU16(data, offset));
             snap.hp_percent = UnpackPercent(data[offset++]);
             snap.shield_percent = UnpackPercent(data[offset++]);
@@ -1084,7 +1137,7 @@ struct ServerEntitySnap
         snap.entity_id = ReadU16(data, offset);
         snap.entity_type = data[offset++];
         snap.team = data[offset++];
-        snap.pos = sf::Vector2f(UnpackCoord(ReadI32(data, offset)), UnpackCoord(ReadI32(data, offset)));
+        snap.pos = florrbt::Vector2f(UnpackCoord(ReadI32(data, offset)), UnpackCoord(ReadI32(data, offset)));
         snap.radius = UnpackRadius(ReadU16(data, offset));
         snap.hp_percent = UnpackPercent(data[offset++]);
         snap.shield_percent = UnpackPercent(data[offset++]);
@@ -1144,7 +1197,7 @@ struct ServerEntitySnap
         return true;
     }
 
-    static void pack(const ServerEntitySnap& snap, uint8_t* out, size_t& offset, sf::Vector2f origin = { 0.f, 0.f },
+    static void pack(const ServerEntitySnap& snap, uint8_t* out, size_t& offset, florrbt::Vector2f origin = { 0.f, 0.f },
                      net_entity_id owner_entity_id = 0, bool has_origin = false)
     {
         if (has_origin && CanPackCompact(snap, origin, owner_entity_id))
@@ -1229,7 +1282,7 @@ struct ServerEntitySnap
         return size;
     }
 
-    static size_t GetPackedSize(const ServerEntitySnap& snap, sf::Vector2f origin, net_entity_id owner_entity_id,
+    static size_t GetPackedSize(const ServerEntitySnap& snap, florrbt::Vector2f origin, net_entity_id owner_entity_id,
                                 bool has_origin)
     {
         if (!has_origin || !CanPackCompact(snap, origin, owner_entity_id)) return GetPackedSize(snap);
@@ -1239,6 +1292,65 @@ struct ServerEntitySnap
                     : 1 + std::min<size_t>(snap.states.size(), UINT8_MAX) * entity_state_packet_size);
     }
 };
+
+namespace snap_eq
+{
+template <typename T> inline bool Scalar(const T& a, const T& b) { return a == b; }
+inline bool Pos(const florrbt::Vector2f& a, const florrbt::Vector2f& b)
+{
+    return PackCoord(a.x) == PackCoord(b.x) && PackCoord(a.y) == PackCoord(b.y);
+}
+inline bool Radius(float a, float b) { return PackRadius(a) == PackRadius(b); }
+inline bool Percent(float a, float b) { return PackPercent(a) == PackPercent(b); }
+inline bool Name(const std::string& a, const std::string& b) { return a == b; }
+
+inline bool OwnerSlots(const std::vector<SOwnerPetalSlot>& a, const std::vector<SOwnerPetalSlot>& b)
+{
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+    {
+        const SOwnerPetalSlot& lhs = a[i];
+        const SOwnerPetalSlot& rhs = b[i];
+        if (lhs.petal_type != rhs.petal_type || lhs.rarity != rhs.rarity || lhs.visual_type != rhs.visual_type ||
+            lhs.copies.size() != rhs.copies.size())
+            return false;
+        for (size_t copy = 0; copy < lhs.copies.size(); ++copy)
+        {
+            if (lhs.copies[copy].state != rhs.copies[copy].state ||
+                lhs.copies[copy].progress != rhs.copies[copy].progress ||
+                lhs.copies[copy].visual_value != rhs.copies[copy].visual_value)
+                return false;
+        }
+    }
+    return true;
+}
+
+inline bool States(const std::vector<SEntityStateSnap>& a, const std::vector<SEntityStateSnap>& b)
+{
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (a[i].type != b[i].type || a[i].rarity != b[i].rarity || a[i].value != b[i].value) return false;
+    return true;
+}
+
+inline bool Hallucinations(const std::vector<SnapHallucinationArray>& a,
+                           const std::vector<SnapHallucinationArray>& b)
+{
+    return a == b;
+}
+} // namespace snap_eq
+
+#define SNAPSHOT_FIELD_COMPARE(member, type, def, cmp) if (!cmp(lhs.member, rhs.member)) return false;
+// Generated from PER_SNAPSHOT_FIELD: comparing two snapshots is a per-field walk
+// over the same table that declared the struct, so a field added there is
+// automatically part of the dedup decision here.
+inline bool SameServerEntitySnap(const ServerEntitySnap& lhs, const ServerEntitySnap& rhs)
+{
+    PER_SNAPSHOT_FIELD(SNAPSHOT_FIELD_COMPARE)
+    return true;
+}
+#undef SNAPSHOT_FIELD_COMPARE
+#undef PER_SNAPSHOT_FIELD
 
 struct SChatMessage
 {
@@ -1342,7 +1454,7 @@ struct ServerMessage
     std::vector<SCodexLootEntry> codex_loot_entries;
 
     // Lightning chain visual: world-space node positions (net coords).
-    std::vector<sf::Vector2f> lightning_points;
+    std::vector<florrbt::Vector2f> lightning_points;
 
     // Mutable-terrain tile change: layer index (tilelayer order), tile row,
     // tile column, and the new raw gid (including flip bits).
@@ -1353,8 +1465,8 @@ struct ServerMessage
 
     // Native wall removal: world-space rect whose overlapping walls were
     // deleted by the terrain eraser.
-    sf::Vector2f wall_remove_min = { 0.f, 0.f };
-    sf::Vector2f wall_remove_max = { 0.f, 0.f };
+    florrbt::Vector2f wall_remove_min = { 0.f, 0.f };
+    florrbt::Vector2f wall_remove_max = { 0.f, 0.f };
 
     std::optional<uint8_t> flags;
 
@@ -1426,7 +1538,7 @@ struct ServerMessage
             uint16_t count = ReadU16(data, offset);
             uint16_t removed_count = ReadU16(data, offset);
             msg.entities.reserve(count);
-            sf::Vector2f snapshot_origin = { 0.f, 0.f };
+            florrbt::Vector2f snapshot_origin = { 0.f, 0.f };
             bool has_snapshot_origin = false;
             for (uint16_t i = 0; i < count; ++i)
             {
@@ -1804,7 +1916,7 @@ struct ServerMessage
             uint16_t removed_count =
                 static_cast<uint16_t>(std::min<size_t>(msg.removed_entity_ids.size(), UINT16_MAX));
             WriteU16(out, offset, removed_count);
-            sf::Vector2f snapshot_origin = { 0.f, 0.f };
+            florrbt::Vector2f snapshot_origin = { 0.f, 0.f };
             bool has_snapshot_origin = false;
             net_entity_id owner_id = msg.owner_entity_id.value_or(0);
             for (uint16_t i = 0; i < count; ++i)
@@ -1994,7 +2106,7 @@ struct ServerMessage
         case Type::Snapshot: {
             size_t size = server_snapshot_header_size;
             size_t count = std::min<size_t>(msg.entities.size(), UINT16_MAX);
-            sf::Vector2f snapshot_origin = { 0.f, 0.f };
+            florrbt::Vector2f snapshot_origin = { 0.f, 0.f };
             bool has_snapshot_origin = false;
             net_entity_id owner_id = msg.owner_entity_id.value_or(0);
             for (size_t i = 0; i < count; ++i)

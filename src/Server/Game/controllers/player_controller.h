@@ -41,8 +41,8 @@ class CPlayerController : public IController
     void ExecuteOperate(const ClientOperate& op, CMobBase* mob);
     void TryManualAttack(CMobBase* mob);
 
-    sf::Vector2f m_move_dir = { 0.f, 0.f };
-    sf::Vector2f m_aim_dir = { 1.f, 0.f };
+    florrbt::Vector2f m_move_dir = { 0.f, 0.f };
+    florrbt::Vector2f m_aim_dir = { 1.f, 0.f };
     bool m_has_aim_dir = false;
     std::array<SPendingOperate, INPUT_QUEUE_CAPACITY> m_pending_operates{};
     std::uint64_t m_local_tick = 0;

@@ -191,7 +191,7 @@ class CHallucinogenicState final : public CState
 
     void Tick(float dt) override;
     bool AffectsMovementTarget() const override { return m_parameter_mask != 0; }
-    sf::Vector2f ModifyMovementTarget(const CMobBase& owner, const sf::Vector2f& target_pos) const override;
+    florrbt::Vector2f ModifyMovementTarget(const CMobBase& owner, const florrbt::Vector2f& target_pos) const override;
     bool ComputeEffectiveParameters(const CMobBase& owner, parameter_array& out) const;
 
     std::uint8_t GetParameterMask() const { return m_parameter_mask; }

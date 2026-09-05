@@ -81,7 +81,7 @@ void CPickupController::SyncCarriedTransform(CMobBase* mob)
     if (!carried) return;
 
     const float angle = mob->HasFacing() ? mob->FacingAngle() : 0.f;
-    const sf::Vector2f forward(std::cos(angle), std::sin(angle));
+    const florrbt::Vector2f forward(std::cos(angle), std::sin(angle));
     const float contact_distance = std::max(0.f, mob->Radius()) + std::max(0.f, carried->Radius());
     carried->Pos() = mob->Pos() + forward * contact_distance;
     if (auto* carried_mob = dynamic_cast<CMobBase*>(carried)) carried_mob->m_vel = { 0.f, 0.f };
@@ -96,10 +96,10 @@ void CPickupController::ResolveCarriedConstraint(CMobBase* mob)
     if (!carried || !carried_mob) return;
 
     const float angle = mob->HasFacing() ? mob->FacingAngle() : 0.f;
-    const sf::Vector2f forward(std::cos(angle), std::sin(angle));
+    const florrbt::Vector2f forward(std::cos(angle), std::sin(angle));
     const float contact_distance = std::max(0.f, mob->Radius()) + std::max(0.f, carried->Radius());
-    const sf::Vector2f desired_carried_pos = mob->Pos() + forward * contact_distance;
-    const sf::Vector2f error = carried->Pos() - desired_carried_pos;
+    const florrbt::Vector2f desired_carried_pos = mob->Pos() + forward * contact_distance;
+    const florrbt::Vector2f error = carried->Pos() - desired_carried_pos;
     const float error_sq = LengthSq(error);
     const float epsilon = std::max(0.f, game_config::entity_collision_epsilon);
     carried_mob->m_vel = { 0.f, 0.f };
@@ -120,12 +120,12 @@ void CPickupController::ResolveCarriedConstraint(CMobBase* mob)
     const float carried_weight = inverse_mass_sum > epsilon ? carried_inverse_mass / inverse_mass_sum : 0.5f;
 
     CGameWorld* world = mob->GameWorld();
-    auto is_clear = [world](sf::Vector2f pos, float radius) {
+    auto is_clear = [world](florrbt::Vector2f pos, float radius) {
         return !world->CircleBlockedByWall(pos, std::max(0.f, radius));
     };
 
-    const sf::Vector2f weighted_carrier_pos = mob->Pos() + error * carrier_weight;
-    const sf::Vector2f weighted_carried_pos = carried->Pos() - error * carried_weight;
+    const florrbt::Vector2f weighted_carrier_pos = mob->Pos() + error * carrier_weight;
+    const florrbt::Vector2f weighted_carried_pos = carried->Pos() - error * carried_weight;
     const bool weighted_carrier_blocked = !is_clear(weighted_carrier_pos, mob->WallCollisionRadius());
     const bool weighted_carried_blocked = !is_clear(weighted_carried_pos, carried->WallCollisionRadius());
     bool carried_wall_pushed_carrier = false;
@@ -157,7 +157,7 @@ void CPickupController::ResolveCarriedConstraint(CMobBase* mob)
     if (carried_wall_pushed_carrier)
     {
         const float error_length = std::sqrt(error_sq);
-        const sf::Vector2f wall_normal = error / error_length;
+        const florrbt::Vector2f wall_normal = error / error_length;
         const float velocity_into_wall = mob->m_vel.x * wall_normal.x + mob->m_vel.y * wall_normal.y;
         if (velocity_into_wall < 0.f) mob->m_vel -= wall_normal * velocity_into_wall;
     }
@@ -176,7 +176,7 @@ void CPickupController::ApplyCarryingTurn(CMobBase* mob, float previous_angle, b
 
     const float speed = Length(mob->m_vel);
     if (speed > game_config::entity_collision_epsilon)
-        mob->m_vel = sf::Vector2f(std::cos(mob->FacingAngle()), std::sin(mob->FacingAngle())) * speed;
+        mob->m_vel = florrbt::Vector2f(std::cos(mob->FacingAngle()), std::sin(mob->FacingAngle())) * speed;
 }
 
 void CPickupController::CaptureCarriedSnapshot(CSnapshotWriter& writer) const

@@ -488,6 +488,7 @@ CJsonOwner CaptureMob(const CMobBase& mob, std::string& error)
     writer.Field("mob_type", static_cast<int>(mob.GetMobType()));
     writer.Field("mob_key", GetMobTypeName(mob.GetMobType()));
     writer.Field("rarity", static_cast<int>(mob.GetRarity()));
+    writer.Field("naturally_spawned", mob.IsNaturallySpawned());
     writer.Field("velocity", mob.m_vel);
 
     if (const auto* attackable = dynamic_cast<const IAttackableMob*>(&mob))
@@ -583,6 +584,11 @@ CJsonOwner CapturePetal(const CPetal& petal)
         writer.Field("throw_deceleration_time", thrown->m_throw_deceleration_time);
         writer.Field("throw_initial_speed", thrown->m_throw_initial_speed);
         writer.Field("throw_direction", thrown->m_throw_direction);
+    }
+    if (const auto* pheromone = dynamic_cast<const CEouPheromonePetal*>(&petal))
+    {
+        writer.Field("pheromone_team_id", pheromone->m_team_id);
+        writer.Field("pheromone_group_id", pheromone->m_group_id);
     }
     if (const auto* missile = dynamic_cast<const CMissilePetal*>(&petal))
     {
@@ -750,6 +756,7 @@ bool IsDependentEntityKind(std::string_view kind)
 
 bool RestoreMobInitialState(CMobBase& mob, const CSnapshotReader& data, std::string& error)
 {
+    mob.SetNaturallySpawned(data.Bool("naturally_spawned"));
     mob.m_vel = data.Vector2("velocity");
     if (auto* attackable = dynamic_cast<IAttackableMob*>(&mob))
     {
@@ -786,7 +793,7 @@ bool CreateIndependentEntity(CGameWorld& world, const json_t* record, std::strin
     if (!ReadEntityIdentity(record, id, generation, error)) return false;
     CSnapshotReader common(record_reader.Node("common"));
     CSnapshotReader data(record_reader.Node("data"));
-    const sf::Vector2f pos = common.Vector2("pos");
+    const florrbt::Vector2f pos = common.Vector2("pos");
     std::unique_ptr<CEntity> entity;
 
     if (kind == "mob")
@@ -878,6 +885,11 @@ void RestorePetalRuntime(CPetal& petal, const CSnapshotReader& data)
         thrown->m_throw_initial_speed = data.Float("throw_initial_speed");
         thrown->m_throw_direction = data.Vector2("throw_direction", { 1.f, 0.f });
     }
+    if (auto* pheromone = dynamic_cast<CEouPheromonePetal*>(&petal))
+    {
+        pheromone->m_team_id = data.Int("pheromone_team_id", 0);
+        pheromone->m_group_id = data.Int("pheromone_group_id", 0);
+    }
     if (auto* missile = dynamic_cast<CMissilePetal*>(&petal))
     {
         missile->m_fired = data.Bool("fired");
@@ -913,7 +925,7 @@ bool CreateDependentEntity(CGameWorld& world, const json_t* record, std::string&
     if (!ReadEntityIdentity(record, id, generation, error)) return false;
     CSnapshotReader common(record_reader.Node("common"));
     CSnapshotReader data(record_reader.Node("data"));
-    const sf::Vector2f pos = common.Vector2("pos");
+    const florrbt::Vector2f pos = common.Vector2("pos");
     const int owner_id = data.Int("owner_id", -1);
     const std::uint64_t owner_generation = data.UInt64("owner_generation");
     CEntity* owner = owner_id >= 0 ? world.GetEntity(owner_id, owner_generation) : nullptr;
@@ -940,7 +952,7 @@ bool CreateDependentEntity(CGameWorld& world, const json_t* record, std::string&
         entity = std::move(petal);
     } else if (kind == "missile" || kind == "dandelion_missile")
     {
-        sf::Vector2f direction = data.Vector2("velocity", { 1.f, 0.f });
+        florrbt::Vector2f direction = data.Vector2("velocity", { 1.f, 0.f });
         const float length = std::sqrt(std::max(0.f, LengthSq(direction)));
         if (length > 0.f) direction /= length;
         else direction = { 1.f, 0.f };
@@ -965,11 +977,11 @@ bool CreateDependentEntity(CGameWorld& world, const json_t* record, std::string&
         missile->RestoreAttachedToOwner(data.Bool("attached"));
     } else if (kind == "trap_projectile")
     {
-        const sf::Vector2f initial_velocity = data.Vector2("initial_velocity");
+        const florrbt::Vector2f initial_velocity = data.Vector2("initial_velocity");
         const float initial_speed = std::sqrt(std::max(0.f, LengthSq(initial_velocity)));
-        const sf::Vector2f direction = initial_speed > game_config::entity_collision_epsilon
+        const florrbt::Vector2f direction = initial_speed > game_config::entity_collision_epsilon
                                            ? initial_velocity / initial_speed
-                                           : sf::Vector2f{ 1.f, 0.f };
+                                           : florrbt::Vector2f{ 1.f, 0.f };
         auto trap = std::make_unique<CTrapProjectile>(
             &world, pos, common.Float("radius"), direction, initial_speed, data.Float("damage"),
             common.Float("health", 1.f), data.Float("lifetime"), common.Float("mass"),
@@ -1659,8 +1671,7 @@ bool RestoreTitanForgeCooldowns(CServer& server, const json_t* data, std::uint32
         const int type = reader.Int("type", -1);
         const float remaining = reader.Float("remaining_seconds", -1.f);
         if (!reader.IsValid() || !json_is_integer(type_value) || !json_is_number(remaining_value) ||
-            type <= static_cast<int>(EPetalType::None) || type >= static_cast<int>(petal_type_names.size()) ||
-            !std::isfinite(remaining) || remaining < 0.f)
+            !IsKnownPetalTypeId(type) || !std::isfinite(remaining) || remaining < 0.f)
         {
             error = "Invalid Titan forge cooldown entry at index " + std::to_string(i);
             return false;

@@ -13,7 +13,7 @@ class CDrop : public CEntity
 {
   public:
     CDrop();
-    CDrop(CGameWorld* world, sf::Vector2f pos, PetalType type, ERarity rarity, int owner_id = drop_owner_all,
+    CDrop(CGameWorld* world, florrbt::Vector2f pos, PetalType type, ERarity rarity, int owner_id = drop_owner_all,
           float lifetime = game_config::default_drop_lifetime, uint16_t stack_num = 1);
     ~CDrop() = default;
 
@@ -21,6 +21,11 @@ class CDrop : public CEntity
     bool CanCollide() const override { return false; }
     bool CanBePickedUpBy(uint32_t player_id) const;
     bool PickUpTo(CPlayer& player);
+    // Drop inertia: the target center starts at `center_start` and inherits
+    // the killer's velocity (decaying to zero over `delay`); each drop glides
+    // from that moving center to its final spot during the same window.
+    void BeginInertiaDrop(florrbt::Vector2f center_start, florrbt::Vector2f center_velocity, float delay);
+    bool IsInertiaActive() const { return m_inertia_active; }
 
     PetalType GetType() const { return m_type; }
     ERarity GetRarity() const { return m_rarity; }
@@ -47,4 +52,12 @@ class CDrop : public CEntity
     float m_unable_picked_timer = game_config::default_drop_pickup_delay;
     float m_merge_timer = 0.f;
     float m_timer = game_config::default_drop_lifetime;
+
+    // Inertia window.
+    bool m_inertia_active = false;
+    float m_inertia_duration = game_config::default_drop_inertia_delay;
+    float m_inertia_elapsed = 0.f;
+    florrbt::Vector2f m_inertia_target{};
+    florrbt::Vector2f m_inertia_center_start{};
+    florrbt::Vector2f m_inertia_center_velocity{};
 };

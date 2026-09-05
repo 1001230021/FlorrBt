@@ -24,7 +24,7 @@ float WebReferenceMass(const CEntity* owner)
 }
 } // namespace
 
-CStateZone::CStateZone(CGameWorld* world, sf::Vector2f pos, float radius, state_factory state, zone_filter filter,
+CStateZone::CStateZone(CGameWorld* world, florrbt::Vector2f pos, float radius, state_factory state, zone_filter filter,
                        SEntityTypeInfo entity_type)
     : CEntity(world, pos.x, pos.y, radius, entity_type), m_state(std::move(state)), m_filter(std::move(filter))
 {
@@ -69,7 +69,7 @@ void CStateZone::Apply()
     });
 }
 
-CSpiderWebZone::CSpiderWebZone(CGameWorld* world, sf::Vector2f pos, float radius, CEntity* owner, float lifetime,
+CSpiderWebZone::CSpiderWebZone(CGameWorld* world, florrbt::Vector2f pos, float radius, CEntity* owner, float lifetime,
                                float desired_speed_multiplier)
     : CStateZone(
           world, pos, radius,

@@ -20,7 +20,7 @@ std::mt19937& RespawnRng()
     return rng;
 }
 
-bool RespawnPointBlockedByMob(const CGameWorld& world, sf::Vector2f pos, float radius)
+bool RespawnPointBlockedByMob(const CGameWorld& world, florrbt::Vector2f pos, float radius)
 {
     bool blocked = false;
     world.ForEachEntity([&](const CEntity* entity) {
@@ -37,14 +37,14 @@ bool RespawnPointBlockedByMob(const CGameWorld& world, sf::Vector2f pos, float r
     return blocked;
 }
 
-bool RespawnPointSafe(const CGameWorld& world, const FlorrBtMap::Checkpoint& checkpoint, sf::Vector2f pos, float radius)
+bool RespawnPointSafe(const CGameWorld& world, const FlorrBtMap::Checkpoint& checkpoint, florrbt::Vector2f pos, float radius)
 {
     if (!CheckpointContainsPoint(checkpoint, pos.x, pos.y)) return false;
     if (world.CircleBlockedByWall(pos, radius)) return false;
     return !RespawnPointBlockedByMob(world, pos, radius);
 }
 
-bool MoveRespawnPointToSafeSpot(const CGameWorld& world, const FlorrBtMap::Checkpoint& checkpoint, sf::Vector2f& pos,
+bool MoveRespawnPointToSafeSpot(const CGameWorld& world, const FlorrBtMap::Checkpoint& checkpoint, florrbt::Vector2f& pos,
                                 float radius)
 {
     if (RespawnPointSafe(world, checkpoint, pos, radius)) return true;
@@ -60,7 +60,7 @@ bool MoveRespawnPointToSafeSpot(const CGameWorld& world, const FlorrBtMap::Check
         {
             const float angle =
                 game_config::pi * 2.f * static_cast<float>(angle_index) / static_cast<float>(safety_angles);
-            sf::Vector2f candidate = { pos.x + std::cos(angle) * distance, pos.y + std::sin(angle) * distance };
+            florrbt::Vector2f candidate = { pos.x + std::cos(angle) * distance, pos.y + std::sin(angle) * distance };
             if (!RespawnPointSafe(world, checkpoint, candidate, radius)) continue;
             pos = candidate;
             return true;
@@ -70,7 +70,7 @@ bool MoveRespawnPointToSafeSpot(const CGameWorld& world, const FlorrBtMap::Check
     return false;
 }
 
-bool RandomPointInCheckpoint(const CGameWorld& world, const FlorrBtMap::Checkpoint& checkpoint, sf::Vector2f& out_pos)
+bool RandomPointInCheckpoint(const CGameWorld& world, const FlorrBtMap::Checkpoint& checkpoint, florrbt::Vector2f& out_pos)
 {
     if (checkpoint.w <= 0.f || checkpoint.h <= 0.f) return false;
 
@@ -80,7 +80,7 @@ bool RandomPointInCheckpoint(const CGameWorld& world, const FlorrBtMap::Checkpoi
     {
         const FlorrBtMap::Point point =
             CheckpointLocalToWorldPoint(checkpoint, random_x(RespawnRng()), random_y(RespawnRng()));
-        sf::Vector2f candidate = { point.x, point.y };
+        florrbt::Vector2f candidate = { point.x, point.y };
         if (!MoveRespawnPointToSafeSpot(world, checkpoint, candidate, game_config::mob_player_flower_radius)) continue;
         out_pos = candidate;
         return true;
@@ -88,18 +88,18 @@ bool RandomPointInCheckpoint(const CGameWorld& world, const FlorrBtMap::Checkpoi
     return false;
 }
 
-bool CheckpointContains(const FlorrBtMap::Checkpoint& checkpoint, sf::Vector2f pos)
+bool CheckpointContains(const FlorrBtMap::Checkpoint& checkpoint, florrbt::Vector2f pos)
 {
     return CheckpointContainsPoint(checkpoint, pos.x, pos.y);
 }
 
-sf::Vector2f CheckpointCenter(const FlorrBtMap::Checkpoint& checkpoint)
+florrbt::Vector2f CheckpointCenter(const FlorrBtMap::Checkpoint& checkpoint)
 {
     const FlorrBtMap::Point point = CheckpointCenterPoint(checkpoint);
     return { point.x, point.y };
 }
 
-std::string Vec2String(sf::Vector2f pos)
+std::string Vec2String(florrbt::Vector2f pos)
 {
     std::ostringstream oss;
     oss << pos.x << "," << pos.y;
@@ -109,7 +109,7 @@ std::string Vec2String(sf::Vector2f pos)
 std::string CheckpointLabel(const FlorrBtMap::Checkpoint& checkpoint)
 {
     std::ostringstream oss;
-    const sf::Vector2f center = CheckpointCenter(checkpoint);
+    const florrbt::Vector2f center = CheckpointCenter(checkpoint);
     oss << "id=" << checkpoint.id << " level=" << checkpoint.level << " center=" << Vec2String(center)
         << " size=" << checkpoint.w << "x" << checkpoint.h << " rotation=" << checkpoint.rotation;
     return oss.str();
@@ -196,7 +196,7 @@ bool ShouldUpdatePlayerCheckpoint(CPlayer& player)
 }
 
 bool PickCheckpointRespawnPosition(const CPlayer& player, const CGameWorld& world, const FlorrBtMap& map,
-                                   const SPlayerCheckpointEntry& entry, sf::Vector2f& out_pos)
+                                   const SPlayerCheckpointEntry& entry, florrbt::Vector2f& out_pos)
 {
     if (entry.checkpoint_id == 0)
     {
@@ -229,7 +229,7 @@ bool PickCheckpointRespawnPosition(const CPlayer& player, const CGameWorld& worl
 }
 
 bool PickStackCheckpointRespawnPosition(CPlayer& player, const CGameWorld& world, const FlorrBtMap& map,
-                                        sf::Vector2f& out_pos)
+                                        florrbt::Vector2f& out_pos)
 {
     if (player.m_cp_stack.empty())
     {
@@ -271,7 +271,7 @@ bool PickStackCheckpointRespawnPosition(CPlayer& player, const CGameWorld& world
     return false;
 }
 
-sf::Vector2f PickRespawnAreaPosition(const CPlayer& player, CGameWorld& world)
+florrbt::Vector2f PickRespawnAreaPosition(const CPlayer& player, CGameWorld& world)
 {
     const FlorrBtMap* map = world.GetMap();
     if (map)
@@ -285,7 +285,7 @@ sf::Vector2f PickRespawnAreaPosition(const CPlayer& player, CGameWorld& world)
         if (!checkpoints.empty())
         {
             std::uniform_int_distribution<size_t> dist(0, checkpoints.size() - 1);
-            sf::Vector2f pos;
+            florrbt::Vector2f pos;
             const FlorrBtMap::Checkpoint& checkpoint = map->checkpoints[checkpoints[dist(RespawnRng())]];
             if (RandomPointInCheckpoint(world, checkpoint, pos))
             {
@@ -301,11 +301,11 @@ sf::Vector2f PickRespawnAreaPosition(const CPlayer& player, CGameWorld& world)
     return { game_config::player_respawn_x, game_config::player_respawn_y };
 }
 
-sf::Vector2f PickRespawnPosition(CPlayer& player, CGameWorld& world)
+florrbt::Vector2f PickRespawnPosition(CPlayer& player, CGameWorld& world)
 {
     if (const FlorrBtMap* map = world.GetMap())
     {
-        sf::Vector2f saved_pos;
+        florrbt::Vector2f saved_pos;
         if (PickStackCheckpointRespawnPosition(player, world, *map, saved_pos)) return saved_pos;
     }
     return PickRespawnAreaPosition(player, world);
@@ -332,7 +332,7 @@ CEntity* CPlayerLifecycleService::SpawnPlayer(CPlayer& player, CGameWorld& world
     std::vector<SPlayerCheckpointEntry> checkpoint_stack_before;
     if (reason == EPlayerSpawnReason::Respawn) checkpoint_stack_before = player.m_cp_stack;
 
-    std::optional<sf::Vector2f> spawn_pos;
+    std::optional<florrbt::Vector2f> spawn_pos;
     if (auto* controller = world.GetController()) spawn_pos = controller->SelectPlayerSpawn(world, player, reason);
     if (!spawn_pos)
     {

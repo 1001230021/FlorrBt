@@ -329,18 +329,24 @@ class CAntennaeTalent final : public ITalent
 {
   public:
     CAntennaeTalent() = default;
-    CAntennaeTalent(ERarity rarity, int cost, float added_default_view)
-        : ITalent(ETalentId::Antennae, rarity, cost), m_added_default_view(added_default_view)
+    CAntennaeTalent(ERarity rarity, int cost, float horizon_multiplier)
+        : ITalent(ETalentId::Antennae, rarity, cost), m_horizon_multiplier(horizon_multiplier)
     {
     }
 
     void Apply(ETalentEvent event, STalentContext& ctx) override
     {
         if (event != ETalentEvent::RebuildFlowerStats || !ctx.flower_stats) return;
-        ctx.flower_stats->horizon += game_config::default_player_flower_horizon * m_added_default_view;
+        // Horizon buffs do not stack: the talent takes effect only when it
+        // actually extends the flower's current horizon (max, not addition).
+        // Uses the same base as antennae petals (default_horizon), so max
+        // tier EQUALS an Ultra antennae exactly (player_flower_horizon is
+        // 6x that and must not be used here).
+        const float bonused = game_config::default_horizon * m_horizon_multiplier;
+        ctx.flower_stats->horizon = std::max(ctx.flower_stats->horizon, bonused);
     }
 
-    float m_added_default_view = 1.f;
+    float m_horizon_multiplier = 1.f;
 };
 
 class CPetalSplitTalent final : public ITalent
@@ -622,10 +628,14 @@ inline std::array<CSlotNumTalent, short_talent_tier_count>& SlotNumTalents()
 
 inline std::array<CAntennaeTalent, antennae_tier_count>& AntennaeTalents()
 {
+    // Max tier equals an Ultra antennae (11.142x default horizon); the three
+    // tiers step evenly (equal increments toward that ceiling).
     static std::array<CAntennaeTalent, antennae_tier_count> talents = {
-        CAntennaeTalent(ERarity::Rare, 1, 1.f),
-        CAntennaeTalent(ERarity::Epic, 3, 1.f),
-        CAntennaeTalent(ERarity::Legendary, 5, 1.f),
+        CAntennaeTalent(ERarity::Rare, 1,
+                        1.f + (game_config::default_antennae_horizon_ultra - 1.f) * (1.f / 3.f)),
+        CAntennaeTalent(ERarity::Epic, 3,
+                        1.f + (game_config::default_antennae_horizon_ultra - 1.f) * (2.f / 3.f)),
+        CAntennaeTalent(ERarity::Legendary, 5, game_config::default_antennae_horizon_ultra),
     };
     static const bool linked = []() {
         auto& slots = SlotNumTalents();

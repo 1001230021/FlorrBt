@@ -3,6 +3,7 @@
 #include "../../Shared/game_config.h"
 #include "../../Shared/tools.h"
 #include "../Game/gamecontext.h"
+#include "../Game/player.h"
 #include "../Game/gamecontrollers/world_controller_factory.h"
 #include "../Game/gamecontrollers/waitingcontroller.h"
 #include <algorithm>
@@ -29,16 +30,30 @@ std::string NormalizeMapName(std::string name)
 
 IWorldModule::IWorldModule()
 {
-    const size_t instance_count = std::clamp<size_t>(game_config::open_world_instances_per_map, 1, 64);
-    m_worlds.reserve(instance_count * map_declarations::kMaps.size());
+    m_worlds.reserve(map_declarations::kMaps.size() * 64);
     for (const map_declarations::SMapDeclaration& declaration : map_declarations::kMaps)
     {
+        const size_t instance_count = std::clamp<size_t>(OpenWorldInstancesForMap(declaration.map_path), 1, 64);
         for (size_t instance = 0; instance < instance_count; ++instance)
         {
-            m_worlds.emplace_back(std::make_unique<CGameWorld>(std::string(declaration.map_path),
-                                                               static_cast<std::uint32_t>(m_worlds.size())));
+            auto world = std::make_unique<CGameWorld>(std::string(declaration.map_path),
+                                                      static_cast<std::uint32_t>(m_worlds.size()));
+            if (!world->GetMap())
+            {
+                LOG_ERROR("world", "Startup world skipped (map not loaded): " + std::string(declaration.map_path));
+                continue;
+            }
+            m_worlds.emplace_back(std::move(world));
         }
     }
+}
+
+size_t IWorldModule::OpenWorldInstancesForMap(std::string_view map_path) const
+{
+    const std::string name = NormalizeMapName(std::string(map_path));
+    if (name == "garden") return game_config::garden_world_instances;
+    if (name == "ant_hel") return game_config::ant_hel_world_instances;
+    return game_config::open_world_instances_per_map;
 }
 
 bool IWorldModule::Init() { return true; }
@@ -190,6 +205,46 @@ CGameWorld* IWorldModule::FindRoomWorld(int room_code) const
 {
     auto it = m_rooms.find(room_code);
     return it == m_rooms.end() ? nullptr : it->second;
+}
+
+bool IWorldModule::DestroyWorldById(std::uint32_t world_id)
+{
+    for (size_t i = 0; i < m_worlds.size(); ++i)
+    {
+        CGameWorld* world = m_worlds[i].get();
+        if (!world || world->GetId() != world_id) continue;
+
+        // Release the world's players first: drop their entities so the
+        // player lifecycle keeps running (they return to the lobby flow).
+        CGameContext* context = world->GameContext();
+        if (context)
+        {
+            for (const auto& player : context->Players())
+            {
+                if (!player) continue;
+                CEntity* entity = player->GetEntity();
+                if (entity && entity->GameWorld() == world)
+                    entity->MarkForDestroy(EEntityRemovalReason::OwnerRemoved);
+            }
+        }
+
+        // Unregister rooms pointing at this world, then drop the world.
+        for (auto it = m_rooms.begin(); it != m_rooms.end();)
+        {
+            if (it->second == world) it = m_rooms.erase(it);
+            else ++it;
+        }
+        for (auto it = m_room_waiting_worlds.begin(); it != m_room_waiting_worlds.end();)
+        {
+            if (it->second == world) it = m_room_waiting_worlds.erase(it);
+            else ++it;
+        }
+        m_worlds.erase(m_worlds.begin() + static_cast<std::ptrdiff_t>(i));
+        LOG_INFO("world", "Destroyed world id=" + std::to_string(world_id) + " (" + world->GetMapPath() + ")");
+        return true;
+    }
+    LOG_WARN("world", "DestroyWorldById: world " + std::to_string(world_id) + " not found");
+    return false;
 }
 
 int IWorldModule::NextRoomCode() const

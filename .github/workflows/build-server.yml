@@ -28,6 +28,28 @@ jobs:
             exit 1
           fi
 
+  client-deps-ratchet:
+    name: Client import cycles must not grow
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Check client dependency ratchet
+        run: node tools/check_client_deps.mjs
+
+  client-input-tests:
+    name: Client input binding tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Run input hold regression tests
+        run: node tools/test_input_holds.mjs
+
   web-bridge-tests:
     name: Web bridge unit tests
     runs-on: ubuntu-latest
@@ -71,6 +93,7 @@ jobs:
             libgl1-mesa-dev \
             libharfbuzz-dev \
             libjansson-dev \
+            libmariadb-dev \
             libmbedtls-dev \
             libssh2-1-dev \
             libudev-dev \

@@ -1,4 +1,4 @@
-#include "gameworld.h"
+﻿#include "gameworld.h"
 #include "../../Engine/logger.h"
 #include "../../Shared/game_config.h"
 #include "../Module/network_module.h"
@@ -45,7 +45,7 @@ struct crash_entity_snapshot
     int team = 0;
     float health = 0.f;
     float radius = 0.f;
-    sf::Vector2f pos = { 0.f, 0.f };
+    florrbt::Vector2f pos = { 0.f, 0.f };
     bool marked_for_destroy = false;
     bool valid = false;
 };
@@ -164,7 +164,7 @@ EEntityTickMode EffectiveTickMode(const CEntity* entity)
     return entity->TickMode();
 }
 
-float Dot(sf::Vector2f a, sf::Vector2f b);
+float Dot(florrbt::Vector2f a, florrbt::Vector2f b);
 bool CollisionPairAlive(const CEntity* lhs, const CEntity* rhs);
 void ApplyPhysicalDamageHits(CEntity* target, float damage, CEntity* attacker, int hit_count,
                              const CEntity* collision_source = nullptr);
@@ -181,7 +181,7 @@ bool TryMergeActiveTickViews(active_tick_view& base, const active_tick_view& inc
         return true;
     }
 
-    sf::Vector2f delta = incoming.center - base.center;
+    florrbt::Vector2f delta = incoming.center - base.center;
     const float dist_sq = delta.x * delta.x + delta.y * delta.y;
     const float dist = std::sqrt(std::max(0.f, dist_sq));
     if (dist + incoming.radius <= base.radius) return true;
@@ -200,7 +200,7 @@ bool TryMergeActiveTickViews(active_tick_view& base, const active_tick_view& inc
     }
 
     const float merged_radius = (dist + base.radius + incoming.radius) * 0.5f;
-    const sf::Vector2f dir = delta / dist;
+    const florrbt::Vector2f dir = delta / dist;
     base.center += dir * (merged_radius - base.radius);
     base.radius = merged_radius;
     return true;
@@ -235,7 +235,7 @@ std::string WarpKey(std::string text)
 }
 
 bool RandomPointInTransferCheckpoint(const CGameWorld& world, const FlorrBtMap::Checkpoint& checkpoint,
-                                     sf::Vector2f& out_pos)
+                                     florrbt::Vector2f& out_pos)
 {
     if (checkpoint.w <= 0.f || checkpoint.h <= 0.f) return false;
 
@@ -244,7 +244,7 @@ bool RandomPointInTransferCheckpoint(const CGameWorld& world, const FlorrBtMap::
     for (int attempt = 0; attempt < std::max(1, game_config::gameworld_transfer_spawn_position_attempts); ++attempt)
     {
         const FlorrBtMap::Point point = CheckpointLocalToWorldPoint(checkpoint, random_x(GetRng()), random_y(GetRng()));
-        sf::Vector2f candidate = { point.x, point.y };
+        florrbt::Vector2f candidate = { point.x, point.y };
         if (world.CircleBlockedByWall(candidate, game_config::mob_player_flower_radius)) continue;
         out_pos = candidate;
         return true;
@@ -252,7 +252,7 @@ bool RandomPointInTransferCheckpoint(const CGameWorld& world, const FlorrBtMap::
     return false;
 }
 
-sf::Vector2f PickDefaultTransferSpawnPosition(const CGameWorld& world)
+florrbt::Vector2f PickDefaultTransferSpawnPosition(const CGameWorld& world)
 {
     const FlorrBtMap* map = world.GetMap();
     if (map)
@@ -267,7 +267,7 @@ sf::Vector2f PickDefaultTransferSpawnPosition(const CGameWorld& world)
         if (!checkpoints.empty())
         {
             std::uniform_int_distribution<size_t> dist(0, checkpoints.size() - 1);
-            sf::Vector2f pos;
+            florrbt::Vector2f pos;
             if (RandomPointInTransferCheckpoint(world, *checkpoints[dist(GetRng())], pos)) return pos;
         }
     }
@@ -352,10 +352,10 @@ bool ApplyWeakOverlapCollision(const collision_entity_view& lhs_view, const coll
     CEntity* rhs = rhs_view.entity;
     if (!lhs || !rhs || !lhs->IsCollision(*rhs)) return false;
 
-    sf::Vector2f delta = rhs->Pos() - lhs->Pos();
+    florrbt::Vector2f delta = rhs->Pos() - lhs->Pos();
     float dist_sq = LengthSq(delta);
     float dist = std::sqrt(std::max(0.f, dist_sq));
-    sf::Vector2f normal;
+    florrbt::Vector2f normal;
     if (dist > game_config::entity_collision_epsilon)
     {
         normal = delta / dist;
@@ -660,13 +660,17 @@ void ResolvePhysicalCollision(const collision_pair_context& pair)
     // Wax-to-mob separation has its own immovable-wall response.
     if (ResolveWaxMobHardCollision(pair.lhs, pair.rhs)) return;
 
-    // Mob-vs-mob (flowers are mobs too): strong repulsion pushes both out of
-    // each other's collision box with extra clearance and velocity damping.
-    // Special-cased pairs (summons, traps, wax, CanPhysicallyCollideWith
-    // overrides) are handled above or never reach this point.
+    // Mob-vs-mob (flowers are mobs too): keep the physical collision, but use
+    // a gentler separation curve for two non-flower mobs. This lets a swarm
+    // visibly bump and flow around its target instead of building a rigid
+    // wall, while flower contact keeps the legacy response.
     if (pair.lhs.mob && pair.rhs.mob)
     {
-        ApplyWeakOverlapCollision(pair.lhs, pair.rhs, game_config::mob_overlap_push_multiplier);
+        const bool nonflower_mob_pair = !pair.lhs.flower && !pair.rhs.flower;
+        const float push_multiplier = nonflower_mob_pair
+                                          ? game_config::nonflower_mob_overlap_push_multiplier
+                                          : game_config::mob_overlap_push_multiplier;
+        ApplyWeakOverlapCollision(pair.lhs, pair.rhs, push_multiplier);
         return;
     }
 
@@ -676,27 +680,27 @@ void ResolvePhysicalCollision(const collision_pair_context& pair)
 
 bool CanResolveCollisionDamage(const collision_pair_context& pair) { return !pair.same_team || pair.team_heal; }
 
-sf::Vector2f WallPoint(const FlorrBtMap::Point& point) { return { point.x, point.y }; }
+florrbt::Vector2f WallPoint(const FlorrBtMap::Point& point) { return { point.x, point.y }; }
 
-float Dot(sf::Vector2f a, sf::Vector2f b) { return a.x * b.x + a.y * b.y; }
+float Dot(florrbt::Vector2f a, florrbt::Vector2f b) { return a.x * b.x + a.y * b.y; }
 
-float Cross(sf::Vector2f a, sf::Vector2f b) { return a.x * b.y - a.y * b.x; }
+float Cross(florrbt::Vector2f a, florrbt::Vector2f b) { return a.x * b.y - a.y * b.x; }
 
-sf::Vector2f NormalizeOrZero(sf::Vector2f value)
+florrbt::Vector2f NormalizeOrZero(florrbt::Vector2f value)
 {
     float len = Length(value);
     if (len <= game_config::entity_collision_epsilon) return { 0.f, 0.f };
     return value / len;
 }
 
-sf::Vector2f GetEntityVelocity(CEntity& entity)
+florrbt::Vector2f GetEntityVelocity(CEntity& entity)
 {
     if (auto* mob = dynamic_cast<CMobBase*>(&entity)) return mob->m_vel;
     if (auto* projectile = dynamic_cast<CProjectile*>(&entity)) return projectile->m_vel;
     return { 0.f, 0.f };
 }
 
-void SetEntityVelocity(CEntity& entity, sf::Vector2f velocity)
+void SetEntityVelocity(CEntity& entity, florrbt::Vector2f velocity)
 {
     if (auto* mob = dynamic_cast<CMobBase*>(&entity))
     {
@@ -725,12 +729,12 @@ bool ResolveWaxMobHardCollision(const collision_entity_view& lhs, const collisio
 
     if (!wax || !mob) return false;
 
-    sf::Vector2f delta = mob->Pos() - wax->Pos();
+    florrbt::Vector2f delta = mob->Pos() - wax->Pos();
     float distance = Length(delta);
     float overlap = mob->Radius() + wax->Radius() - distance;
     if (overlap <= 0.f) return true;
 
-    sf::Vector2f normal = NormalizeOrZero(delta);
+    florrbt::Vector2f normal = NormalizeOrZero(delta);
     if (LengthSq(normal) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
         normal = NormalizeOrZero(mob->PrevPos() - wax->Pos());
     if (LengthSq(normal) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
@@ -742,7 +746,7 @@ bool ResolveWaxMobHardCollision(const collision_entity_view& lhs, const collisio
     {
         // Flowers push wax: only the wax moves out of the way, the flower stays put.
         wax->Pos() -= normal * (overlap + game_config::entity_collision_epsilon);
-        sf::Vector2f wax_vel = GetEntityVelocity(*wax);
+        florrbt::Vector2f wax_vel = GetEntityVelocity(*wax);
         float wax_inward_speed = Dot(wax_vel, normal);
         if (wax_inward_speed > 0.f) SetEntityVelocity(*wax, wax_vel - normal * wax_inward_speed);
         return true;
@@ -760,13 +764,13 @@ bool BounceFiredCarrotFromEntity(CPetal* petal, const CEntity* target)
     auto* missile = dynamic_cast<CMissilePetal*>(petal);
     if (!missile || !target || !missile->m_fired) return false;
 
-    sf::Vector2f normal = NormalizeOrZero(missile->Pos() - target->Pos());
+    florrbt::Vector2f normal = NormalizeOrZero(missile->Pos() - target->Pos());
     if (LengthSq(normal) <= game_config::entity_collision_epsilon) normal = NormalizeOrZero(-missile->m_vel);
     if (LengthSq(normal) <= game_config::entity_collision_epsilon) normal = { 1.f, 0.f };
 
     if (Dot(missile->m_vel, normal) > 0.f) normal = -normal;
 
-    sf::Vector2f old_vel = missile->m_vel;
+    florrbt::Vector2f old_vel = missile->m_vel;
     float speed = Length(old_vel);
     float into_entity = Dot(old_vel, normal);
     missile->Pos() =
@@ -851,8 +855,8 @@ int PhysicalHitCountForTick(const CEntity* attacker, const CEntity* target)
 {
     if (!attacker || !target) return 1;
 
-    sf::Vector2f attacker_delta = attacker->Pos() - attacker->PrevPos();
-    sf::Vector2f target_delta = target->Pos() - target->PrevPos();
+    florrbt::Vector2f attacker_delta = attacker->Pos() - attacker->PrevPos();
+    florrbt::Vector2f target_delta = target->Pos() - target->PrevPos();
     float relative_sweep = Length(attacker_delta - target_delta);
     float hit_spacing =
         std::max(game_config::entity_hit_spacing_min,
@@ -1248,19 +1252,19 @@ void ResolveOverlappingEntityPair(CEntity* entity, CEntity* other, float dt, boo
     }
 }
 
-sf::Vector2f ClosestPointOnSegment(sf::Vector2f point, sf::Vector2f a, sf::Vector2f b)
+florrbt::Vector2f ClosestPointOnSegment(florrbt::Vector2f point, florrbt::Vector2f a, florrbt::Vector2f b)
 {
-    sf::Vector2f ab = b - a;
+    florrbt::Vector2f ab = b - a;
     float len_sq = LengthSq(ab);
     if (len_sq <= game_config::entity_collision_epsilon) return a;
     float t = std::clamp(Dot(point - a, ab) / len_sq, 0.f, 1.f);
     return a + ab * t;
 }
 
-bool SegmentIntersectsSegment(sf::Vector2f a, sf::Vector2f b, sf::Vector2f c, sf::Vector2f d)
+bool SegmentIntersectsSegment(florrbt::Vector2f a, florrbt::Vector2f b, florrbt::Vector2f c, florrbt::Vector2f d)
 {
-    sf::Vector2f r = b - a;
-    sf::Vector2f s = d - c;
+    florrbt::Vector2f r = b - a;
+    florrbt::Vector2f s = d - c;
     float denom = Cross(r, s);
     float numer = Cross(c - a, r);
     if (std::abs(denom) <= game_config::entity_collision_epsilon)
@@ -1280,7 +1284,7 @@ bool SegmentIntersectsSegment(sf::Vector2f a, sf::Vector2f b, sf::Vector2f c, sf
     return t >= 0.f && t <= 1.f && u >= 0.f && u <= 1.f;
 }
 
-float SegmentDistanceSq(sf::Vector2f a, sf::Vector2f b, sf::Vector2f c, sf::Vector2f d)
+float SegmentDistanceSq(florrbt::Vector2f a, florrbt::Vector2f b, florrbt::Vector2f c, florrbt::Vector2f d)
 {
     if (SegmentIntersectsSegment(a, b, c, d)) return 0.f;
     float best = DistanceSq(a, ClosestPointOnSegment(a, c, d));
@@ -1290,7 +1294,7 @@ float SegmentDistanceSq(sf::Vector2f a, sf::Vector2f b, sf::Vector2f c, sf::Vect
     return best;
 }
 
-bool PointInWallPolygon(sf::Vector2f point, const FlorrBtMap::Wall& wall)
+bool PointInWallPolygon(florrbt::Vector2f point, const FlorrBtMap::Wall& wall)
 {
     if (!wall.closed || wall.vertices.size() < 3) return false;
 
@@ -1298,8 +1302,8 @@ bool PointInWallPolygon(sf::Vector2f point, const FlorrBtMap::Wall& wall)
     size_t count = wall.vertices.size();
     for (size_t i = 0, j = count - 1; i < count; j = i++)
     {
-        sf::Vector2f a = WallPoint(wall.vertices[i]);
-        sf::Vector2f b = WallPoint(wall.vertices[j]);
+        florrbt::Vector2f a = WallPoint(wall.vertices[i]);
+        florrbt::Vector2f b = WallPoint(wall.vertices[j]);
         bool intersects =
             ((a.y > point.y) != (b.y > point.y)) &&
             (point.x <
@@ -1315,31 +1319,31 @@ int WallSegmentCount(const FlorrBtMap::Wall& wall)
     return wall.closed ? static_cast<int>(wall.vertices.size()) : static_cast<int>(wall.vertices.size() - 1);
 }
 
-bool ExpandedWallBoundsMayTouch(const FlorrBtMap::Wall& wall, sf::Vector2f min_pos, sf::Vector2f max_pos, float padding)
+bool ExpandedWallBoundsMayTouch(const FlorrBtMap::Wall& wall, florrbt::Vector2f min_pos, florrbt::Vector2f max_pos, float padding)
 {
     return max_pos.x + padding >= wall.min_x && min_pos.x - padding <= wall.max_x &&
            max_pos.y + padding >= wall.min_y && min_pos.y - padding <= wall.max_y;
 }
 
-bool SweptCircleHitsWall(sf::Vector2f start, sf::Vector2f end, float radius, const FlorrBtMap::Wall& wall)
+bool SweptCircleHitsWall(florrbt::Vector2f start, florrbt::Vector2f end, float radius, const FlorrBtMap::Wall& wall)
 {
-    sf::Vector2f min_pos{ std::min(start.x, end.x), std::min(start.y, end.y) };
-    sf::Vector2f max_pos{ std::max(start.x, end.x), std::max(start.y, end.y) };
+    florrbt::Vector2f min_pos{ std::min(start.x, end.x), std::min(start.y, end.y) };
+    florrbt::Vector2f max_pos{ std::max(start.x, end.x), std::max(start.y, end.y) };
     if (!ExpandedWallBoundsMayTouch(wall, min_pos, max_pos, radius)) return false;
 
     float radius_sq = radius * radius;
     int segment_count = WallSegmentCount(wall);
     for (int i = 0; i < segment_count; ++i)
     {
-        sf::Vector2f a = WallPoint(wall.vertices[i]);
-        sf::Vector2f b = WallPoint(wall.vertices[(i + 1) % wall.vertices.size()]);
+        florrbt::Vector2f a = WallPoint(wall.vertices[i]);
+        florrbt::Vector2f b = WallPoint(wall.vertices[(i + 1) % wall.vertices.size()]);
         if (SegmentDistanceSq(start, end, a, b) <= radius_sq) return true;
     }
 
     return PointInWallPolygon(start, wall) || PointInWallPolygon(end, wall);
 }
 
-int FindBlockingWallSegment(sf::Vector2f start, sf::Vector2f end, float radius, const FlorrBtMap::Wall& wall)
+int FindBlockingWallSegment(florrbt::Vector2f start, florrbt::Vector2f end, float radius, const FlorrBtMap::Wall& wall)
 {
     float radius_sq = radius * radius;
     int segment_count = WallSegmentCount(wall);
@@ -1347,8 +1351,8 @@ int FindBlockingWallSegment(sf::Vector2f start, sf::Vector2f end, float radius, 
     float best_dist_sq = std::numeric_limits<float>::max();
     for (int i = 0; i < segment_count; ++i)
     {
-        sf::Vector2f a = WallPoint(wall.vertices[i]);
-        sf::Vector2f b = WallPoint(wall.vertices[(i + 1) % wall.vertices.size()]);
+        florrbt::Vector2f a = WallPoint(wall.vertices[i]);
+        florrbt::Vector2f b = WallPoint(wall.vertices[(i + 1) % wall.vertices.size()]);
         float dist_sq = SegmentDistanceSq(start, end, a, b);
         if (dist_sq <= radius_sq && dist_sq < best_dist_sq)
         {
@@ -1359,15 +1363,15 @@ int FindBlockingWallSegment(sf::Vector2f start, sf::Vector2f end, float radius, 
     return best_segment;
 }
 
-int FindClosestWallSegment(sf::Vector2f point, const FlorrBtMap::Wall& wall)
+int FindClosestWallSegment(florrbt::Vector2f point, const FlorrBtMap::Wall& wall)
 {
     int segment_count = WallSegmentCount(wall);
     int best_segment = -1;
     float best_dist_sq = std::numeric_limits<float>::max();
     for (int i = 0; i < segment_count; ++i)
     {
-        sf::Vector2f a = WallPoint(wall.vertices[i]);
-        sf::Vector2f b = WallPoint(wall.vertices[(i + 1) % wall.vertices.size()]);
+        florrbt::Vector2f a = WallPoint(wall.vertices[i]);
+        florrbt::Vector2f b = WallPoint(wall.vertices[(i + 1) % wall.vertices.size()]);
         float dist_sq = DistanceSq(point, ClosestPointOnSegment(point, a, b));
         if (dist_sq < best_dist_sq)
         {
@@ -1378,34 +1382,34 @@ int FindClosestWallSegment(sf::Vector2f point, const FlorrBtMap::Wall& wall)
     return best_segment;
 }
 
-sf::Vector2f WallSegmentTangent(const FlorrBtMap::Wall& wall, int segment_index)
+florrbt::Vector2f WallSegmentTangent(const FlorrBtMap::Wall& wall, int segment_index)
 {
     if (segment_index < 0 || wall.vertices.empty()) return { 0.f, 0.f };
-    sf::Vector2f a = WallPoint(wall.vertices[segment_index]);
-    sf::Vector2f b = WallPoint(wall.vertices[(segment_index + 1) % wall.vertices.size()]);
+    florrbt::Vector2f a = WallPoint(wall.vertices[segment_index]);
+    florrbt::Vector2f b = WallPoint(wall.vertices[(segment_index + 1) % wall.vertices.size()]);
     return NormalizeOrZero(b - a);
 }
 
-sf::Vector2f ProjectEntityVelocityAlongWall(CEntity& entity, const FlorrBtMap::Wall& wall, int segment_index)
+florrbt::Vector2f ProjectEntityVelocityAlongWall(CEntity& entity, const FlorrBtMap::Wall& wall, int segment_index)
 {
-    sf::Vector2f tangent = WallSegmentTangent(wall, segment_index);
+    florrbt::Vector2f tangent = WallSegmentTangent(wall, segment_index);
     if (LengthSq(tangent) <= game_config::entity_collision_epsilon) return { 0.f, 0.f };
 
-    sf::Vector2f velocity = GetEntityVelocity(entity);
-    sf::Vector2f projected = tangent * Dot(velocity, tangent);
+    florrbt::Vector2f velocity = GetEntityVelocity(entity);
+    florrbt::Vector2f projected = tangent * Dot(velocity, tangent);
     SetEntityVelocity(entity, projected);
     return projected;
 }
 
-sf::Vector2f ChooseWallNormal(const FlorrBtMap::Wall& wall, int segment_index, sf::Vector2f point,
-                              sf::Vector2f motion = { 0.f, 0.f })
+florrbt::Vector2f ChooseWallNormal(const FlorrBtMap::Wall& wall, int segment_index, florrbt::Vector2f point,
+                              florrbt::Vector2f motion = { 0.f, 0.f })
 {
-    sf::Vector2f a = WallPoint(wall.vertices[segment_index]);
-    sf::Vector2f b = WallPoint(wall.vertices[(segment_index + 1) % wall.vertices.size()]);
-    sf::Vector2f edge = b - a;
-    sf::Vector2f n1 = NormalizeOrZero({ -edge.y, edge.x });
+    florrbt::Vector2f a = WallPoint(wall.vertices[segment_index]);
+    florrbt::Vector2f b = WallPoint(wall.vertices[(segment_index + 1) % wall.vertices.size()]);
+    florrbt::Vector2f edge = b - a;
+    florrbt::Vector2f n1 = NormalizeOrZero({ -edge.y, edge.x });
     if (LengthSq(n1) <= game_config::entity_collision_epsilon) return { 1.f, 0.f };
-    sf::Vector2f n2 = -n1;
+    florrbt::Vector2f n2 = -n1;
 
     if (wall.closed)
     {
@@ -1426,8 +1430,8 @@ sf::Vector2f ChooseWallNormal(const FlorrBtMap::Wall& wall, int segment_index, s
     return side > 0.f ? n1 : n2;
 }
 
-bool HandleFiredMissileWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, int segment_index, sf::Vector2f start,
-                               sf::Vector2f end)
+bool HandleFiredMissileWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, int segment_index, florrbt::Vector2f start,
+                               florrbt::Vector2f end)
 {
     if (auto* raw_missile = dynamic_cast<CMissile*>(&entity))
     {
@@ -1448,17 +1452,17 @@ bool HandleFiredMissileWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, in
             segment_index = FindBlockingWallSegment(start, end, std::max(0.f, entity.WallCollisionRadius()), wall);
         if (segment_index < 0) segment_index = FindClosestWallSegment(start, wall);
 
-        sf::Vector2f motion = end - start;
+        florrbt::Vector2f motion = end - start;
         if (LengthSq(motion) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
             motion = missile->m_vel;
-        sf::Vector2f normal =
+        florrbt::Vector2f normal =
             segment_index >= 0 ? ChooseWallNormal(wall, segment_index, start, motion) : NormalizeOrZero(start - end);
         if (LengthSq(normal) <= game_config::entity_collision_epsilon) normal = NormalizeOrZero(-missile->m_vel);
         if (LengthSq(normal) <= game_config::entity_collision_epsilon) normal = { 1.f, 0.f };
 
         if (Dot(missile->m_vel, normal) > 0.f) normal = -normal;
 
-        sf::Vector2f old_vel = missile->m_vel;
+        florrbt::Vector2f old_vel = missile->m_vel;
         float speed = Length(old_vel);
         float into_wall = Dot(old_vel, normal);
         missile->Pos() = start + normal * game_config::gameworld_wall_contact_skin;
@@ -1483,8 +1487,8 @@ bool HandleFiredMissileWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, in
     return false;
 }
 
-bool HandleBumbleBeeWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, int segment_index, sf::Vector2f start,
-                            sf::Vector2f end)
+bool HandleBumbleBeeWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, int segment_index, florrbt::Vector2f start,
+                            florrbt::Vector2f end)
 {
     auto* mob = dynamic_cast<CMobBase*>(&entity);
     if (!mob || mob->GetMobType() != EMobType::BumbleBee) return false;
@@ -1492,17 +1496,17 @@ bool HandleBumbleBeeWallHit(CEntity& entity, const FlorrBtMap::Wall& wall, int s
     const float wall_radius = std::max(0.f, entity.WallCollisionRadius());
     if (segment_index < 0) segment_index = FindBlockingWallSegment(start, end, wall_radius, wall);
 
-    sf::Vector2f motion = end - start;
+    florrbt::Vector2f motion = end - start;
     if (LengthSq(motion) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
         motion = mob->m_vel;
-    sf::Vector2f normal =
+    florrbt::Vector2f normal =
         segment_index >= 0 ? ChooseWallNormal(wall, segment_index, start, motion) : NormalizeOrZero(start - end);
     if (LengthSq(normal) <= game_config::entity_collision_epsilon) normal = NormalizeOrZero(-mob->m_vel);
     if (LengthSq(normal) <= game_config::entity_collision_epsilon) normal = { 1.f, 0.f };
 
     if (Dot(mob->m_vel, normal) > 0.f) normal = -normal;
 
-    sf::Vector2f old_vel = mob->m_vel;
+    florrbt::Vector2f old_vel = mob->m_vel;
     float speed = Length(old_vel);
     if (speed <= game_config::entity_collision_epsilon)
     {
@@ -1528,14 +1532,14 @@ bool PushEntityOutOfWall(CEntity& entity, const FlorrBtMap::Wall& wall)
     if (!ExpandedWallBoundsMayTouch(wall, entity.Pos(), entity.Pos(), wall_radius)) return false;
 
     float best_dist_sq = std::numeric_limits<float>::max();
-    sf::Vector2f best_point = entity.Pos();
+    florrbt::Vector2f best_point = entity.Pos();
     int best_segment = -1;
     int segment_count = WallSegmentCount(wall);
     for (int i = 0; i < segment_count; ++i)
     {
-        sf::Vector2f a = WallPoint(wall.vertices[i]);
-        sf::Vector2f b = WallPoint(wall.vertices[(i + 1) % wall.vertices.size()]);
-        sf::Vector2f closest = ClosestPointOnSegment(entity.Pos(), a, b);
+        florrbt::Vector2f a = WallPoint(wall.vertices[i]);
+        florrbt::Vector2f b = WallPoint(wall.vertices[(i + 1) % wall.vertices.size()]);
+        florrbt::Vector2f closest = ClosestPointOnSegment(entity.Pos(), a, b);
         float dist_sq = DistanceSq(entity.Pos(), closest);
         if (dist_sq < best_dist_sq)
         {
@@ -1550,10 +1554,10 @@ bool PushEntityOutOfWall(CEntity& entity, const FlorrBtMap::Wall& wall)
     float dist = std::sqrt(std::max(0.f, best_dist_sq));
     if (!inside && dist >= wall_radius) return false;
 
-    sf::Vector2f motion = entity.Pos() - entity.PrevPos();
+    florrbt::Vector2f motion = entity.Pos() - entity.PrevPos();
     if (LengthSq(motion) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
         motion = GetEntityVelocity(entity);
-    sf::Vector2f normal =
+    florrbt::Vector2f normal =
         inside ? ChooseWallNormal(wall, best_segment, best_point, motion) : NormalizeOrZero(entity.Pos() - best_point);
     if (LengthSq(normal) <= game_config::entity_collision_epsilon)
         normal = ChooseWallNormal(wall, best_segment, entity.Pos(), motion);
@@ -1561,7 +1565,7 @@ bool PushEntityOutOfWall(CEntity& entity, const FlorrBtMap::Wall& wall)
     float penetration = inside ? wall_radius + dist : wall_radius - dist;
     entity.Pos() += normal * (penetration + game_config::gameworld_wall_contact_skin);
 
-    sf::Vector2f velocity = GetEntityVelocity(entity);
+    florrbt::Vector2f velocity = GetEntityVelocity(entity);
     if (!IsFiredCarrotPetal(&entity) &&
         LengthSq(velocity) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
     {
@@ -1605,7 +1609,7 @@ CGameWorld::CGameWorld(const std::string& path, std::uint32_t world_id)
           [](const CEntity& entity) { return entity.Id() >= 0; }),
       m_wall_grid(
           game_config::spatial_grid_cell_size,
-          [](const FlorrBtMap::Wall& wall) { return sf::Vector2f{ wall.center.x, wall.center.y }; },
+          [](const FlorrBtMap::Wall& wall) { return florrbt::Vector2f{ wall.center.x, wall.center.y }; },
           [](const FlorrBtMap::Wall& wall) { return wall.id; }, [this](int id) { return GetWall(id); },
           [](const FlorrBtMap::Wall& wall) { return wall.id >= 0; })
 {
@@ -2136,19 +2140,19 @@ void CGameWorld::SpawnMapPortals()
     {
         if (warp.goal.empty()) continue;
         float radius = warp.radius > 0.f ? warp.radius : game_config::portal_radius;
-        auto portal = std::make_unique<CPortal>(this, sf::Vector2f{ warp.x, warp.y }, radius, warp.goal);
+        auto portal = std::make_unique<CPortal>(this, florrbt::Vector2f{ warp.x, warp.y }, radius, warp.goal);
         portal->SetFromPointName(warp.point.empty() ? warp.name : warp.point);
         InsertEntity(std::move(portal));
     }
 }
 
 CEntity* CGameWorld::TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& target_world,
-                                                 std::optional<sf::Vector2f> target_pos,
+                                                 std::optional<florrbt::Vector2f> target_pos,
                                                  std::optional<std::string> from)
 {
     if (from && !from->empty())
     {
-        if (std::optional<sf::Vector2f> warp_pos = target_world.FindWarpPoint(*from)) target_pos = warp_pos;
+        if (std::optional<florrbt::Vector2f> warp_pos = target_world.FindWarpPoint(*from)) target_pos = warp_pos;
     }
     if (!target_pos) target_pos = PickDefaultTransferSpawnPosition(target_world);
 
@@ -2470,13 +2474,13 @@ bool CGameWorld::IsCarriedEntity(const CEntity& carried)
     return true;
 }
 
-CEntity* CGameWorld::FindClosestEntity(const sf::Vector2f& center, float max_range,
+CEntity* CGameWorld::FindClosestEntity(const florrbt::Vector2f& center, float max_range,
                                        std::function<bool(const CEntity*)> filter) const
 {
     return m_spatial_grid.FindClosest(center, max_range, filter);
 }
 
-CEntity* CGameWorld::FindClosestEntityByEdge(const sf::Vector2f& center, float max_edge_range,
+CEntity* CGameWorld::FindClosestEntityByEdge(const florrbt::Vector2f& center, float max_edge_range,
                                              std::function<bool(const CEntity*)> filter) const
 {
     if (max_edge_range <= 0.f) return nullptr;
@@ -2541,7 +2545,7 @@ std::vector<CEntity*> CGameWorld::GetAllEntities() const
 
 std::string CGameWorld::GetMapName() const { return std::filesystem::path(m_map_path).stem().generic_string(); }
 
-ERarity CGameWorld::GetSpawnZoneRarity(const sf::Vector2f& pos) const
+ERarity CGameWorld::GetSpawnZoneRarity(const florrbt::Vector2f& pos) const
 {
     float max_difficulty = 0.f;
     if (m_map)
@@ -2572,7 +2576,7 @@ std::size_t CGameWorld::GetPlayerCount() const
     return count;
 }
 
-std::optional<sf::Vector2f> CGameWorld::FindWarpPoint(const std::string& from) const
+std::optional<florrbt::Vector2f> CGameWorld::FindWarpPoint(const std::string& from) const
 {
     if (!m_map || from.empty()) return std::nullopt;
 
@@ -2591,7 +2595,7 @@ std::optional<sf::Vector2f> CGameWorld::FindWarpPoint(const std::string& from) c
         std::uniform_int_distribution<size_t> dist(0, matches.size() - 1);
         warp = matches[dist(GetRng())];
     }
-    return sf::Vector2f{ warp->x, warp->y };
+    return florrbt::Vector2f{ warp->x, warp->y };
 }
 
 FlorrBtMap::Wall* CGameWorld::GetWall(int id) const
@@ -2611,7 +2615,7 @@ void CGameWorld::BuildWallGrid()
     }
 }
 
-int CGameWorld::RemoveWallsInRect(sf::Vector2f min_pos, sf::Vector2f max_pos)
+int CGameWorld::RemoveWallsInRect(florrbt::Vector2f min_pos, florrbt::Vector2f max_pos)
 {
     if (!m_map) return 0;
     const float min_x = std::min(min_pos.x, max_pos.x);
@@ -2645,12 +2649,45 @@ int CGameWorld::RemoveWallsInRect(sf::Vector2f min_pos, sf::Vector2f max_pos)
     return static_cast<int>(removed);
 }
 
-bool CGameWorld::SweptCircleBlockedByWall(sf::Vector2f start, sf::Vector2f end, float radius) const
+int CGameWorld::RemoveWallsByIds(const std::vector<int>& ids)
+{
+    if (!m_map || ids.empty()) return 0;
+
+    std::vector<bool> remove(m_map->walls.size(), false);
+    for (const int id : ids)
+        if (id >= 0 && id < static_cast<int>(remove.size())) remove[static_cast<size_t>(id)] = true;
+
+    size_t removed = 0;
+    auto& walls = m_map->walls;
+    for (size_t i = 0; i < walls.size();)
+    {
+        if (!remove[i])
+        {
+            ++i;
+            continue;
+        }
+        walls[i] = walls.back();
+        walls.pop_back();
+        remove[i] = remove.back();
+        remove.pop_back();
+        ++removed;
+    }
+
+    if (removed > 0)
+    {
+        for (size_t i = 0; i < walls.size(); ++i)
+            walls[i].id = static_cast<int>(i);
+        BuildWallGrid();
+    }
+    return static_cast<int>(removed);
+}
+
+bool CGameWorld::SweptCircleBlockedByWall(florrbt::Vector2f start, florrbt::Vector2f end, float radius) const
 {
     if (!m_map || m_map->walls.empty()) return false;
 
     radius = std::max(0.f, radius);
-    sf::Vector2f center = (start + end) * 0.5f;
+    florrbt::Vector2f center = (start + end) * 0.5f;
     float travel = Distance(start, end);
     float query_radius =
         travel * 0.5f + radius + std::max(0.f, game_config::gameworld_wall_swept_query_padding);
@@ -2662,12 +2699,12 @@ bool CGameWorld::SweptCircleBlockedByWall(sf::Vector2f start, sf::Vector2f end, 
     return blocked;
 }
 
-bool CGameWorld::SegmentBlockedByWall(sf::Vector2f start, sf::Vector2f end) const
+bool CGameWorld::SegmentBlockedByWall(florrbt::Vector2f start, florrbt::Vector2f end) const
 {
     return SweptCircleBlockedByWall(start, end, 0.f);
 }
 
-bool CGameWorld::CircleBlockedByWall(sf::Vector2f center, float radius) const
+bool CGameWorld::CircleBlockedByWall(florrbt::Vector2f center, float radius) const
 {
     return SweptCircleBlockedByWall(center, center, radius);
 }
@@ -2679,16 +2716,16 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
     const int max_wall_push_passes = std::max(1, game_config::entity_wall_push_passes);
     const float wall_query_slop = std::max(0.f, game_config::entity_wall_query_slop);
 
-    auto find_swept_wall_hit = [this, wall_query_slop](sf::Vector2f start, sf::Vector2f end, float radius,
+    auto find_swept_wall_hit = [this, wall_query_slop](florrbt::Vector2f start, florrbt::Vector2f end, float radius,
                                                        const FlorrBtMap::Wall*& out_wall, int& out_segment) {
         out_wall = nullptr;
         out_segment = -1;
 
-        sf::Vector2f center = (start + end) * 0.5f;
+        florrbt::Vector2f center = (start + end) * 0.5f;
         float travel = Distance(start, end);
         float query_radius = travel * 0.5f + std::max(0.f, radius) + wall_query_slop;
-        sf::Vector2f min_pos{ std::min(start.x, end.x), std::min(start.y, end.y) };
-        sf::Vector2f max_pos{ std::max(start.x, end.x), std::max(start.y, end.y) };
+        florrbt::Vector2f min_pos{ std::min(start.x, end.x), std::min(start.y, end.y) };
+        florrbt::Vector2f max_pos{ std::max(start.x, end.x), std::max(start.y, end.y) };
 
         bool swept_hit = false;
         m_wall_grid.ForEachInRangeBroadphase(center, query_radius, m_wall_query_visited, [&](FlorrBtMap::Wall* wall) {
@@ -2709,7 +2746,7 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
         for (int pass = 0; pass < max_wall_push_passes; ++pass)
         {
             bool pushed_any = false;
-            sf::Vector2f center = entity.Pos();
+            florrbt::Vector2f center = entity.Pos();
             float query_radius = std::max(1.f, wall_radius + wall_query_slop);
 
             m_wall_grid.ForEachInRangeBroadphase(
@@ -2745,8 +2782,8 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
         if (auto* raw_missile = dynamic_cast<CMissile*>(entity); raw_missile && raw_missile->IsAttachedToOwner())
             continue;
 
-        sf::Vector2f start = entity->PrevPos();
-        sf::Vector2f end = entity->Pos();
+        florrbt::Vector2f start = entity->PrevPos();
+        florrbt::Vector2f end = entity->Pos();
         const float wall_radius = std::max(0.f, entity->WallCollisionRadius());
         float travel = Distance(start, end);
 
@@ -2767,8 +2804,8 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
                 if (entity->IsMarkedForDes() || !entity->CanCollide()) continue;
             } else
             {
-                sf::Vector2f motion = end - start;
-                sf::Vector2f wall_normal = { 0.f, 0.f };
+                florrbt::Vector2f motion = end - start;
+                florrbt::Vector2f wall_normal = { 0.f, 0.f };
                 if (blocking_wall && blocking_segment >= 0)
                     wall_normal = ChooseWallNormal(*blocking_wall, blocking_segment, start, motion);
                 if (LengthSq(wall_normal) <=
@@ -2781,18 +2818,23 @@ void CGameWorld::ResolveWallCollisions(const std::vector<CEntity*>& entities)
                     game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
                     wall_normal = { 1.f, 0.f };
 
-                sf::Vector2f slide_start = start + wall_normal * game_config::gameworld_wall_contact_skin;
+                florrbt::Vector2f slide_start =
+                    start + wall_normal * (wall_radius + game_config::gameworld_wall_contact_skin);
                 entity->Pos() = slide_start;
                 if (blocking_wall)
                 {
-                    sf::Vector2f slide_vel = ProjectEntityVelocityAlongWall(*entity, *blocking_wall, blocking_segment);
+                    florrbt::Vector2f slide_vel = ProjectEntityVelocityAlongWall(*entity, *blocking_wall, blocking_segment);
                     if (LengthSq(slide_vel) >
                         game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
                     {
-                        sf::Vector2f slide_end = slide_start + slide_vel * game_config::server_fixed_dt;
+                        florrbt::Vector2f slide_end = slide_start + slide_vel * game_config::server_fixed_dt;
                         const FlorrBtMap::Wall* slide_wall = nullptr;
                         int slide_segment = -1;
-                        if (!find_swept_wall_hit(slide_start, slide_end, wall_radius, slide_wall, slide_segment))
+                        // The slide test runs on the circle-center path (radius
+                        // 0): slide_start already rests the circle against the
+                        // wall, so a full-radius test would always hit the wall
+                        // it is sliding along and kill tangential motion.
+                        if (!find_swept_wall_hit(slide_start, slide_end, 0.f, slide_wall, slide_segment))
                         {
                             entity->Pos() = slide_end;
                         } else
@@ -3016,7 +3058,7 @@ void CGameWorld::ChainLightning(CEntity& origin, float damage, int bounces, CEnt
     const float range_multiplier = lightning_humidity::RangeMultiplier(humidity);
     bounces = lightning_humidity::ScaledBounces(bounces, humidity);
 
-    std::vector<sf::Vector2f> chain;
+    std::vector<florrbt::Vector2f> chain;
     chain.push_back(origin.Pos());
 
     const CEntity* current = &origin;
