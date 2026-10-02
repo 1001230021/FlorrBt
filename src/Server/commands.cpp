@@ -15,6 +15,7 @@
 #include "Game/gamecontrollers/world_controller_factory.h"
 #include "Module/network_module.h"
 #include "Module/world_module.h"
+#include "DevTools/dev_debug_service.h"
 #include "Persistence/account_store.h"
 #include "server.h"
 #include <algorithm>
@@ -152,7 +153,7 @@ const CPetalPrototype* FindPetalPrototypeByText(std::string_view text)
     }
 
     const std::string target = ToLower(text);
-    for (const auto& [type, proto] : PetalRegistry())
+    for (const auto& [type, proto] : GetPetalRegistry())
     {
         if (!proto) continue;
         if (MatchPetalTypeAlias(target, type) || ToLower(proto->m_name) == target) return proto;
@@ -168,7 +169,7 @@ const CMobPrototype* FindMobPrototypeByText(std::string_view text)
     }
 
     const std::string target = ToLower(text);
-    for (const auto& [type, proto] : MobRegistry())
+    for (const auto& [type, proto] : GetMobRegistry())
     {
         if (!proto) continue;
         if (MatchMobTypeAlias(target, type) || ToLower(proto->m_name) == target ||
@@ -338,7 +339,7 @@ void LogWeatherUsage()
              "weather derive | weather auto | weather time <HH:MM[:SS]>");
 }
 
-int TalentPointGainForCommandLevel(int level)
+int CalculateTalentPointsForCommandLevel(int level)
 {
     if (level <= 1) return 0;
 
@@ -692,7 +693,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(level_up, "level_up <player> <count>", "player", 
     {
         ++flower->m_level;
         flower->m_exp = 0;
-        gained_talent_points += TalentPointGainForCommandLevel(flower->m_level);
+        gained_talent_points += CalculateTalentPointsForCommandLevel(flower->m_level);
     }
 
     flower->RebuildFinalStats();
@@ -1294,6 +1295,35 @@ REGISTER_CONSOLE_COMMAND_USAGE(add, "add <player|account> <petal> <rarity> [coun
                             account_name + ".");
 })
 
+REGISTER_CONSOLE_COMMAND_USAGE(inventory, "inventory <player> <list|add|remove|set> [petal] [rarity] [count]", "player", {
+    if (args.size() < 2)
+    {
+        LOG_INFO("console", "Usage: inventory <player> <list|add|remove|set> [petal] [rarity] [count]");
+        return;
+    }
+    auto* server = CServer::GetInstance();
+    auto* player = FindPlayerByIdOrName(server ? server->GameContext() : nullptr, args[0]);
+    if (!server || !player || !player->IsAuthenticated()) { LOG_WARN("console", "Authenticated player not found"); return; }
+    const std::string operation = ToLower(args[1]);
+    if (operation == "list")
+    {
+        for (const auto& item : CAccountDataStore::GetInventory(player->GetAccountName()))
+            LOG_INFO("console", "type=" + std::to_string(item.petal_type) + " rarity=" + std::to_string(item.rarity) +
+                                " count=" + std::to_string(item.count));
+        return;
+    }
+    if (args.size() != 5) { LOG_WARN("console", "Supply petal, rarity and count"); return; }
+    const auto* prototype = FindPetalPrototypeByText(args[2]);
+    const auto rarity = ParseRarity(args[3]); const auto count = ParseInt(args[4]);
+    if (!prototype || !rarity || !count || *count < 0 || static_cast<std::uint32_t>(*count) > max_inventory_item_count)
+    { LOG_WARN("console", "Invalid petal/rarity/count"); return; }
+    std::string result;
+    if (EditDebugInventory(*server, *player, operation, static_cast<std::uint8_t>(prototype->m_type),
+                           static_cast<std::uint8_t>(*rarity), static_cast<std::uint32_t>(*count), result))
+        LOG_INFO("console", player->GetName() + ": " + result);
+    else LOG_WARN("console", result);
+})
+
 REGISTER_CONSOLE_COMMAND_USAGE(
     equip, "equip <player|world_id:entity_id> [slot] <petal> <rarity>", "target petal rarity", {
         if (args.size() < 3)
@@ -1367,7 +1397,12 @@ REGISTER_CONSOLE_COMMAND_USAGE(
             return;
         }
 
-        flower->EquipPetal(slot, proto, *rarity);
+        if (!flower->EquipPetal(slot, proto, *rarity))
+        {
+            LOG_WARN("console", "Failed to equip " + RarityName(*rarity) + " " + proto->m_name + " to entity " +
+                                      EntityCommandRef(target_entity) + " slot " + std::to_string(slot) + ".");
+            return;
+        }
         LOG_INFO("console", "Equipped " + RarityName(*rarity) + " " + proto->m_name + " to entity " +
                                 EntityCommandRef(target_entity) + " slot " + std::to_string(slot) + ".");
     })

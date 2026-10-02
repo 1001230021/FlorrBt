@@ -1,5 +1,6 @@
 #pragma once
 #include "../../Shared/shared.h"
+#include "../../Shared/math_types.h"
 
 class CMobBase;
 

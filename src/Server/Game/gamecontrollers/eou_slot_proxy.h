@@ -32,7 +32,7 @@ class CEouSlotProxy
 {
   public:
     void SetSlotCount(int count) { m_slots.resize(std::max(0, count)); }
-    int SlotCount() const { return static_cast<int>(m_slots.size()); }
+    int GetSlotCount() const { return static_cast<int>(m_slots.size()); }
     SEouSlotProxySlot& Slot(int index) { return m_slots[static_cast<size_t>(index)]; }
     const SEouSlotProxySlot& Slot(int index) const { return m_slots[static_cast<size_t>(index)]; }
 

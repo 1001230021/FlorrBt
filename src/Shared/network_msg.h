@@ -1,10 +1,11 @@
 #pragma once
 #include "entity_type.h"
+#include "dev_debug_protocol.h"
 #include "inventory.h"
+#include "math_types.h"
 #include "state_type.h"
 #include "talent_type.h"
 #include "version.h"
-#include <SFML/System/Vector2.hpp>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -789,6 +790,8 @@ constexpr size_t server_snapshot_header_size = 27;
 // and wind speed (u8, speed/20*255 clamped).
 constexpr size_t server_environment_weather_count = 4;
 constexpr size_t server_environment_wind_size = 2;
+// OwnerState flags: the visible room loadout must not be edited as inventory.
+constexpr uint8_t owner_state_loadout_locked = 1u << 0;
 
 inline net_coord PackCoord(float value) { return static_cast<net_coord>(std::round(value * net_coord_scale)); }
 
@@ -948,6 +951,7 @@ struct SOwnerPetalSlot
         None = 0,
         Angle = 1,
         Size = 2,
+        Counter = 3, // Unsigned live count per copy (charges, accumulated hits, ...).
     };
 
     uint8_t petal_type = 0;
@@ -976,7 +980,7 @@ constexpr size_t entity_owner_slot_copy_visual_size = 2;
 inline bool IsKnownOwnerPetalVisualType(SOwnerPetalSlot::EVisualType type)
 {
     return type == SOwnerPetalSlot::EVisualType::None || type == SOwnerPetalSlot::EVisualType::Angle ||
-           type == SOwnerPetalSlot::EVisualType::Size;
+           type == SOwnerPetalSlot::EVisualType::Size || type == SOwnerPetalSlot::EVisualType::Counter;
 }
 
 inline size_t GetEntityOwnerPetalCopyPackedSize(const SOwnerPetalSlot& slot)
@@ -1406,6 +1410,8 @@ struct ServerMessage
         LightningChain = 0x18,
         TerrainDelta = 0x19,
         TerrainWallRemove = 0x1a,
+        CombatFeedback = 0x1b,
+        DebugTicket = 0x1c,
         Unknown = 0xff,
     } type = Type::Unknown;
 
@@ -1413,6 +1419,7 @@ struct ServerMessage
     std::optional<net_entity_id> owner_entity_id;
     std::optional<uint8_t> tick_rate;
     std::string map_name;
+    std::string debug_ticket;
     std::optional<uint8_t> weather_enabled;
 
     std::optional<uint32_t> snapshot_id;
@@ -1455,6 +1462,22 @@ struct ServerMessage
 
     // Lightning chain visual: world-space node positions (net coords).
     std::vector<florrbt::Vector2f> lightning_points;
+
+    // Batched authoritative health damage, aggregated per target/kind between
+    // snapshots. Never inferred client-side from rounded health percentages.
+    struct SCombatHit
+    {
+        net_entity_id target_id = 0;
+        florrbt::Vector2f pos{};
+        float radius = 0.f;
+        float amount = 0.f;
+        uint8_t kind = 0; // BaseDamageType: normal / poison / lightning / true
+        uint8_t source_type = 0;
+        uint8_t source_rarity = 0;
+    };
+    static constexpr size_t combat_hit_size = 19;
+    static constexpr size_t combat_hit_limit = 64;
+    std::vector<SCombatHit> combat_hits;
 
     // Mutable-terrain tile change: layer index (tilelayer order), tile row,
     // tile column, and the new raw gid (including flip bits).
@@ -1577,6 +1600,13 @@ struct ServerMessage
                 msg.weather_intensity[i] = data[offset++];
             msg.wind_direction = data[offset++];
             msg.wind_speed = data[offset++];
+            break;
+        }
+        case Type::DebugTicket: {
+            if (len != 1 + dev_debug::ticket_size) { msg.type = Type::Unknown; break; }
+            msg.debug_ticket.assign(reinterpret_cast<const char*>(data + offset), dev_debug::ticket_size);
+            if (!dev_debug::IsTicket(msg.debug_ticket)) msg.type = Type::Unknown;
+            offset += dev_debug::ticket_size;
             break;
         }
         case Type::AuthResult: {
@@ -1855,6 +1885,28 @@ struct ServerMessage
                 }
             }
             break;
+        case Type::CombatFeedback: {
+            if (offset >= len) { msg.type = Type::Unknown; break; }
+            const size_t count = data[offset++];
+            if (count > combat_hit_limit || offset + count * combat_hit_size > len)
+            { msg.type = Type::Unknown; break; }
+            for (size_t i = 0; i < count; ++i)
+            {
+                SCombatHit hit;
+                hit.target_id = ReadU16(data, offset);
+                hit.pos.x = UnpackCoord(ReadI32(data, offset));
+                hit.pos.y = UnpackCoord(ReadI32(data, offset));
+                hit.radius = UnpackRadius(ReadU16(data, offset));
+                hit.amount = ReadF32(data, offset);
+                hit.kind = data[offset++];
+                hit.source_type = data[offset++];
+                hit.source_rarity = data[offset++];
+                if (!std::isfinite(hit.amount) || hit.amount < 0.f || hit.kind > 3)
+                { msg.type = Type::Unknown; msg.combat_hits.clear(); break; }
+                msg.combat_hits.push_back(hit);
+            }
+            break;
+        }
         case Type::LightningChain:
             if (len < 1)
             {
@@ -1936,6 +1988,11 @@ struct ServerMessage
             out[offset++] = msg.wind_direction;
             out[offset++] = msg.wind_speed;
             return offset;
+        }
+        case Type::DebugTicket: {
+            if (!dev_debug::IsTicket(msg.debug_ticket)) return 0;
+            std::copy_n(msg.debug_ticket.data(), dev_debug::ticket_size, out + offset);
+            return offset + dev_debug::ticket_size;
         }
         case Type::AuthResult: {
             out[offset++] = static_cast<uint8_t>(msg.auth_result_code.value_or(EAuthResultCode::Failed));
@@ -2080,6 +2137,23 @@ struct ServerMessage
             }
             return offset;
         }
+        case Type::CombatFeedback: {
+            const size_t count = std::min(msg.combat_hits.size(), combat_hit_limit);
+            out[offset++] = static_cast<uint8_t>(count);
+            for (size_t i = 0; i < count; ++i)
+            {
+                const auto& hit = msg.combat_hits[i];
+                WriteU16(out, offset, hit.target_id);
+                WriteI32(out, offset, PackCoord(hit.pos.x));
+                WriteI32(out, offset, PackCoord(hit.pos.y));
+                WriteU16(out, offset, PackRadius(hit.radius));
+                WriteF32(out, offset, hit.amount);
+                out[offset++] = hit.kind;
+                out[offset++] = hit.source_type;
+                out[offset++] = hit.source_rarity;
+            }
+            return offset;
+        }
         case Type::TerrainDelta:
             out[offset++] = msg.terrain_layer;
             WriteU16(out, offset, msg.terrain_row);
@@ -2123,6 +2197,8 @@ struct ServerMessage
             size += server_environment_weather_count + server_environment_wind_size;
             return size;
         }
+        case Type::DebugTicket:
+            return 1 + dev_debug::ticket_size;
         case Type::AuthResult:
             return 5 + std::min<size_t>(msg.auth_message.size(), UINT8_MAX);
         case Type::OwnerState:
@@ -2140,6 +2216,8 @@ struct ServerMessage
             return 10 + std::min<size_t>(msg.craft_items.size(), UINT16_MAX) * inventory_item_packet_size;
         case Type::Environment:
             return 25;
+        case Type::CombatFeedback:
+            return 2 + std::min(msg.combat_hits.size(), combat_hit_limit) * combat_hit_size;
         case Type::CodexFull:
             return 3 + std::min<size_t>(msg.codex_entries.size(), UINT16_MAX) * 6;
         case Type::CodexDelta:

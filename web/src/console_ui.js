@@ -95,6 +95,7 @@ export function createConsoleUi({
 
   return {
     addLine: (text, kind = "") => gameConsole.addLine(text, kind),
+    clear: () => gameConsole.clear(),
     setStatus,
     submit,
     toggle,

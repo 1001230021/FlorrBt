@@ -36,19 +36,19 @@ float HornetMissileSpeed(ERarity rarity)
            (1.f + game_config::mob_hornet_missile_speed_level_step * static_cast<float>(level));
 }
 
-float MobHealthScaleForRarity(ERarity rarity)
+float GetMobHealthScaleForRarity(ERarity rarity)
 {
-    return game_config::MobHealthScaleForLevel(GetLevel(rarity));
+    return game_config::GetMobHealthScaleForLevel(GetLevel(rarity));
 }
 
 SMobStats ScaleMobStats(SMobStats stats, ERarity rarity)
 {
     int level = GetLevel(rarity);
-    float health_scale = MobHealthScaleForRarity(rarity);
+    float health_scale = GetMobHealthScaleForRarity(rarity);
     float damage_scale = std::pow(game_config::mob_damage_scale_base, static_cast<float>(level - 1));
-    float radius_scale = game_config::MobRadiusScaleForLevel(level);
+    float radius_scale = game_config::GetMobRadiusScaleForLevel(level);
     float horizon_scale = std::pow(static_cast<float>(level), game_config::mob_horizon_scale_exp);
-    float mass_scale = game_config::MobMassScaleForLevel(level);
+    float mass_scale = game_config::GetMobMassScaleForLevel(level);
 
     stats.max_health *= health_scale;
     stats.damage *= damage_scale;
@@ -320,7 +320,7 @@ ERarity RarityFromNaturalMobLevel(int level)
 float LeafPieceRegenPerSecond(ERarity rarity)
 {
     return std::max(0.f, game_config::mob_leaf_piece_regen_per_second) *
-           std::max(0.f, MobHealthScaleForRarity(rarity));
+           std::max(0.f, GetMobHealthScaleForRarity(rarity));
 }
 
 int CountOwnedSummonedSoldierAnts(CGameWorld* world, const CEntity* owner)
@@ -385,6 +385,12 @@ class CBeeMob : public CBasicMob
 
     void MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius = -1.f) override
     {
+        MoveTowards(target_pos, dt, target_radius, 0.f);
+    }
+
+    void MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius,
+                     float full_speed_distance) override
+    {
         const SMobStats* stats = GetFinalStats();
         if (!stats) return;
 
@@ -410,12 +416,16 @@ class CBeeMob : public CBasicMob
         const florrbt::Vector2f effective_target_pos = ApplyMovementTargetStates(target_pos);
         florrbt::Vector2f delta = effective_target_pos - Pos();
         float len = Length(delta);
-        if (len <= Radius() + std::max(0.f, target_radius))
+        const bool analog = std::isfinite(full_speed_distance) && full_speed_distance > 0.f;
+        const float stop_distance = analog && target_radius < 0.f ? 0.f : Radius() + std::max(0.f, target_radius);
+        if (len <= stop_distance)
         {
             m_vel *= game_config::mob_stop_damping;
             if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = { 0.f, 0.f };
             return;
         }
+
+        if (analog) max_velocity *= std::clamp((len - stop_distance) / full_speed_distance, 0.f, 1.f);
 
         florrbt::Vector2f forward = delta / len;
         florrbt::Vector2f left(-forward.y, forward.x);
@@ -484,6 +494,12 @@ class CFireflyMob : public CBasicMob
     // Bee flight: wavy approach toward the target (shared with the bee).
     void MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius = -1.f) override
     {
+        MoveTowards(target_pos, dt, target_radius, 0.f);
+    }
+
+    void MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius,
+                     float full_speed_distance) override
+    {
         const SMobStats* stats = GetFinalStats();
         if (!stats) return;
 
@@ -509,12 +525,16 @@ class CFireflyMob : public CBasicMob
         const florrbt::Vector2f effective_target_pos = ApplyMovementTargetStates(target_pos);
         florrbt::Vector2f delta = effective_target_pos - Pos();
         float len = Length(delta);
-        if (len <= Radius() + std::max(0.f, target_radius))
+        const bool analog = std::isfinite(full_speed_distance) && full_speed_distance > 0.f;
+        const float stop_distance = analog && target_radius < 0.f ? 0.f : Radius() + std::max(0.f, target_radius);
+        if (len <= stop_distance)
         {
             m_vel *= game_config::mob_stop_damping;
             if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = { 0.f, 0.f };
             return;
         }
+
+        if (analog) max_velocity *= std::clamp((len - stop_distance) / full_speed_distance, 0.f, 1.f);
 
         florrbt::Vector2f forward = delta / len;
         florrbt::Vector2f left(-forward.y, forward.x);
@@ -845,7 +865,7 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
         int level = GetLevel(GetRarity());
         float missile_damage = game_config::mob_hornet_missile_base_damage *
                                std::pow(game_config::mob_damage_scale_base, static_cast<float>(level - 1));
-        float missile_health = game_config::mob_hornet_missile_base_health * MobHealthScaleForRarity(GetRarity());
+        float missile_health = game_config::mob_hornet_missile_base_health * GetMobHealthScaleForRarity(GetRarity());
         float radius_scale = Radius() / std::max(game_config::entity_collision_epsilon, game_config::mob_hornet_radius);
         float missile_radius = game_config::mob_hornet_missile_radius * radius_scale;
 
@@ -853,7 +873,7 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
                                                   LoadedMissileDirection(), 0.f, missile_damage, missile_health,
                                                   game_config::default_missile_lifetime, this);
         missile->Team() = Team();
-        missile->Mass() = game_config::MobProjectileMassForLevel(level);
+        missile->Mass() = game_config::GetMobProjectileMassForLevel(level);
         missile->AttachToOwner();
 
         CEntity* inserted = GameWorld()->InsertEntity(std::move(missile));
@@ -1096,7 +1116,7 @@ class CDandelionMob : public CAttackableBasicMob
 
     float MissileHealth() const
     {
-        return game_config::mob_dandelion_missile_base_health * MobHealthScaleForRarity(GetRarity());
+        return game_config::mob_dandelion_missile_base_health * GetMobHealthScaleForRarity(GetRarity());
     }
 
     CDandelionMissile* FindMissile(int index)
@@ -1147,7 +1167,7 @@ class CDandelionMob : public CAttackableBasicMob
             auto missile = std::make_unique<CDandelionMissile>(world, pos, radius, attach_angle, damage, health,
                                                                lifetime, GetRarity(), this);
             missile->Team() = Team();
-            missile->Mass() = game_config::MobProjectileMassForLevel(GetLevel(GetRarity()));
+            missile->Mass() = game_config::GetMobProjectileMassForLevel(GetLevel(GetRarity()));
             missile->AttachToOwner();
 
             CEntity* inserted = world->InsertEntity(std::move(missile));
@@ -1572,6 +1592,7 @@ class CAntHoleMob : public CBasicMob
     }
 
     bool CanPhysicallyCollideWith(const CEntity*) const override { return true; }
+
     bool IsDead() const override { return m_pending_death_cleanup || CBasicMob::IsDead(); }
     bool CanCollide() const override { return !m_pending_death_cleanup && CBasicMob::CanCollide(); }
     bool IsVisible() const override { return !m_pending_death_cleanup && CBasicMob::IsVisible(); }
@@ -2205,6 +2226,8 @@ class CDummyMob : public CBasicMob
         if (dmg <= 0.f) return;
         if (TrySharePsionicDamage(this, dmg, attacker, dmg_type)) return;
 
+        if (GameWorld()) GameWorld()->RecordCombatDamage(*this, dmg, dmg_type, attacker);
+
         CGameContext* context = GameContext();
         CPlayer* player = context ? context->FindPlayerFromEntity(attacker) : nullptr;
         if (player && player->IsAuthenticated())
@@ -2227,6 +2250,7 @@ class CDummyMob : public CBasicMob
     }
 
     bool CanPhysicallyCollideWith(const CEntity*) const override { return true; }
+    bool IsCollisionPositionLocked() const override { return true; }
 
   private:
     struct SDummyDamageReport
@@ -3236,6 +3260,30 @@ bool RegisterEouMobs(std::string& error)
         if (!RegisterModMob<EModMobType::EouQueen, CEouQueenMob>(std::move(proto), EMobType::QueenAnt))
         {
             error = "Failed to register eou queen prototype";
+            return false;
+        }
+    }
+    {
+        // EOU soldier ant: vanilla soldier ant as visual proxy. Hatched from
+        // soldier hatchery cells; combat stats follow the eou_soldier_*
+        // configs.
+        CMobPrototype proto;
+        proto.m_team = game_config::mob_soldier_ant_team;
+        proto.m_base_stats.max_health = game_config::eou_soldier_max_health;
+        proto.m_base_stats.armor = game_config::eou_soldier_armor;
+        proto.m_base_stats.damage = game_config::eou_soldier_damage;
+        proto.m_base_stats.radius = game_config::eou_soldier_radius;
+        proto.m_base_stats.mass = game_config::eou_soldier_mass;
+        proto.m_base_stats.horizon = game_config::default_horizon;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = game_config::default_max_velocity;
+        proto.m_base_stats.acceleration = game_config::default_acceleration;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(base_stats, rarity);
+        };
+        if (!RegisterModMob<EModMobType::EouSoldier, CEouSoldierAnt>(std::move(proto), EMobType::SoldierAnt))
+        {
+            error = "Failed to register eou soldier ant prototype";
             return false;
         }
     }

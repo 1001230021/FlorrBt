@@ -1,4 +1,4 @@
-﻿#include "ant_kingdom_controller.h"
+#include "ant_kingdom_controller.h"
 #include "../../../Engine/logger.h"
 #include "../../../Shared/tools.h"
 #include "../../Module/network_module.h"
@@ -31,6 +31,22 @@ int ParseIntDefault(std::string_view value, int fallback)
     stream >> parsed;
     return stream.fail() || !stream.eof() ? fallback : parsed;
 }
+
+bool ParseWorldPoint(const std::string& token, florrbt::Vector2f& point)
+{
+    std::istringstream input(token);
+    char open = 0, comma = 0, close = 0;
+    if (!(input >> open >> point.x >> comma >> point.y >> close)) return false;
+    input >> std::ws;
+    return open == '[' && comma == ',' && close == ']' && input.eof() &&
+           std::isfinite(point.x) && std::isfinite(point.y);
+}
+
+void ConfigureColonyEntity(CEntity& entity)
+{
+    entity.TickMode() = EEntityTickMode::Always;
+    entity.AddTag(EEntityTag::NoDefeatRewards);
+}
 }
 
 bool CAntKingdomController::ValidatePheromoneGroupCount(const std::string& value)
@@ -42,13 +58,14 @@ bool CAntKingdomController::ValidatePheromoneGroupCount(const std::string& value
 }
 
 CAntKingdomController::CAntKingdomController(CControllerParams params)
-    : CAntHelPvpController(std::move(params))
+    : CAntHelPvpController(params)
 {
     if (params.Contains("pheromone_group_count"))
         m_pheromone_group_count = std::clamp(params.GetInt("pheromone_group_count", 6), 0, kMaxPheromoneGroups);
     else
         m_pheromone_group_count = std::clamp(
             ParseIntDefault(ResolveControllerParamDefault("eou_pheromone_group_count"), 6), 0, kMaxPheromoneGroups);
+    InitializeSlotProxies();
 }
 
 void CAntKingdomController::OnActivate(CGameWorld& world)
@@ -60,9 +77,16 @@ void CAntKingdomController::OnActivate(CGameWorld& world)
     m_wall_board.Reload(world);
     InsertWallsForTerrain(world);
 
+    SpawnInitialFood(world);
+    m_food_replenish_timer = std::max(1.f, game_config::eou_food_replenish_interval);
+}
+
+void CAntKingdomController::InitializeSlotProxies()
+{
     // Skill cards disguised as vanilla petal slots for the client. The build
-    // card mirrors the build mode (Soil = storage, AntEgg = hatchery).
-    if (m_slot_proxy.SlotCount() == 0)
+    // card mirrors the build mode (Soil = storage, AntEgg = worker hatchery,
+    // Stinger = soldier hatchery).
+    if (m_slot_proxy.GetSlotCount() == 0)
     {
         m_slot_proxy.SetSlotCount(3);
         SEouSlotProxySlot& pheromone = m_slot_proxy.Slot(0);
@@ -79,14 +103,11 @@ void CAntKingdomController::OnActivate(CGameWorld& world)
         build_mode.visual_rarity = ERarity::Rare;
     }
 
-    // Neutral starting food: scattered over walkable cells (team 0 = no
-    // owner: either team can harvest it).
-    SpawnInitialFood(world);
 }
 
 void CAntKingdomController::SpawnInitialFood(CGameWorld& world)
 {
-    const int count = std::max(0, game_config::eou_initial_food_count);
+    const int count = std::clamp(game_config::eou_initial_food_count, 0, 128);
     if (count <= 0) return;
 
     const int width = m_wall_board.Width();
@@ -109,6 +130,7 @@ void CAntKingdomController::SpawnInitialFood(CGameWorld& world)
 
 CEntity* CAntKingdomController::SpawnFoodEntity(CGameWorld& world, florrbt::Vector2f pos, float amount, int food_type)
 {
+    if (!std::isfinite(amount) || amount <= 0.f) return nullptr;
     std::unique_ptr<CMobBase> food = CreateMob(ToMobType(EModMobType::EouFood), &world, pos, ERarity::Common);
     if (!food) return nullptr;
     auto* eou_food = dynamic_cast<CEouFoodMob*>(food.get());
@@ -119,12 +141,70 @@ CEntity* CAntKingdomController::SpawnFoodEntity(CGameWorld& world, florrbt::Vect
     }
     eou_food->SetFoodTotal(std::max(0.f, amount));
     eou_food->SetFoodType(food_type);
+    ConfigureColonyEntity(*food);
 
     CEntity* entity = world.InsertEntity(std::move(food));
     if (!entity) return nullptr;
     entity->Team() = 0; // neutral: anybody may harvest
     m_food_entities.emplace(entity->Id(), entity->Generation());
     return entity;
+}
+
+int CAntKingdomController::SpawnColonyFood(CGameWorld& world, const CTeam& team, int count)
+{
+    if (!team.HasHomePos() || !m_wall_board.IsLoaded()) return 0;
+    count = std::clamp(count, 0, 8);
+    const float tile = m_wall_board.TileSize();
+    const float radius = std::max(0.f, game_config::eou_food_mob_radius);
+    const float min_distance = std::max(100.f, game_config::eou_queen_radius + radius + 32.f);
+    const float max_distance = std::max(min_distance, std::min(480.f, game_config::default_horizon * 0.8f));
+    int placed = 0;
+    for (int attempt = 0; attempt < 80 && placed < count; ++attempt)
+    {
+        const float angle = 2.f * game_config::pi * static_cast<float>(attempt) / 17.f;
+        const float distance = min_distance + (max_distance - min_distance) * static_cast<float>(attempt % 5) / 4.f;
+        const florrbt::Vector2f pos = team.HomePos() + florrbt::Vector2f{ std::cos(angle), std::sin(angle) } * distance;
+        bool clear = tile > 0.f;
+        for (int dy = -1; dy <= 1 && clear; ++dy)
+        for (int dx = -1; dx <= 1 && clear; ++dx)
+        {
+            const int row = static_cast<int>(std::floor((pos.y + dy * (radius + 8.f)) / tile));
+            const int col = static_cast<int>(std::floor((pos.x + dx * (radius + 8.f)) / tile));
+            clear = m_wall_board.InBounds(row, col) && !m_wall_board.TileSolid(row, col);
+        }
+        if (!clear || !eou_has_line_of_sight(m_wall_board, team.HomePos(), pos)) continue;
+        for (const auto& [id, generation] : m_food_entities)
+        {
+            const auto* food = world.GetEntity(id, generation);
+            if (food && !food->IsMarkedForDes() && EouDistance(pos, food->Pos()) < radius * 2.f + 40.f)
+            { clear = false; break; }
+        }
+        if (clear && SpawnFoodEntity(world, pos, game_config::eou_initial_food_amount, 0)) ++placed;
+    }
+    return placed;
+}
+
+void CAntKingdomController::ReplenishFood(CGameWorld& world)
+{
+    std::erase_if(m_food_entities, [&world](const auto& entry) {
+        auto* food = dynamic_cast<CEouFoodMob*>(world.GetEntity(entry.first, entry.second));
+        return !food || food->IsMarkedForDes() || food->IsDead() || food->RemainingFood() <= 0.f;
+    });
+    const int near_cap = std::clamp(game_config::eou_colony_food_count, 0, 8);
+    const size_t total_cap = static_cast<size_t>(std::clamp(game_config::eou_initial_food_count, 0, 128)) +
+                             m_teams.size() * static_cast<size_t>(near_cap);
+    for (const auto& [team_id, team] : m_teams)
+    {
+        if (m_food_entities.size() >= total_cap) break;
+        int nearby = 0;
+        for (const auto& [id, generation] : m_food_entities)
+        {
+            const auto* food = world.GetEntity(id, generation);
+            if (food && EouDistance(team.HomePos(), food->Pos()) <= std::max(512.f, game_config::default_horizon) &&
+                eou_has_line_of_sight(m_wall_board, team.HomePos(), food->Pos())) ++nearby;
+        }
+        if (nearby < near_cap) SpawnColonyFood(world, team, 1);
+    }
 }
 
 void CAntKingdomController::OnMobDefeated(CGameWorld& world, CMobBase& mob)
@@ -150,6 +230,11 @@ void CAntKingdomController::OnMobDefeated(CGameWorld& world, CMobBase& mob)
 
 void CAntKingdomController::OnEntityRemoved(CGameWorld& world, CEntity& entity, EEntityRemovalReason reason)
 {
+    if (auto* cell = dynamic_cast<CEouCellMob*>(&entity))
+    {
+        ReleaseCellContents(world, *cell);
+        if (CTeam* team = FindTeam(cell->TeamId())) team->RemoveCell(world, *cell);
+    }
     if (const auto it = m_food_entities.find(entity.Id());
         it != m_food_entities.end() && it->second == entity.Generation())
         m_food_entities.erase(it);
@@ -163,6 +248,12 @@ void CAntKingdomController::OnTick(CGameWorld& world, float dt)
     // After a hot-reload restore the world's map (and wall grid) is rebuilt:
     // lazily rebuild the board and replay its recorded cells/removals.
     if (!m_wall_board.IsLoaded()) m_wall_board.Reload(world);
+    m_food_replenish_timer -= dt;
+    if (m_food_replenish_timer <= 0.f)
+    {
+        m_food_replenish_timer = std::max(1.f, game_config::eou_food_replenish_interval);
+        if (game_config::eou_food_replenish_interval > 0.f) ReplenishFood(world);
+    }
 
     for (auto& [team_id, team] : m_teams)
     {
@@ -188,6 +279,12 @@ void CAntKingdomController::OnPlayerEnteredWorld(CGameWorld& world, CPlayer& pla
 
     // A match team gets its eou team (owning its pheromone groups).
     const int team_id = PlayerTeam(player.GetId());
+    if (HasMatchTeam(player.GetId()))
+    {
+        m_team_slot_proxies.try_emplace(team_id, m_slot_proxy);
+        SyncBuildModeCard(team_id);
+        if (auto* flower = dynamic_cast<CPlayerFlower*>(player.GetEntity())) EquipPheromonePetals(*flower);
+    }
     if (HasMatchTeam(player.GetId()) && m_teams.find(team_id) == m_teams.end())
     {
         m_teams.emplace(team_id, CTeam(team_id, m_wall_board));
@@ -200,7 +297,9 @@ void CAntKingdomController::OnPlayerEnteredWorld(CGameWorld& world, CPlayer& pla
         // and workers ferry food here. Home must exist before the workers
         // spawn so adoption hands them the right ferry point.
         if (!team.HasHomePos()) team.SetHomePos(origin);
+        team.DepositFood(game_config::eou_initial_stash);
         SpawnQueen(world, team, origin);
+        SpawnColonyFood(world, team, game_config::eou_colony_food_count);
         const int workers = std::max(0, game_config::eou_initial_worker_count);
         for (int i = 0; i < workers; ++i)
             SpawnEouMob(world, team_id, ToMobType(EModMobType::EouWorker), origin);
@@ -209,6 +308,7 @@ void CAntKingdomController::OnPlayerEnteredWorld(CGameWorld& world, CPlayer& pla
                                     std::to_string(m_pheromone_group_count) + " pheromone groups, " +
                                     std::to_string(workers) + " workers and a queen");
     }
+    SendSystemMessage(world, player, "EOU: /colony = food/army status; /colony help = controls. Collect food, build nurseries, protect your queen.");
 }
 
 void CAntKingdomController::OnPlayerLeftWorld(CGameWorld& world, CPlayer& player)
@@ -221,6 +321,7 @@ void CAntKingdomController::OnPlayerLeftWorld(CGameWorld& world, CPlayer& player
         it->second.Dissolve(world);
         m_teams.erase(it);
         m_team_build_type.erase(team_id);
+        m_team_slot_proxies.erase(team_id);
         LOG_INFO("ant_kingdom", "team " + std::to_string(team_id) + " dissolved");
     }
     CAntHelPvpController::OnPlayerLeftWorld(world, player);
@@ -238,15 +339,30 @@ bool CAntKingdomController::HandlePlayerCommand(CGameWorld& world, CPlayer& play
         if (name == "mark_wall") return HandleMarkWallCommand(world, player, args);
         if (name == "pheromone") return HandlePheromoneCommand(world, player, args);
         if (name == "build") return HandleBuildCommand(world, player, args);
+        if (name == "colony" || name == "food") return HandleColonyCommand(world, player, args);
     }
     return COpenController::HandlePlayerCommand(world, player, args);
 }
 
-ECouCellType CAntKingdomController::TeamBuildType(int team_id) const
+EEouBuildMode CAntKingdomController::TeamBuildMode(int team_id) const
 {
     const auto it = m_team_build_type.find(team_id);
-    return it == m_team_build_type.end() ? ECouCellType::Storage : it->second;
+    return it == m_team_build_type.end() ? EEouBuildMode::Storage : it->second;
 }
+
+namespace
+{
+const char* EouBuildModeName(EEouBuildMode mode)
+{
+    switch (mode)
+    {
+    case EEouBuildMode::WorkerHatchery: return "worker hatchery";
+    case EEouBuildMode::SoldierHatchery: return "soldier hatchery";
+    case EEouBuildMode::Storage: break;
+    }
+    return "storage";
+}
+} // namespace
 
 bool CAntKingdomController::HandleBuildCommand(CGameWorld& world, CPlayer& player,
                                                const std::vector<std::string>& args)
@@ -258,15 +374,11 @@ bool CAntKingdomController::HandleBuildCommand(CGameWorld& world, CPlayer& playe
     }
     const int team_id = PlayerTeam(player.GetId());
 
-    const auto type_name = [](ECouCellType type) {
-        return type == ECouCellType::Hatchery ? "hatchery" : "storage";
-    };
-
     if (args.size() < 2)
     {
         SendSystemMessage(world, player,
-                          std::string("build: current mode is ") + type_name(TeamBuildType(team_id)) +
-                              " - usage /build storage|hatchery (defend-throw a pheromone petal to build)");
+                          std::string("build: current mode is ") + EouBuildModeName(TeamBuildMode(team_id)) +
+                              " - usage /build storage|worker|soldier (defend-throw a pheromone petal to build)");
         return true;
     }
 
@@ -274,33 +386,115 @@ bool CAntKingdomController::HandleBuildCommand(CGameWorld& world, CPlayer& playe
     std::transform(mode.begin(), mode.end(), mode.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     if (mode == "storage" || mode == "s")
-        m_team_build_type[team_id] = ECouCellType::Storage;
-    else if (mode == "hatchery" || mode == "h")
-        m_team_build_type[team_id] = ECouCellType::Hatchery;
+        m_team_build_type[team_id] = EEouBuildMode::Storage;
+    else if (mode == "worker" || mode == "w" || mode == "hatchery" || mode == "h")
+        m_team_build_type[team_id] = EEouBuildMode::WorkerHatchery;
+    else if (mode == "soldier" || mode == "sol")
+        m_team_build_type[team_id] = EEouBuildMode::SoldierHatchery;
     else
     {
-        SendSystemMessage(world, player, "build: usage /build storage|hatchery");
+        SendSystemMessage(world, player, "build: usage /build storage|worker|soldier");
         return true;
     }
-    SyncBuildModeCard();
+    SyncBuildModeCard(team_id);
+    if (CGameContext* context = world.GameContext()) context->Network().QueueOwnerStateUpdate(player);
+    const EEouBuildMode chosen = TeamBuildMode(team_id);
+    const float cost = chosen == EEouBuildMode::SoldierHatchery ? game_config::eou_soldier_cell_build_cost
+                       : chosen == EEouBuildMode::WorkerHatchery ? game_config::eou_worker_cell_build_cost
+                                                                 : game_config::eou_storage_build_cost;
     SendSystemMessage(world, player,
-                      std::string("build: mode set to ") + type_name(TeamBuildType(team_id)));
+                      std::string("build: mode set to ") + EouBuildModeName(chosen) + " (costs " +
+                          std::to_string(static_cast<int>(std::lround(cost))) + " food)");
     return true;
 }
 
-void CAntKingdomController::SyncBuildModeCard()
+// `/colony` (alias `/food`): the colony readout. Without a HUD this is the
+// only way to see the food economy, so it reports stock, nurseries and the
+// live population in one message.
+bool CAntKingdomController::HandleColonyCommand(CGameWorld& world, CPlayer& player,
+                                                const std::vector<std::string>& args)
 {
-    if (m_slot_proxy.SlotCount() <= 2) return;
-    // The card can only show one team's mode; with the two-player room both
-    // players share the display, so it mirrors the most recent /build.
-    ECouCellType shown = ECouCellType::Storage;
-    for (const auto& [team_id, type] : m_team_build_type)
+    (void)args;
+    if (!HasMatchTeam(player.GetId()))
     {
-        (void)team_id;
-        shown = type;
+        SendSystemMessage(world, player, "colony: only players with a match team have a colony");
+        return true;
     }
-    SEouSlotProxySlot& card = m_slot_proxy.Slot(2);
-    card.visual_petal_type = shown == ECouCellType::Hatchery ? EPetalType::AntEgg : EPetalType::Soil;
+    CTeam* team = FindTeam(PlayerTeam(player.GetId()));
+    if (!team)
+    {
+        SendSystemMessage(world, player, "colony: no colony yet");
+        return true;
+    }
+
+    int storage_cells = 0;
+    int worker_cells = 0;
+    int soldier_cells = 0;
+    int eggs = 0;
+    int grown_eggs = 0;
+    for (const SEouEntityHandle& handle : team->Cells().AllCells())
+    {
+        auto* cell = dynamic_cast<CEouCellMob*>(world.GetEntity(handle.id, handle.generation));
+        if (!cell || cell->IsMarkedForDes() || cell->IsDead()) continue;
+        if (cell->CellType() == ECouCellType::Storage) ++storage_cells;
+        else if (cell->EggType() == ToMobType(EModMobType::EouSoldier)) ++soldier_cells;
+        else ++worker_cells;
+        if (!cell->HasEgg()) continue;
+        auto* egg = dynamic_cast<CEouEggMob*>(world.GetEntity(cell->EggId(), cell->EggGeneration()));
+        if (!egg || egg->IsMarkedForDes()) continue;
+        ++eggs;
+        if (egg->Grown()) ++grown_eggs;
+    }
+
+    // Population: ants counted from the world (group membership can lag a
+    // tick behind a hatch), carried cargo included so ferried food is visible.
+    int workers = 0;
+    int soldiers = 0;
+    float carried = 0.f;
+    const int team_id = team->TeamId();
+    world.ForEachEntity([&](CEntity* entity) {
+        auto* mob = dynamic_cast<CMobBase*>(entity);
+        if (!mob || mob->IsMarkedForDes() || mob->IsDead() || mob->Team() != team_id) return;
+        if (const auto* eou = dynamic_cast<const IEouMob*>(entity)) carried += eou->EouCarry();
+        if (mob->GetMobType() == ToMobType(EModMobType::EouSoldier)) ++soldiers;
+        else if (mob->GetMobType() == ToMobType(EModMobType::EouWorker)) ++workers;
+    });
+
+    const auto round1 = [](float value) {
+        return std::to_string(static_cast<int>(std::lround(value)));
+    };
+    SendSystemMessage(world, player,
+                      "colony: food " + round1(team->StorageFoodTotal(world)) + "/" +
+                          round1(team->FoodCapacity(world)) + " (stash " + round1(team->StashFood()) +
+                          ", carried " + round1(carried) + ")");
+    SendSystemMessage(world, player,
+                      "colony: cells storage " + std::to_string(storage_cells) + ", worker " +
+                          std::to_string(worker_cells) + ", soldier " + std::to_string(soldier_cells) +
+                          " | eggs " + std::to_string(eggs) + " (" + std::to_string(grown_eggs) +
+                          " waiting on food)");
+    SendSystemMessage(world, player,
+                      "colony: ants worker " + std::to_string(workers) + ", soldier " +
+                          std::to_string(soldiers) + " | hatch cost worker " +
+                          round1(game_config::eou_egg_hatch_food_cost) + ", soldier " +
+                          round1(game_config::eou_soldier_hatch_food_cost));
+    return true;
+}
+
+const CEouSlotProxy* CAntKingdomController::SlotProxy(int team_id) const
+{
+    const auto it = m_team_slot_proxies.find(team_id);
+    return it == m_team_slot_proxies.end() ? nullptr : &it->second;
+}
+
+void CAntKingdomController::SyncBuildModeCard(int team_id)
+{
+    auto it = m_team_slot_proxies.find(team_id);
+    if (it == m_team_slot_proxies.end() || it->second.GetSlotCount() <= 2) return;
+    const EEouBuildMode shown = TeamBuildMode(team_id);
+    SEouSlotProxySlot& card = it->second.Slot(2);
+    card.visual_petal_type = shown == EEouBuildMode::SoldierHatchery ? EPetalType::Stinger
+                             : shown == EEouBuildMode::WorkerHatchery ? EPetalType::AntEgg
+                                                                      : EPetalType::Soil;
 }
 
 bool CAntKingdomController::WorkerDigWall(CGameWorld& world, int team, florrbt::Vector2f pos)
@@ -337,6 +531,7 @@ void CAntKingdomController::AdoptEouMob(CGameWorld& world, CTeam& team, CEntity&
 {
     (void)world;
     entity.Team() = team.TeamId();
+    ConfigureColonyEntity(entity);
     // Workers know where to ferry food: the team's home (the queen's spot).
     if (auto* eou = dynamic_cast<IEouMob*>(&entity))
         if (team.HasHomePos()) eou->SetHomePos(team.HomePos());
@@ -374,6 +569,7 @@ CEntity* CAntKingdomController::SpawnQueen(CGameWorld& world, CTeam& team, florr
     CEntity* entity = world.InsertEntity(std::move(queen_mob));
     if (!entity) return nullptr;
     entity->Team() = team.TeamId();
+    ConfigureColonyEntity(*entity);
     team.SetQueen({ entity->Id(), entity->Generation() });
     LOG_INFO("ant_kingdom", "team " + std::to_string(team.TeamId()) + " queen spawned at " +
                                 std::to_string(pos.x) + "," + std::to_string(pos.y));
@@ -476,9 +672,9 @@ bool CAntKingdomController::HandleMarkWallCommand(CGameWorld& world, CPlayer& pl
         SendSystemMessage(world, player, "mark_wall: flagged [" + std::to_string(target_col) + "," +
                                              std::to_string(target_row) + "] for team " + std::to_string(team));
     }
-    if (m_slot_proxy.SlotCount() > 1)
+    if (auto it = m_team_slot_proxies.find(team); it != m_team_slot_proxies.end())
     {
-        SEouSlotProxySlot& slot = m_slot_proxy.Slot(1);
+        SEouSlotProxySlot& slot = it->second.Slot(1);
         slot.cooldown_progress = 0.f;
         slot.available = false;
     }
@@ -534,9 +730,9 @@ bool CAntKingdomController::HandlePheromoneCommand(CGameWorld& world, CPlayer& p
     CEouPheromoneGroup* group = team->GroupCount() > 0 ? team->FindGroup(1) : nullptr;
     if (!group) group = team->CreateGroup(target);
     else group->SetPheromoneTarget(target);
-    if (m_slot_proxy.SlotCount() > 0)
+    if (auto it = m_team_slot_proxies.find(team_id); it != m_team_slot_proxies.end())
     {
-        SEouSlotProxySlot& slot = m_slot_proxy.Slot(0);
+        SEouSlotProxySlot& slot = it->second.Slot(0);
         slot.cooldown_progress = 0.f;
         slot.available = false;
     }
@@ -547,9 +743,10 @@ bool CAntKingdomController::HandlePheromoneCommand(CGameWorld& world, CPlayer& p
 
 void CAntKingdomController::TickSlotProxies(float dt)
 {
-    for (int i = 0; i < m_slot_proxy.SlotCount(); ++i)
+    for (auto& [team_id, proxy] : m_team_slot_proxies)
+    for (int i = 0; i < proxy.GetSlotCount(); ++i)
     {
-        SEouSlotProxySlot& slot = m_slot_proxy.Slot(i);
+        SEouSlotProxySlot& slot = proxy.Slot(i);
         if (slot.available) continue;
         const float duration = slot.skill_id == kEouSlotPheromone ? kEouPheromoneCooldown : kEouMarkWallCooldown;
         slot.cooldown_progress = std::min(1.f, slot.cooldown_progress + dt / std::max(duration, 0.001f));
@@ -566,7 +763,6 @@ void CAntKingdomController::EquipPheromonePetals(CPlayerFlower& flower)
     const CPetalPrototype* proto = FindPetalPrototype(ToPetalType(EModPetalType::EouPheromone));
     if (!proto) return;
     const int count = m_pheromone_group_count;
-    if (count <= 0) return;
 
     // Slot 0 stays reserved (empty / proxy skill card); slots 1..N carry the
     // pheromone petals in rarity order Common..Mythic (then Ultra/Super/
@@ -581,7 +777,12 @@ void CAntKingdomController::EquipPheromonePetals(CPlayerFlower& flower)
     flower.SetPetalSlotCapacity(count + 3);
     flower.SetPetalSlotCount(count + 3);
     for (int i = 1; i <= count; ++i)
-        flower.LoadPetalSlot(i, proto, kPheromoneRarities[i - 1]);
+    {
+        const auto& slot = flower.GetSlots()[i];
+        if (slot.m_p_proto != proto || slot.m_stored_rarity != kPheromoneRarities[i - 1] ||
+            slot.m_banned || !slot.m_available)
+            flower.LoadPetalSlot(i, proto, kPheromoneRarities[i - 1]);
+    }
 }
 
 void CAntKingdomController::OnPheromonePetalStopped(CGameWorld& world, int team_id, int group_id,
@@ -619,21 +820,46 @@ void CAntKingdomController::OnPheromonePetalStopped(CGameWorld& world, int team_
         // Snap to the cell center so the grid connectivity reads cleanly.
         if (m_wall_board.InBounds(row, col)) pos = m_wall_board.CellCenter(row, col);
     }
-    const ECouCellType build_type = TeamBuildType(team_id);
-    const EMobType egg_type = build_type == ECouCellType::Hatchery ? ToMobType(EModMobType::EouWorker) : EMobType::None;
-    if (SpawnCellEntity(world, team_id, build_type, pos, egg_type) != nullptr)
+    const EEouBuildMode build_mode = TeamBuildMode(team_id);
+    // Cell count is capped so a colony cannot carpet the map with nurseries.
+    if (static_cast<int>(team->Cells().AllCells().size()) >= std::max(1, game_config::eou_max_cells_per_team))
+    {
+        SendTeamMessage(world, team_id, "cell limit reached - demolish one first");
+        return;
+    }
+    const ECouCellType build_type =
+        build_mode == EEouBuildMode::Storage ? ECouCellType::Storage : ECouCellType::Hatchery;
+    const EMobType egg_type = build_mode == EEouBuildMode::SoldierHatchery ? ToMobType(EModMobType::EouSoldier)
+                              : build_mode == EEouBuildMode::WorkerHatchery ? ToMobType(EModMobType::EouWorker)
+                                                                            : EMobType::None;
+    // Building costs food (soldier nurseries cost the most). Payment is
+    // atomic: it only leaves the stores once the cell actually exists.
+    const float cost = build_mode == EEouBuildMode::SoldierHatchery ? game_config::eou_soldier_cell_build_cost
+                       : build_mode == EEouBuildMode::WorkerHatchery ? game_config::eou_worker_cell_build_cost
+                                                                     : game_config::eou_storage_build_cost;
+    if (!team->TryConsumeFood(world, std::max(0.f, cost)))
+    {
         SendTeamMessage(world, team_id,
-                        build_type == ECouCellType::Hatchery ? "hatchery built" : "storage built");
+                        std::string(EouBuildModeName(build_mode)) + " needs " +
+                            std::to_string(static_cast<int>(std::lround(cost))) + " food");
+        return;
+    }
+    if (SpawnCellEntity(world, team_id, build_type, pos, egg_type) != nullptr)
+        SendTeamMessage(world, team_id, std::string(EouBuildModeName(build_mode)) + " built");
+    else
+        team->RefundFood(world, std::max(0.f, cost));
 }
 
-void CAntKingdomController::DepositWorkerFood(CGameWorld& world, int team_id, florrbt::Vector2f pos, float amount)
+float CAntKingdomController::DepositWorkerFood(CGameWorld& world, int team_id, florrbt::Vector2f pos, float amount)
 {
     CTeam* team = FindTeam(team_id);
-    if (!team || amount <= 0.f) return;
+    if (!team || amount <= 0.f) return 0.f;
     // Storage cells first; whatever they cannot take (no cells yet, or the
-    // nearest is full) lands on the queen's stash so no carried food is lost.
+    // nearest is full) lands on the queen's stash. Both are capped, so the
+    // worker keeps whatever neither could accept and retries later.
     const float stored = team->DepositToNearestStorage(world, pos, amount);
-    if (stored < amount) team->DepositFood(amount - stored);
+    const float stashed = stored < amount ? team->DepositFood(amount - stored) : 0.f;
+    return stored + stashed;
 }
 
 std::vector<SControllerParamInfo> CAntKingdomController::ParamSchema() const
@@ -700,7 +926,7 @@ void CAntKingdomController::CaptureSnapshot(CSnapshotWriter& writer) const
         team.CaptureSnapshot(team_writer);
         writer.Node("eou_team_" + std::to_string(team_id), team_object.release());
         writer.Field("eou_build_type_" + std::to_string(team_id),
-                     static_cast<int>(TeamBuildType(team_id)));
+                     static_cast<int>(TeamBuildMode(team_id)));
         ++index;
     }
 }
@@ -728,15 +954,64 @@ bool CAntKingdomController::RestoreSnapshot(const CSnapshotReader& reader, std::
         auto team = std::make_unique<CTeam>(team_id, m_wall_board);
         if (!team->RestoreSnapshot(team_reader, version, error)) return false;
         m_teams.emplace(team_id, std::move(*team));
-        const int build_type = reader.Int("eou_build_type_" + std::to_string(team_id),
-                                          static_cast<int>(ECouCellType::Storage));
-        m_team_build_type[team_id] =
-            build_type == static_cast<int>(ECouCellType::Hatchery) ? ECouCellType::Hatchery
-                                                                   : ECouCellType::Storage;
+        // Old snapshots stored ECouCellType (0 storage / 1 hatchery); the
+        // build-mode values keep those meanings (1 = worker hatchery).
+        const int build_mode = reader.Int("eou_build_type_" + std::to_string(team_id),
+                                          static_cast<int>(EEouBuildMode::Storage));
+        m_team_build_type[team_id] = build_mode == static_cast<int>(EEouBuildMode::SoldierHatchery)
+                                         ? EEouBuildMode::SoldierHatchery
+                                     : build_mode == static_cast<int>(EEouBuildMode::WorkerHatchery)
+                                         ? EEouBuildMode::WorkerHatchery
+                                         : EEouBuildMode::Storage;
     }
-    SyncBuildModeCard();
+    m_team_slot_proxies.clear();
+    for (const auto& [team_id, team] : m_teams)
+    {
+        m_team_slot_proxies.emplace(team_id, m_slot_proxy);
+        SyncBuildModeCard(team_id);
+    }
     return true;
 }
+
+bool CAntKingdomController::ResolveReferences(CGameWorld& world, const IGameWorldResolver&, std::string& error)
+{
+    (void)error;
+    // The neutral food index holds {id, generation} handles that only make
+    // sense against live entities, so it is deliberately not snapshotted:
+    // after a restore we rebuild it by scanning the world once. Without this
+    // the replenisher would see an empty field and re-seed on top of the
+    // food that actually survived.
+    m_food_entities.clear();
+    world.ForEachEntity([&](CEntity* entity) {
+        const auto* food = dynamic_cast<const CEouFoodMob*>(entity);
+        if (!food || food->IsMarkedForDes() || food->IsDead()) return;
+        m_food_entities.emplace(entity->Id(), entity->Generation());
+    });
+    return true;
+}
+
+// A cell is going away (demolished, despawned or dissolved): its egg dies
+// with it and its stored food returns to the team so a rebuild does not
+// silently burn the colony's reserves.
+void CAntKingdomController::ReleaseCellContents(CGameWorld& world, CEouCellMob& cell)
+{
+    if (cell.HasEgg())
+    {
+        if (CEntity* egg = world.GetEntity(cell.EggId(), cell.EggGeneration()))
+            egg->MarkForDestroy(EEntityRemovalReason::Despawned);
+        cell.ClearEgg();
+    }
+    // The bound ant outlives its nursery; it just loses its tile binding.
+    cell.ClearBoundAnt();
+
+    const float stored = cell.StoredFood();
+    if (stored <= 0.f) return;
+    cell.TakeFood(stored);
+    // Hand it back through the team so remaining storage cells get first
+    // refusal and only the overflow lands in the queen's stash.
+    if (CTeam* team = FindTeam(cell.TeamId())) team->RefundFood(world, stored);
+}
+
 CEntity* CAntKingdomController::SpawnCellEntity(CGameWorld& world, int team_id, ECouCellType type,
                                                 florrbt::Vector2f pos, EMobType egg_type)
 {
@@ -809,7 +1084,6 @@ CEntity* CAntKingdomController::SpawnOrStandbyEgg(CGameWorld& world, CEouCellMob
 
 void CAntKingdomController::TickTeamCells(CGameWorld& world, CTeam& team, float dt)
 {
-    (void)dt;
     const int team_id = team.TeamId();
     for (const SEouEntityHandle& handle : team.Cells().AllCells())
     {
@@ -818,6 +1092,17 @@ void CAntKingdomController::TickTeamCells(CGameWorld& world, CTeam& team, float 
         if (!cell) continue;
 
         if (cell->EggType() == EMobType::None) continue; // storage cells
+
+        // One tile, one ant (the EotU rule): while the tile's bound ant is
+        // alive no egg is laid; its death starts the respawn cycle (retry
+        // timer -> egg -> grow -> hatch for the food cost).
+        if (cell->HasBoundAnt())
+        {
+            CEntity* ant_entity = world.GetEntity(cell->BoundAntId(), cell->BoundAntGeneration());
+            auto* ant = dynamic_cast<CMobBase*>(ant_entity);
+            if (ant && !ant->IsMarkedForDes() && !ant->IsDead()) continue;
+            cell->ClearBoundAnt();
+        }
 
         // Hatchery: keep an egg alive.
         CEouEggMob* egg = nullptr;
@@ -843,23 +1128,31 @@ void CAntKingdomController::TickTeamCells(CGameWorld& world, CTeam& team, float 
             continue;
         }
 
-        // Egg grown? Hatch once the team can pay the food cost.
+        // Egg grown? Hatch once the team can pay the food cost (soldiers
+        // cost more than workers).
         if (!egg->Grown()) continue;
-        const float cost = game_config::eou_egg_hatch_food_cost;
-        if (team.TryConsumeFood(world, cost))
+        const bool soldier = egg->HatchType() == ToMobType(EModMobType::EouSoldier);
+        const float cost = soldier ? game_config::eou_soldier_hatch_food_cost
+                                   : game_config::eou_egg_hatch_food_cost;
+        if (!team.TryConsumeFood(world, cost)) continue;
+
+        // Payment is only final once the ant exists: a factory/insertion
+        // failure refunds the food and keeps the egg for the next tick.
+        std::unique_ptr<CMobBase> hatch = CreateMob(egg->HatchType(), &world, egg->Pos(), ERarity::Common);
+        CEntity* hatched = hatch ? world.InsertEntity(std::move(hatch)) : nullptr;
+        if (!hatched)
         {
-            std::unique_ptr<CMobBase> hatch = CreateMob(egg->HatchType(), &world, egg->Pos(), ERarity::Common);
-            if (hatch)
-            {
-                // Adoption gives the hatchling its colony: team, home point
-                // and primary-group membership (which wires the path board).
-                if (CEntity* hatched = world.InsertEntity(std::move(hatch)))
-                    AdoptEouMob(world, team, *hatched);
-            }
-            SendTeamMessage(world, team_id, "egg hatched");
-            cell->ClearEgg();
-            egg->MarkForDestroy(EEntityRemovalReason::Despawned);
+            team.RefundFood(world, cost);
+            continue;
         }
+        // Adoption gives the hatchling its colony: team, home point and
+        // primary-group membership (which wires the path board). The tile
+        // binds its ant: no new egg until this one dies.
+        AdoptEouMob(world, team, *hatched);
+        cell->SetBoundAnt(hatched->Id(), hatched->Generation());
+        SendTeamMessage(world, team_id, soldier ? "soldier hatched" : "worker hatched");
+        cell->ClearEgg();
+        egg->MarkForDestroy(EEntityRemovalReason::Despawned);
     }
 }
 

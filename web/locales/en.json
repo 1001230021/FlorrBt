@@ -5,6 +5,11 @@
     "name": "English"
   },
   "ui": {
+    "slotCounter": {
+      "live": "Live value: {value}",
+      "inactive": "Inactive petal: no live charges",
+      "pending": "Waiting for the server value"
+    },
     "loading": "Loading...",
     "canvas": {
       "ariaLabel": "FlorrBt game"
@@ -34,7 +39,9 @@
       "collected": "Collected this run",
       "collectedAriaLabel": "Collected petals",
       "reviveNote": "You'll be revived soon.",
-      "revive": "Revive",
+      "revive": "Continue",
+      "returning": "Returning…",
+      "portrait": "Your defeated flower and equipped petals",
       "close": "Close"
     },
     "quick": {
@@ -48,8 +55,8 @@
       "craftTitle": "Craft [C]",
       "settings": "Settings",
       "settingsTitle": "Settings [Esc]",
-      "bestiary": "Bestiary",
-      "bestiaryTitle": "Bestiary"
+      "bestiary": "Mob Gallery",
+      "bestiaryTitle": "Mob Gallery"
     },
     "chat": {
       "ariaLabel": "Chat",
@@ -82,7 +89,9 @@
       "helpPrefix": "Help: {text}",
       "usage": "Usage: {name} {params}",
       "help": {
+        "devDebug": "Open the independent world debug workspace after RCON authorization",
         "version": "Show the client version",
+        "clear": "Clear the F1 console backlog",
         "language": "List or change the display language",
         "say": "Send a chat message on the given channel",
         "g": "Send a global chat message",
@@ -103,12 +112,18 @@
         "unbind": "Remove a key or mouse button binding",
         "unbindall": "Remove every binding on a device",
         "render_scale": "Show or set the render resolution scale",
+        "view_zoom": "Show or set the in-game view zoom percentage",
         "bench": "Run the render benchmark on the login screen",
         "freeze_log": "List recent freeze watchdog events (client stalls / server gaps)",
         "reset": "Reset client config, key bindings or settings"
       }
     },
     "settings": {
+      "tabs": { "game": "Game", "graphics": "Graphics", "controls": "Controls" },
+      "damageNumbers": "Show damage numbers",
+      "screenShake": "Screen shake",
+      "liveIcons": "Live slot icons",
+      "movementArrow": "Mouse movement guide",
       "title": "Settings",
       "close": "Close settings",
       "language": "Language",
@@ -125,6 +140,8 @@
       "emailNotBound": "Not bound",
       "fullscreen": "Fullscreen",
       "renderScale": "Render resolution",
+      "viewZoom": "View zoom",
+      "autoRegister": "Auto-register with empty-password login",
       "renderScaleModes": {
         "auto": "Auto",
         "native": "Native"
@@ -142,6 +159,7 @@
       "slotsAriaLabel": "Craft slots",
       "once": "Craft",
       "instruction": "Combine 5 of the same petal to craft an upgrade",
+      "failureHint": "Failure consumes some of the selected petals",
       "slot": "Craft slot",
       "successChance": "{chance} success chance",
       "working": "Crafting...",
@@ -162,7 +180,16 @@
     "talents": {
       "title": "Talents",
       "close": "Close talents",
-      "points": "Talent Points: {count}",
+      "points": "{count} TP",
+      "center": "Center",
+      "panHint": "Drag to explore · Scroll to zoom · Hold a node",
+      "reset": "Reset",
+      "resetConfirm": "Confirm reset",
+      "pending": "Waiting for server confirmation…",
+      "requestFailed": "No confirmation received. Check your connection and try again.",
+      "insufficient": "Not enough talent points for this upgrade path.",
+      "learnCost": "Hold to learn this path ({count} upgrades, {cost} TP in total).",
+      "removeRefund": "Hold to remove this talent and its dependent upgrades. Refund: {cost} TP.",
       "holdRemove": "Hold to remove {name}",
       "holdLearn": "Hold to learn {names} ({cost} TP)",
       "cost": "{cost} TP",
@@ -253,10 +280,28 @@
       "defendLabel": "B",
       "defend": "Defend",
       "swapLabel": "X",
-      "swap": "Quick Swap"
+      "swap": "Swap all primary and reserve petals",
+      "menu": "Menu",
+      "bestiary": "Bestiary",
+      "map": "Map",
+      "console": "Console",
+      "fullscreen": "Fullscreen",
+      "moveHint": "Drag to move",
+      "toggleReserve": "Show or hide reserve petals",
+      "changeChannel": "Change chat channel",
+      "send": "Send",
+      "slotActions": "Petal slot actions",
+      "slotSwap": "Swap this slot",
+      "zoomIn": "Zoom in on talents",
+      "zoomOut": "Zoom out on talents",
+      "close": "Close",
+      "viewMore": "Wider view",
+      "viewLess": "Closer view",
+      "unequip": "Unequip",
+      "cancel": "Cancel"
     },
     "codex": {
-      "title": "Bestiary",
+      "title": "Mob Gallery",
       "close": "Close bestiary"
     }
   },
@@ -361,6 +406,11 @@
     "renderScale": {
       "current": "Render scale: {mode} (effective {dpr}x)",
       "changed": "Render scale set to {mode} (effective {dpr}x)"
+    },
+    "viewZoom": {
+      "current": "View zoom: {percent}% (wheel up shrinks the view)",
+      "changed": "View zoom set to {percent}%",
+      "invalid": "Invalid view zoom percentage: {value}"
     },
     "bench": {
       "alreadyRunning": "A benchmark is already running",
@@ -517,6 +567,25 @@
     }
   },
   "talents": {
+    "effects": {
+      "health": "Increases the flower's maximum health.",
+      "movement": "Increases the flower's movement speed.",
+      "sharp_edges": "Increases body contact damage.",
+      "body_toxicity": "Body contact inflicts poison damage.",
+      "petal_health": "Increases petal durability.",
+      "reload": "Reduces petal reload time and the minimum swap cooldown.",
+      "rotation": "Increases the petals' orbit rotation speed.",
+      "loadout": "Unlocks additional petal slots.",
+      "antennae": "Extends vision when this upgrade exceeds your current vision bonus.",
+      "reach": "Extends petal attack reach.",
+      "duplicator": "Adds copies to eligible petals; higher tiers also affect the leftmost slot.",
+      "magnetism": "Extends the range for collecting drops.",
+      "medic": "Improves healing from petals.",
+      "summoner": "Increases summoned creatures' health.",
+      "second_chance": "Provides a second chance against lethal damage, subject to its cooldown.",
+      "poison": "Increases poison damage.",
+      "concentrated_poison": "Concentrates poison into stronger damage over a shorter duration."
+    },
     "groups": {
       "flower": "Flower",
       "petals": "Petals",
@@ -599,5 +668,14 @@
       "titan": "The Titan, one of the strongest beings.",
       "firefly": "A firefly that retaliates with chain lightning when attacked."
     }
+  },
+  "maps": {
+    "garden": "Garden",
+    "ant_hel": "Ant Hell",
+    "eou_small": "Ant Kingdom",
+    "training_grounds": "Training Grounds",
+    "waiting_room": "Waiting Room",
+    "garden_walltest": "Garden (Wall Test)",
+    "test": "Test"
   }
 }

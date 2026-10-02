@@ -1,12 +1,13 @@
 import { clamp } from "./protocol.js";
-import { dom, state } from "./app_context.js";
+import { dom, state as appState } from "./app_context.js";
 import { clientRuntimeConfig } from "./client_config.js";
 import { t } from "./i18n.js";
+import { createMapChunkCache } from "./map_chunk_cache.js";
+import { loadVisualImage, whenVisualReady } from "./visual_assets.js";
 
-const mapChunkTileSpan = 4;
-const mapChunkCacheLimit = 192;
-const mapPrewarmBudgetMs = 8;
+const mapPrewarmBudgetMs = 1.5;
 const mapOverviewMaxDimensionPx = 2048;
+const mapTransitionDurationMs = 360;
 const {
   minimapTileSubdivisions,
   minimapTextureSampleSizePx,
@@ -40,6 +41,7 @@ const manualMinimapTileMatrices = Object.freeze({
 
 export function createMapRenderer({
   ctx = dom.ctx,
+  state = appState,
   defaultMapName = "garden.tmj",
   addConsoleLine = () => {},
   requestDraw = () => {},
@@ -47,6 +49,9 @@ export function createMapRenderer({
   worldScale,
   worldToScreen,
 } = {}) {
+  let mapTransition = null;
+  let transitionCanvas = null;
+
   async function loadMap(mapName) {
     const path = normalizeMapPath(mapName);
     if (!path) return null;
@@ -89,6 +94,7 @@ export function createMapRenderer({
       const minimapTileDefinitions = new Map();
       const collisionDefs = new Map();
       const tileLoadPromises = [];
+      const failedTiles = [];
       for (const tilesetRef of tmj.tilesets || []) {
         const tilesetPath = joinAssetPath(path, tilesetRef.source || "");
         let tileset = tilesetRef;
@@ -103,14 +109,15 @@ export function createMapRenderer({
           const collisionDef = buildTileCollisionDefinition(tile, tileset);
           if (collisionDef) collisionDefs.set(gid, collisionDef);
           if (!tile.image) continue;
-          const image = new Image();
           const tileSrc = joinAssetPath(tilesetPath || path, tile.image);
+          const image = loadVisualImage(tileSrc, { retry: true });
           minimapTileDefinitions.set(
             gid,
             parseMinimapTileDefinition(tile.image),
           );
           tileLoadPromises.push(
-            loadMapTileImage(image, tileSrc).then((ok) => {
+            whenVisualReady(image).then((ok) => {
+              if (!ok) failedTiles.push(tileSrc);
               if (!ok && token === state.mapLoadToken)
                 addConsoleLine(
                   t("status.tileImageFailed", { path: tileSrc }),
@@ -122,6 +129,7 @@ export function createMapRenderer({
         }
       }
       await Promise.all(tileLoadPromises);
+      if (failedTiles.length) throw new Error(`Tile preparation failed: ${failedTiles.join(", ")}`);
       const minimapSubdivisions = Math.max(
         1,
         Math.floor(minimapTileSubdivisions),
@@ -139,12 +147,13 @@ export function createMapRenderer({
         layers.push({
           name: layer.name || "",
           visible: layer.visible !== false,
+          opacity: Number.isFinite(layer.opacity) ? clamp(layer.opacity, 0, 1) : 1,
           width: layer.width || tmj.width || 0,
           height: layer.height || tmj.height || 0,
           tiles: await decodeTileLayer(layer),
         });
       }
-      const decorations = await loadMapDecorations(tmj, path, token);
+      const decorations = await loadMapDecorations(tmj, path, token, state);
       const mapWidth = tmj.width || layers[0]?.width || 0;
       const mapHeight = tmj.height || layers[0]?.height || 0;
       const tileWidth = tmj.tilewidth || 512;
@@ -182,6 +191,7 @@ export function createMapRenderer({
         height: mapHeight,
         tileWidth,
         tileHeight,
+        backgroundColor: tmj.backgroundcolor || "#1ea761",
         layers,
         decorations,
         tileImages,
@@ -200,15 +210,36 @@ export function createMapRenderer({
         ),
         chunkCache: new Map(),
         chunkBuildQueue: [],
-        chunkBuildQueued: new Set(),
-        chunkBuildPumpScheduled: false,
-        chunkUseTick: 0,
       };
       await buildFullMapOverview(map, token);
-      if (token !== state.mapLoadToken) return null;
+      if (token !== state.mapLoadToken) { releaseMapRasters(map); return null; }
 
+      map.rasterCache = createMapChunkCache({ map, state, worldScale, worldToScreen,
+        createCanvas: createMapRenderCanvas, drawTile: drawTileImage, requestDraw,
+        isActive: () => token === state.mapLoadToken || state.map === map });
+      // Publish only after the initial visible region has complete layers,
+      // not merely an 8px-per-tile overview. Ordinary movement remains async.
+      await map.rasterCache.warm();
+      if (token !== state.mapLoadToken) { releaseMapRasters(map); return null; }
+
+      const previousMap = state.map;
+      if (mapTransition?.from && mapTransition.from !== previousMap)
+        releaseMapRasters(mapTransition.from);
       state.map = map;
       state.mapName = path;
+      // Do not allocate an extra hundreds-of-MB framebuffer at 4K/4x DPR.
+      // In that case publish the already-prepared map sharply instead.
+      const transitionBytes = (state.canvasWidth || 1) * (state.canvasHeight || 1) * (state.dpr || 1) ** 2 * 4;
+      if (previousMap && previousMap !== map && transitionBytes <= 32 * 1024 * 1024) {
+        mapTransition = {
+          from: previousMap,
+          to: map,
+          startedAt: performance.now(),
+        };
+      } else {
+        if (previousMap && previousMap !== map) releaseMapRasters(previousMap);
+        mapTransition = null;
+      }
       addConsoleLine(
         t("status.mapLoaded", {
           path,
@@ -229,23 +260,7 @@ export function createMapRenderer({
     }
   }
 
-  async function loadMapTileImage(image, src) {
-    return new Promise((resolve) => {
-      image.decoding = "async";
-      image.onload = async () => {
-        if (image.decode) {
-          try {
-            await image.decode();
-          } catch {
-            // Some browsers reject SVG decode even after load; the image is still drawable.
-          }
-        }
-        resolve(true);
-      };
-      image.onerror = () => resolve(false);
-      image.src = src;
-    });
-  }
+
 
   async function decodeTileLayer(layer) {
     if (Array.isArray(layer.data))
@@ -302,7 +317,8 @@ export function createMapRenderer({
     let sliceStarted = performance.now();
 
     for (const layer of map.layers || []) {
-      if (!layer?.width || !layer?.height || !layer.tiles?.length) continue;
+      if (layer.visible === false || !layer?.width || !layer?.height || !layer.tiles?.length) continue;
+      overviewCtx.globalAlpha = layer.opacity ?? 1;
       for (let tileY = 0; tileY < layer.height; tileY += 1) {
         for (let tileX = 0; tileX < layer.width; tileX += 1) {
           const raw = layer.tiles[tileY * layer.width + tileX] >>> 0;
@@ -352,11 +368,38 @@ export function createMapRenderer({
     return new Promise((resolve) => window.setTimeout(resolve, 0));
   }
 
-  function drawGrid() {
-    ctx.fillStyle = state.map ? "#20aa63" : "#edf3f7";
+  function drawGrid(now = performance.now()) {
+    const transition = mapTransition;
+    let progress = 1;
+    if (transition) {
+      const linearProgress = clamp(
+        (now - transition.startedAt) / mapTransitionDurationMs,
+        0,
+        1,
+      );
+      progress = linearProgress * linearProgress * (3 - 2 * linearProgress);
+      if (progress >= 1) {
+        releaseMapRasters(transition.from);
+        mapTransition = null;
+        if (transitionCanvas) transitionCanvas.width = transitionCanvas.height = 0;
+        transitionCanvas = null;
+      }
+    }
+
+    // Match the original Garden green more closely. This is only the
+    // fallback under loaded tile layers; the map assets remain authoritative.
+    ctx.fillStyle = state.map ? "#1ea761" : "#edf3f7";
     ctx.fillRect(0, 0, state.canvasWidth, state.canvasHeight);
-    drawMapTiles();
-    drawMapDecorations();
+
+    if (transition && progress < 1) {
+      // The old map is already prepared, so only reuse its overview/chunks;
+      // all chunk construction remains reserved for the new authoritative
+      // map. This keeps the crossfade smooth even for large maps.
+      drawMapLayer(transition.from, 1, false, now);
+      drawMapLayer(transition.to, progress, true, now);
+    } else {
+      drawMapLayer(state.map, 1, true, now);
+    }
 
     if (!state.map) {
       ctx.save();
@@ -376,99 +419,35 @@ export function createMapRenderer({
 
   }
 
-  function drawMapTiles() {
-    const map = state.map;
-    if (!map || !map.layers || !map.tileImages) return;
-
-    const scale = worldScale();
-    drawMapOverview(map, scale);
-    const profile = mapChunkProfile(scale);
-    resetMapChunkBuildQueueForProfile(map, profile);
-    map.chunkProfileLabel = profile.label;
-    const tileW = map.tileWidth;
-    const tileH = map.tileHeight;
-    if (tileW <= 0 || tileH <= 0) return;
-
-    const visibleBounds = {
-      left: state.camera.x - (state.canvasWidth * 0.5) / scale - tileW,
-      top: state.camera.y - (state.canvasHeight * 0.5) / scale - tileH,
-      right: state.camera.x + (state.canvasWidth * 0.5) / scale + tileW,
-      bottom: state.camera.y + (state.canvasHeight * 0.5) / scale + tileH,
-    };
-    const preloadBounds = mapPreloadBounds(visibleBounds, tileW, tileH);
-    const visibleChunkKeys = new Set();
-
-    for (let layerIndex = 0; layerIndex < map.layers.length; layerIndex += 1) {
-      const layer = map.layers[layerIndex];
-      if (
-        !layer.width ||
-        !layer.height ||
-        !layer.tiles ||
-        layer.tiles.length <= 0
-      )
-        continue;
-      const chunkBounds = normalizeChunkBounds(
-        chunkBoundsForWorldBounds(visibleBounds, tileW, tileH, profile.span),
-      );
-
-      for (
-        let chunkY = chunkBounds.minY;
-        chunkY <= chunkBounds.maxY;
-        chunkY += 1
-      ) {
-        for (
-          let chunkX = chunkBounds.minX;
-          chunkX <= chunkBounds.maxX;
-          chunkX += 1
-        ) {
-          visibleChunkKeys.add(
-            mapChunkKey(layerIndex, chunkX, chunkY, profile),
-          );
-        }
-      }
+  function drawMapLayer(map, alpha, prepare, now) {
+    if (!map || alpha <= 0) return;
+    // Apply transition alpha once to the complete map, not once per layer.
+    const output = ctx;
+    if (alpha < 1) {
+      const dpr = state.dpr || 1;
+      const width = Math.max(1, Math.round(state.canvasWidth * dpr));
+      const height = Math.max(1, Math.round(state.canvasHeight * dpr));
+      if (!transitionCanvas) transitionCanvas = createMapRenderCanvas(width, height);
+      if (transitionCanvas.width !== width) transitionCanvas.width = width;
+      if (transitionCanvas.height !== height) transitionCanvas.height = height;
+      ctx = transitionCanvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, state.canvasWidth, state.canvasHeight);
     }
-    map.visibleChunkKeys = visibleChunkKeys;
-
-    for (let layerIndex = 0; layerIndex < map.layers.length; layerIndex += 1) {
-      const layer = map.layers[layerIndex];
-      if (
-        !layer.width ||
-        !layer.height ||
-        !layer.tiles ||
-        layer.tiles.length <= 0
-      )
-        continue;
-      const chunkBounds = normalizeChunkBounds(
-        chunkBoundsForWorldBounds(visibleBounds, tileW, tileH, profile.span),
-      );
-      queueMapChunksForBounds(map, layer, layerIndex, preloadBounds, profile);
-
-      for (
-        let chunkY = chunkBounds.minY;
-        chunkY <= chunkBounds.maxY;
-        chunkY += 1
-      ) {
-        for (
-          let chunkX = chunkBounds.minX;
-          chunkX <= chunkBounds.maxX;
-          chunkX += 1
-        ) {
-          const chunk = getMapChunk(map, layer, layerIndex, chunkX, chunkY, {
-            buildNow: false,
-            profile,
-          });
-          if (!chunk || chunk.empty) continue;
-          const pos = worldToScreen({ x: chunk.worldX, y: chunk.worldY });
-          const bleed = 0.75;
-          ctx.drawImage(
-            chunk.canvas,
-            pos.x - bleed,
-            pos.y - bleed,
-            chunk.width * scale + bleed * 2,
-            chunk.height * scale + bleed * 2,
-          );
-        }
-      }
+    try {
+      ctx.save();
+      ctx.fillStyle = map.backgroundColor || "#1ea761";
+      ctx.fillRect(0, 0, state.canvasWidth, state.canvasHeight);
+      drawMapOverview(map, worldScale());
+      map.rasterCache?.draw(ctx, now, prepare);
+      drawMapDecorations(map);
+      ctx.restore();
+    } finally { ctx = output; }
+    if (alpha < 1) {
+      ctx.save(); ctx.globalAlpha *= alpha;
+      ctx.drawImage(transitionCanvas, 0, 0, transitionCanvas.width, transitionCanvas.height,
+        0, 0, state.canvasWidth, state.canvasHeight);
+      ctx.restore();
     }
   }
 
@@ -504,8 +483,7 @@ export function createMapRenderer({
     ctx.restore();
   }
 
-  function drawMapDecorations() {
-    const map = state.map;
+  function drawMapDecorations(map = state.map) {
     if (!map?.decorations?.length) return;
 
     const scale = worldScale();
@@ -586,125 +564,6 @@ export function createMapRenderer({
     else ctx.drawImage(decor.image, x, y, width, height);
   }
 
-  function getMapChunk(map, layer, layerIndex, chunkX, chunkY, options = {}) {
-    const buildNow = options.buildNow !== false;
-    const profile = normalizeMapChunkProfile(
-      options.profile || mapChunkProfile(1),
-    );
-    if (!map.chunkCache) map.chunkCache = new Map();
-    const key = mapChunkKey(layerIndex, chunkX, chunkY, profile);
-    let chunk = map.chunkCache.get(key);
-    if (!chunk) {
-      if (!buildNow) {
-        queueMapChunkBuild(map, layer, layerIndex, chunkX, chunkY, profile);
-        return null;
-      }
-      chunk = buildMapChunk(map, layer, layerIndex, chunkX, chunkY, profile);
-      if (!chunk) return null;
-      map.chunkCache.set(key, chunk);
-      pruneMapChunkCache(map);
-    }
-    chunk.lastUsed = ++map.chunkUseTick;
-    return chunk;
-  }
-
-  function queueMapChunksForBounds(map, layer, layerIndex, bounds, profile) {
-    const chunkBounds = normalizeChunkBounds(
-      chunkBoundsForWorldBounds(
-        bounds,
-        map.tileWidth,
-        map.tileHeight,
-        profile.span,
-      ),
-    );
-    for (
-      let chunkY = chunkBounds.minY;
-      chunkY <= chunkBounds.maxY;
-      chunkY += 1
-    ) {
-      for (
-        let chunkX = chunkBounds.minX;
-        chunkX <= chunkBounds.maxX;
-        chunkX += 1
-      ) {
-        queueMapChunkBuild(map, layer, layerIndex, chunkX, chunkY, profile);
-      }
-    }
-  }
-
-  function queueMapChunkBuild(
-    map,
-    layer,
-    layerIndex,
-    chunkX,
-    chunkY,
-    profile = mapChunkProfile(1),
-  ) {
-    const chunkProfile = normalizeMapChunkProfile(profile);
-    if (!map.chunkCache) map.chunkCache = new Map();
-    if (!map.chunkBuildQueue) map.chunkBuildQueue = [];
-    if (!map.chunkBuildQueued) map.chunkBuildQueued = new Set();
-
-    const key = mapChunkKey(layerIndex, chunkX, chunkY, chunkProfile);
-    if (map.chunkCache.has(key) || map.chunkBuildQueued.has(key)) return;
-
-    map.chunkBuildQueued.add(key);
-    const job = {
-      key,
-      layer,
-      layerIndex,
-      chunkX,
-      chunkY,
-      profile: chunkProfile,
-    };
-    if (map.visibleChunkKeys?.has(key)) map.chunkBuildQueue.unshift(job);
-    else map.chunkBuildQueue.push(job);
-    scheduleMapChunkBuildPump(map);
-  }
-
-  function scheduleMapChunkBuildPump(map) {
-    if (!map || map.chunkBuildPumpScheduled) return;
-    map.chunkBuildPumpScheduled = true;
-
-    const run = () => {
-      map.chunkBuildPumpScheduled = false;
-      pumpMapChunkBuildQueue(map);
-    };
-    if (window.requestIdleCallback)
-      window.requestIdleCallback(run, { timeout: 80 });
-    else requestAnimationFrame(run);
-  }
-
-  function pumpMapChunkBuildQueue(map) {
-    if (!map || state.map !== map || !map.chunkBuildQueue?.length) return;
-
-    let builtAny = false;
-    const started = performance.now();
-    while (
-      map.chunkBuildQueue.length &&
-      performance.now() - started < mapPrewarmBudgetMs
-    ) {
-      const job = map.chunkBuildQueue.shift();
-      map.chunkBuildQueued?.delete(job.key);
-      if (map.chunkCache?.has(job.key)) continue;
-
-      const chunk = buildMapChunk(
-        map,
-        job.layer,
-        job.layerIndex,
-        job.chunkX,
-        job.chunkY,
-        job.profile,
-      );
-      if (!chunk) continue;
-      map.chunkCache.set(job.key, chunk);
-      pruneMapChunkCache(map);
-      builtAny = true;
-    }
-
-    if (builtAny) requestDraw();
-    if (map.chunkBuildQueue.length) scheduleMapChunkBuildPump(map);
-  }
 
   function resolvePredictedCircleMotion(start, end, radius) {
     const map = state.map;
@@ -728,26 +587,7 @@ export function createMapRenderer({
     if (layer.tiles[index] === gid) return false;
     layer.tiles[index] = gid;
 
-    // Drop every cached chunk (across all zoom profiles) that covers the
-    // changed tile. Chunks always rebuild from the updated layer, so no old
-    // tile pixels can linger.
-    if (map.chunkCache) {
-      for (const [key, chunk] of [...map.chunkCache.entries()]) {
-        const parts = String(key).split(":");
-        if (parts.length !== 5) continue;
-        if (Number(parts[2]) !== layerIndex) continue;
-        const span = Number(parts[0]) || 1;
-        const chunkX = Number(parts[3]);
-        const chunkY = Number(parts[4]);
-        if (
-          col >= chunkX * span &&
-          col < (chunkX + 1) * span &&
-          row >= chunkY * span &&
-          row < (chunkY + 1) * span
-        )
-          map.chunkCache.delete(key);
-      }
-    }
+    map.rasterCache?.invalidate(row, col);
 
     // If the new tile's image just became available, drop the raster cache so
     // the next overview rebuild includes it.
@@ -760,17 +600,29 @@ export function createMapRenderer({
         map.overviewTileImagesCache = null;
     }
 
-    // Rebuild the zoomed-out overview lazily: debounce so a burst of deltas
-    // (one per changed tile) collapses into a single rebuild after the burst.
-    if (map.overviewRebuildTimer) window.clearTimeout(map.overviewRebuildTimer);
-    map.overviewRebuildTimer = window.setTimeout(() => {
-      map.overviewRebuildTimer = null;
-      buildFullMapOverview(map, state.mapLoadToken)
-        .catch(() => {})
-        .finally(() => requestDraw());
-    }, 500);
+    // The fallback must change with the terrain, not show a removed wall
+    // for another half second while a full-map rebuild is debounced.
+    updateOverviewTile(map, row, col);
     requestDraw();
     return true;
+  }
+
+  function updateOverviewTile(map, row, col) {
+    const target = map.overviewCanvas?.getContext("2d");
+    if (!target) return;
+    const width = map.tileWidth * map.overviewScale, height = map.tileHeight * map.overviewScale;
+    const x = col * width, y = row * height;
+    target.save(); target.beginPath(); target.rect(x, y, width, height); target.clip();
+    target.clearRect(x, y, width, height);
+    for (const layer of map.layers) {
+      if (layer.visible === false || row >= layer.height || col >= layer.width) continue;
+      const raw = layer.tiles[row * layer.width + col] >>> 0;
+      const image = map.tileImages.get(canonicalTileGid(raw));
+      if (!imageReady(image)) continue;
+      target.globalAlpha = layer.opacity ?? 1;
+      drawTileImage(image, { x, y }, width, height, raw, target);
+    }
+    target.restore();
   }
 
   function applyWallRemove(minPos, maxPos) {
@@ -814,10 +666,28 @@ export function createMapRenderer({
     applyTerrainDelta,
     applyWallRemove,
     resolvePredictedCircleMotion,
+    dispose() {
+      state.mapLoadToken += 1;
+      releaseMapRasters(state.map);
+      if (mapTransition?.from !== state.map) releaseMapRasters(mapTransition?.from);
+      state.map = null;
+      state.mapLoadPromise = null;
+      state.mapLoadPath = "";
+      mapTransition = null;
+      if (transitionCanvas) transitionCanvas.width = transitionCanvas.height = 0;
+      transitionCanvas = null;
+    },
   };
 }
 
-async function loadMapDecorations(tmj, mapPath, token) {
+function releaseMapRasters(map) {
+  if (!map) return;
+  map.rasterCache?.dispose();
+  if (map.overviewCanvas) map.overviewCanvas.width = map.overviewCanvas.height = 0;
+  for (const canvas of map.overviewTileImagesCache?.values() || []) canvas.width = canvas.height = 0;
+}
+
+async function loadMapDecorations(tmj, mapPath, token, state = appState) {
   const decorations = [];
   const loadPromises = [];
 
@@ -841,9 +711,10 @@ async function loadMapDecorations(tmj, mapPath, token) {
       ).toLowerCase();
       const x = Number(obj.x) || 0;
       const y = Number(obj.y) || 0;
+      const src = joinAssetPath(mapPath, imagePath);
       const decor = {
-        image: new Image(),
-        src: joinAssetPath(mapPath, imagePath),
+        image: loadVisualImage(src, { retry: true }),
+        src,
         x: anchor === "center" ? x - width * 0.5 : x,
         y: anchor === "center" ? y - height * 0.5 : y,
         width,
@@ -867,7 +738,7 @@ async function loadMapDecorations(tmj, mapPath, token) {
         ),
       };
       loadPromises.push(
-        loadMapDecorationImage(decor.image, decor.src).then((ok) => {
+        whenVisualReady(decor.image).then((ok) => {
           if (!ok && token === state.mapLoadToken) decor.image.failed = true;
         }),
       );
@@ -878,24 +749,6 @@ async function loadMapDecorations(tmj, mapPath, token) {
   await Promise.all(loadPromises);
   decorations.sort((a, b) => a.y + a.height - (b.y + b.height));
   return decorations;
-}
-
-async function loadMapDecorationImage(image, src) {
-  return new Promise((resolve) => {
-    image.decoding = "async";
-    image.onload = async () => {
-      if (image.decode) {
-        try {
-          await image.decode();
-        } catch {
-          // Animated formats can reject decode while still being drawable.
-        }
-      }
-      resolve(true);
-    };
-    image.onerror = () => resolve(false);
-    image.src = src;
-  });
 }
 
 function objectProperty(obj, name) {
@@ -1395,10 +1248,18 @@ function rectsOverlap(a, b) {
 }
 
 function normalizeMapPath(path) {
-  const normalized = String(path || "")
+  let normalized = String(path || "").trim()
     .replace(/\\/g, "/")
-    .replace(/^\/+/, "");
+    .replace(/^(?:\.\/|\/)+/, "");
   if (!normalized) return "";
+  // Older debug servers send a display name ("garden"), not a map filename.
+  // Keep explicit filenames intact, and resolve legacy names to Tiled JSON.
+  const suffixIndex = normalized.search(/[?#]/);
+  const suffix = suffixIndex < 0 ? "" : normalized.slice(suffixIndex);
+  if (suffixIndex >= 0) normalized = normalized.slice(0, suffixIndex);
+  if (!normalized) return "";
+  if (!/\.[^/]+$/.test(normalized)) normalized += ".tmj";
+  normalized += suffix;
   if (normalized.startsWith("data/")) return `/${normalized}`;
   if (normalized.startsWith("maps/") || normalized.startsWith("tiles/"))
     return `/data/${normalized}`;
@@ -1808,13 +1669,12 @@ function drawTileImage(image, pos, width, height, raw, targetCtx) {
       origin.y,
     );
   }
-  const bleed = 0.75;
   targetCtx.drawImage(
     image,
-    -bleed,
-    -bleed,
-    width + bleed * 2,
-    height + bleed * 2,
+    0,
+    0,
+    width,
+    height,
   );
   targetCtx.restore();
 }
@@ -1826,203 +1686,4 @@ function createMapRenderCanvas(width, height) {
   canvas.width = width;
   canvas.height = height;
   return canvas;
-}
-
-function pruneMapChunkCache(map) {
-  if (!map?.chunkCache || map.chunkCache.size <= mapChunkCacheLimit) return;
-  const protectedKeys = map.visibleChunkKeys || new Set();
-  const dynamicLimit = Math.max(mapChunkCacheLimit, protectedKeys.size + 128);
-  if (map.chunkCache.size <= dynamicLimit) return;
-  const entries = [...map.chunkCache.entries()].sort(
-    (a, b) => (a[1].lastUsed || 0) - (b[1].lastUsed || 0),
-  );
-  let removeCount = Math.max(0, entries.length - dynamicLimit);
-  for (const [key] of entries) {
-    if (removeCount <= 0) break;
-    if (protectedKeys.has(key)) continue;
-    map.chunkCache.delete(key);
-    removeCount -= 1;
-  }
-}
-
-function mapChunkProfile(scale) {
-  if (!Number.isFinite(scale) || scale <= 0)
-    return { span: mapChunkTileSpan, renderScale: 1, label: "4@1x" };
-  if (scale < 0.004)
-    return { span: 128, renderScale: 1 / 64, label: "128@1/64" };
-  if (scale < 0.009) return { span: 64, renderScale: 1 / 32, label: "64@1/32" };
-  if (scale < 0.012) return { span: 32, renderScale: 1 / 16, label: "32@1/16" };
-  if (scale < 0.026) return { span: 16, renderScale: 1 / 8, label: "16@1/8" };
-  if (scale < 0.06) return { span: 8, renderScale: 1 / 4, label: "8@1/4" };
-  if (scale < 0.12) return { span: 4, renderScale: 1 / 2, label: "4@1/2" };
-  return { span: mapChunkTileSpan, renderScale: 1, label: "4@1x" };
-}
-
-function normalizeMapChunkProfile(profile) {
-  const span = Math.max(1, Math.floor(profile?.span || mapChunkTileSpan));
-  const renderScale = clamp(Number(profile?.renderScale) || 1, 1 / 64, 1);
-  const label =
-    profile?.label || `${span}@${Math.round(renderScale * 1024)}/1024`;
-  return { span, renderScale, label };
-}
-
-function mapChunkProfileKey(profile) {
-  const normalized = normalizeMapChunkProfile(profile);
-  return `${normalized.span}:${Math.round(normalized.renderScale * 1024)}`;
-}
-
-function mapChunkKey(layerIndex, chunkX, chunkY, profile) {
-  return `${mapChunkProfileKey(profile)}:${layerIndex}:${chunkX}:${chunkY}`;
-}
-
-function buildMapChunk(
-  map,
-  layer,
-  layerIndex,
-  chunkX,
-  chunkY,
-  profile = mapChunkProfile(1),
-) {
-  const chunkProfile = normalizeMapChunkProfile(profile);
-  const tileW = map.tileWidth;
-  const tileH = map.tileHeight;
-  const startX = chunkX * chunkProfile.span;
-  const startY = chunkY * chunkProfile.span;
-  const widthTiles = chunkProfile.span;
-  const heightTiles = chunkProfile.span;
-  const width = Math.max(1, widthTiles * tileW);
-  const height = Math.max(1, heightTiles * tileH);
-  const pixelTileW = Math.max(1, tileW * chunkProfile.renderScale);
-  const pixelTileH = Math.max(1, tileH * chunkProfile.renderScale);
-  const pixelWidth = Math.max(1, Math.ceil(width * chunkProfile.renderScale));
-  const pixelHeight = Math.max(1, Math.ceil(height * chunkProfile.renderScale));
-  const maxTileX = Math.max(0, layer.width - 1);
-  const maxTileY = Math.max(0, layer.height - 1);
-  const drawTiles = [];
-
-  for (let localY = 0; localY < heightTiles; localY += 1) {
-    const tileY = startY + localY;
-    const sampleY = clamp(tileY, 0, maxTileY);
-    for (let localX = 0; localX < widthTiles; localX += 1) {
-      const tileX = startX + localX;
-      const sampleX = clamp(tileX, 0, maxTileX);
-      const raw = layer.tiles[sampleY * layer.width + sampleX] >>> 0;
-      const gid = canonicalTileGid(raw);
-      if (!gid) continue;
-
-      const image = map.tileImages.get(gid);
-      if (!imageReady(image)) return null;
-      drawTiles.push({
-        image,
-        raw,
-        x: localX * pixelTileW,
-        y: localY * pixelTileH,
-      });
-    }
-  }
-
-  const key = mapChunkKey(layerIndex, chunkX, chunkY, chunkProfile);
-  if (!drawTiles.length) {
-    return {
-      canvas: null,
-      worldX: startX * tileW,
-      worldY: startY * tileH,
-      width,
-      height,
-      empty: true,
-      lastUsed: ++map.chunkUseTick,
-      key,
-      profileKey: mapChunkProfileKey(chunkProfile),
-    };
-  }
-
-  const canvas = createMapRenderCanvas(pixelWidth, pixelHeight);
-  const chunkCtx = canvas.getContext("2d");
-  if (!chunkCtx) return null;
-
-  for (const tile of drawTiles) {
-    drawTileImage(
-      tile.image,
-      { x: tile.x, y: tile.y },
-      pixelTileW,
-      pixelTileH,
-      tile.raw,
-      chunkCtx,
-    );
-  }
-
-  return {
-    canvas,
-    worldX: startX * tileW,
-    worldY: startY * tileH,
-    width,
-    height,
-    empty: false,
-    lastUsed: ++map.chunkUseTick,
-    key,
-    profileKey: mapChunkProfileKey(chunkProfile),
-  };
-}
-
-function resetMapChunkBuildQueueForProfile(map, profile) {
-  const profileKey = mapChunkProfileKey(profile);
-  if (map.activeChunkProfileKey === profileKey) return;
-  if (!map.activeChunkProfileKey) {
-    map.activeChunkProfileKey = profileKey;
-    return;
-  }
-  map.activeChunkProfileKey = profileKey;
-  map.chunkBuildQueue = [];
-  map.chunkBuildQueued = new Set();
-}
-
-function chunkBoundsForWorldBounds(bounds, tileW, tileH, span) {
-  return {
-    minX: Math.floor(Math.floor(bounds.left / tileW) / span),
-    minY: Math.floor(Math.floor(bounds.top / tileH) / span),
-    maxX: Math.floor(Math.ceil(bounds.right / tileW) / span),
-    maxY: Math.floor(Math.ceil(bounds.bottom / tileH) / span),
-  };
-}
-
-function normalizeChunkBounds(bounds) {
-  return {
-    minX: Math.min(bounds.minX, bounds.maxX),
-    minY: Math.min(bounds.minY, bounds.maxY),
-    maxX: Math.max(bounds.minX, bounds.maxX),
-    maxY: Math.max(bounds.minY, bounds.maxY),
-  };
-}
-
-function mapPreloadBounds(visibleBounds, tileW, tileH) {
-  const last = state.map?.lastPreloadCamera || state.camera;
-  const dx = state.camera.x - last.x;
-  const dy = state.camera.y - last.y;
-  state.map.lastPreloadCamera = { x: state.camera.x, y: state.camera.y };
-
-  const owner = state.entities.get(state.ownerEntityId);
-  const snapshotMove = owner?.snapshotMove || 0;
-  const cameraMove = Math.hypot(dx, dy);
-  const speedHint = Math.max(cameraMove, snapshotMove);
-  const tileSize = Math.max(1, Math.min(tileW, tileH));
-  const sidePadding = clamp(
-    tileSize + speedHint * 4,
-    tileSize,
-    Math.max(tileSize, state.viewRadius * 0.3),
-  );
-  const lead = clamp(
-    tileSize + speedHint * 12,
-    tileSize * 1.5,
-    Math.max(tileSize * 2, state.viewRadius * 0.85),
-  );
-  const length = Math.hypot(dx, dy);
-  const nx = length > 0.001 ? dx / length : 0;
-  const ny = length > 0.001 ? dy / length : 0;
-
-  return {
-    left: visibleBounds.left - sidePadding + Math.min(0, nx * lead),
-    top: visibleBounds.top - sidePadding + Math.min(0, ny * lead),
-    right: visibleBounds.right + sidePadding + Math.max(0, nx * lead),
-    bottom: visibleBounds.bottom + sidePadding + Math.max(0, ny * lead),
-  };
 }

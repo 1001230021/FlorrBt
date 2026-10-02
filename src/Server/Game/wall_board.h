@@ -1,6 +1,6 @@
 ﻿#pragma once
 #include "tile_board.h"
-#include <SFML/System/Vector2.hpp>
+#include "../../Shared/math_types.h"
 #include <cstdint>
 #include <unordered_map>
 #include <utility>

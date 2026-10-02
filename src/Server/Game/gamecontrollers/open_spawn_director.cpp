@@ -477,7 +477,7 @@ struct COpenSpawnDirector::CImplementation
         return { game_config::player_respawn_x, game_config::player_respawn_y };
     }
 
-    int ZoneTargetMobCount(const FlorrBtMap::Zone& zone, float area, float density_multiplier)
+    int ZoneTargetGetMobCount(const FlorrBtMap::Zone& zone, float area, float density_multiplier)
     {
         if (zone.density < 0.f) return 0;
         // density == 0 with a mob pool is a map-authored single-spawn sentinel,
@@ -514,7 +514,7 @@ struct COpenSpawnDirector::CImplementation
         const double query_area = static_cast<double>(game_config::pi) * query_radius * query_radius;
         const float local_area = static_cast<float>(
             std::min(query_area, static_cast<double>(std::numeric_limits<float>::max())));
-        return std::min(hard_limit, ZoneTargetMobCount(zone, local_area, density_multiplier));
+        return std::min(hard_limit, ZoneTargetGetMobCount(zone, local_area, density_multiplier));
     }
 
     int ZonePopulationLimit(const FlorrBtMap::Zone& zone) const
@@ -702,7 +702,7 @@ struct COpenSpawnDirector::CImplementation
                 resolved ? &resolved->mob_entries : &cached_zone.mob_entries;
             const float difficulty = zone.difficulty + (resolved ? resolved->difficulty_offset : 0.f);
 
-            const int target_mobs = ZoneTargetMobCount(zone, cached_zone.area, effective_density_multiplier);
+            const int target_mobs = ZoneTargetGetMobCount(zone, cached_zone.area, effective_density_multiplier);
             if (target_mobs <= 0) continue;
             const int nearby_mob_limit = NearbyMobLimit(zone, effective_density_multiplier);
             if (nearby_mob_limit <= 0) continue;

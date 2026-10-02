@@ -1,5 +1,6 @@
 #pragma once
 #include "../Game/player.h"
+#include "../../Shared/math_types.h"
 #include "../Game/systems/player_lifecycle_service.h"
 #include "../Game/systems/snapshot_service.h"
 #include "../server.h"
@@ -21,6 +22,7 @@ class CPlayer;
 class CAccountAuthWorker;
 class CEmailVerificationService;
 class CSnapshotBuildWorkerPool;
+class CDevDebugService;
 struct ClientAuthRequest;
 struct ClientChatRequest;
 struct ClientCraftRequest;
@@ -85,6 +87,9 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
     bool QueueInventoryUpdate(CPlayer& player);
     void NotifyPlayerWorldChanged(CPlayer& player);
     const SSnapshotTelemetry& GetSnapshotTelemetry() const { return m_snapshot_telemetry; }
+    bool QueueDebugTicket(CPlayer& player);
+    bool AuthenticateRcon(CPlayer& player, const std::string& password, std::string& message);
+    bool ValidateRconAuthorization(CPlayer& player);
 
   private:
     static constexpr size_t auth_queue_limit = 128;
@@ -149,7 +154,17 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
         Rejected,
     };
 
+    struct SPendingConnection
+    {
+        sf::TcpSocket socket;
+        std::string remote;
+        bool proxy_pending = false;
+        std::vector<std::uint8_t> received;
+        std::chrono::steady_clock::time_point deadline;
+    };
+
     void AcceptConnections();
+    void ClassifyPendingConnections();
     void ProcessMessages();
     void ProcessAuthenticationResults();
     void ProcessEmailDeliveryResults();
@@ -209,6 +224,8 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
     bool m_listening_v4 = false;
     bool m_listening_v6 = false;
     std::vector<std::unique_ptr<CPlayer>> m_players;
+    std::vector<std::unique_ptr<SPendingConnection>> m_pending_connections;
+    std::unique_ptr<CDevDebugService> m_dev_debug;
     std::set<std::uint32_t> m_proxy_header_pending;
     std::unordered_map<std::uint32_t, std::chrono::steady_clock::time_point> m_auth_deadlines;
     std::set<int> m_free_player_ids;
@@ -224,6 +241,7 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
     std::unordered_map<std::uint32_t, SPendingVerifiedLogin> m_pending_verified_logins;
     std::unordered_map<std::uint32_t, std::uint64_t> m_email_delivery_requests;
     std::unordered_map<std::string, SAuthFailureState> m_auth_failures;
+    std::unordered_map<std::uint32_t, std::string> m_rcon_authorizations;
     std::uint64_t m_next_auth_request_id = 1;
     float m_last_environment_day_duration = 0.f;
     double m_last_environment_time_of_day = -1.0;

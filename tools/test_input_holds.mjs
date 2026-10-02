@@ -85,6 +85,22 @@ check("press and release moves then stops", () => {
   assert.deepEqual(ctx.move, { x: 0, y: 0 });
 });
 
+check("move_toward preserves optional strength", () => {
+  bindKey(table, "keyboard", "f10", ["move_toward 0 0.25"]);
+  down("f10");
+  assert.deepEqual(ctx.move, { x: 0.25, y: 0 });
+  up("f10");
+});
+
+check("move_toward rejects nonfinite or out-of-range strength", () => {
+  for (const strength of ["-1", "2", "NaN", "Infinity"]) {
+    bindKey(table, "keyboard", "f10", [`move_toward 0 ${strength}`]);
+    down("f10");
+    assert.deepEqual(ctx.move, { x: 0, y: 0 });
+    up("f10");
+  }
+});
+
 check("auto-repeat does not stack", () => {
   down("a");
   for (let i = 0; i < 30; i += 1) down("a", { repeat: true });

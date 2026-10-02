@@ -1,5 +1,6 @@
 #pragma once
 #include "open_spawn_director.h"
+#include "../../../Shared/math_types.h"
 #include "../gamecontroller.h"
 #include <cstdint>
 #include <unordered_map>

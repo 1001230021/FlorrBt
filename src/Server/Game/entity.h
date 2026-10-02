@@ -1,6 +1,6 @@
 #pragma once
 #include "../../Shared/shared.h"
-#include <SFML/System/Vector2.hpp>
+#include "../../Shared/math_types.h"
 #include <cstddef>
 #include <cstdint>
 #include <limits>

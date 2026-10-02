@@ -1,6 +1,7 @@
-﻿#include "gameworld.h"
+#include "gameworld.h"
 #include "../../Engine/logger.h"
 #include "../../Shared/game_config.h"
+#include "../../Shared/circle_contact.h"
 #include "../Module/network_module.h"
 #include "controllers/melee_controller.h"
 #include "controllers/pickup_controller.h"
@@ -168,6 +169,26 @@ float Dot(florrbt::Vector2f a, florrbt::Vector2f b);
 bool CollisionPairAlive(const CEntity* lhs, const CEntity* rhs);
 void ApplyPhysicalDamageHits(CEntity* target, float damage, CEntity* attacker, int hit_count,
                              const CEntity* collision_source = nullptr);
+
+// A fast projectile can travel farther than its diameter in one server tick.
+// Testing only the final positions then lets it tunnel through mobs. Compare
+// the relative-motion segment against the combined radii so contact anywhere
+// along the tick is still dispatched to the normal collision/damage path.
+bool SweptProjectileTouches(const CEntity& lhs, const CEntity& rhs)
+{
+    if (!dynamic_cast<const CProjectile*>(&lhs) && !dynamic_cast<const CProjectile*>(&rhs)) return false;
+
+    const florrbt::Vector2f start = lhs.PrevPos() - rhs.PrevPos();
+    const florrbt::Vector2f motion = (lhs.Pos() - rhs.Pos()) - start;
+    const float motion_sq = LengthSq(motion);
+    float fraction = 0.f;
+    if (motion_sq > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+        fraction = std::clamp(-Dot(start, motion) / motion_sq, 0.f, 1.f);
+
+    const florrbt::Vector2f closest = start + motion * fraction;
+    const float radius = std::max(0.f, lhs.Radius()) + std::max(0.f, rhs.Radius());
+    return LengthSq(closest) <= radius * radius;
+}
 
 using active_tick_view = CActiveTickView;
 using player_tick_view = CPlayerTickView;
@@ -537,7 +558,7 @@ void DamageYggdrasilOnEnemyContact(CPetal* petal, CMobBase* mob)
 
 bool IsHealPetalType(EPetalType type) { return type == EPetalType::Rose || type == EPetalType::Dahlia; }
 
-bool EntityNeedsMedicRecovery(const CMobBase* mob)
+bool NeedsMedicRecovery(const CMobBase* mob)
 {
     const SMobStats* stats = mob ? mob->GetFinalStats() : nullptr;
     if (!stats || stats->max_health <= 0.f) return false;
@@ -557,7 +578,7 @@ bool IsRoseTeamHealCollision(const collision_entity_view& lhs, const collision_e
         lhs.petal->m_target_entity_id == rhs.entity->Id() &&
         (lhs.petal->m_target_entity_generation == 0 ||
          lhs.petal->m_target_entity_generation == rhs.entity->Generation()) &&
-        EntityNeedsMedicRecovery(rhs.mob) &&
+        NeedsMedicRecovery(rhs.mob) &&
         CheckTeam(GetPreCorruptionTeam(lhs.entity, lhs.InteractionMob()),
                   GetPreCorruptionTeam(rhs.entity, rhs.InteractionMob())))
         return true;
@@ -565,7 +586,7 @@ bool IsRoseTeamHealCollision(const collision_entity_view& lhs, const collision_e
         rhs.petal->m_target_entity_id == lhs.entity->Id() &&
         (rhs.petal->m_target_entity_generation == 0 ||
          rhs.petal->m_target_entity_generation == lhs.entity->Generation()) &&
-        EntityNeedsMedicRecovery(lhs.mob) &&
+        NeedsMedicRecovery(lhs.mob) &&
         CheckTeam(GetPreCorruptionTeam(lhs.entity, lhs.InteractionMob()),
                   GetPreCorruptionTeam(rhs.entity, rhs.InteractionMob())))
         return true;
@@ -660,17 +681,24 @@ void ResolvePhysicalCollision(const collision_pair_context& pair)
     // Wax-to-mob separation has its own immovable-wall response.
     if (ResolveWaxMobHardCollision(pair.lhs, pair.rhs)) return;
 
-    // Mob-vs-mob (flowers are mobs too): keep the physical collision, but use
-    // a gentler separation curve for two non-flower mobs. This lets a swarm
-    // visibly bump and flow around its target instead of building a rigid
-    // wall, while flower contact keeps the legacy response.
+    // Flower contact stops relative inward motion without bounce or tangent
+    // drag. Ordinary swarms keep the weaker, configurable overlap response.
     if (pair.lhs.mob && pair.rhs.mob)
     {
         const bool nonflower_mob_pair = !pair.lhs.flower && !pair.rhs.flower;
-        const float push_multiplier = nonflower_mob_pair
-                                          ? game_config::nonflower_mob_overlap_push_multiplier
-                                          : game_config::mob_overlap_push_multiplier;
-        ApplyWeakOverlapCollision(pair.lhs, pair.rhs, push_multiplier);
+        if (nonflower_mob_pair)
+        {
+            ApplyWeakOverlapCollision(pair.lhs, pair.rhs, game_config::nonflower_mob_overlap_push_multiplier);
+        } else
+        {
+            auto inverse_mass = [](const CEntity& entity) {
+                if (entity.IsCollisionPositionLocked() || !std::isfinite(entity.Mass())) return 0.f;
+                return entity.Mass() > game_config::entity_collision_epsilon ? 1.f / entity.Mass() : 1.f;
+            };
+            florrbt::ResolveCircleContact(pair.lhs.entity->Pos(), pair.lhs.mob->m_vel, pair.lhs.entity->Radius(),
+                inverse_mass(*pair.lhs.entity), pair.rhs.entity->Pos(), pair.rhs.mob->m_vel,
+                pair.rhs.entity->Radius(), inverse_mass(*pair.rhs.entity), game_config::mob_overlap_push_multiplier);
+        }
         return;
     }
 
@@ -2302,6 +2330,47 @@ auto run_tick_phases = [this, dt](auto&& phase_done) {
     }
 }
 
+void CGameWorld::RecordCombatDamage(const CEntity& target, float amount, EDamageType damage_type, CEntity* source)
+{
+    if (!std::isfinite(amount) || amount <= 0.f || target.Id() < 0 || !target.IsVisible()) return;
+    const uint8_t kind = static_cast<uint8_t>(BaseDamageType(damage_type));
+    const uint32_t key = (static_cast<uint32_t>(target.Id()) << 2) | kind;
+    // Only this unsent batch is retained. Bounded even in an empty world or
+    // while every client is backed up, and cleared after the snapshot batch.
+    auto found = m_combat_feedback_indices.find(key);
+    if (found == m_combat_feedback_indices.end())
+    {
+        if (m_combat_feedback.size() >= 256) return;
+        m_combat_feedback_indices.emplace(key, m_combat_feedback.size());
+        m_combat_feedback.push_back({ static_cast<net_entity_id>(target.Id()), target.Pos(), target.Radius(), 0.f, kind });
+        found = m_combat_feedback_indices.find(key);
+    }
+    auto& hit = m_combat_feedback[found->second];
+    hit.amount = std::min(1.e30f, hit.amount + amount);
+    hit.pos = target.Pos();
+    for (int depth = 0; source && depth < 8; ++depth)
+    {
+        const auto* projectile = dynamic_cast<const CProjectile*>(source);
+        if (!projectile || !projectile->GetOwner() || projectile->GetOwner() == source) break;
+        source = projectile->GetOwner();
+    }
+    if (source)
+    {
+        hit.source_type = source->GetNetworkType();
+        if (const auto* mob = dynamic_cast<const CMobBase*>(source))
+        {
+            hit.source_rarity = static_cast<uint8_t>(mob->GetRarity());
+            if (const auto* prototype = FindMobPrototype(mob->GetMobType());
+                prototype && prototype->m_visual_proxy_type != EMobType::None)
+                hit.source_type = static_cast<uint8_t>(prototype->m_visual_proxy_type);
+        }
+    } else
+    {
+        hit.source_type = 0;
+        hit.source_rarity = 0;
+    }
+}
+
 void CGameWorld::CollectActiveEntitiesForTick()
 {
     BuildActiveTickViews(*this, m_active_tick_views, m_player_tick_views);
@@ -2905,10 +2974,12 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
         if (!is_active(other)) other->PrevPos() = other->Pos();
 
         const bool overlapping = entity->IsCollision(*other);
-        if (!overlapping) return;
+        const bool swept_contact = !overlapping && SweptProjectileTouches(*entity, *other);
+        if (!overlapping && !swept_contact) return;
         const bool unloaded_mob = !is_active(other) && other->IsEntityType(EEntityType::Mob);
         ResolveOverlappingEntityPair(entity, other, dt, !unloaded_mob);
-        if (overlapping && !is_active(other) && other->CollisionSyncMarker() != m_collision_sync_marker)
+        if ((overlapping || swept_contact) && !is_active(other) &&
+            other->CollisionSyncMarker() != m_collision_sync_marker)
         {
             other->CollisionSyncMarker() = m_collision_sync_marker;
             inactive_collision_entities.push_back(other);

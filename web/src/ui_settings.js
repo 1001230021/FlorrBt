@@ -25,6 +25,7 @@ import {
   setAuthUiMode,
 } from "./game.js";
 import { sendBytes } from "./net_outbound.js";
+import { setAnimatedVisibility } from "./ui_motion.js";
 
 const defaultMapName = clientRuntimeConfig.loginMapDefaultName;
 const {
@@ -160,7 +161,7 @@ export function updateQuickActionButtons() {
     talentPointsLabel.textContent = t("ui.talents.points", { count: points });
   if (quickTalentPoints) {
     quickTalentPoints.textContent = formatShortCount(points);
-    quickTalentPoints.classList.toggle("hidden", points <= 0);
+    setAnimatedVisibility(quickTalentPoints, points > 0, { duration: 140 });
     quickTalentBtn?.setAttribute(
       "title",
       points > 0
@@ -172,9 +173,9 @@ export function updateQuickActionButtons() {
 
 export function updatePlayUiVisibility() {
   const visible = state.authenticated;
-  quickActions?.classList.toggle("hidden", !visible);
+  setAnimatedVisibility(quickActions, visible, { duration: 220 });
   const topLeftActions = document.getElementById("topLeftActions");
-  topLeftActions?.classList.toggle("hidden", !visible);
+  setAnimatedVisibility(topLeftActions, visible, { duration: 220 });
   ui.chatUi.setVisible(visible);
   ui.mobileControls?.setMode(state.mobileControlMode);
   ui.mobileControls?.setEnabled(visible);
@@ -183,7 +184,7 @@ export function updatePlayUiVisibility() {
 
 export function setLoadingScreenVisible(visible) {
   if (!loadingScreen) return;
-  loadingScreen.classList.toggle("hidden", !visible);
+  setAnimatedVisibility(loadingScreen, visible, { duration: 260 });
   loadingScreen.setAttribute("aria-busy", visible ? "true" : "false");
   if (!visible) return;
 

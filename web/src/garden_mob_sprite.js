@@ -1,4 +1,6 @@
 import { drawSpriteImage } from "./sprite_raster_cache.js";
+import { prepareSvgImage, readSvgSource, whenVisualReady } from "./visual_assets.js";
+import { getSpritePhase, getLimbMotionAmount } from "./sprite_motion.js";
 const SVG_VIEWBOX_SIZE = 110;
 const SVG_CLIP_X = 9.167;
 const SVG_CLIP_SIZE = 91.667;
@@ -29,7 +31,7 @@ const BUBBLE_FALLBACK_FILL = "rgba(255, 255, 255, 0.34)";
 const BUBBLE_FALLBACK_STROKE = "rgba(255, 255, 255, 0.7)";
 
 export function drawBubble(ctx, pos, radius, entityId) {
-  if (radius < 0.5) return;
+  if (!(radius > 0) || !Number.isFinite(radius)) return;
   const image = baseImage("./assets/bubble.svg", "raw", "raw");
   // Fixed size: the per-mob ±10% radius variation is baked in by the server
   // at spawn time (snap.radius) and must not change afterwards.
@@ -53,7 +55,7 @@ export function drawBubble(ctx, pos, radius, entityId) {
 }
 
 export function drawRock(ctx, pos, radius, entityId, worldRadius = radius) {
-  if (radius < 0.5) return;
+  if (!(radius > 0) || !Number.isFinite(radius)) return;
   const points = rockShapePoints(entityId, worldRadius);
   const visualRadius = radius * ROCK_VISUAL_SCALE;
 
@@ -179,7 +181,7 @@ export function drawAntEggMob(ctx, pos, radius, variant = "normal") {
 }
 
 export function drawLeafPiece(ctx, pos, radius, entityId, angle) {
-  if (radius < 0.5) return;
+  if (!(radius > 0) || !Number.isFinite(radius)) return;
   const variant = (stableHash(entityId || 0) % 4) + 1;
   const image = baseImage(`./assets/leaf_piece_${variant}.svg`, "raw", "raw");
   const size = Math.max(1, radius * LEAF_PIECE_VISUAL_SCALE);
@@ -425,7 +427,7 @@ export function drawDandelion(
 }
 
 export function drawSandstorm(ctx, pos, radius, entityId, time) {
-  if (radius < 0.5) return;
+  if (!(radius > 0) || !Number.isFinite(radius)) return;
 
   const image = baseImage("./assets/sandstorm.svg", "sandstorm", "plain");
   const basePhase = (entityId || 0) * 0.41;
@@ -454,7 +456,7 @@ export function drawSandstorm(ctx, pos, radius, entityId, time) {
 }
 
 export function drawPortal(ctx, pos, radius, entityId, time, angle = 0) {
-  if (radius < 0.5) return;
+  if (!(radius > 0) || !Number.isFinite(radius)) return;
 
   const image = baseImage("./assets/portal.svg", "portal", "raw");
   const basePhase =
@@ -529,9 +531,9 @@ function drawGardenAnt(
 
 function antAnimation(entityId, motion, time, forelimbAmplitude = 0.28) {
   const move = clamp01(motion);
-  const activeMove = move < 0.12 ? 0 : move;
-  const forelimbPhase = time * (4.5 + activeMove * 30) + entityId * 0.73;
-  const wingPhase = time * (4.5 + move * 20) + entityId * 0.47;
+  const activeMove = getLimbMotionAmount(move);
+  const forelimbPhase = getSpritePhase(entityId, "garden-legs", time, 4.5 + activeMove * 30, entityId * 0.73);
+  const wingPhase = getSpritePhase(entityId, "garden-wings", time, 4.5 + move * 20, entityId * 0.47);
   return {
     forelimb: Math.sin(forelimbPhase) * activeMove * forelimbAmplitude,
     wing: Math.sin(wingPhase) * Math.max(0.22, move) * 0.16,
@@ -600,27 +602,9 @@ function baseImage(src, key, stripWings) {
   let entry = BASE_CACHE.get(cacheKey);
   if (entry) return entry.image;
 
-  const image = new Image();
-  image.decoding = "async";
-  entry = { image, url: "" };
+  const image = prepareSvgImage(src, `garden-${key}`, text => stripAnimatedSvg(text, stripWings));
+  entry = { image };
   BASE_CACHE.set(cacheKey, entry);
-
-  fetch(src)
-    .then((response) => {
-      if (!response.ok) throw new Error(`Garden mob SVG failed: ${src}`);
-      return response.text();
-    })
-    .then((svgText) => {
-      const blob = new Blob([stripAnimatedSvg(svgText, stripWings)], {
-        type: "image/svg+xml",
-      });
-      const url = URL.createObjectURL(blob);
-      entry.url = url;
-      image.src = url;
-    })
-    .catch(() => {
-      image.failed = true;
-    });
 
   return image;
 }
@@ -634,11 +618,7 @@ function svgParts(src, kind) {
   PART_CACHE.set(cacheKey, entry);
   if (typeof Path2D === "undefined") return entry.parts;
 
-  fetch(src)
-    .then((response) => {
-      if (!response.ok) throw new Error(`Garden mob parts failed: ${src}`);
-      return response.text();
-    })
+  entry.ready = readSvgSource(src)
     .then((svgText) => {
       entry.parts = extractSvgParts(svgText, kind);
     })
@@ -646,6 +626,32 @@ function svgParts(src, kind) {
       entry.parts = [];
     });
   return entry.parts;
+}
+
+export function prepareGardenSprites() {
+  const jobs = [];
+  const ants = ["baby_ant", "worker_ant", "soldier_leafcutter_ant", "queen_ant",
+    "baby_fire_ant", "worker_fire_ant", "fire_queen_ant", "baby_termite",
+    "worker_termite", "soldier_fire_ant", "soldier_termite", "termite_overmind"];
+  for (const name of ants) {
+    const src = `./assets/${name}.svg`;
+    for (const part of ["ant-abdomen", "ant-head"])
+      jobs.push(whenVisualReady(baseImage(src, part, part)));
+    for (const kind of ["forelimbs", "wings"]) {
+      svgParts(src, kind);
+      jobs.push(PART_CACHE.get(`${kind}:${src}`).ready);
+    }
+  }
+  for (const name of ["bubble", "leaf_piece_1", "leaf_piece_2", "leaf_piece_3", "leaf_piece_4",
+    "ant_egg", "fire_ant_egg", "leafcutter_ant_egg", "termite_egg"])
+    jobs.push(whenVisualReady(baseImage(`./assets/${name}.svg`, "raw", "raw")));
+  for (const [name, key, mode] of [["ant_hole", "plain", false],
+    ["dandelion_base", "dandelion-base", "raw"], ["sandstorm", "sandstorm", "plain"],
+    ["portal", "portal", "raw"], ["firefly", "firefly-body", "firefly-body"]])
+    jobs.push(whenVisualReady(baseImage(`./assets/${name}.svg`, key, mode)));
+  svgParts("./assets/firefly.svg", "wings");
+  jobs.push(PART_CACHE.get("wings:./assets/firefly.svg").ready);
+  return Promise.all(jobs);
 }
 
 function stripAnimatedSvg(svgText, stripWings) {

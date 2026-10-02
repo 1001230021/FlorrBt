@@ -6,6 +6,7 @@
 #include <limits>
 
 class CEntity;
+class CFlower;
 class CPlayer;
 
 class CSnapshotService
@@ -24,5 +25,6 @@ class CSnapshotService
     };
 
     bool BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id, SBuildResult& out) const;
+    static std::vector<SOwnerPetalSlot> BuildPrimarySlots(const CFlower& flower);
     ServerEntitySnap BuildEntitySnap(const CEntity& entity, const CEntity& owner) const;
 };

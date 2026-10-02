@@ -1,0 +1,100 @@
+.dev-debug {
+  position: fixed; inset: 0; z-index: 1000; display: grid;
+  grid-template-rows: 52px minmax(180px, 1fr) clamp(150px, 24vh, 280px);
+  color-scheme: dark; background: #10151e; color: #dce5f1;
+  font: 13px/1.45 "Segoe UI", "Microsoft YaHei", sans-serif;
+  --dev-line: #2a3545; --dev-surface: #18212e; --dev-muted: #94a5bb;
+  overflow: hidden; text-shadow: none;
+}
+.dev-debug * { box-sizing: border-box; }
+.dev-debug [hidden] { display: none !important; }
+.dev-debug h3 { font: 650 14px/1.4 "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0 0 10px; color: #f3f6fa; }
+.dev-debug button, .dev-debug select, .dev-debug input {
+  font: inherit; color: #e5edf8; background: #202d3e; border: 1px solid #3a4a60;
+  border-radius: 5px; min-width: 0; height: 30px; padding: 4px 9px; box-shadow: none;
+  text-shadow: none; transform: none; filter: none;
+}
+.dev-debug button { cursor: pointer; }
+.dev-debug button:hover { background: #2e425d; filter: none; }
+.dev-debug button:active { transform: none; background: #1c2d43; }
+.dev-debug button:disabled { opacity: .45; cursor: not-allowed; }
+.dev-debug input:focus, .dev-debug select:focus, .dev-debug button:focus-visible { outline: 2px solid #61bfff; outline-offset: 1px; }
+.dev-debug .primary { background: #266799; border-color: #3989bc; }
+.dev-debug .danger { color: #ffadad; }
+.dev-debug .error { color: #ff9c9c; }
+.dev-debug .warn { color: #eac375; }
+.dev-debug .success { color: #88d9b0; }
+.dev-debug .dev-muted { color: var(--dev-muted); }
+.dev-header { display: flex; align-items: center; gap: 12px; padding: 7px 14px; background: #18212e; border-bottom: 1px solid var(--dev-line); }
+.dev-brand { display: grid; flex: 0 0 auto; line-height: 1.2; letter-spacing: .04em; }
+.dev-brand strong { color: #8ddcff; font-size: 13px; }
+.dev-brand small { color: var(--dev-muted); font-size: 10px; margin-top: 3px; }
+.dev-world-select { width: min(360px, 25vw); }
+.dev-status { flex: 1; min-width: 0; color: #9bc9af; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dev-main { display: grid; grid-template-columns: 230px minmax(0, 1fr) 300px; min-height: 0; }
+.dev-people, .dev-inspector { min-height: 0; padding: 12px; background: var(--dev-surface); }
+.dev-people { display: flex; flex-direction: column; gap: 6px; border-right: 1px solid var(--dev-line); }
+.dev-people h3 { margin: 0; }
+.dev-players { overflow: auto; min-height: 0; flex: 1; padding-top: 5px; }
+.dev-debug .dev-player { display: grid; width: 100%; height: auto; gap: 3px; text-align: left; padding: 8px; margin-bottom: 5px; border-color: #29384a; }
+.dev-player strong, .dev-player small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-player small { color: var(--dev-muted); font-size: 11px; }
+.dev-debug .dev-player.nearby { border-left: 3px solid #69c6ae; }
+.dev-player.offline { opacity: .55; }
+.dev-world { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
+.dev-toolbar { display: flex; align-items: center; gap: 7px; padding: 7px; background: #141c29; flex-wrap: wrap; }
+.dev-check { display: flex; align-items: center; gap: 4px; color: var(--dev-muted); white-space: nowrap; }
+.dev-debug .dev-check input { width: 14px; height: 14px; accent-color: #62bfff; }
+.dev-viewport { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #111b24; }
+.dev-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+.dev-viewport[data-truncated="true"]::after { content: "实体数量达到上限，请放大视图"; position: absolute; left: 10px; bottom: 10px; padding: 4px 8px; color: #ffe0a0; background: #252017dc; pointer-events: none; }
+.dev-view-footer { display: flex; align-items: center; gap: 12px; padding: 5px 8px; background: #141c29; font: 11px/1.4 Consolas, monospace; }
+.dev-view-footer span:nth-child(2) { flex: 1; color: var(--dev-muted); }
+.dev-debug .dev-view-footer button { height: 24px; font-size: 11px; }
+.dev-inspector { overflow: auto; border-left: 1px solid var(--dev-line); user-select: text; }
+.dev-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.dev-fields { display: grid; grid-template-columns: minmax(85px, .9fr) minmax(0, 1.3fr); gap: 5px 9px; margin: 10px 0; font-size: 12px; }
+.dev-fields dt { color: var(--dev-muted); word-break: break-word; }
+.dev-fields dd { margin: 0; overflow-wrap: anywhere; }
+.dev-detail-section { padding: 6px 0; border-top: 1px solid var(--dev-line); }
+.dev-detail-section summary { cursor: pointer; color: #a6d6fb; }
+.dev-debug pre { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.5 Consolas, monospace; user-select: text; }
+.dev-console { display: grid; grid-template-rows: 32px minmax(0, 1fr) 38px; min-height: 0; border-top: 1px solid var(--dev-line); background: #0c111a; }
+.dev-console-header { display: flex; align-items: center; gap: 14px; padding: 3px 12px; font-size: 11px; background: #18212e; }
+.dev-console-header strong { letter-spacing: .1em; color: #8fa5c4; }
+.dev-console-header span { flex: 1; }
+.dev-debug .dev-console-header button { height: 24px; font-size: 11px; }
+.dev-logs { overflow: auto; padding: 6px 12px; font: 12px/1.5 Consolas, "Microsoft YaHei", monospace; user-select: text; }
+.dev-log { white-space: pre-wrap; overflow-wrap: anywhere; }
+.dev-log.command { color: #89cbff; }
+.dev-command-form { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-top: 1px solid var(--dev-line); }
+.dev-command-form > span { color: #67bdff; font: bold 18px monospace; }
+.dev-command-form input { flex: 1; font-family: Consolas, "Microsoft YaHei", monospace; }
+.dev-menu { position: fixed; z-index: 1010; display: grid; gap: 3px; min-width: 220px; max-width: min(370px, calc(100vw - 16px)); padding: 8px; border: 1px solid #46576e; border-radius: 7px; background: #182434; box-shadow: 0 10px 30px #0008; }
+.dev-menu strong { padding: 3px 7px 7px; color: #8ddcff; font-size: 12px; }
+.dev-debug .dev-menu button { height: auto; min-height: 30px; white-space: normal; text-align: left; border: 0; background: transparent; }
+.dev-debug .dev-menu button:hover { background: #2d4059; }
+.dev-picker-shade, .dev-form-shade { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; background: #0008; z-index: 1020; }
+.dev-picker-shade { z-index: 1030; }
+.dev-picker, .dev-form { width: min(680px, 95vw); max-height: min(600px, 85vh); padding: 18px; border: 1px solid #4b607b; border-radius: 8px; background: #192435; box-shadow: 0 20px 80px #0008; }
+.dev-picker { display: grid; grid-template-rows: auto 32px minmax(80px, 1fr) 32px; gap: 10px; height: min(580px, 85vh); }
+.dev-type-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); align-content: start; overflow: auto; gap: 7px; min-height: 0; }
+.dev-debug .dev-type-cell { height: 98px; display: grid; grid-template-rows: 52px auto auto; justify-items: center; align-content: center; padding: 5px; gap: 1px; }
+.dev-type-cell img { width: 50px; height: 50px; object-fit: contain; grid-row: 1; }
+.dev-type-cell span { grid-row: 2; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; }
+.dev-type-cell small { grid-row: 3; font: 10px monospace; color: var(--dev-muted); }
+.dev-form { width: min(460px, 95vw); overflow: auto; }
+.dev-form-field { display: grid; gap: 5px; margin: 12px 0; color: #adbed4; }
+.dev-form-field button, .dev-form-field select, .dev-form-field input { width: 100%; }
+.dev-form .dev-actions { justify-content: flex-end; margin-bottom: 0; }
+@media (max-width: 1050px) {
+  .dev-main { grid-template-columns: 180px minmax(0, 1fr) 245px; }
+  .dev-brand small, .dev-status { display: none; }
+  .dev-world-select { flex: 1; width: auto; }
+}
+@media (max-width: 760px) {
+  .dev-main { grid-template-columns: 130px minmax(0, 1fr); grid-template-rows: minmax(120px, 1fr) minmax(90px, 22vh); }
+  .dev-inspector { grid-column: 1 / -1; border-top: 1px solid var(--dev-line); border-left: 0; }
+  .dev-header { gap: 6px; padding: 6px; }
+  .dev-brand strong { font-size: 10px; }
+}

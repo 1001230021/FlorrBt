@@ -190,7 +190,6 @@ inline void RegisterWikiTermiteOvermindRelicDropTable()
             { ERarity::Ultra, ERarity::Ultra, 0.0005 },
             { ERarity::Ultra, ERarity::Mythic, 0.4655 },
             { ERarity::Ultra, ERarity::Legendary, 0.534 },
-            { ERarity::Super, ERarity::Super, 0.000008 },
             { ERarity::Super, ERarity::Ultra, 0.464992 },
             { ERarity::Super, ERarity::Mythic, 0.535 },
         });
@@ -220,7 +219,6 @@ inline void RegisterWikiWorkerTermitePlankDropTable()
             { ERarity::Ultra, ERarity::Ultra, 0.0005 },
             { ERarity::Ultra, ERarity::Mythic, 0.4655 },
             { ERarity::Ultra, ERarity::Legendary, 0.534 },
-            { ERarity::Super, ERarity::Super, 0.000008 },
             { ERarity::Super, ERarity::Ultra, 0.464992 },
             { ERarity::Super, ERarity::Mythic, 0.535 },
         });
@@ -344,7 +342,6 @@ inline void RegisterWikiSoldierTermiteBoneDropTable()
                         { ERarity::Ultra, ERarity::Ultra, 0.0005 },
                         { ERarity::Ultra, ERarity::Mythic, 0.4655 },
                         { ERarity::Ultra, ERarity::Legendary, 0.534 },
-                        { ERarity::Super, ERarity::Super, 0.000008 },
                         { ERarity::Super, ERarity::Ultra, 0.464992 },
                         { ERarity::Super, ERarity::Mythic, 0.535 },
         });
@@ -552,8 +549,7 @@ inline void ReplaceAntDropRatesWithWikiData()
                         { ERarity::Mythic, ERarity::Legendary, 0.265 },     { ERarity::Mythic, ERarity::Mythic, 0.003 },
                         { ERarity::Ultra, ERarity::Legendary, 0.748 },      { ERarity::Ultra, ERarity::Mythic, 0.2515 },
                         { ERarity::Ultra, ERarity::Ultra, 0.0005 },         { ERarity::Super, ERarity::Mythic, 0.749 },
-                        { ERarity::Super, ERarity::Ultra, 0.250992 },       { ERarity::Super, ERarity::Super, 0.000008 },
-        });
+                        { ERarity::Super, ERarity::Ultra, 0.250992 },        });
         RegisterDropRateTable(
         EMobType::BabyFireAnt, EPetalType::Yucca,
         {
@@ -670,7 +666,6 @@ inline void ReplaceTermiteDropRatesWithWikiData()
                         { ERarity::Ultra, ERarity::Ultra, 0.0005 },
                         { ERarity::Ultra, ERarity::Mythic, 0.4655 },
                         { ERarity::Ultra, ERarity::Legendary, 0.534 },
-                        { ERarity::Super, ERarity::Super, 0.000008 },
                         { ERarity::Super, ERarity::Ultra, 0.464992 },
                         { ERarity::Super, ERarity::Mythic, 0.535 },
         });
@@ -697,7 +692,6 @@ inline void ReplaceTermiteDropRatesWithWikiData()
                         { ERarity::Ultra, ERarity::Ultra, 0.0005 },
                         { ERarity::Ultra, ERarity::Mythic, 0.4655 },
                         { ERarity::Ultra, ERarity::Legendary, 0.534 },
-                        { ERarity::Super, ERarity::Super, 0.000008 },
                         { ERarity::Super, ERarity::Ultra, 0.464992 },
                         { ERarity::Super, ERarity::Mythic, 0.535 },
         });
@@ -724,7 +718,6 @@ inline void ReplaceTermiteDropRatesWithWikiData()
                         { ERarity::Ultra, ERarity::Ultra, 0.0005 },
                         { ERarity::Ultra, ERarity::Mythic, 0.4655 },
                         { ERarity::Ultra, ERarity::Legendary, 0.534 },
-                        { ERarity::Super, ERarity::Super, 0.000008 },
                         { ERarity::Super, ERarity::Ultra, 0.464992 },
                         { ERarity::Super, ERarity::Mythic, 0.535 },
         });
@@ -736,7 +729,6 @@ inline void ReplaceTermiteDropRatesWithWikiData()
 
 inline void RegisterDerivedSuperAndEternalDropRates()
 {
-    constexpr double super_same_rarity_drop_rate = 0.00000001; // 0.000001%
     constexpr double eternal_super_drop_min_rate = 0.030108;
     constexpr double eternal_super_drop_max_rate = 0.099892;
     constexpr double super_ultra_drop_saturation_rate = 0.45;
@@ -765,7 +757,6 @@ inline void RegisterDerivedSuperAndEternalDropRates()
         {
             double super_ultra_drop_rate = 0.0;
             double super_mythic_drop_rate = 0.0;
-            bool has_same_rarity_super_drop = false;
             auto& super_mob_drop_entries = GetDropRateTable()[SDropRateKey{ mob_type, ERarity::Super }];
             for (SDropRate& drop_entry : super_mob_drop_entries)
             {
@@ -774,17 +765,16 @@ inline void RegisterDerivedSuperAndEternalDropRates()
                     super_ultra_drop_rate += drop_entry.drop_rate;
                 else if (drop_entry.rarity == ERarity::Mythic)
                     super_mythic_drop_rate += drop_entry.drop_rate;
-                else if (drop_entry.rarity == ERarity::Super)
-                {
-                    drop_entry.drop_rate = super_same_rarity_drop_rate;
-                    has_same_rarity_super_drop = true;
-                }
             }
-            if (!has_same_rarity_super_drop)
-            {
-                RegisterDropRate(mob_type, ERarity::Super, drop_type, ERarity::Super,
-                                 super_same_rarity_drop_rate);
-            }
+            // Super mobs never drop Super petals (supers are craft-only);
+            // scrub any table that still carries one so future data imports
+            // cannot reintroduce the bug.
+            super_mob_drop_entries.erase(
+                std::remove_if(super_mob_drop_entries.begin(), super_mob_drop_entries.end(),
+                               [drop_type](const SDropRate& drop_entry) {
+                                   return drop_entry.type == drop_type && drop_entry.rarity == ERarity::Super;
+                               }),
+                super_mob_drop_entries.end());
 
             const double super_drop_curve_factor =
                 std::clamp(super_ultra_drop_rate / super_ultra_drop_saturation_rate, 0.0, 1.0);
@@ -850,10 +840,8 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::SoldierAnt, ERarity::Ultra, EPetalType::Glass, ERarity::Ultra, 0.0005);
     RegisterDropRate(EMobType::SoldierAnt, ERarity::Ultra, EPetalType::Glass, ERarity::Mythic, 0.4655);
     RegisterDropRate(EMobType::SoldierAnt, ERarity::Ultra, EPetalType::Glass, ERarity::Legendary, 0.534);
-    RegisterDropRate(EMobType::SoldierAnt, ERarity::Super, EPetalType::Wing, ERarity::Super, 0.000008);
     RegisterDropRate(EMobType::SoldierAnt, ERarity::Super, EPetalType::Wing, ERarity::Ultra, 0.672992);
     RegisterDropRate(EMobType::SoldierAnt, ERarity::Super, EPetalType::Wing, ERarity::Mythic, 0.327);
-    RegisterDropRate(EMobType::SoldierAnt, ERarity::Super, EPetalType::Glass, ERarity::Super, 0.000008);
     RegisterDropRate(EMobType::SoldierAnt, ERarity::Super, EPetalType::Glass, ERarity::Ultra, 0.464992);
     RegisterDropRate(EMobType::SoldierAnt, ERarity::Super, EPetalType::Glass, ERarity::Mythic, 0.535);
 
@@ -937,10 +925,8 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::NormalLadybug, ERarity::Ultra, EPetalType::Rose, ERarity::Ultra, 0.0005);
     RegisterDropRate(EMobType::NormalLadybug, ERarity::Ultra, EPetalType::Rose, ERarity::Mythic, 0.4655);
     RegisterDropRate(EMobType::NormalLadybug, ERarity::Ultra, EPetalType::Rose, ERarity::Legendary, 0.534);
-    RegisterDropRate(EMobType::NormalLadybug, ERarity::Super, EPetalType::Light, ERarity::Super, 0.000008);
     RegisterDropRate(EMobType::NormalLadybug, ERarity::Super, EPetalType::Light, ERarity::Ultra, 0.357992);
     RegisterDropRate(EMobType::NormalLadybug, ERarity::Super, EPetalType::Light, ERarity::Mythic, 0.642);
-    RegisterDropRate(EMobType::NormalLadybug, ERarity::Super, EPetalType::Rose, ERarity::Super, 0.000008);
     RegisterDropRate(EMobType::NormalLadybug, ERarity::Super, EPetalType::Rose, ERarity::Ultra, 0.464992);
     RegisterDropRate(EMobType::NormalLadybug, ERarity::Super, EPetalType::Rose, ERarity::Mythic, 0.535);
 
@@ -1297,10 +1283,8 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::Hornet, ERarity::Ultra, EPetalType::Missile, ERarity::Ultra, 0.0005);
     RegisterDropRate(EMobType::Hornet, ERarity::Ultra, EPetalType::Missile, ERarity::Mythic, 0.668608);
     RegisterDropRate(EMobType::Hornet, ERarity::Ultra, EPetalType::Missile, ERarity::Legendary, 0.330892);
-    RegisterDropRate(EMobType::Hornet, ERarity::Super, EPetalType::Antennae, ERarity::Super, 0.000002);
     RegisterDropRate(EMobType::Hornet, ERarity::Super, EPetalType::Antennae, ERarity::Ultra, 0.332);
     RegisterDropRate(EMobType::Hornet, ERarity::Super, EPetalType::Antennae, ERarity::Mythic, 0.667998);
-    RegisterDropRate(EMobType::Hornet, ERarity::Super, EPetalType::Missile, ERarity::Super, 0.00001);
     RegisterDropRate(EMobType::Hornet, ERarity::Super, EPetalType::Missile, ERarity::Ultra, 0.6681);
     RegisterDropRate(EMobType::Hornet, ERarity::Super, EPetalType::Missile, ERarity::Mythic, 0.33189);
     RegisterDropRate(EMobType::Hornet, ERarity::Common, EPetalType::Orange, ERarity::Unusual, 0.164);
@@ -1341,7 +1325,6 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::Dandelion, ERarity::Ultra, EPetalType::Dandelion, ERarity::Ultra, 0.0005);
     RegisterDropRate(EMobType::Dandelion, ERarity::Ultra, EPetalType::Dandelion, ERarity::Mythic, 0.668608);
     RegisterDropRate(EMobType::Dandelion, ERarity::Ultra, EPetalType::Dandelion, ERarity::Legendary, 0.330892);
-    RegisterDropRate(EMobType::Dandelion, ERarity::Super, EPetalType::Dandelion, ERarity::Super, 0.00001);
     RegisterDropRate(EMobType::Dandelion, ERarity::Super, EPetalType::Dandelion, ERarity::Ultra, 0.6681);
     RegisterDropRate(EMobType::Dandelion, ERarity::Super, EPetalType::Dandelion, ERarity::Mythic, 0.33189);
 
@@ -1358,8 +1341,7 @@ inline void RegisterDropRates()
                         { ERarity::Mythic, ERarity::Legendary, 0.265 },     { ERarity::Mythic, ERarity::Mythic, 0.003 },
                         { ERarity::Ultra, ERarity::Legendary, 0.748 },      { ERarity::Ultra, ERarity::Mythic, 0.2515 },
                         { ERarity::Ultra, ERarity::Ultra, 0.0005 },         { ERarity::Super, ERarity::Mythic, 0.749 },
-                        { ERarity::Super, ERarity::Ultra, 0.250992 },       { ERarity::Super, ERarity::Super, 0.000008 },
-        });
+                        { ERarity::Super, ERarity::Ultra, 0.250992 },        });
     RegisterDropRate(EMobType::BandageBeetle, ERarity::Common, EPetalType::BeetleEgg, ERarity::Common, 0.800);
     RegisterDropRate(EMobType::BandageBeetle, ERarity::Common, EPetalType::BeetleEgg, ERarity::Unusual, 0.200);
 
@@ -1383,7 +1365,6 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::BandageBeetle, ERarity::Ultra, EPetalType::BeetleEgg, ERarity::Ultra, 0.0005);
     RegisterDropRate(EMobType::BandageBeetle, ERarity::Ultra, EPetalType::BeetleEgg, ERarity::Mythic, 0.5985);
     RegisterDropRate(EMobType::BandageBeetle, ERarity::Ultra, EPetalType::BeetleEgg, ERarity::Legendary, 0.401);
-    RegisterDropRate(EMobType::BandageBeetle, ERarity::Super, EPetalType::BeetleEgg, ERarity::Super, 0.000008);
     RegisterDropRate(EMobType::BandageBeetle, ERarity::Super, EPetalType::BeetleEgg, ERarity::Ultra, 0.597992);
     RegisterDropRate(EMobType::BandageBeetle, ERarity::Super, EPetalType::BeetleEgg, ERarity::Mythic, 0.402);
 
@@ -1400,8 +1381,7 @@ inline void RegisterDropRates()
                         { ERarity::Mythic, ERarity::Legendary, 0.265 },     { ERarity::Mythic, ERarity::Mythic, 0.003 },
                         { ERarity::Ultra, ERarity::Legendary, 0.748 },      { ERarity::Ultra, ERarity::Mythic, 0.2515 },
                         { ERarity::Ultra, ERarity::Ultra, 0.0005 },         { ERarity::Super, ERarity::Mythic, 0.749 },
-                        { ERarity::Super, ERarity::Ultra, 0.250992 },       { ERarity::Super, ERarity::Super, 0.000008 },
-        });
+                        { ERarity::Super, ERarity::Ultra, 0.250992 },        });
         RegisterDropRateTable(
         EMobType::Firefly, EPetalType::Battery,
         {
@@ -1415,8 +1395,7 @@ inline void RegisterDropRates()
                         { ERarity::Mythic, ERarity::Legendary, 0.265 },     { ERarity::Mythic, ERarity::Mythic, 0.003 },
                         { ERarity::Ultra, ERarity::Legendary, 0.748 },      { ERarity::Ultra, ERarity::Mythic, 0.2515 },
                         { ERarity::Ultra, ERarity::Ultra, 0.0005 },         { ERarity::Super, ERarity::Mythic, 0.749 },
-                        { ERarity::Super, ERarity::Ultra, 0.250992 },       { ERarity::Super, ERarity::Super, 0.000008 },
-        });
+                        { ERarity::Super, ERarity::Ultra, 0.250992 },        });
 
     RegisterDropRate(EMobType::Beetle, ERarity::Unusual, EPetalType::BeetleEgg, ERarity::Common, 0.547);
     RegisterDropRate(EMobType::Beetle, ERarity::Unusual, EPetalType::BeetleEgg, ERarity::Unusual, 0.453);
@@ -1435,7 +1414,6 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::Beetle, ERarity::Ultra, EPetalType::BeetleEgg, ERarity::Ultra, 0.0005);
     RegisterDropRate(EMobType::Beetle, ERarity::Ultra, EPetalType::BeetleEgg, ERarity::Mythic, 0.4655);
     RegisterDropRate(EMobType::Beetle, ERarity::Ultra, EPetalType::BeetleEgg, ERarity::Legendary, 0.534);
-    RegisterDropRate(EMobType::Beetle, ERarity::Super, EPetalType::BeetleEgg, ERarity::Super, 0.000008);
     RegisterDropRate(EMobType::Beetle, ERarity::Super, EPetalType::BeetleEgg, ERarity::Ultra, 0.464992);
     RegisterDropRate(EMobType::Beetle, ERarity::Super, EPetalType::BeetleEgg, ERarity::Mythic, 0.535);
 

@@ -154,7 +154,7 @@ inline bool IsKnownPetalTypeId(int value)
     return !GetModPetalTypeName(value).empty();
 }
 
-inline bool PetalUsesBaseAndDefenseReach(EPetalType type)
+inline bool UsesBaseAndDefenseReach(EPetalType type)
 {
     switch (type)
     {
@@ -169,7 +169,7 @@ inline bool PetalUsesBaseAndDefenseReach(EPetalType type)
     }
 }
 
-inline bool PetalIgnoresReachBonus(EPetalType type)
+inline bool IgnoresReachBonus(EPetalType type)
 {
     switch (type)
     {

@@ -2,7 +2,7 @@
 #include "../../../Shared/mob_type.h"
 #include "../../../Shared/rarity.h"
 #include "../entity.h"
-#include <SFML/System/Vector2.hpp>
+#include "../../../Shared/math_types.h"
 
 class CBloodSacrificeRitual : public CEntity
 {

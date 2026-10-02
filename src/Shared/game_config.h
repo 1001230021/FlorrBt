@@ -365,6 +365,14 @@ inline float eou_food_biomass_ratio = 0.5f;
 inline float eou_food_home_radius = 40.0f;
 inline int eou_initial_food_count = 12;
 inline float eou_initial_food_amount = 120.0f;
+inline float eou_initial_stash = 150.0f;
+inline float eou_stash_capacity = 200.0f;
+inline int eou_colony_food_count = 3;
+inline float eou_food_replenish_interval = 15.0f;
+inline float eou_storage_build_cost = 20.0f;
+inline float eou_worker_cell_build_cost = 30.0f;
+inline float eou_soldier_cell_build_cost = 50.0f;
+inline int eou_max_cells_per_team = 64;
 inline float eou_food_mob_max_health = 500.0f;
 inline float eou_food_mob_armor = 100.0f;
 inline float eou_food_mob_radius = WorldUnits(12.0f);
@@ -384,6 +392,19 @@ inline float eou_queen_armor = 10.0f;
 inline float eou_queen_damage = 10.0f;
 inline float eou_queen_radius = WorldUnits(28.0f);
 inline float eou_queen_mass = 5000.0f;
+// EOU soldier ant: hatched from soldier hatchery cells (EotU-style, the tile
+// type picks the caste). Hunts enemy-team mobs/flowers inside the aggro
+// range, drops the chase past the leash range, and follows pheromones
+// otherwise. Costs more food to hatch than a worker.
+inline float eou_soldier_max_health = 260.0f;
+inline float eou_soldier_armor = 2.0f;
+inline float eou_soldier_damage = 18.0f;
+inline float eou_soldier_radius = WorldUnits(14.0f);
+inline float eou_soldier_mass = 400.0f;
+inline float eou_soldier_aggro_range = WorldUnits(240.0f);
+inline float eou_soldier_leash_range = WorldUnits(420.0f);
+inline float eou_soldier_scan_interval = 0.4f;
+inline float eou_soldier_hatch_food_cost = 90.0f;
 inline float default_max_velocity = WorldUnits(75.0f);
 inline float default_moon_base_damage = 3.0f;
 inline float default_moon_base_health = 5000.0f;
@@ -1061,14 +1082,28 @@ inline float player_level_exp_growth = 1.20f;
 // PlayerFlowerExpRequired).
 inline float player_level_exp_legacy_growth = 1.22f;
 inline float player_spawn_invincible_duration = 3.0f;
+// Keep Common..Epic's familiar sizes, then interpolate geometrically to the
+// Super anchor instead of multiplying ever-larger per-level factors. The
+// reference Mecha Flowers are roughly 13/20 player diameters at S/ET; Q uses
+// ET's level, and P continues with a smaller jump. Health/damage are separate.
 inline float mob_radius_level_step = 0.15f;
-inline float MobRadiusScaleForLevel(int level)
+inline float mob_radius_scale_super = 11.5f;
+inline float mob_radius_scale_eternal = 18.0f;
+inline float mob_radius_scale_primordial = 25.0f;
+inline float GetMobRadiusScaleForLevel(int level)
 {
+    const int clamped_level = std::clamp(level, 1, 10);
     float scale = 1.f;
-    int clamped_level = std::clamp(level, 1, 10);
-    for (int previous_level = 1; previous_level < clamped_level; ++previous_level)
-        scale *= 1.f + static_cast<float>(previous_level) * mob_radius_level_step;
-    return std::max(0.f, scale);
+    for (int previous_level = 1; previous_level < std::min(clamped_level, 4); ++previous_level)
+        scale *= 1.f + static_cast<float>(previous_level) * std::max(0.f, mob_radius_level_step);
+    if (clamped_level <= 4) return scale;
+
+    const float super_scale = std::max(scale, mob_radius_scale_super);
+    if (clamped_level <= 8)
+        return scale * std::pow(super_scale / scale, static_cast<float>(clamped_level - 4) / 4.f);
+    const float eternal_scale = std::max(super_scale, mob_radius_scale_eternal);
+    if (clamped_level == 9) return eternal_scale;
+    return std::max(eternal_scale, mob_radius_scale_primordial);
 }
 inline float mob_stop_damping = 0.9f;
 inline float mob_stop_velocity_epsilon = 1e-5f;
@@ -1191,7 +1226,8 @@ inline int player_talent_point_minor_bonus = 5;
 inline int player_talent_point_minor_level_interval = 5;
 inline int player_talent_point_major_bonus = 10;
 inline int player_talent_point_major_level_interval = 10;
-inline float player_move_target_distance = WorldUnits(100123.0f);
+// Target offset used to represent full analog input, not a navigation goal.
+inline float player_move_target_distance = WorldUnits(100.0f);
 inline float player_respawn_x = 5376.0f;
 inline float player_respawn_y = 5376.0f;
 inline int port = 10012;
@@ -1355,7 +1391,7 @@ inline float mob_health_scale_ultra = 145800.0f;
 inline float mob_health_scale_super = 4374000.0f;
 inline float mob_health_scale_eternal = 78732000.0f;
 inline float mob_health_scale_primordial = 944784000.0f;
-inline float MobHealthScaleForLevel(int level)
+inline float GetMobHealthScaleForLevel(int level)
 {
     switch (std::clamp(level, 1, 10))
     {
@@ -1383,7 +1419,7 @@ inline float MobHealthScaleForLevel(int level)
         return mob_health_scale_common;
     }
 }
-inline float MobMassScaleForLevel(int level)
+inline float GetMobMassScaleForLevel(int level)
 {
     return std::pow(mob_mass_scale_base,
                     static_cast<float>(std::max(1, level) - 1) * mob_mass_scale_exp_multiplier);
@@ -1405,7 +1441,8 @@ inline float mob_hornet_skill1_super_chance_after_eternal = 0.3478261f;
 inline float mob_hornet_skill1_super_chance = 0.08f;
 inline float mob_hornet_skill2_arc_pi_multiplier = 5.0f;
 inline float mob_hornet_skill2_move_speed_multiplier = 2.0f;
-inline float mob_hornet_skill2_orbit_radius_multiplier = 3.0f;
+// The circular barrage follows a circle with radius 3/4 of the caster's body.
+inline float mob_hornet_skill2_orbit_radius_multiplier = 0.75f;
 inline float mob_hornet_skill3_cast_chance = 0.10f;
 inline float mob_hornet_skill3_grab_range_radius_multiplier = 2.0f;
 inline float mob_hornet_stop_distance = 128.0f;
@@ -1442,9 +1479,9 @@ inline float mob_bubble_spawn_radius_multiplier = 0.5f;
 inline float mob_bubble_radius_random_min = 0.9f;
 inline float mob_bubble_radius_random_max = 1.1f;
 inline float mob_projectile_base_mass = 1.0f;
-inline float MobProjectileMassForLevel(int level)
+inline float GetMobProjectileMassForLevel(int level)
 {
-    return mob_projectile_base_mass * MobMassScaleForLevel(level);
+    return mob_projectile_base_mass * GetMobMassScaleForLevel(level);
 }
 inline float mob_stop_damping_ticks_per_second = 60.0f;
 inline float mob_summoned_rarity_linear_scale = 0.2f;
@@ -1459,9 +1496,9 @@ inline float open_squad_loot_damage_range = 1.f;
 inline size_t server_max_saved_chats = 256;
 inline float world_mob_overlap_velocity_retention = 0.35f;
 inline float world_mob_overlap_weak_push = 0.32f;
-// General mob-overlap separation push (used whenever at least one side is a
-// flower). This is the pre-swarm-tuning value.
-inline float mob_overlap_push_multiplier = 1.25f;
+// Flower contact position correction (0..1). Values above 1 are capped so
+// penetration correction never launches the bodies apart.
+inline float mob_overlap_push_multiplier = 1.0f;
 // Non-flower mob pairs still collide physically, but separate more gently so
 // several attackers can pack around a flower instead of becoming a rigid shell.
 inline float nonflower_mob_overlap_push_multiplier = 0.60f;
@@ -1887,6 +1924,14 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("eou_food_home_radius", eou_food_home_radius),
         REGISTER_CONFIG("eou_initial_food_count", eou_initial_food_count),
         REGISTER_CONFIG("eou_initial_food_amount", eou_initial_food_amount),
+        REGISTER_CONFIG("eou_initial_stash", eou_initial_stash),
+        REGISTER_CONFIG("eou_stash_capacity", eou_stash_capacity),
+        REGISTER_CONFIG("eou_colony_food_count", eou_colony_food_count),
+        REGISTER_CONFIG("eou_food_replenish_interval", eou_food_replenish_interval),
+        REGISTER_CONFIG("eou_storage_build_cost", eou_storage_build_cost),
+        REGISTER_CONFIG("eou_worker_cell_build_cost", eou_worker_cell_build_cost),
+        REGISTER_CONFIG("eou_soldier_cell_build_cost", eou_soldier_cell_build_cost),
+        REGISTER_CONFIG("eou_max_cells_per_team", eou_max_cells_per_team),
         REGISTER_CONFIG("eou_food_mob_max_health", eou_food_mob_max_health),
         REGISTER_CONFIG("eou_food_mob_armor", eou_food_mob_armor),
         REGISTER_CONFIG("eou_food_mob_radius", eou_food_mob_radius),
@@ -1903,6 +1948,15 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("eou_queen_damage", eou_queen_damage),
         REGISTER_CONFIG("eou_queen_radius", eou_queen_radius),
         REGISTER_CONFIG("eou_queen_mass", eou_queen_mass),
+        REGISTER_CONFIG("eou_soldier_max_health", eou_soldier_max_health),
+        REGISTER_CONFIG("eou_soldier_armor", eou_soldier_armor),
+        REGISTER_CONFIG("eou_soldier_damage", eou_soldier_damage),
+        REGISTER_CONFIG("eou_soldier_radius", eou_soldier_radius),
+        REGISTER_CONFIG("eou_soldier_mass", eou_soldier_mass),
+        REGISTER_CONFIG("eou_soldier_aggro_range", eou_soldier_aggro_range),
+        REGISTER_CONFIG("eou_soldier_leash_range", eou_soldier_leash_range),
+        REGISTER_CONFIG("eou_soldier_scan_interval", eou_soldier_scan_interval),
+        REGISTER_CONFIG("eou_soldier_hatch_food_cost", eou_soldier_hatch_food_cost),
         REGISTER_CONFIG("max_velocity", default_max_velocity),
         REGISTER_CONFIG("melee_random_idle_chance", melee_random_idle_chance),
         REGISTER_CONFIG("melee_random_idle_time", melee_random_idle_time),
@@ -2169,6 +2223,9 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_player_flower_team", mob_player_flower_team),
         REGISTER_CONFIG("player_spawn_invincible_duration", player_spawn_invincible_duration),
         REGISTER_CONFIG("mob_radius_level_step", mob_radius_level_step),
+        REGISTER_CONFIG("mob_radius_scale_super", mob_radius_scale_super),
+        REGISTER_CONFIG("mob_radius_scale_eternal", mob_radius_scale_eternal),
+        REGISTER_CONFIG("mob_radius_scale_primordial", mob_radius_scale_primordial),
         REGISTER_CONFIG("mob_slow_to_max_velocity_time", mob_slow_to_max_velocity_time),
         REGISTER_CONFIG("mob_digging_speed_multiplier", mob_digging_speed_multiplier),
         REGISTER_CONFIG("mob_stop_damping", mob_stop_damping),

@@ -1,10 +1,24 @@
 export const clientCommandSpecs = Object.freeze([
   {
+    name: "dev_debug",
+    aliases: ["dev"],
+    params: "",
+    args: "",
+    help: "ui.console.help.devDebug",
+  },
+  {
     name: "version",
     aliases: ["ver"],
     params: "",
     args: "",
     help: "ui.console.help.version",
+  },
+  {
+    name: "clear",
+    aliases: ["clear_console"],
+    params: "",
+    args: "",
+    help: "ui.console.help.clear",
   },
   {
     name: "change_language",
@@ -96,6 +110,13 @@ export const clientCommandSpecs = Object.freeze([
     params: "[auto|native|0.75-4]",
     args: "",
     help: "ui.console.help.render_scale",
+  },
+  {
+    name: "view_zoom",
+    aliases: ["viewzoom", "zoom"],
+    params: "[25-100%]",
+    args: "",
+    help: "ui.console.help.view_zoom",
   },
   {
     name: "colorful_map",

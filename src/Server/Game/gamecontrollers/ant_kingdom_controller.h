@@ -5,7 +5,7 @@
 #include "eou_team.h"
 #include "mutable_terrain_controller.h"
 #include "pvp_controller.h"
-#include <SFML/System/Vector2.hpp>
+#include "../../../Shared/math_types.h"
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -23,8 +23,8 @@
 //   /mark_wall             - toggle this team's flag on the cell under you
 //   /mark_wall [x,y]       - toggle this team's flag on the cell at [x,y]
 //   /pheromone [x,y]       - move this team's primary group target to [x,y]
-//   /build [storage|hatchery] - report or switch the team's build mode (what
-//                            a defend-thrown pheromone petal builds)
+//   /build [storage|worker|soldier] - report or switch the team's build mode
+//                            (what a defend-thrown pheromone petal builds)
 // Only players with a match team (>= start_team) may use them.
 //
 // Construction parameters (overridable from the waiting room /setting):
@@ -33,6 +33,16 @@
 //                            integer in [0, 10]). Slot 0 stays reserved; slots
 //                            1..N hold one pheromone petal each, bound to
 //                            group 1..N.
+// What a defend-thrown pheromone petal builds. Storage keeps food; the two
+// hatchery modes pick which caste the tile raises (the EotU rule: the tile
+// type decides the ant). Values are snapshot-stable - never renumber.
+enum class EEouBuildMode : std::uint8_t
+{
+    Storage = 0,
+    WorkerHatchery = 1,
+    SoldierHatchery = 2,
+};
+
 class CAntKingdomController : virtual public CMutableTerrainController,
                               virtual public CAntHelPvpController
 {
@@ -55,6 +65,7 @@ class CAntKingdomController : virtual public CMutableTerrainController,
     std::uint32_t SnapshotVersion() const override { return 1; }
     void CaptureSnapshot(CSnapshotWriter& writer) const override;
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
+    bool ResolveReferences(CGameWorld& world, const IGameWorldResolver&, std::string& error) override;
     std::vector<SControllerParamInfo> ParamSchema() const override;
     // Diamond resolution: the mutable-terrain base wins.
     bool ForcesPrimordialNullification() const override
@@ -63,6 +74,7 @@ class CAntKingdomController : virtual public CMutableTerrainController,
     }
     // The pheromone petals are the only equippable loadout; the system owns
     // them, so they can never be unequipped back into the backpack.
+    bool LocksPetalLoadout() const override { return true; }
     bool CanEquipPetalType(EPetalType type) const override
     {
         return type == ToPetalType(EModPetalType::EouPheromone);
@@ -88,8 +100,7 @@ class CAntKingdomController : virtual public CMutableTerrainController,
 
     // Skill slots disguised as vanilla petal slots for the client (see
     // eou_slot_proxy.h).
-    const CEouSlotProxy* SlotProxy() const override { return &m_slot_proxy; }
-    CEouSlotProxy& SlotProxyMut() { return m_slot_proxy; }
+    const CEouSlotProxy* SlotProxy(int team_id) const override;
 
     // Pheromone petal stopped: attack throw retargets the bound group,
     // defend throw toggles a cell at the resting point.
@@ -98,7 +109,7 @@ class CAntKingdomController : virtual public CMutableTerrainController,
 
     // Worker deposit: ferry food into the nearest storage cell (overflow and
     // storage-less colonies fall back to the team stash).
-    void DepositWorkerFood(CGameWorld& world, int team_id, florrbt::Vector2f pos, float amount);
+    float DepositWorkerFood(CGameWorld& world, int team_id, florrbt::Vector2f pos, float amount);
 
     // A worker finished digging at `pos`: removes the wall cell there when it
     // is still flagged by `team` and still standing. Returns false when the
@@ -106,16 +117,23 @@ class CAntKingdomController : virtual public CMutableTerrainController,
     bool WorkerDigWall(CGameWorld& world, int team, florrbt::Vector2f pos);
 
   private:
+    bool PreservesControllerPetal(EPetalType type) const override
+    {
+        return type == ToPetalType(EModPetalType::EouPheromone);
+    }
     // Scans the dirt layer and binds a cell wall to every in-rule tile.
     void InsertWallsForTerrain(CGameWorld& world);
     // Neutral food: the initial food field and the corpses every eou mob
     // leaves behind (SpawnMobDefeated corpse path wakes through OnMobDefeated).
     void SpawnInitialFood(CGameWorld& world);
+    int SpawnColonyFood(CGameWorld& world, const CTeam& team, int count);
+    void ReplenishFood(CGameWorld& world);
     CEntity* SpawnFoodEntity(CGameWorld& world, florrbt::Vector2f pos, float amount, int food_type);
     // Cells: a defense pheromone drop toggles the cell under the point.
     CEntity* SpawnCellEntity(CGameWorld& world, int team_id, ECouCellType type, florrbt::Vector2f pos,
                              EMobType egg_type = EMobType::None);
     void DestroyCellEntity(CGameWorld& world, CEntity* cell, int team_id);
+    void ReleaseCellContents(CGameWorld& world, CEouCellMob& cell);
     // Hatchery egg: creates the egg the cell binds to (retry-driven).
     CEntity* SpawnOrStandbyEgg(CGameWorld& world, CEouCellMob& cell, CTeam* team);
     // Drives hatchery egg lifecycle (retry spawn + hatch when grown & fed).
@@ -133,20 +151,24 @@ class CAntKingdomController : virtual public CMutableTerrainController,
     bool HandleMarkWallCommand(CGameWorld& world, CPlayer& player, const std::vector<std::string>& args);
     bool HandlePheromoneCommand(CGameWorld& world, CPlayer& player, const std::vector<std::string>& args);
     bool HandleBuildCommand(CGameWorld& world, CPlayer& player, const std::vector<std::string>& args);
+    bool HandleColonyCommand(CGameWorld& world, CPlayer& player, const std::vector<std::string>& args);
     void SendSystemMessage(CGameWorld& world, CPlayer& player, const std::string& message) const;
     void TickSlotProxies(float dt);
+    void InitializeSlotProxies();
     void EquipPheromonePetals(CPlayerFlower& flower);
-    void SyncBuildModeCard();
-    ECouCellType TeamBuildType(int team_id) const;
+    void SyncBuildModeCard(int team_id);
+    EEouBuildMode TeamBuildMode(int team_id) const;
     static bool ValidatePheromoneGroupCount(const std::string& value);
 
     int m_pheromone_group_count = 6;
     CWall m_wall_board;
     std::unordered_map<int, CTeam> m_teams;
     // What a defend-thrown pheromone petal builds for each team (default
-    // Storage; switched with /build).
-    std::unordered_map<int, ECouCellType> m_team_build_type;
+    // Storage; switched with /build storage|worker|soldier).
+    std::unordered_map<int, EEouBuildMode> m_team_build_type;
     CEouSlotProxy m_slot_proxy;
+    std::unordered_map<int, CEouSlotProxy> m_team_slot_proxies;
     // Live food entities ({id, generation} handles; erased on removal).
     std::unordered_map<int, std::uint64_t> m_food_entities;
+    float m_food_replenish_timer = 0.f;
 };

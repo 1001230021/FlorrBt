@@ -1,5 +1,6 @@
 #pragma once
 #include "../../../Shared/game_config.h"
+#include "../../../Shared/math_types.h"
 #include "../controller.h"
 #include "../entities/flower.h"
 #include "pickup_controller.h"

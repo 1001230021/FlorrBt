@@ -3,7 +3,7 @@
 #include "../../HotReload/snapshot_archive.h"
 #include "../tile_board.h"
 #include "mob.h"
-#include <SFML/System/Vector2.hpp>
+#include "../../../Shared/math_types.h"
 #include <cmath>
 #include <deque>
 #include <optional>
@@ -62,6 +62,9 @@ class IEouMob
     // Every eou mob leaves a food corpse behind: the biomass this mob
     // converts into corpse food total.
     virtual float EouBiomass() const { return 0.f; }
+    // Food currently being ferried home (reported by the /colony readout, so
+    // in-flight cargo is not invisible).
+    virtual float EouCarry() const { return 0.f; }
     // The team's home point: where workers ferry the gathered food to.
     virtual void SetHomePos(florrbt::Vector2f) {}
 };
@@ -83,11 +86,13 @@ class CEOUMob : public CMob<TStats>, public IEouMob
     {
         CMob<TStats>::Tick(dt);
 
-        while (!m_waypoints.empty() && EouDistance(this->Pos(), m_waypoints.front()) <= kEouArriveRadius)
+        const float arrival = std::max(kEouArriveRadius, this->Radius() + 4.f);
+        while (!m_waypoints.empty() && EouDistance(this->Pos(), m_waypoints.front()) <= arrival)
             m_waypoints.pop_front();
         if (m_waypoints.empty())
         {
-            WanderEou(dt);
+            if (m_food_phase == EFoodPhase::None) WanderEou(dt);
+            else this->m_vel = { 0.f, 0.f };
             return;
         }
         this->MoveTowards(m_waypoints.front(), dt);
@@ -111,6 +116,13 @@ class CEOUMob : public CMob<TStats>, public IEouMob
     int EouGroupId() const override { return m_eou_group_id; }
     void SetEouGroupId(int group_id) override { m_eou_group_id = group_id; }
     void SetHomePos(florrbt::Vector2f pos) override { SetEouHome(pos); }
+    float EouCarry() const override { return m_carry; }
+    florrbt::Vector2f EouResolveGoal(florrbt::Vector2f fallback) const override
+    {
+        if (m_food_phase == EFoodPhase::Home) return m_home_pos;
+        if (m_food_target.valid()) return m_food_target.pos;
+        return fallback;
+    }
     // Defaults to the biomass of the mob's base health: every eou mob leaves
     // a corpse with this much food.
     float EouBiomass() const override
@@ -131,6 +143,9 @@ class CEOUMob : public CMob<TStats>, public IEouMob
         }
         writer.Node("eou_waypoints", waypoints.release());
         writer.Field("eou_group_id", m_eou_group_id);
+        writer.Field("eou_carry", m_carry);
+        writer.Field("eou_home", m_home_pos);
+        writer.Field("eou_foraging", m_food_phase != EFoodPhase::None);
     }
 
     bool RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version,
@@ -153,6 +168,12 @@ class CEOUMob : public CMob<TStats>, public IEouMob
             }
         }
         m_eou_group_id = reader.Int("eou_group_id", 0);
+        m_carry = std::max(0.f, reader.Float("eou_carry", 0.f));
+        m_home_pos = reader.Vector2("eou_home", {});
+        // Targets are transient handles; rescan after restore without losing cargo.
+        if (reader.Bool("eou_foraging", false)) m_waypoints.clear();
+        m_food_phase = EFoodPhase::None;
+        m_food_target = {};
         return true;
     }
 
@@ -173,19 +194,17 @@ class CEOUMob : public CMob<TStats>, public IEouMob
         this->m_vel = { std::cos(angle) * speed, std::sin(angle) * speed };
     }
 
-    // Food harvesting: when the mob has no group goal to pursue it looks
-    // for the nearest food corpse (first within its own vision range) and
-    // ferries its gathered food back to the team's home. DepositFood is a
-    // stub until there are stash consumers.
+    // Food harvesting begins after the current group waypoint is reached.
+    // Cargo survives interruptions, full storage, and snapshot restores.
     void EouFoodTick(float dt, float scan_interval)
     {
+        m_food_path_timer -= dt;
         if (m_food_phase == EFoodPhase::None)
         {
             m_food_scan_timer -= dt;
             if (m_food_scan_timer > 0.f) return;
             m_food_scan_timer = scan_interval;
-            // Only start when the group is not driving the mob.
-            if (HasTarget()) return;
+            if (HasTarget() && m_carry <= 0.f) return;
             BeginFoodPhase();
             return;
         }
@@ -202,12 +221,17 @@ class CEOUMob : public CMob<TStats>, public IEouMob
                 m_food_phase = EFoodPhase::None;
                 return;
             }
-            if (EouDistance(this->Pos(), m_food_target.pos) <= kEouArriveRadius)
+            CEouFoodMob* food = m_food_target.resolve();
+            m_food_target.pos = food->Pos();
+            const float reach = this->Radius() + food->Radius() + kEouArriveRadius;
+            if (EouDistance(this->Pos(), m_food_target.pos) <= reach)
             {
+                m_waypoints.clear();
+                this->m_vel = { 0.f, 0.f };
                 m_food_phase = EFoodPhase::Gather;
                 return;
             }
-            if (m_waypoints.empty() && !m_food_target.path_active) RefreshFoodPath();
+            if (m_food_path_timer <= 0.f) RefreshFoodPath();
             break;
         }
         case EFoodPhase::Gather:
@@ -220,10 +244,19 @@ class CEOUMob : public CMob<TStats>, public IEouMob
                 if (m_carry > 0.f) SetEouHomeTarget();
                 return;
             }
+            const float reach = this->Radius() + food->Radius() + kEouArriveRadius;
+            if (EouDistance(this->Pos(), food->Pos()) > reach)
+            {
+                m_food_phase = EFoodPhase::Fetch;
+                m_food_target.pos = food->Pos();
+                RefreshFoodPath();
+                return;
+            }
             const float want = std::min(game_config::eou_food_gather_rate * dt,
                                         std::max(0.f, game_config::eou_food_carry_capacity - m_carry));
             m_carry += food->TakeFood(want);
-            this->m_vel *= std::max(0.f, 1.f - 4.f * dt);
+            m_waypoints.clear();
+            this->m_vel = { 0.f, 0.f };
             if (m_carry >= game_config::eou_food_carry_capacity || food->RemainingFood() <= 0.f)
             {
                 m_food_target = {};
@@ -234,21 +267,30 @@ class CEOUMob : public CMob<TStats>, public IEouMob
         }
         case EFoodPhase::Home:
         {
-            if (EouDistance(this->Pos(), m_home_pos) <= game_config::eou_food_home_radius)
+            const float reach = std::max(game_config::eou_food_home_radius,
+                                         game_config::eou_queen_radius + this->Radius() + kEouArriveRadius);
+            if (EouDistance(this->Pos(), m_home_pos) <= reach)
             {
-                DepositFood(m_carry);
-                m_carry = 0.f;
-                m_food_phase = EFoodPhase::None;
-                m_food_scan_timer = scan_interval;
+                m_waypoints.clear();
+                this->m_vel = { 0.f, 0.f };
+                if (m_food_path_timer > 0.f) return;
+                m_carry = std::max(0.f, m_carry - DepositFood(m_carry));
+                m_food_path_timer = std::max(0.2f, scan_interval);
+                if (m_carry <= 0.001f)
+                {
+                    m_carry = 0.f;
+                    m_food_phase = EFoodPhase::None;
+                    m_food_scan_timer = scan_interval;
+                }
                 return;
             }
-            if (m_waypoints.empty()) RefreshFoodPath();
+            if (m_food_path_timer <= 0.f) SetEouHomeTarget();
             break;
         }
         }
     }
 
-    virtual void DepositFood(float amount) = 0;
+    virtual float DepositFood(float amount) = 0;
 
     // Drops the food routine mid-phase (a higher-priority job took over).
     // The carry is kept: the next idle Home phase delivers it.
@@ -256,10 +298,13 @@ class CEOUMob : public CMob<TStats>, public IEouMob
     {
         m_food_phase = EFoodPhase::None;
         m_food_target = {};
+        m_waypoints.clear();
     }
 
     void SetEouHome(florrbt::Vector2f pos) { m_home_pos = pos; }
-    float EouCarry() const { return m_carry; }
+
+    // Drops the current waypoint chain (a direct chase takes over movement).
+    void ClearEouWaypoints() { m_waypoints.clear(); }
 
   private:
     enum class EFoodPhase : std::uint8_t
@@ -276,13 +321,12 @@ class CEOUMob : public CMob<TStats>, public IEouMob
         int id = -1;
         std::uint64_t generation = 0;
         florrbt::Vector2f pos{};
-        bool path_active = false;
 
         bool valid() const { return id >= 0; }
         bool alive() const
         {
             CEouFoodMob* food = resolve();
-            return food && food->RemainingFood() > 0.f;
+            return food && !food->IsMarkedForDes() && !food->IsDead() && food->RemainingFood() > 0.f;
         }
 
         // Out of line (eou_mob.cpp): dereferencing the world needs the full
@@ -294,6 +338,12 @@ class CEOUMob : public CMob<TStats>, public IEouMob
     {
         CGameWorld* world = this->GameWorld();
         if (!world) return;
+        if (m_carry > 0.f)
+        {
+            m_food_phase = EFoodPhase::Home;
+            SetEouHomeTarget();
+            return;
+        }
         m_food_target = FindEouFoodTarget(world);
         if (!m_food_target.valid())
         {
@@ -315,6 +365,7 @@ class CEOUMob : public CMob<TStats>, public IEouMob
 
     void SetEouHomeTarget()
     {
+        m_food_path_timer = 2.f;
         if (!m_board) return;
         m_waypoints.clear();
         AddEouPathTo(m_home_pos);
@@ -322,10 +373,16 @@ class CEOUMob : public CMob<TStats>, public IEouMob
 
     void RefreshFoodPath()
     {
+        m_food_path_timer = 2.f;
         if (!m_board || !m_food_target.valid()) return;
         m_waypoints.clear();
         AddEouPathTo(m_food_target.pos);
-        m_food_target.path_active = !m_waypoints.empty();
+        if (m_waypoints.empty())
+        {
+            m_food_phase = EFoodPhase::None;
+            m_food_target = {};
+            m_food_scan_timer = std::max(0.2f, game_config::eou_food_scan_interval);
+        }
     }
 
     void AddEouPathTo(florrbt::Vector2f goal)
@@ -344,6 +401,7 @@ class CEOUMob : public CMob<TStats>, public IEouMob
     SFoodTarget m_food_target;
     float m_carry = 0.f;
     float m_food_scan_timer = 0.f;
+    float m_food_path_timer = 0.f;
     florrbt::Vector2f m_home_pos{};
 
   private:
@@ -395,10 +453,10 @@ class CEouWorkerAnt final : public CEOUMob<SMobStats>
 
     florrbt::Vector2f EouResolveGoal(florrbt::Vector2f fallback) const override
     {
-        return m_goal.has_value() ? *m_goal : fallback;
+        return m_goal.has_value() ? *m_goal : CEOUMob<SMobStats>::EouResolveGoal(fallback);
     }
 
-    void DepositFood(float amount) override;
+    float DepositFood(float amount) override;
 
   private:
     std::optional<florrbt::Vector2f> FindBestMarkedWall();
@@ -411,6 +469,45 @@ class CEouWorkerAnt final : public CEOUMob<SMobStats>
     float m_dig_progress = 0.f;
 };
 
+// EOU soldier ant: the colony's sword, hatched from soldier hatchery cells.
+// Priorities, highest first:
+//   1. Fight: scan for the closest enemy-team mob or flower inside
+//      eou_soldier_aggro_range. While the line of sight is clear the chase is
+//      direct (MoveTowards); through walls it paths on the scan cadence.
+//      Contact damage comes from the normal collision rules. The target drops
+//      once it dies or leaves eou_soldier_leash_range.
+//   2. Pheromone: with no enemy, follow the group like every other eou mob.
+// Soldiers never dig and never forage.
+class CEouSoldierAnt final : public CEOUMob<SMobStats>
+{
+  public:
+    using CEOUMob<SMobStats>::CEOUMob;
+
+    void Tick(float dt) override;
+
+    // Group reroutes agree with the fight: an engaged soldier reports its
+    // target position instead of the pheromone fallback.
+    florrbt::Vector2f EouResolveGoal(florrbt::Vector2f fallback) const override
+    {
+        return m_engaged ? m_target_pos : fallback;
+    }
+
+    // Soldiers never forage; the deposit hook is unused.
+    float DepositFood(float) override { return 0.f; }
+
+  private:
+    // Revalidates the stored target handle: alive, unremoved and inside the
+    // leash range. Clears the handle when the target is gone.
+    CEntity* ResolveCombatTarget();
+    void ScanForEnemy();
+
+    int m_target_id = -1;
+    std::uint64_t m_target_generation = 0;
+    florrbt::Vector2f m_target_pos{};
+    bool m_engaged = false;
+    float m_combat_scan_timer = 0.f;
+};
+
 // EOU queen: the colony's heart. Stationary (she never follows pheromones,
 // only sheds collision shoves); when she dies her team loses the match (the
 // controller reacts through OnMobDefeated).
@@ -418,11 +515,13 @@ class CEouQueenMob final : public CMob<SMobStats>
 {
   public:
     using CMob<SMobStats>::CMob;
+    bool IsCollisionPositionLocked() const override { return true; }
 
     void Tick(float dt) override
     {
+        m_vel = { 0.f, 0.f };
         CMob<SMobStats>::Tick(dt);
-        m_vel *= std::max(0.f, 1.f - 4.f * dt);
+        m_vel = { 0.f, 0.f };
     }
 };
 
@@ -433,6 +532,7 @@ class CEouFoodMob : public CMob<SMobStats>
 {
   public:
     using CMob<SMobStats>::CMob;
+    bool IsCollisionPositionLocked() const override { return true; }
 
     float RemainingFood() const { return m_food_total; }
     float FoodTotal() const { return m_food_total; }
@@ -453,10 +553,10 @@ class CEouFoodMob : public CMob<SMobStats>
 
     void Tick(float dt) override
     {
+        m_vel = { 0.f, 0.f };
         CMob<SMobStats>::Tick(dt);
-        const float rotten = game_config::eou_food_rotten_rate;
-        if (rotten <= 0.f) return;
-        m_food_total -= rotten * dt;
+        m_vel = { 0.f, 0.f };
+        m_food_total -= std::max(0.f, game_config::eou_food_rotten_rate) * dt;
         if (m_food_total <= 0.f)
         {
             m_food_total = 0.f;
@@ -501,6 +601,9 @@ class CEouCellMob : public CMob<SMobStats>
 {
   public:
     using CMob<SMobStats>::CMob;
+    bool IsCollisionPositionLocked() const override { return true; }
+    // Floors do not push ants or their own eggs away from the tile.
+    bool CanCollide() const override { return false; }
 
     void SetCellType(ECouCellType type) { m_cell_type = type; }
     ECouCellType CellType() const { return m_cell_type; }
@@ -541,6 +644,22 @@ class CEouCellMob : public CMob<SMobStats>
     void ResetEggRetry() { m_egg_retry_timer = game_config::eou_cell_egg_retry_interval; }
     float EggRetryTimer() const { return m_egg_retry_timer; }
 
+    // One tile, one ant (the EotU rule): the hatchery binds the ant it
+    // hatched and only lays a fresh egg once that ant is dead or missing.
+    bool HasBoundAnt() const { return m_ant_id >= 0; }
+    void SetBoundAnt(int id, std::uint64_t generation)
+    {
+        m_ant_id = id;
+        m_ant_generation = generation;
+    }
+    void ClearBoundAnt()
+    {
+        m_ant_id = -1;
+        m_ant_generation = 0;
+    }
+    int BoundAntId() const { return m_ant_id; }
+    std::uint64_t BoundAntGeneration() const { return m_ant_generation; }
+
     int GroupId() const { return m_group_id; }
     void SetGroupId(int id) { m_group_id = id; }
     int TeamId() const { return m_team_id; }
@@ -548,12 +667,14 @@ class CEouCellMob : public CMob<SMobStats>
 
     void Tick(float dt) override
     {
+        m_vel = { 0.f, 0.f };
         CMob<SMobStats>::Tick(dt);
+        m_vel = { 0.f, 0.f };
         m_retire_timer -= dt;
     }
     void ResetRetireTimer() { m_retire_timer = 1.f; }
 
-    std::uint32_t RuntimeSnapshotVersion() const override { return 1; }
+    std::uint32_t RuntimeSnapshotVersion() const override { return 2; }
     void CaptureRuntimeSnapshot(CSnapshotWriter& writer) const override
     {
         writer.Field("cell_type", static_cast<int>(m_cell_type));
@@ -561,9 +682,11 @@ class CEouCellMob : public CMob<SMobStats>
         writer.Field("cell_team", m_team_id);
         writer.Field("cell_food", m_food_stored);
         writer.Field("cell_egg_id", m_egg_id);
-        writer.Field("cell_egg_gen", static_cast<int>(m_egg_generation));
+        writer.UInt64("cell_egg_gen", m_egg_generation);
         writer.Field("cell_egg_type", static_cast<int>(m_egg_type));
         writer.Field("cell_egg_retry", m_egg_retry_timer);
+        writer.Field("cell_ant_id", m_ant_id);
+        writer.UInt64("cell_ant_gen", m_ant_generation);
     }
     bool RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override
     {
@@ -580,6 +703,10 @@ class CEouCellMob : public CMob<SMobStats>
         m_egg_generation = reader.UInt64("cell_egg_gen", m_egg_generation);
         m_egg_type = static_cast<EMobType>(reader.Int("cell_egg_type", static_cast<int>(m_egg_type)));
         m_egg_retry_timer = std::max(0.f, reader.Float("cell_egg_retry", m_egg_retry_timer));
+        // Version 1 snapshots carry no ant binding: the cell simply lays a
+        // fresh egg on the next tick, which matches the old behaviour.
+        m_ant_id = reader.Int("cell_ant_id", -1);
+        m_ant_generation = reader.UInt64("cell_ant_gen", 0);
         return true;
     }
 
@@ -593,6 +720,8 @@ class CEouCellMob : public CMob<SMobStats>
     EMobType m_egg_type = EMobType::None;
     float m_egg_retry_timer = 0.f;
     float m_retire_timer = 1.f;
+    int m_ant_id = -1;
+    std::uint64_t m_ant_generation = 0;
 };
 
 // EOU egg: grows over time (radius eou_egg_size_start -> eou_egg_size_final),
@@ -602,6 +731,7 @@ class CEouEggMob : public CMob<SMobStats>
 {
   public:
     using CMob<SMobStats>::CMob;
+    bool IsCollisionPositionLocked() const override { return true; }
 
     void SetHatchType(EMobType type) { m_hatch_type = type; }
     EMobType HatchType() const { return m_hatch_type; }
@@ -620,7 +750,9 @@ class CEouEggMob : public CMob<SMobStats>
 
     void Tick(float dt) override
     {
+        m_vel = { 0.f, 0.f };
         CMob<SMobStats>::Tick(dt);
+        m_vel = { 0.f, 0.f };
         const float grow_time = std::max(0.1f, game_config::eou_egg_grow_time);
         m_age += dt;
         m_grow_progress = std::clamp(m_age / grow_time, 0.f, 1.f);
@@ -628,6 +760,28 @@ class CEouEggMob : public CMob<SMobStats>
                              (game_config::eou_egg_size_final - game_config::eou_egg_size_start) * m_grow_progress;
         Radius() = radius;
         if (m_grow_progress >= 1.f) m_grown = true;
+    }
+
+    std::uint32_t RuntimeSnapshotVersion() const override { return 1; }
+    void CaptureRuntimeSnapshot(CSnapshotWriter& writer) const override
+    {
+        writer.Field("egg_hatch_type", static_cast<int>(m_hatch_type));
+        writer.Field("egg_team", m_team_id);
+        writer.Field("egg_cell", m_cell_id);
+        writer.UInt64("egg_cell_gen", m_cell_generation);
+        writer.Field("egg_age", m_age);
+    }
+    bool RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override
+    {
+        if (version > RuntimeSnapshotVersion()) { error = "Unsupported eou egg snapshot"; return false; }
+        m_hatch_type = static_cast<EMobType>(reader.Int("egg_hatch_type", static_cast<int>(m_hatch_type)));
+        m_team_id = reader.Int("egg_team", m_team_id);
+        m_cell_id = reader.Int("egg_cell", m_cell_id);
+        m_cell_generation = reader.UInt64("egg_cell_gen", m_cell_generation);
+        m_age = std::max(0.f, reader.Float("egg_age", 0.f));
+        m_grow_progress = std::clamp(m_age / std::max(0.1f, game_config::eou_egg_grow_time), 0.f, 1.f);
+        m_grown = m_grow_progress >= 1.f;
+        return true;
     }
 
   private:

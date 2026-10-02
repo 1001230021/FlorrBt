@@ -1,5 +1,6 @@
 #pragma once
 #include "../../../Shared/game_config.h"
+#include "../../../Shared/math_types.h"
 #include "../../../Shared/shared.h"
 #include "../gamecontroller.h"
 #include "mob.h"
@@ -30,7 +31,7 @@ class CFlower : public CAttackableMob<SFlowerStats>
     void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
     void ClearPetals();
     void DestroyPetalEntities();
-    void ReloadAllPetals();
+    void ReloadPetals();
     bool TryStartBurrowFromShovel();
 
     const SFlowerStats* GetBaseStats() const override { return &m_base_stats; }
@@ -58,9 +59,13 @@ class CFlower : public CAttackableMob<SFlowerStats>
         m_petal_state_dirty = true;
     }
     std::uint64_t GetFinalStatsRevision() const { return m_final_stats_revision; }
-    void EquipPetal(int slot_index, const CPetalPrototype* proto, ERarity rarity);
+    // Returns false without changing the slot when the requested operation is
+    // not valid (for example, a controller/state-banned slot). Callers that
+    // also mutate inventory must use the result before committing those
+    // mutations.
+    bool EquipPetal(int slot_index, const CPetalPrototype* proto, ERarity rarity);
     void LoadPetalSlot(int slot_index, const CPetalPrototype* proto, ERarity rarity);
-    void UnequipPetal(int slot_index);
+    bool UnequipPetal(int slot_index);
     void ForceUnequipPetal(int slot_index);
     bool CanUnequipPetal(int slot_index) const;
     void ApplyExclusivity(EPetalType type);

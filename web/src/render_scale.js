@@ -4,13 +4,14 @@ import { t } from "./i18n.js";
 import { minRenderScale, nativeDpr, resizeCanvas } from "./viewport.js";
 
 // Adaptive render resolution ("auto" mode): a frame-budget controller keyed
-// off the measured drawScene CPU cost, so it works the same on 60Hz and
+// off the complete frame plus background preparation CPU cost, on 60Hz and
 // 120Hz+ displays. The budget derives from the observed peak framerate
 // (~display refresh): the draw must fit in ~3/4 of a refresh interval.
 // Sustained overruns step the scale down; sustained headroom steps it back
 // up toward native DPI, so a temporary fight no longer degrades resolution
 // permanently.
 let lastDrawCostMs = 0;
+let lastFrameCostMs = 0;
 let drawCostEmaMs = 0;
 let adaptiveOverFrames = 0;
 let adaptiveUnderFrames = 0;
@@ -34,6 +35,10 @@ export function noteSceneDrawCost(ms) {
   lastDrawCostMs = ms;
 }
 
+export function noteRenderFrameCost(ms) {
+  lastFrameCostMs = ms;
+}
+
 export function sceneDrawCostEma() {
   return drawCostEmaMs;
 }
@@ -41,6 +46,8 @@ export function sceneDrawCostEma() {
 export function setRenderScaleMode(value) {
   state.renderScaleMode = normalizeRenderScaleMode(value);
   state.adaptiveDpr = 0;
+  lastFrameCostMs = 0;
+  lastDrawCostMs = 0;
   drawCostEmaMs = 0;
   adaptiveOverFrames = 0;
   adaptiveUnderFrames = 0;
@@ -49,7 +56,9 @@ export function setRenderScaleMode(value) {
 }
 
 export function updateAdaptiveRenderScale(paused = false) {
-  if (paused || state.renderScaleMode !== "auto" || state.mapLoadPromise)
+  if (paused || state.renderScaleMode !== "auto" || state.mapLoadPromise ||
+      state.map?.chunkBuildQueue?.length || state.map?.chunkBuilding ||
+      Math.abs((state.renderViewZoomPercent ?? state.viewZoomPercent) - state.viewZoomPercent) > 0.01)
     return;
   if (state.fps > 0)
     observedPeakFps = Math.max(
@@ -59,8 +68,8 @@ export function updateAdaptiveRenderScale(paused = false) {
   if (observedPeakFps <= 0 || lastDrawCostMs <= 0) return;
   drawCostEmaMs =
     drawCostEmaMs <= 0
-      ? lastDrawCostMs
-      : drawCostEmaMs + (lastDrawCostMs - drawCostEmaMs) * 0.05;
+      ? (lastFrameCostMs || lastDrawCostMs)
+      : drawCostEmaMs + ((lastFrameCostMs || lastDrawCostMs) - drawCostEmaMs) * 0.05;
 
   // Draw work should fit in ~3/4 of one refresh interval; the rest of the
   // frame belongs to input handling, DOM updates and the compositor.
@@ -68,7 +77,8 @@ export function updateAdaptiveRenderScale(paused = false) {
   const budgetMs = Math.min(12, Math.max(4.5, refreshMs * 0.75));
   const current = state.adaptiveDpr > 0 ? state.adaptiveDpr : nativeDpr();
 
-  if (drawCostEmaMs > budgetMs && current > minRenderScale) {
+  const autoMin = Math.max(1, minRenderScale);
+  if (drawCostEmaMs > budgetMs && current > autoMin) {
     adaptiveOverFrames += 1;
     adaptiveUnderFrames = 0;
   } else if (drawCostEmaMs < budgetMs * 0.45 && current < nativeDpr()) {
@@ -81,7 +91,7 @@ export function updateAdaptiveRenderScale(paused = false) {
 
   if (adaptiveOverFrames >= adaptiveDownFrames) {
     applyAdaptiveRenderScale(
-      Math.max(minRenderScale, current - adaptiveStep),
+      Math.max(autoMin, current - adaptiveStep),
       "down",
     );
   } else if (adaptiveUnderFrames >= adaptiveUpFrames) {

@@ -49,7 +49,7 @@ float GetHealthPercent(const CEntity& entity)
     return entity.Health();
 }
 
-bool FlowerHasAvailablePetal(const CFlower& flower, EPetalType type)
+bool HasAvailablePetal(const CFlower& flower, EPetalType type)
 {
     for (const auto& slot : flower.GetSlots())
     {
@@ -84,6 +84,10 @@ void PopulateOwnerPetalRuntime(const CEntity& owner, ServerEntitySnap& snap)
             slot_snap.visual_type = SOwnerPetalSlot::EVisualType::Angle;
         else if (runtime_type == EPetalType::Tomato)
             slot_snap.visual_type = SOwnerPetalSlot::EVisualType::Size;
+        // Lightning's contact-hit accumulator is internal combat state,
+        // not a player-facing resource/charge count.
+        else if (runtime_type == EPetalType::Battery)
+            slot_snap.visual_type = SOwnerPetalSlot::EVisualType::Counter;
         else
             slot_snap.visual_type = SOwnerPetalSlot::EVisualType::None;
 
@@ -117,6 +121,15 @@ void PopulateOwnerPetalRuntime(const CEntity& owner, ServerEntitySnap& snap)
                                                  : 1.f;
                     copy_snap.visual_value = static_cast<uint16_t>(std::round(
                         std::clamp(size_ratio, 0.f, 1.f) * static_cast<float>(UINT16_MAX)));
+                } else if (slot_snap.visual_type == SOwnerPetalSlot::EVisualType::Counter)
+                {
+                    int count = 0;
+                    if (!slot.m_banned && !petal->IsMarkedForDes() && petal->Health() > 0.f)
+                    {
+                        if (const auto* battery = dynamic_cast<const CBatteryPetal*>(petal))
+                            count = battery->m_charges_remaining;
+                    }
+                    copy_snap.visual_value = static_cast<uint16_t>(std::clamp(count, 0, static_cast<int>(UINT16_MAX)));
                 }
             } else
             {
@@ -507,6 +520,31 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
     return true;
 }
 
+std::vector<SOwnerPetalSlot> CSnapshotService::BuildPrimarySlots(const CFlower& flower)
+{
+    std::vector<SOwnerPetalSlot> result;
+    const auto& slots = flower.GetSlots();
+    const IGameController* controller = flower.GameWorld() ? flower.GameWorld()->GetController() : nullptr;
+    const CEouSlotProxy* proxy = controller ? controller->SlotProxy(flower.Team()) : nullptr;
+    int proxy_index = 0;
+    result.reserve(slots.size());
+    for (const CPetalSlot& slot : slots)
+    {
+        SOwnerPetalSlot output;
+        if (slot.m_p_proto)
+        {
+            const EPetalType visual = slot.m_p_proto->m_type == ToPetalType(EModPetalType::EouPheromone)
+                                          ? EPetalType::Honey : slot.m_p_proto->m_type;
+            output.petal_type = static_cast<uint8_t>(visual);
+            output.rarity = static_cast<uint8_t>(slot.m_stored_rarity);
+        }
+        else if (proxy && proxy_index < proxy->GetSlotCount())
+            output = proxy->MakeOwnerSlot(proxy_index++);
+        result.push_back(std::move(output));
+    }
+    return result;
+}
+
 ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const CEntity& owner) const
 {
     ServerEntitySnap snap;
@@ -531,30 +569,7 @@ ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const 
     if (const auto* player_flower = dynamic_cast<const CPlayerFlower*>(&entity))
     {
         snap.rarity = static_cast<uint8_t>(std::clamp(player_flower->m_level, 0, static_cast<int>(UINT8_MAX)));
-        const auto& slots = player_flower->GetSlots();
-        const CEouSlotProxy* slot_proxy = nullptr;
-        if (const IGameController* controller = entity.GameWorld()->GetController()) slot_proxy = controller->SlotProxy();
-        int proxy_index = 0;
-        snap.primary_slots.reserve(slots.size());
-        for (const CPetalSlot& slot : slots)
-        {
-            SOwnerPetalSlot primary_slot;
-            if (slot.m_p_proto)
-            {
-                primary_slot.petal_type = static_cast<uint8_t>(slot.m_p_proto->m_type);
-                primary_slot.rarity = static_cast<uint8_t>(slot.m_stored_rarity);
-            }
-            else if (slot_proxy && proxy_index < slot_proxy->SlotCount())
-            {
-                // Slot proxy: locked/empty player slots are disguised as the
-                // controller's skill cards (same idea as mod mob visual
-                // proxies - the wire carries vanilla data).
-                snap.primary_slots.push_back(slot_proxy->MakeOwnerSlot(proxy_index));
-                ++proxy_index;
-                continue;
-            }
-            snap.primary_slots.push_back(std::move(primary_slot));
-        }
+        snap.primary_slots = BuildPrimarySlots(*player_flower);
     }
     if (const auto* drop = dynamic_cast<const CDrop*>(&entity)) snap.rarity = static_cast<uint8_t>(drop->GetRarity());
     if (const auto* petal = dynamic_cast<const CPetal*>(&entity)) snap.rarity = static_cast<uint8_t>(petal->m_rarity);
@@ -588,7 +603,7 @@ ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const 
         const SFlowerStats* stats = flower->GetFinalStats();
         if (stats && stats->max_health > 0.f)
             snap.shield_percent = std::clamp(flower->GetShield() / stats->max_health, 0.f, 1.f);
-        if (FlowerHasAvailablePetal(*flower, EPetalType::Antennae))
+        if (HasAvailablePetal(*flower, EPetalType::Antennae))
             snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Antennae);
     }
     if (const auto* drop = dynamic_cast<const CDrop*>(&entity))

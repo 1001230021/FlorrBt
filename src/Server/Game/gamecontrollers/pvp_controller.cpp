@@ -1,4 +1,4 @@
-﻿#include "pvp_controller.h"
+#include "pvp_controller.h"
 #include "../../HotReload/snapshot_archive.h"
 #include "../../../Engine/logger.h"
 #include "../../../Shared/game_config.h"
@@ -88,7 +88,7 @@ void CAntHelPvpController::OnPlayerEntityReady(CGameWorld& world, CPlayer& playe
     (void)world;
     (void)reason;
     // Respawns create a fresh flower: restore the player's assigned team and
-    // strip the loadout that ApplySavedSlots just loaded.
+    // strip the loadout that LoadSavedSlots just loaded.
     flower.Team() = AssignTeam(player);
     StripPlayerPetals(player);
 }
@@ -103,6 +103,7 @@ void CAntHelPvpController::OnPlayerEnteredWorld(CGameWorld& world, CPlayer& play
 void CAntHelPvpController::OnPlayerLeftWorld(CGameWorld& world, CPlayer& player)
 {
     (void)world;
+    if (LocksPetalLoadout()) player.RestoreSavedLoadout();
     // Rejoining a started game counts as a mid-game join (spectator).
     m_player_teams.erase(player.GetId());
 }
@@ -140,24 +141,26 @@ bool CAntHelPvpController::HasMatchTeam(std::uint32_t player_id) const
 
 void CAntHelPvpController::StripPlayerPetals(CPlayer& player)
 {
+    if (!LocksPetalLoadout()) return;
+
     auto* flower = dynamic_cast<CPlayerFlower*>(player.GetEntity());
     if (!flower) return;
 
     auto& slots = flower->GetSlots();
     for (size_t i = 0; i < slots.size(); ++i)
     {
-        // The ant kingdom's pheromone petals are equipped by the controller
-        // and must survive the strip.
-        if (slots[i].m_p_proto && slots[i].m_p_proto->m_type == ToPetalType(EModPetalType::EouPheromone)) continue;
+        if (slots[i].m_p_proto && PreservesControllerPetal(slots[i].m_p_proto->m_type)) continue;
         if (slots[i].m_p_proto) flower->ForceUnequipPetal(static_cast<int>(i));
         flower->SetBanned(true, static_cast<int>(i));
     }
-    flower->DestroyPetalEntities();
-    flower->MarkFinalStatsDirty();
+    // ForceUnequipPetal already clears that slot's entities. A blanket
+    // destruction here also destroys the controller-owned petals we kept.
 }
 
 void CAntHelPvpController::MaintainStrip(CGameWorld& world) const
 {
+    if (!LocksPetalLoadout()) return;
+
     CGameContext* context = world.GameContext();
     if (!context) return;
 
@@ -172,12 +175,10 @@ void CAntHelPvpController::MaintainStrip(CGameWorld& world) const
         auto& slots = flower->GetSlots();
         for (size_t i = 0; i < slots.size(); ++i)
         {
-            // The ant kingdom's pheromone petals survive the strip.
-            if (slots[i].m_p_proto && slots[i].m_p_proto->m_type == ToPetalType(EModPetalType::EouPheromone)) continue;
+            if (slots[i].m_p_proto && PreservesControllerPetal(slots[i].m_p_proto->m_type)) continue;
             if (slots[i].m_p_proto) flower->ForceUnequipPetal(static_cast<int>(i));
             flower->SetBanned(true, static_cast<int>(i));
         }
-        flower->DestroyPetalEntities();
     }
 }
 

@@ -1,4 +1,6 @@
 import { drawSpriteImage } from "./sprite_raster_cache.js";
+import { getSpritePhase, getLimbMotionAmount } from "./sprite_motion.js";
+import { prepareSvgImage, whenVisualReady } from "./visual_assets.js";
 const SPIDER_ASSET = "./assets/spider.svg";
 const SPIDER_VIEWBOX = 110;
 const SPIDER_CLIP_X = 9.167;
@@ -15,7 +17,7 @@ const SPIDER_CACHE = {
 
 export function drawSpider(ctx, pos, radius, entityId, angle, motion, time) {
   const cache = spiderAsset();
-  const move = clamp01(motion || 0);
+  const move = getLimbMotionAmount(motion);
   const spriteSize = Math.max(1, radius * SPIDER_SPRITE_SCALE);
   const spriteHalf = spriteSize * 0.5;
 
@@ -84,8 +86,9 @@ function drawSpiderLegs(ctx, legs, spriteSize, entityId, motion, time) {
 
   const scale = spriteSize / SPIDER_VIEWBOX;
   const stepRate = 4.8 + motion * 22;
-  const step = Math.sin(time * stepRate + entityId * 0.43);
-  const lift = Math.max(0, Math.sin(time * stepRate * 2 + entityId * 0.43));
+  const phase = getSpritePhase(entityId, "spider-legs", time, stepRate, entityId * 0.43);
+  const step = Math.sin(phase);
+  const lift = Math.max(0, Math.sin(phase * 2));
   const swingAmp = 0.18 * motion;
   const slideAmp = 1.8 * motion;
 
@@ -122,34 +125,16 @@ function spiderAsset() {
   if (SPIDER_CACHE.started) return SPIDER_CACHE;
   SPIDER_CACHE.started = true;
 
-  const image = new Image();
-  image.decoding = "async";
-  image.addEventListener(
-    "error",
-    () => {
-      SPIDER_CACHE.failed = true;
-    },
-    { once: true },
-  );
-  SPIDER_CACHE.body = image;
-
-  fetch(SPIDER_ASSET)
-    .then((response) => {
-      if (!response.ok) throw new Error(`Spider SVG failed: ${SPIDER_ASSET}`);
-      return response.text();
-    })
-    .then((svgText) => {
-      SPIDER_CACHE.legs = extractSpiderLegs(svgText);
-      const blob = new Blob([stripSpiderLegs(svgText)], {
-        type: "image/svg+xml",
-      });
-      image.src = URL.createObjectURL(blob);
-    })
-    .catch(() => {
-      SPIDER_CACHE.failed = true;
-    });
+  SPIDER_CACHE.body = prepareSvgImage(SPIDER_ASSET, "spider-body", text => {
+    SPIDER_CACHE.legs = extractSpiderLegs(text);
+    return stripSpiderLegs(text);
+  });
 
   return SPIDER_CACHE;
+}
+
+export function prepareSpiderSprites() {
+  return whenVisualReady(spiderAsset().body);
 }
 
 function extractSpiderLegs(svgText) {
@@ -249,10 +234,6 @@ function drawSpiderFallback(ctx, radius) {
 
 function isImageReady(image) {
   return image && !image.failed && image.complete && image.naturalWidth > 0;
-}
-
-function clamp01(value) {
-  return Math.max(0, Math.min(1, value));
 }
 
 function seededUnit(seed) {

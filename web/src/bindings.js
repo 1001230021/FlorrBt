@@ -65,6 +65,8 @@ export const defaultBindings = Object.freeze({
   mouse: {
     mouse1: ["attack"],
     mouse2: ["defend"],
+    wheelup: ["zoom_out"],
+    wheeldown: ["zoom_in"],
   },
 });
 
@@ -246,15 +248,16 @@ export function mouseKeyFromButton(button) {
 // Everything else is one-shot and runs `run(ctx, args)` on press.
 const builtinCommands = {
   move_toward: {
-    params: "<angle>",
+    params: "<angle> [strength 0..1]",
     args: "number",
     hold: "move",
-    help: "Move toward an angle in degrees (0=right, 90=down, 180=left, 270=up).",
+    help: "Move toward an angle (0=right, 90=down); optional strength 0..1 sets speed (default 1).",
     vector(args) {
       const angle = Number.parseFloat(args[0]);
-      if (!Number.isFinite(angle)) return null;
+      const strength = args[1] === undefined ? 1 : Number(args[1]);
+      if (!Number.isFinite(angle) || !Number.isFinite(strength) || strength < 0 || strength > 1) return null;
       const radians = (angle * Math.PI) / 180;
-      return { x: Math.cos(radians), y: Math.sin(radians) };
+      return { x: Math.cos(radians) * strength, y: Math.sin(radians) * strength };
     },
   },
   left: {
@@ -296,6 +299,18 @@ const builtinCommands = {
     args: "",
     hold: "defend",
     help: "Defend while held (default: mouse2 / Shift).",
+  },
+  zoom_in: {
+    params: "",
+    args: "",
+    help: "Expand the view by one percentage step (default: wheel down).",
+    run: (ctx) => ctx.zoomIn(),
+  },
+  zoom_out: {
+    params: "",
+    args: "",
+    help: "Shrink the view by one percentage step (default: wheel up).",
+    run: (ctx) => ctx.zoomOut(),
   },
   loadout: {
     params: "",
@@ -479,7 +494,9 @@ export function resetBindings(bindings) {
 }
 
 export function commandsFor(bindings, device, key) {
-  const table = device === "mouse" ? bindings.mouse : bindings.keyboard;
+  // Touch controls use a fixed, action-labelled table without impersonating
+  // mouse/keyboard keys or sharing their hold-source identities.
+  const table = device === "touch" ? bindings.touch : device === "mouse" ? bindings.mouse : bindings.keyboard;
   return table?.[normalizeInputKey(key)] || [];
 }
 

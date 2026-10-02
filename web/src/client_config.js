@@ -1,6 +1,22 @@
 ﻿const clientConfigEntries = new Map();
 const clientConfigAliases = new Map();
 
+for (const [name, prop, defaultValue] of [
+  ["damage_numbers", "damageNumbers", 1],
+  ["movement_arrow", "movementArrow", 1],
+  ["screen_shake", "screenShakeEnabled", 1],
+  ["live_icons", "liveIcons", 1],
+]) registerClientConfig(name, { prop, defaultValue, min: 0, max: 1 });
+
+registerClientConfig("auto_register", {
+  prop: "autoRegister",
+  // Opt-in trusted-IP login attempt with an empty password.
+  defaultValue: 0,
+  min: 0,
+  max: 1,
+  aliases: ["auto_reg", "auto_login"],
+});
+
 registerClientConfig("dande_missile_scale", {
   prop: "dandeMissileScale",
   defaultValue: 4.5,
@@ -126,7 +142,7 @@ registerClientConfig("hornet_sprite_scale", {
 
 registerClientConfig("dummy_sprite_scale", {
   prop: "dummySpriteScale",
-  defaultValue: 1.25,
+  defaultValue: 1.0,
   min: 0.5,
   max: 4,
   aliases: ["dummy_scale"],
@@ -158,7 +174,7 @@ registerClientConfig("hornet_body_offset_y", {
 
 registerClientConfig("colorful_map", {
   prop: "colorfulMap",
-  defaultValue: 1,
+  defaultValue: 0,
   min: 0,
   max: 1,
 });
@@ -215,16 +231,36 @@ export const clientRuntimeConfig = Object.freeze({
   packetInterval: 1 / 30,
   deathFadeDuration: 0.25,
   deathScaleBoost: 0.72,
+  // Unified petal-card vanish (rotate 2π + fade + shrink to 0), used by the
+  // DOM card consumers (result dismiss, failed-craft losses). Canvas drop
+  // cards run the same pose over deathFadeDuration so the entity removal
+  // timing stays in sync.
+  petalCardVanishDurationMs: 700,
+  // Craft gamble spin: rounds of craftSpinRoundMs, each spinning the card
+  // formation craftSpinRevolutionsPerRound full turns at constant angular
+  // velocity. The suspense length is a uniformly random round count in
+  // [craftSpinMinRounds, craftSpinMaxRounds]; craftSpinRampMs eases the
+  // spin-up so the start does not snap.
+  craftSpinRoundMs: 600,
+  craftSpinRevolutionsPerRound: 2,
+  craftSpinMinRounds: 0,
+  craftSpinMaxRounds: 7,
+  craftSpinRoundScale: 0.5,
+  craftSpinRampMs: 90,
   hurtFlashDuration: 0.14,
   hurtFlashInterval: 0.25,
   hurtFlashMinDelta: 0.002,
   missingEntityViewEdgeGrace: 48,
-  mouseMoveDeadzonePx: 16,
+  // Client-only camera field of view. 100% is the normal view; lower values
+  // shrink the visible world radius without changing network snapshots.
+  viewZoomMinPercent: 25,
+  viewZoomMaxPercent: 100,
+  viewZoomStepPercent: 5,
+  mouseMoveDeadzonePx: 4,
+  mouseMoveFullSpeedRadiusRatio: 0.105,
   entityFrameMinScreenRadius: 8,
-  entityPixelMinScreenRadius: 0.45,
-  entityDetailMinScreenRadius: 2.4,
-  petalDetailMinScreenRadius: 0.9,
-  dropDetailMinScreenRadius: 1.15,
+  entityNameMinScreenRadius: 4,
+  // Only labels use readability thresholds. Entity bodies have no size LOD.
   bloodSacrificeDrawPhaseEnd: 0.5,
   bloodSacrificeInitialHeading: Math.PI * 0.5,
   bloodSacrificeInnerRadiusScale: 0.5,
@@ -306,7 +342,7 @@ export const clientRuntimeConfig = Object.freeze({
   loginMapDefaultHorizon: 2048,
   titanForgeRange: 2048,
   minimapMarginPx: 12,
-  minimapLocalMaxPx: 164,
+  minimapLocalMaxPx: 104,
   minimapFullMaxPx: 272,
   minimapHudGapPx: 12,
   minimapTileSubdivisions: 2,
@@ -327,6 +363,17 @@ export const clientRuntimeConfig = Object.freeze({
   chatFadeMs: 3000,
   chatClosedRenderIntervalMs: 180,
 });
+
+export function normalizeViewZoomPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return clientRuntimeConfig.viewZoomMaxPercent;
+  return Math.round(
+    Math.max(
+      clientRuntimeConfig.viewZoomMinPercent,
+      Math.min(clientRuntimeConfig.viewZoomMaxPercent, number),
+    ),
+  );
+}
 
 export const defaultClientConfig = Object.freeze(
   Object.fromEntries(
@@ -391,6 +438,8 @@ export function parseClientConfigNumber(value) {
   const text = String(value ?? "")
     .trim()
     .toLowerCase();
+  if (["true", "on", "yes", "enable", "enabled"].includes(text)) return 1;
+  if (["false", "off", "no", "disable", "disabled"].includes(text)) return 0;
   if (text === "pi") return Math.PI;
   if (text === "-pi") return -Math.PI;
 

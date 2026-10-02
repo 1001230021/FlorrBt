@@ -79,6 +79,7 @@
     <ClInclude Include="src\Engine\logger.h" />
     <ClInclude Include="src\Engine\map_tools.h" />
     <ClInclude Include="src\Engine\spatial_hash_grid.h" />
+    <ClInclude Include="src\Shared\circle_contact.h" />
     <ClInclude Include="src\Shared\damage_type.h" />
     <ClInclude Include="src\Shared\entity_type.h" />
     <ClInclude Include="src\Shared\drop_rate.h" />

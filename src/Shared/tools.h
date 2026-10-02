@@ -1,6 +1,6 @@
 #pragma once
+#include "math_types.h"
 #include "rarity.h"
-#include <SFML/System/Vector2.hpp>
 #include <algorithm>
 #include <cmath>
 #include <memory>

@@ -137,6 +137,29 @@ export function measureSvgContentBox(svgMarkup) {
   }
 }
 
+export function getCenteredSvgViewBox(box, paddingRatio = 0.04) {
+  if (!box || ![box.x, box.y, box.w, box.h].every(Number.isFinite) || box.w <= 0 || box.h <= 0)
+    return null;
+  const padding = Number.isFinite(paddingRatio) ? Math.max(0, paddingRatio) : 0.04;
+  const side = Math.max(box.w, box.h) * (1 + padding * 2);
+  const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+  return `${(cx - side / 2).toFixed(3)} ${(cy - side / 2).toFixed(3)} ${side.toFixed(3)} ${side.toFixed(3)}`;
+}
+
+// Only run on label-stripped equipment art, once when the cached image loads.
+// Card padding and baked-in group translations must not become body offsets.
+export function centerPetalArtSvg(svgMarkup) {
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgMarkup;
+  const doc = new DOMParser().parseFromString(svgMarkup, "image/svg+xml");
+  const root = doc.documentElement;
+  if (!root || root.tagName.toLowerCase() !== "svg") return svgMarkup;
+  const viewBox = getCenteredSvgViewBox(measureSvgContentBox(svgMarkup));
+  if (!viewBox) return svgMarkup;
+  root.setAttribute("viewBox", viewBox);
+  root.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  return new XMLSerializer().serializeToString(root);
+}
+
 function isLabelOutlinePath(path) {
   const stroke = normalizeColorAttr(path.getAttribute("stroke"));
   const fill = normalizeColorAttr(path.getAttribute("fill"));

@@ -5,6 +5,11 @@
     "name": "繁體中文"
   },
   "ui": {
+    "slotCounter": {
+      "live": "即時數值：{value}",
+      "inactive": "副槽花瓣未啟動，沒有即時蓄能",
+      "pending": "等待伺服器數值"
+    },
     "loading": "載入中...",
     "canvas": {
       "ariaLabel": "FlorrBt 遊戲"
@@ -34,7 +39,9 @@
       "collected": "本輪收集",
       "collectedAriaLabel": "收集到的花瓣",
       "reviveNote": "等待復活。",
-      "revive": "復活",
+      "revive": "繼續",
+      "returning": "返回中…",
+      "portrait": "陣亡時的花朵和花瓣配裝",
       "close": "關閉"
     },
     "quick": {
@@ -82,7 +89,9 @@
       "helpPrefix": "說明：{text}",
       "usage": "用法：{name} {params}",
       "help": {
+        "devDebug": "RCON 授權後開啟獨立的世界除錯工作台",
         "version": "顯示用戶端版本",
+        "clear": "清空 F1 控制台記錄",
         "language": "查看或切換顯示語言",
         "say": "在指定頻道傳送聊天訊息",
         "g": "傳送全域聊天訊息",
@@ -103,12 +112,18 @@
         "unbind": "移除某個按鍵或滑鼠按鈕的綁定",
         "unbindall": "移除某個裝置的全部綁定",
         "render_scale": "查看或設定渲染解析度倍率",
+        "view_zoom": "查看或設定遊戲視野縮放百分比",
         "bench": "在登入畫面執行渲染基準測試",
         "freeze_log": "列出最近的凍結偵測記錄（客戶端卡頓/伺服器斷流）",
         "reset": "重置用戶端設定、按鍵綁定或選項"
       }
     },
     "settings": {
+      "tabs": { "game": "遊戲", "graphics": "畫面", "controls": "操作" },
+      "damageNumbers": "顯示傷害數字",
+      "screenShake": "螢幕震動",
+      "liveIcons": "動態槽位圖示",
+      "movementArrow": "滑鼠移動指引",
       "title": "設置",
       "close": "關閉設置",
       "language": "語言",
@@ -125,6 +140,8 @@
       "emailNotBound": "未綁定",
       "fullscreen": "全螢幕",
       "renderScale": "渲染解析度",
+      "viewZoom": "視野縮放",
+      "autoRegister": "自動免密登入（空密碼）",
       "renderScaleModes": {
         "auto": "自動",
         "native": "原生"
@@ -142,6 +159,7 @@
       "slotsAriaLabel": "合成槽",
       "once": "合成",
       "instruction": "放入 5 個相同花瓣以合成更高稀有度",
+      "failureHint": "失敗會消耗部分已放入的花瓣",
       "slot": "合成槽",
       "successChance": "{chance} 成功率",
       "working": "合成中...",
@@ -162,7 +180,16 @@
     "talents": {
       "title": "天賦",
       "close": "關閉天賦",
-      "points": "天賦點數：{count}",
+      "points": "{count} TP",
+      "center": "回到中心",
+      "panHint": "拖動查看 · 滾輪縮放 · 長按節點",
+      "reset": "重置",
+      "resetConfirm": "確認重置",
+      "pending": "等待伺服器確認…",
+      "requestFailed": "未收到確認，請檢查連線後重試。",
+      "insufficient": "天賦點不足，無法學習這條升級路徑。",
+      "learnCost": "長按學習此路徑（{count} 個升級，共 {cost} TP）。",
+      "removeRefund": "長按移除此天賦及依賴它的後續升級，返還 {cost} TP。",
       "holdRemove": "長按移除 {name}",
       "holdLearn": "長按學習 {names}（{cost} TP）",
       "cost": "{cost} TP",
@@ -240,7 +267,7 @@
     },
     "mobile": {
       "ariaLabel": "移動端控制",
-      "bagLabel": "包",
+      "bagLabel": "揹包",
       "inventory": "揹包",
       "talentLabel": "賦",
       "talents": "天賦",
@@ -253,7 +280,25 @@
       "defendLabel": "B",
       "defend": "防禦",
       "swapLabel": "X",
-      "swap": "快速換位"
+      "swap": "交換整排主槽與副槽花瓣",
+      "menu": "選單",
+      "bestiary": "圖鑑",
+      "map": "地圖",
+      "console": "控制台",
+      "fullscreen": "全螢幕",
+      "moveHint": "左側拖曳移動",
+      "toggleReserve": "展開或收起副槽花瓣",
+      "changeChannel": "切換聊天頻道",
+      "send": "傳送",
+      "slotActions": "花瓣槽操作",
+      "slotSwap": "主副槽換位",
+      "zoomIn": "放大天賦樹",
+      "zoomOut": "縮小天賦樹",
+      "close": "關閉",
+      "viewMore": "視野 ＋",
+      "viewLess": "視野 －",
+      "unequip": "卸下花瓣",
+      "cancel": "取消"
     },
     "codex": {
       "title": "生物圖鑑",
@@ -361,6 +406,11 @@
     "renderScale": {
       "current": "渲染倍率：{mode}（實際 {dpr}x）",
       "changed": "渲染倍率已設為 {mode}（實際 {dpr}x）"
+    },
+    "viewZoom": {
+      "current": "視野縮放：{percent}%（滾輪上滑縮小視野、放大花朵）",
+      "changed": "視野縮放已設為 {percent}%",
+      "invalid": "無效的視野縮放百分比：{value}"
     },
     "bench": {
       "alreadyRunning": "基準測試已在執行",
@@ -517,6 +567,25 @@
     }
   },
   "talents": {
+    "effects": {
+      "health": "提高花朵的最大生命值。",
+      "movement": "提高花朵的移動速度。",
+      "sharp_edges": "提高本體接觸傷害。",
+      "body_toxicity": "本體接觸時附加中毒傷害。",
+      "petal_health": "提高花瓣耐久。",
+      "reload": "縮短花瓣裝填時間及換槽的最低冷卻時間。",
+      "rotation": "提高花瓣的環繞旋轉速度。",
+      "loadout": "解鎖更多花瓣槽位。",
+      "antennae": "當天賦提供的視野超過現有加成時，擴大視野。",
+      "reach": "擴大花瓣攻擊距離。",
+      "duplicator": "為符合條件的花瓣增加副本，高階天賦也會作用於最左槽。",
+      "magnetism": "擴大掉落物拾取範圍。",
+      "medic": "提高花瓣的治療效果。",
+      "summoner": "提高召喚物生命值。",
+      "second_chance": "在冷卻允許時，提供抵抗致命傷害的第二次機會。",
+      "poison": "提高中毒傷害。",
+      "concentrated_poison": "把中毒集中為更短時間內的更高傷害。"
+    },
     "groups": {
       "flower": "花朵",
       "petals": "花瓣",
@@ -599,5 +668,14 @@
       "titan": "泰坦，最強的存在之一。",
       "firefly": "螢火蟲，受到攻擊時會用連鎖閃電反擊。"
     }
+  },
+  "maps": {
+    "garden": "花園",
+    "ant_hel": "蟻獄",
+    "eou_small": "地下蟻國",
+    "training_grounds": "訓練場",
+    "waiting_room": "等待室",
+    "garden_walltest": "花園（牆體測試）",
+    "test": "測試"
   }
 }

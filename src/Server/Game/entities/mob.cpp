@@ -145,7 +145,7 @@ bool CMobBase::TickDropPickup(CPlayer* player)
     return picked_any;
 }
 
-void CMobBase::ApplyDamageDirect(float dmg, CEntity* attacker)
+void CMobBase::ApplyDamageDirect(float dmg, CEntity* attacker, EDamageType damage_type)
 {
     if (dmg <= 0.f) return;
     if (HasState<CInvincibleState>()) return;
@@ -175,6 +175,7 @@ void CMobBase::ApplyDamageDirect(float dmg, CEntity* attacker)
         }
     }
 
+    if (GameWorld()) GameWorld()->RecordCombatDamage(*this, std::min(dmg, std::max(0.f, Health())), damage_type, attacker);
     Health() -= dmg;
     if (m_p_controller) m_p_controller->OnDamaged(this, attacker);
     if (Health() <= 0.f)
@@ -185,6 +186,12 @@ void CMobBase::ApplyDamageDirect(float dmg, CEntity* attacker)
 }
 
 void CMobBase::MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius)
+{
+    MoveTowards(target_pos, dt, target_radius, 0.f);
+}
+
+void CMobBase::MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius,
+                          float full_speed_distance)
 {
     const SMobStats* stats = GetFinalStats();
     if (!stats) return;
@@ -207,13 +214,16 @@ void CMobBase::MoveTowards(const florrbt::Vector2f& target_pos, float dt, float 
 
     florrbt::Vector2f delta = effective_target_pos - Pos();
     float len = Length(delta);
-    const float stop_distance = Radius() + std::max(0.f, target_radius);
+    const bool analog = std::isfinite(full_speed_distance) && full_speed_distance > 0.f;
+    const float stop_distance = analog && target_radius < 0.f ? 0.f : Radius() + std::max(0.f, target_radius);
     if (len <= stop_distance)
     {
         m_vel *= game_config::mob_stop_damping;
         if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = { 0.f, 0.f };
         return;
     }
+
+    if (analog) max_velocity *= std::clamp((len - stop_distance) / full_speed_distance, 0.f, 1.f);
 
     float target_angle = std::atan2(delta.y, delta.x);
     bool facing_locked = IsFacingLocked();
@@ -237,7 +247,8 @@ void CMobBase::MoveTowards(const florrbt::Vector2f& target_pos, float dt, float 
 
         florrbt::Vector2f forward(std::cos(FacingAngle()), std::sin(FacingAngle()));
         float speed = Length(m_vel);
-        speed = std::min(max_velocity, speed + acceleration * dt);
+        if (analog) speed += std::clamp(max_velocity - speed, -acceleration * dt, acceleration * dt);
+        else speed = std::min(max_velocity, speed + acceleration * dt);
         m_vel = forward * speed;
         return;
     }
@@ -282,7 +293,7 @@ bool CMobBase::RemoveState(CState* state)
 
 const CMobPrototype* FindMobPrototype(EMobType type)
 {
-    return MobRegistry().Find(type);
+    return GetMobRegistry().Find(type);
 }
 
 std::unique_ptr<CMobBase> CreateMob(EMobType type, CGameWorld* world, florrbt::Vector2f pos, ERarity rarity,

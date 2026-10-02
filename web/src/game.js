@@ -1,4 +1,4 @@
-﻿import {
+import {
   AuthMode,
   AuthResultCode,
   ChatFlag,
@@ -7,6 +7,7 @@
   NETWORK_DROP_TYPE_OFFSET,
   NETWORK_PETAL_TYPE_OFFSET,
   PetalNames,
+  MobNames,
   PetalSlotCopyState,
   PetalSlotVisualType,
   RarityNames,
@@ -37,15 +38,21 @@
   rarityColor,
   rarityName,
 } from "./protocol.js";
-import { clearLadybugPattern, drawNormalLadybug } from "./ladybug_sprite.js";
-import { drawBeetle } from "./beetle_sprite.js";
-import { drawSoldierAnt } from "./soldier_ant_sprite.js";
+import { clearLadybugPattern, drawNormalLadybug, prepareLadybugSprites } from "./ladybug_sprite.js";
+import { prepareSvgImage, whenVisualReady, getPreparedVisualImages } from "./visual_assets.js";
+import { getRenderFrameTiming, takeRenderPreparationCost } from "./render_timing.js";
+import { sceneRasterBudget } from "./raster_budget.js";
+import { getPointerMoveIntent, quantizeMoveIntent } from "./movement_input.js";
+import { getSlotCounter, getSlotCounterColor } from "./slot_counter.js";
+import { drawBeetle, prepareBeetleSprites } from "./beetle_sprite.js";
+import { drawSoldierAnt, prepareSoldierAntSprites } from "./soldier_ant_sprite.js";
 import {
   drawBee,
   drawBumbleBee,
   drawHornet,
   drawHornetMissile,
   drawPollen,
+  prepareBeeSprites,
 } from "./bee_sprite.js";
 import {
   drawAntEggMob,
@@ -69,11 +76,14 @@ import {
   drawWorkerAnt,
   drawWorkerFireAnt,
   drawWorkerTermite,
+  prepareGardenSprites,
 } from "./garden_mob_sprite.js";
-import { drawSpider, drawSpiderWeb } from "./spider_sprite.js";
+import { drawSpider, drawSpiderWeb, prepareSpiderSprites } from "./spider_sprite.js";
 import {
   drawSpriteImage,
-  setSpriteWhiteTint,
+  setSpriteHitTint,
+  setSpriteRasterFrameTime,
+  primeSpriteRasters,
 } from "./sprite_raster_cache.js";
 import {
   dom,
@@ -107,17 +117,30 @@ import {
   clientRuntimeConfig,
   formatClientConfigValue,
   getClientConfigValue,
+  normalizeViewZoomPercent,
   setClientConfigValue,
 } from "./client_config.js";
 import { createConsoleUi } from "./console_ui.js";
 import { createMapRenderer } from "./map_renderer.js";
-import { createMobileControls } from "./mobile_controls.js";
+import { createMobileControls, mobileActionBindings } from "./mobile_controls.js";
+import { bindMobileViewport } from "./mobile_viewport.js";
+import { bindTouchLongPress } from "./touch_gestures.js";
 import { initCustomScrollbars } from "./custom_scrollbar.js";
+import { setAnimatedVisibility } from "./ui_motion.js";
+import {
+  animatePetalCardVanish,
+} from "./card_motion.js";
+import { createCraftParticleLayer } from "./craft_particles.js";
+import { createBurrowParticles } from "./burrow_particles.js";
+import { createRainField } from "./weather_rain.js";
+import { createBlockFogField } from "./weather_fog.js";
+import { createCraftSpinController } from "./craft_motion.js";
 import { createMysteryAudio } from "./mystery_audio.js";
 import { SettingsPanel } from "./settings_ui.js";
 import { UiPanel, UiPanelManager } from "./ui_panel.js";
 import {
   drawSolidProgressBar,
+  getMobFrameLayout,
   traceSolidProgressBarPath,
 } from "./render_primitives.js";
 import { createTextInput, isTextInputActive } from "./text_input.js";
@@ -250,7 +273,6 @@ import {
   rarityEternal,
   rarityExotic,
   rarityPrimordial,
-  rarityShortNames,
   raritySortRanks,
   raritySuper,
   rarityUnique,
@@ -271,6 +293,7 @@ import {
   stateBanSlot,
   stateNullification,
   statePoison,
+  stateAntiHeal,
   statePsionicConnection,
   stateUndead,
   stingerSplitIconMinRarity,
@@ -291,19 +314,22 @@ import {
 } from "./game_ids.js";
 import { PETAL_ICON_IDS } from "./generated_ids.js";
 import { collectSceneRenderPasses } from "./scene_passes.js";
-import {
-  TalentId,
-  talentChildrenByBase,
-  talentKey,
-  talentNodeByKey,
-  talentRootNodes,
-} from "./talent_data.js";
+import { TalentId } from "./talent_data.js";
+import { createTalentTree } from "./ui_talents.js";
+import { placeCraftReturns } from "./craft_slots.js";
+import { drawFlowerDisc, drawFlowerFace, drawFlowerBandage, drawFlowerAntennae, getFlowerPalette, stepFlowerFace,
+  flowerAttachmentLayout, getFlowerFrameLayout } from "./flower_renderer.js";
+import { createCombatFeedback, stepHealthTrail } from "./combat_feedback.js";
+import { drawMovementGuide } from "./movement_guide.js";
+import { beginEntityAppearance, beginEntityExit, resumeEntityAppearance, getEntityAppearance, getDropCardTilt } from "./entity_motion.js";
+import { clearSpriteMotion, resetSpriteMotion } from "./sprite_motion.js";
+import { beginDeathMotion, clearDeathMotion, captureDeathLoadout } from "./death_motion.js";
+import { drawDeathPortrait } from "./death_portrait.js";
 import { ASSET_MANIFEST } from "./asset_manifest.js";
 import {
   addConsoleLine,
   formatPetalItem,
   loadSettings,
-  localizedTalentName,
   localizationSlug,
   refreshLocalizedUi,
   saveSettings,
@@ -324,6 +350,7 @@ import {
 } from "./ui_settings.js";
 import {
   codexKey,
+  codexMobIcons,
   hideCodexDetail,
   moveCodexDetail,
   renderCodexPanel,
@@ -332,18 +359,21 @@ import {
 import {
   debugNumber,
   drawGrid,
+  effectiveViewRadius,
   lerpAngle,
   normalizeAngle,
   resizeCanvas,
   screenToWorld,
   smoothFactor,
+  viewZoomPercent,
+  updateViewZoom,
   worldLengthToScreen,
   worldScale,
   worldToScreen,
 } from "./camera.js";
 import {
   initOwnerPrediction,
-  playerSnapHasPetal,
+  hasPlayerSnapPetal,
   resetOwnerPredictionTiming,
   syncEntityRenderToSnapshot,
   transformOwnerHallucinationVector,
@@ -363,15 +393,14 @@ import {
   livePetalImages,
   makePetalStack,
   normalizePetalName,
-  petalBaseCopy,
-  petalBasePath,
-  petalCopyLayout,
-  petalDisplayName,
-  petalHasMultiCopyVisual,
-  petalIconPath,
+  getPetalBaseCopy,
+  getPetalBasePath,
+  getPetalCopyLayout,
+  getPetalDisplayName,
+  hasPetalMultiCopyVisual,
+  getPetalIconPath,
   ensurePetalCopyDistanceData,
   petalBaseImage,
-  petalLabelIconUrls,
   petalTypeFromSnap,
   preloadAssets,
   rarityLevel,
@@ -385,7 +414,8 @@ import {
   noteConnectionReset,
   noteServerSnapshot,
 } from "./freeze_watchdog.js";
-import { drawOutlinedText } from "./render_text.js";
+import { drawOutlinedText as drawSharedOutlinedText } from "./render_text.js";
+import { withDebugRenderState } from "./dev_debug_model.js";
 import {
   executeClientCommand,
   executeLanguageCommand,
@@ -408,11 +438,13 @@ import {
   extractMimicLabelSvg,
   extractPetalLabelSvg,
   measureSvgContentBox,
+  centerPetalArtSvg,
   stripLivePetalLabel,
 } from "./petal_svg.js";
 import {
   initRenderScale,
   noteSceneDrawCost,
+  noteRenderFrameCost,
   sceneDrawCostEma,
   setRenderScaleMode,
   updateAdaptiveRenderScale,
@@ -421,7 +453,6 @@ import {
 const {
   canvas,
   loadingScreen,
-  ctx,
   authPanel,
   emailBindingPanel,
   wsUrlInput,
@@ -441,6 +472,7 @@ const {
   deathOverlay,
   deathSource,
   deathLoot,
+  deathPortrait,
   reviveBtn,
   deathCloseBtn,
   quickActions,
@@ -487,10 +519,69 @@ const {
   openEmailBindingBtn,
   primarySlots,
   secondarySlots,
+  slotSwapHint,
+  slotKeyHints,
   inventoryList,
   inventoryStacking,
   inventorySearch,
 } = dom;
+
+let ctx = dom.ctx;
+let devDebugUi = null;
+let devDebugRequestAt = -Infinity;
+
+function drawOutlinedText(text, x, y, options) {
+  return drawSharedOutlinedText(text, x, y, options, ctx);
+}
+
+function requestDevDebug() {
+  if (!state.authenticated || !state.connected) {
+    addConsoleLine("请先连接服务器，在 F1 使用 rcon <密码> 授权，再输入 dev_debug。", "error"); return;
+  }
+  if (devDebugUi?.isOpen() || performance.now() - devDebugRequestAt < 1000) return;
+  devDebugRequestAt = performance.now();
+  sendBytes(packChat(ChatFlag.Local, "/dev_debug"));
+}
+
+async function openDevDebug(ticket) {
+  const originalSocket = state.ws;
+  const { createDevDebugUi } = await import("./dev_debug_ui.js");
+  if (!state.authenticated || state.ws !== originalSocket || originalSocket?.readyState !== WebSocket.OPEN) return;
+  if (!devDebugUi) devDebugUi = createDevDebugUi({
+    onOpen: () => {
+      state.devDebugOpen = true;
+      releaseInputHolds(); clearDrag(); ui.mobileControls?.reset();
+      state.localMoveInput = { x: 0, y: 0 }; state.digging = false;
+      sendNeutralGameplayState({ includeInput: true });
+      toggleConsole(false); closeChat(); hideCodexDetail(); hidePetalInfoTooltip();
+    },
+    onClose: () => { state.devDebugOpen = false; releaseInputHolds(); canvas.focus(); requestRedraw(); },
+    releaseVisual: id => { clearSpriteMotion(id); clearLadybugPattern(id); },
+    getTypeIcon: entry => entry.kind === "petal" ? getPetalIconPath(entry.id)
+      : codexMobIcons[entry.visualType] ? `./assets/${codexMobIcons[entry.visualType]}` : "",
+    getTypeName: entry => entry.kind === "petal" ? (PetalNames[entry.id] ? petalTypeName(entry.id) : entry.name)
+      : (MobNames[entry.id] ? mobTypeName(entry.id) : entry.name),
+    renderEntities: (target, scene, now) => {
+      const originalContext = ctx, originalTime = currentRenderTimeSeconds;
+      const patch = { entities: scene.entities, camera: scene.camera, canvasWidth: scene.width,
+        canvasHeight: scene.height, dpr: scene.dpr, ownerEntityId: -1, viewZoomPercent: 100,
+        renderViewZoomPercent: 100,
+        deathViewFactor: 1, screenShake: { x: 0, y: 0 },
+        viewRadius: Math.max(96, Math.hypot(scene.width, scene.height) / 2) / scene.scale };
+      // No awaits inside this scope. Map loading owns its independent state;
+      // legacy entity helpers see only this bounded, temporary render context.
+      try {
+        ctx = target; currentRenderTimeSeconds = now / 1000;
+        withDebugRenderState(state, patch, () => {
+          const passes = collectSceneRenderPasses({ scale: scene.scale, isEntityInRenderView: () => true, isBoss: () => false });
+          for (const pass of [passes.ground, passes.underlay, passes.world, passes.petals, passes.overlays])
+            for (const entity of pass) drawEntity(entity, { visualOnly: true });
+        });
+      } finally { ctx = originalContext; currentRenderTimeSeconds = originalTime; }
+    },
+  });
+  devDebugUi.open(originalSocket.url, ticket);
+}
 
 const wsUrlField = createTextInput(wsUrlInput, {
   onSubmit: () => connectAndAuth(),
@@ -541,6 +632,7 @@ ui.talentUiPanel = new UiPanel({
   trigger: quickTalentBtn,
   focusTarget: canvas,
   onOpen: () => renderTalentPanel(),
+  onClose: () => talentTreeUi?.close(),
   onChange: () => updateQuickActionButtons(),
 });
 ui.settingsUi = new SettingsPanel({
@@ -571,6 +663,25 @@ ui.settingsUi = new SettingsPanel({
           label: entry.label,
         })),
       setValue: (value) => executeLanguageCommand([String(value)]),
+    },
+    {
+      id: "auto-register",
+      type: "toggle",
+      labelKey: "ui.settings.autoRegister",
+      getValue: () =>
+        getClientConfigValue(state.clientConfig, "auto_register") >= 0.5,
+      setValue: (value) => {
+        const result = setClientConfigValue(
+          state.clientConfig,
+          "auto_register",
+          value ? 1 : 0,
+        );
+        if (!result.ok)
+          throw new Error(result.error || "Invalid auto-register setting");
+        state.clientConfig = result.config;
+        autoRegisterAttempted = false;
+        saveSettings();
+      },
     },
     {
       id: "movement",
@@ -625,6 +736,19 @@ ui.settingsUi = new SettingsPanel({
       getValue: () => !!document.fullscreenElement,
       setValue: (value) => setFullscreen(!!value),
     },
+    ...[
+      ["damage_numbers", "ui.settings.damageNumbers"],
+      ["screen_shake", "ui.settings.screenShake"],
+      ["live_icons", "ui.settings.liveIcons"],
+      ["movement_arrow", "ui.settings.movementArrow"],
+    ].map(([name, labelKey]) => ({
+      id: name, type: "toggle", labelKey,
+      getValue: () => getClientConfigValue(state.clientConfig, name) >= 0.5,
+      setValue: value => {
+        const result = setClientConfigValue(state.clientConfig, name, value ? 1 : 0);
+        if (result.ok) { state.clientConfig = result.config; saveSettings(); }
+      },
+    })),
   ],
 });
 ui.consoleUiPanel = new UiPanel({
@@ -687,9 +811,10 @@ ui.mapRenderer = createMapRenderer({
       setLoadingScreenVisible(true);
       return;
     }
-    (assetsPreloadPromise || Promise.resolve()).then(() =>
-      setLoadingScreenVisible(false),
-    );
+    (assetsPreloadPromise || Promise.resolve()).then(() => {
+      // An earlier map may finish while a newer one is still preparing.
+      if (!state.mapLoadPromise) setLoadingScreenVisible(false);
+    });
   },
   worldScale,
   worldToScreen,
@@ -702,9 +827,6 @@ const scheduledInputLeadTicks = 2;
 let snapshotResetRequested = false;
 const reconnectInitialDelayMs = 250;
 const reconnectMaxDelayMs = 5000;
-const douliOverlaySizeScale = 3.4;
-const douliOverlayOffsetYScale = -0.55;
-const douliOverlayAngle = -0.34;
 let reconnectTimer = null;
 let reconnectAttempt = 0;
 let reconnectArmed = false;
@@ -718,20 +840,22 @@ const AuthUiMode = Object.freeze({
 export let authUiMode = AuthUiMode.Login;
 let pendingAuthMode = null;
 let activeAuthMode = null;
+let autoRegisterAttempted = false;
 const {
   packetInterval,
-  deathFadeDuration,
-  deathScaleBoost,
+  craftSpinRoundMs,
+  craftSpinRevolutionsPerRound,
+  craftSpinMinRounds,
+  craftSpinMaxRounds,
+  craftSpinRampMs,
   hurtFlashDuration,
   hurtFlashInterval,
   hurtFlashMinDelta,
   missingEntityViewEdgeGrace,
+  viewZoomStepPercent,
   mouseMoveDeadzonePx,
   entityFrameMinScreenRadius,
-  entityPixelMinScreenRadius,
-  entityDetailMinScreenRadius,
-  petalDetailMinScreenRadius,
-  dropDetailMinScreenRadius,
+  entityNameMinScreenRadius,
   bloodSacrificeDrawPhaseEnd,
   bloodSacrificeInitialHeading,
   bloodSacrificeInnerRadiusScale,
@@ -822,6 +946,36 @@ const {
   checkpointZoneOutlineColor,
   checkpointZoneOutlineWidthPx,
 } = clientRuntimeConfig;
+
+// Craft gamble spin: square-particle layer + orbit controller for the stage.
+// This must be created after the client config is destructured because the
+// controller receives the configured timings at construction time.
+const craftParticles = createCraftParticleLayer(craftStage);
+const craftSpin = createCraftSpinController({
+  stage: craftStage,
+  particles: craftParticles,
+  rarityColor,
+  roundMs: craftSpinRoundMs,
+  revolutionsPerRound: craftSpinRevolutionsPerRound,
+  minRounds: craftSpinMinRounds,
+  maxRounds: craftSpinMaxRounds,
+  roundScale: clientRuntimeConfig.craftSpinRoundScale,
+  rampMs: craftSpinRampMs,
+});
+let craftResultDismissing = false;
+let talentTreeUi = null;
+let craftVisualGeneration = 0;
+const combatFeedback = createCombatFeedback();
+const burrowParticles = createBurrowParticles({ isVisible: (snap, position) => {
+  if (state.devDebugOpen || document.hidden) return false;
+  const point = worldToScreen(position), radius = worldLengthToScreen(snap.radius || 0);
+  return radius >= 3 && point.x + radius >= 0 && point.y + radius >= 0 &&
+    point.x - radius <= state.canvasWidth && point.y - radius <= state.canvasHeight;
+} });
+let lastOwnerDamage = null;
+let ownerDeathSummary = null;
+let reviveRequestedAt = 0;
+
 const playerTeam = 1;
 const craftRarityDisplayOrder = rarityDisplayOrder.filter((rarity) =>
   canCraftRarity(rarity),
@@ -836,10 +990,11 @@ const ownerMovementTalentMultiplierByRarity = Object.freeze({
   9: 2,
 });
 let currentRenderTimeSeconds = 0;
+let currentRenderFrameId = 0;
 let currentVisibleEntityCount = 0;
 let currentRenderLoad = 0;
-// Batched hit-flash: flashing entities are collected per frame and re-blitted
-// once in a dedicated pass as pre-tinted white rasters (no ctx.filter — see
+// Hit-flash scratch buffers: re-blit cached tinted rasters immediately after
+// their owning body so the layer order stays correct (no ctx.filter — see
 // drawHurtFlashPass). Pixel-sized (distant) entities and non-sprite effect
 // entities use a cheap white dot overlay instead of a sprite redraw.
 const currentHurtFlashSprites = [];
@@ -850,7 +1005,6 @@ let diurnalMaskCanvas = null;
 let diurnalMaskContext = null;
 let diurnalLightCanvas = null;
 let diurnalLightContext = null;
-let rainDrops = [];
 let lastWeatherEffectsAt = 0;
 // Smoothed weather intensities. The server streams per-tick values that can
 // jitter when multiple weather systems stack; we lerp the rendered alpha so
@@ -858,8 +1012,23 @@ let lastWeatherEffectsAt = 0;
 let actualRain = 0;
 let actualFog = 0;
 let actualCloudyTint = 0;
+const rainField = createRainField();
+const blockFogField = createBlockFogField();
 let minimapHitRect = null;
 let minimapCache = null;
+// Canvas HUD motion is kept outside the authoritative snapshots.  A snapshot
+// may replace an entire boss group or change several health values at once;
+// these short-lived visual states turn those discrete updates into reversible
+// compositor-free fades/lerps without changing gameplay state.
+const bossBarMotions = new Map();
+const hudValueMotions = new Map();
+const healthTrails = new Map();
+const bossBarMotionRate = 14;
+const bossBarExitLiftPx = 24;
+const hudMotionRate = 13;
+const minimapTransitionDurationMs = 240;
+const craftSlotMotionDurationMs = 180;
+let minimapTransition = null;
 
 // --- Bestiary (codex) -----------------------------------------------------
 
@@ -904,11 +1073,22 @@ function bindingAccountName() {
   return state.accountName || accountField.getValue({ trim: true });
 }
 
+function isEmailBindingPanelOpen() {
+  return (
+    !!state.emailBindingPanelOpen ||
+    emailBindingPanel?.getAttribute("aria-hidden") === "false"
+  );
+}
+
+function setAuthPanelVisible(visible) {
+  return setAnimatedVisibility(authPanel, visible, { duration: 220 });
+}
+
 export function renderEmailSettingsRow() {
   if (!emailSettingsRow) return;
   const visible =
     state.authenticated && state.emailPolicy !== EmailPolicy.Disabled;
-  emailSettingsRow.classList.toggle("hidden", !visible);
+  setAnimatedVisibility(emailSettingsRow, visible, { duration: 160 });
   if (!visible) return;
 
   emailBindingState.textContent = t(
@@ -916,13 +1096,16 @@ export function renderEmailSettingsRow() {
       ? "ui.settings.emailBound"
       : "ui.settings.emailNotBound",
   );
-  openEmailBindingBtn.classList.toggle("hidden", state.emailBound);
+  setAnimatedVisibility(openEmailBindingBtn, !state.emailBound, {
+    duration: 140,
+  });
 }
 
 function setEmailBindingPanel(open, { required = false } = {}) {
-  const wasOpen = !emailBindingPanel.classList.contains("hidden");
+  const wasOpen = isEmailBindingPanelOpen();
+  state.emailBindingPanelOpen = !!open;
   state.emailBindingRequired = open && required;
-  emailBindingPanel.classList.toggle("hidden", !open);
+  setAnimatedVisibility(emailBindingPanel, open, { duration: 220 });
   emailBindingPanel.classList.toggle("binding-required", open && required);
   cancelEmailBindingBtn.classList.toggle("hidden", open && required);
   bindingNotice.textContent = t(
@@ -931,7 +1114,7 @@ function setEmailBindingPanel(open, { required = false } = {}) {
       : "ui.auth.bindingOptionalNotice",
   );
   if (open) {
-    authPanel.classList.add("hidden");
+    setAuthPanelVisible(false);
     releaseInputHolds();
     state.localMoveInput = { x: 0, y: 0 };
     state.digging = false;
@@ -1026,7 +1209,7 @@ function queueAuthRequest(mode) {
   ) {
     setEmailBindingPanel(false);
     setAuthUiMode(AuthUiMode.Login);
-    authPanel.classList.remove("hidden");
+    setAuthPanelVisible(true);
     setStatus(t("status.bindingSessionExpired"));
     return;
   }
@@ -1116,7 +1299,19 @@ function openConnection(wsUrl, automatic, generation) {
     const mode = automatic ? AuthMode.Login : pendingAuthMode ?? selectedAuthMode();
     pendingAuthMode = null;
     if (activeAuthMode === null) setAuthRequestPending(mode);
-    sendAuth(mode);
+    const canTryAutoRegister =
+      !automatic &&
+      !autoRegisterAttempted &&
+      mode === AuthMode.Login &&
+      getClientConfigValue(state.clientConfig, "auto_register") >= 0.5 &&
+      !!accountField.getValue({ trim: true }) &&
+      !passwordField.getValue();
+    if (canTryAutoRegister) {
+      autoRegisterAttempted = true;
+      sendAuth(mode, { passwordOverride: "" });
+    } else {
+      sendAuth(mode);
+    }
   });
 
   ws.addEventListener("message", (event) => {
@@ -1147,7 +1342,7 @@ function openConnection(wsUrl, automatic, generation) {
       scheduleReconnect();
     } else {
       resumingConnection = false;
-      authPanel.classList.remove("hidden");
+      setAuthPanelVisible(true);
       loadLoginMap();
       setStatus(t("status.disconnected"));
       addConsoleLine(t("status.disconnected"), "error");
@@ -1190,7 +1385,7 @@ function sendNeutralGameplayState({ includeInput = false } = {}) {
   return sendBytes(packChores(false, false, false, false, false));
 }
 
-function sendAuth(mode = AuthMode.Login) {
+function sendAuth(mode = AuthMode.Login, { passwordOverride } = {}) {
   if (!validateAuthFields(mode)) {
     clearAuthRequestPending();
     return;
@@ -1205,7 +1400,7 @@ function sendAuth(mode = AuthMode.Login) {
     name: accountName,
     password:
       mode === AuthMode.Login || mode === AuthMode.Register
-        ? passwordField.getValue()
+        ? passwordOverride ?? passwordField.getValue()
         : "",
     email: binding ? emailField.getValue({ trim: true }) : "",
     code:
@@ -1264,6 +1459,14 @@ function receiveBytes(bytes) {
 
 // Server message handlers. Registered against net_messages.js so extracted
 // modules can own their handlers later without a central switch.
+registerMessageHandler(ServerType.DebugTicket, (msg) => {
+  void openDevDebug(msg.ticket).catch(error => {
+    devDebugUi?.close(); state.devDebugOpen = false;
+    addConsoleLine(`Dev Debug: ${error.message}`, "error");
+  });
+  msg.ticket = "";
+});
+
 registerMessageHandler(ServerType.Welcome, (msg) => {
   const previousOwner = state.entities.get(state.ownerEntityId);
   const previousOwnerWasDead =
@@ -1295,7 +1498,7 @@ registerMessageHandler(ServerType.AuthResult, (msg) => {
     resultCode === AuthResultCode.VerificationCodeSending ||
     resultCode === AuthResultCode.VerificationCodeSent;
   const wasAuthenticated = state.authenticated;
-  const bindingPanelOpen = !emailBindingPanel.classList.contains("hidden");
+  const bindingPanelOpen = isEmailBindingPanelOpen();
   if (
     Number.isInteger(msg.emailPolicy) &&
     msg.emailPolicy >= EmailPolicy.Disabled &&
@@ -1341,7 +1544,7 @@ registerMessageHandler(ServerType.AuthResult, (msg) => {
     renderInventoryPanel();
     if (state.craftOpen) renderCraftPanel();
     sendBytes(packStateRequest());
-    authPanel.classList.add("hidden");
+    setAuthPanelVisible(false);
   } else if (resultCode === AuthResultCode.EmailBindingRequired) {
     state.authenticated = false;
     state.emailBound = false;
@@ -1370,7 +1573,7 @@ registerMessageHandler(ServerType.AuthResult, (msg) => {
     reconnectArmed = false;
     resumingConnection = false;
     setEmailBindingPanel(false);
-    authPanel.classList.remove("hidden");
+    setAuthPanelVisible(true);
     loadLoginMap();
   }
   updatePlayUiVisibility();
@@ -1510,16 +1713,23 @@ registerMessageHandler(ServerType.TerrainDelta, (msg) => {
 });
 
 registerMessageHandler(ServerType.OwnerState, (msg) => {
+  const locked = (msg.flags & 1) !== 0;
+  if (locked || locked !== state.ownerLoadoutLocked) {
+    clearSlotTransactions();
+    clearDrag();
+  }
+  state.ownerLoadoutLocked = locked;
   const previousMovementMultiplier = state.ownerMovementMultiplier || 1;
   state.ownerLevel = Math.max(1, msg.level || 1);
   state.ownerExpProgress = clamp(msg.expProgress || 0, 0, 1);
   state.talentPoints = Math.max(0, msg.talentPoints || 0);
   state.talents = msg.talents || [];
+  talentTreeUi?.acknowledge();
   const movementMultiplier = ownerMovementTalentMultiplier(state.talents);
   state.ownerMovementMultiplier = movementMultiplier;
   if (movementMultiplier !== previousMovementMultiplier) {
     const owner = state.entities.get(state.ownerEntityId);
-    if (owner?.snapshot) initOwnerPrediction(owner, owner.snapshot, true);
+    if (owner?.snapshot && !(owner.snapshot.flags & flagDead)) initOwnerPrediction(owner, owner.snapshot, true);
   }
   updateQuickActionButtons();
   const primaryCount = Math.max(
@@ -1540,6 +1750,25 @@ registerMessageHandler(ServerType.OwnerState, (msg) => {
   return;
 });
 
+registerMessageHandler(ServerType.CombatFeedback, msg => {
+  const now = performance.now();
+  if (getClientConfigValue(state.clientConfig, "damage_numbers") >= 0.5) combatFeedback.add(msg.hits, now);
+  let sourceChanged = false;
+  for (const hit of msg.hits || []) {
+    const entity = state.entities.get(hit.targetId);
+    if (entity && hit.kind !== 1 && !(entity.snapshot.flags & flagDead) &&
+        now / 1000 >= (entity.hurtFlashReadyAt || 0)) {
+      entity.hurtFlashAge = 0;
+      entity.hurtFlashReadyAt = now / 1000 + hurtFlashInterval;
+    }
+    if (hit.targetId !== state.ownerEntityId) continue;
+    sourceChanged = sourceChanged || hit.sourceType !== lastOwnerDamage?.sourceType || hit.sourceRarity !== lastOwnerDamage?.sourceRarity;
+    lastOwnerDamage = { ...hit, receivedAt: now };
+    if (ownerDeathSummary && isOwnerDead()) ownerDeathSummary.source = { ...lastOwnerDamage };
+  }
+  if (sourceChanged && isOwnerDead()) renderDeathOverlayContent();
+});
+
 registerMessageHandler(ServerType.Inventory, (msg) => {
   state.inventory = msg.inventory || [];
   state.inventoryLoaded = true;
@@ -1550,6 +1779,7 @@ registerMessageHandler(ServerType.Inventory, (msg) => {
   scheduleInventoryUiRender({
     forceInventory: inventoryList.childElementCount === 0,
   });
+  if (isOwnerDead()) renderDeathOverlayContent();
   return;
 });
 
@@ -1578,6 +1808,22 @@ function resetNetworkScene({ resetRunCollection = true } = {}) {
   clearSlotTransactions();
   state.receiveBuffer = new Uint8Array();
   state.entities.clear();
+  resetSpriteMotion();
+  bossBarMotions.clear();
+  hudValueMotions.clear();
+  healthTrails.clear();
+  combatFeedback.clear();
+  burrowParticles.clear();
+  rainField.reset();
+  blockFogField.reset();
+  lastWeatherEffectsAt = 0;
+  actualRain = 0;
+  actualFog = 0;
+  actualCloudyTint = 0;
+  lastOwnerDamage = null;
+  ownerDeathSummary = null;
+  reviveRequestedAt = 0;
+  state.deathViewFactor = 1;
   state.snapshotId = -1;
   state.serverTick = -1;
   state.serverTickReceivedAt = 0;
@@ -1995,7 +2241,7 @@ function highestOwnerSlotRarity() {
   );
 }
 
-function playerLevelRarity(snap) {
+function getPlayerLevelRarity(snap) {
   const cachedRarity = snap?.entityId
     ? state.entities.get(snap.entityId)?.playerPrimarySlotRarity || 0
     : 0;
@@ -2110,6 +2356,28 @@ function setViewRadiusImmediate(viewRadius) {
   state.viewRadiusTransition = null;
 }
 
+function setViewZoomPercent(value) {
+  const next = normalizeViewZoomPercent(value);
+  const previous = normalizeViewZoomPercent(state.viewZoomPercent);
+  if (!Number.isFinite(state.renderViewZoomPercent)) state.renderViewZoomPercent = previous;
+  if (next === previous) {
+    state.viewZoomPercent = next;
+    return false;
+  }
+  state.viewZoomPercent = next;
+  saveSettings();
+  requestRedraw();
+  return true;
+}
+
+function adjustViewZoomPercent(direction) {
+  const sign = Number(direction) < 0 ? -1 : 1;
+  return setViewZoomPercent(
+    normalizeViewZoomPercent(state.viewZoomPercent) +
+      sign * viewZoomStepPercent,
+  );
+}
+
 function setTargetViewRadius(viewRadius, now = performance.now()) {
   const target = Number(viewRadius);
   if (!Number.isFinite(target) || target <= 0) return;
@@ -2150,6 +2418,7 @@ function updateViewRadius(now) {
 
 function applySnapshot(msg) {
   if ((msg.snapshotId || 0) <= (state.snapshotId || 0)) return false;
+  const initialScene = state.snapshotId < 0;
   if (
     state.environment &&
     state.environment.received &&
@@ -2197,11 +2466,23 @@ function applySnapshot(msg) {
   const live = new Set();
   for (const snap of msg.entities || []) {
     live.add(snap.entityId);
-    const existing = state.entities.get(snap.entityId);
+    let existing = state.entities.get(snap.entityId);
+    if (existing && existing.snapshot.entityType !== snap.entityType) {
+      // IDs are reused by the server. An old death pose/velocity must not be
+      // inherited by a newly allocated, different entity in that slot.
+      clearSpriteMotion(snap.entityId);
+      clearLadybugPattern(snap.entityId);
+      existing = null;
+    }
     if (existing) {
+      burrowParticles.observe(existing.snapshot, snap, !existing.dying && !existing.missingSnapshotCount, existing.renderPos);
+      resumeEntityAppearance(existing);
       const previousSnapshot = existing.snapshot;
       const wasDead = (existing.snapshot.flags & flagDead) !== 0;
       const isDead = (snap.flags & flagDead) !== 0;
+      const deathVelocity = snap.entityId === state.ownerEntityId
+        ? { ...(existing.ownerPrediction?.vel || existing.snapshotVelocity) }
+        : { ...existing.snapshotVelocity };
       const previousHp = Number.isFinite(existing.snapshot.hpPercent)
         ? existing.snapshot.hpPercent
         : snap.hpPercent;
@@ -2213,6 +2494,23 @@ function applySnapshot(msg) {
       existing.snapshotAt = snapshotNow;
       updateEntitySnapshotVelocity(existing, snap, previousSnapshot);
       existing.snapshot = snap;
+      if (isDead && !wasDead) {
+        beginDeathMotion(existing, snapshotNow, { velocity: deathVelocity });
+        if (snap.entityId === state.ownerEntityId) {
+          ownerDeathSummary = { snapshot: { ...previousSnapshot, flags: snap.flags },
+            slots: captureDeathLoadout(previousSnapshot), startedAt: snapshotNowMs,
+            source: lastOwnerDamage && snapshotNowMs - lastOwnerDamage.receivedAt < 10000 ? { ...lastOwnerDamage } : null };
+          reviveRequestedAt = 0;
+        }
+      } else if (!isDead && wasDead) {
+        clearDeathMotion(existing);
+        if (snap.entityId === state.ownerEntityId) lastOwnerDamage = null;
+      } else if (isDead && existing.deathMotion &&
+        Math.hypot(snap.pos.x - existing.deathMotion.anchor.x, snap.pos.y - existing.deathMotion.anchor.y) > Math.max(200, snap.radius * 6)) {
+        clearDeathMotion(existing);
+        existing.renderPos = { ...snap.pos };
+        beginDeathMotion(existing, snapshotNow, { resting: true });
+      }
       if (!Number.isFinite(existing.particleBurstNextAt))
         existing.particleBurstNextAt = null;
       if (snap.entityType === bloodSacrificeEffectType) {
@@ -2279,6 +2577,16 @@ function applySnapshot(msg) {
         bloodSacrificeSweeps: [],
       });
       const created = state.entities.get(snap.entityId);
+      beginEntityAppearance(created, {
+        immediate: initialScene || snap.entityId === state.ownerEntityId || isPetalEntity(snap.entityType),
+        card: isDropEntity(snap.entityType),
+      });
+      if (isDead) {
+        beginDeathMotion(created, snapshotNow, { resting: true });
+        if (snap.entityId === state.ownerEntityId) ownerDeathSummary = {
+          snapshot: { ...snap }, slots: captureDeathLoadout(snap), startedAt: snapshotNowMs,
+        };
+      }
       if (snap.entityId === state.ownerEntityId)
         initOwnerPrediction(created, snap, true);
     }
@@ -2296,15 +2604,21 @@ function applySnapshot(msg) {
     const entity = state.entities.get(id);
     if (!entity) continue;
     entity.missingSnapshotCount = (entity.missingSnapshotCount || 0) + 1;
-    if (entity.missingSnapshotCount < 3) continue;
     if (entity.dying) continue;
     if (!shouldFadeMissingEntity(entity)) {
       state.entities.delete(id);
       clearLadybugPattern(id);
+      clearSpriteMotion(id);
       continue;
     }
-    entity.dying = true;
-    entity.deathAge = 0;
+    // Snapshot membership is authoritative for visibility, not a death or
+    // pickup receipt. Fade once immediately; if visibility returns, reverse
+    // from the current pose instead of popping back to full size/opacity.
+    beginEntityExit(entity, snapshotNow, {
+      card: isDropEntity(entity.snapshot.entityType),
+      mob: isMobSnap(entity.snapshot),
+      defeated: (entity.snapshot.flags & flagDead) !== 0 || entity.snapshot.hpPercent <= 0,
+    });
     entity.hurtFlashAge = hurtFlashDuration;
     if (entity.deathAngle == null)
       entity.deathAngle = Math.random() * Math.PI * 2;
@@ -2428,13 +2742,23 @@ function ownerMovementTalentMultiplier(talents) {
 
 function handleOwnerSnapshot(entity, snap, snapshotNow, wasDead, isDead) {
   if (wasDead && !isDead) startRunCollectionBaseline();
+  // Do not reset renderPos/velocity on every dead snapshot: they contain the
+  // authoritative stationary corpse, while the short coast is visual-only.
+  if (isDead) {
+    if (entity.ownerPrediction) {
+      entity.ownerPrediction.vel = { x: 0, y: 0 };
+      entity.ownerPrediction.correction = { x: 0, y: 0 };
+      entity.ownerPrediction.lastSnapshotAt = snapshotNow;
+    }
+    return;
+  }
   const prediction = initOwnerPrediction(entity, snap, false);
   if (!prediction || !snap?.pos) return;
 
   const dx = snap.pos.x - prediction.pos.x;
   const dy = snap.pos.y - prediction.pos.y;
   const errorDistance = Math.hypot(dx, dy);
-  const largeStateChange = wasDead !== isDead || (snap.flags & flagDead) !== 0;
+  const largeStateChange = wasDead !== isDead;
   const shouldSnap =
     largeStateChange ||
     errorDistance >= ownerPredictionTeleportDistance ||
@@ -2522,17 +2846,13 @@ function readMouseMoveInput() {
   const center = owner
     ? worldToScreen(owner.renderPos)
     : { x: state.canvasWidth * 0.5, y: state.canvasHeight * 0.5 };
-  let x = state.mouse.x - center.x;
-  let y = state.mouse.y - center.y;
-  const length = Math.hypot(x, y);
-  if (length <= mouseMoveDeadzonePx) return { x: 0, y: 0 };
-
-  const fullSpeedDistance = Math.max(
-    80,
-    Math.min(state.canvasWidth, state.canvasHeight) * 0.18,
-  );
-  const scale = Math.min(1, length / fullSpeedDistance) / length;
-  return { x: x * scale, y: y * scale };
+  // The reference clip's dummy radius is about 93 CSS px in an 884px-high
+  // game viewport. Keep a similarly sized control circle across resolutions,
+  // independent of flower buffs, device pixel ratio and camera zoom.
+  const fullSpeedDistance = Math.max(24,
+    Math.min(state.canvasWidth, state.canvasHeight) * clientRuntimeConfig.mouseMoveFullSpeedRadiusRatio);
+  return getPointerMoveIntent(state.mouse.x - center.x, state.mouse.y - center.y,
+    fullSpeedDistance, mouseMoveDeadzonePx);
 }
 
 function isMainPanelOpen() {
@@ -2583,14 +2903,15 @@ function flushInput(dt) {
   // so hand the keyboard over cleanly instead of latching movement on.
   if (typing) releaseInputHolds({ device: "keyboard" });
 
-  if (!state.connected || !state.authenticated || typing || isOwnerDead()) {
+  if (!state.connected || !state.authenticated || (typing && !state.devDebugOpen) || isOwnerDead()) {
     state.localMoveInput = { x: 0, y: 0 };
     return;
   }
 
   state.sendTimer += dt;
-  const move = readMoveInput();
-  state.localMoveInput = { x: clamp(move.x, -1, 1), y: clamp(move.y, -1, 1) };
+  const rawMove = state.devDebugOpen ? { x: 0, y: 0 } : readMoveInput();
+  const move = quantizeMoveIntent(rawMove.x, rawMove.y);
+  state.localMoveInput = move;
   const packetMoveX = move.y;
   const packetMoveY = move.x;
   const px = Math.round(clamp(packetMoveX, -1, 1) * 127);
@@ -2605,8 +2926,11 @@ function flushInput(dt) {
     state.defending ||
     !!ui.mobileControls?.isDefending();
   const digging = false;
-  const effectiveAttacking = attacking;
-  const effectiveDefending = defending;
+  const effectiveAttacking = !state.devDebugOpen && attacking;
+  // Attack and defend are action modes, not additive holds. Avoid sending
+  // both flags together: many petals fire when either mode is active, so a
+  // simultaneous Shift+Space hold can create an unnecessary throw storm.
+  const effectiveDefending = !state.devDebugOpen && defending && !attacking;
   const choresChanged =
     effectiveAttacking !== state.lastInput.attacking ||
     effectiveDefending !== state.lastInput.defending ||
@@ -2654,16 +2978,38 @@ function updateDeathOverlay() {
   const dead = isOwnerDead();
   if (dead && !state.wasOwnerDead) {
     state.deathOverlayClosed = false;
+    releaseInputHolds();
+    state.localMoveInput = { x: 0, y: 0 };
+    ui.mobileControls?.reset();
+    sendNeutralGameplayState({ includeInput: true });
     renderDeathOverlayContent();
   }
-  if (!dead) state.deathOverlayClosed = false;
+  if (!dead) {
+    state.deathOverlayClosed = false;
+    ownerDeathSummary = null;
+    reviveRequestedAt = 0;
+  }
   state.wasOwnerDead = dead;
-  deathOverlay.classList.toggle("hidden", !dead);
+  setAnimatedVisibility(deathOverlay, dead, { enterDuration: 420, exitDuration: 120 });
   deathOverlay.classList.toggle("closed", dead && state.deathOverlayClosed);
+  const pending = reviveRequestedAt > 0 && performance.now() - reviveRequestedAt < 3000;
+  reviveBtn.disabled = !state.connected || pending;
+  const label = t(pending ? "ui.death.returning" : "ui.death.revive");
+  if (reviveBtn.textContent !== label) reviveBtn.textContent = label;
 }
 
 export function renderDeathOverlayContent() {
-  if (deathSource) deathSource.textContent = t("ui.death.unknownSource");
+  if (deathSource) {
+    const hit = ownerDeathSummary?.source || lastOwnerDamage;
+    const knownType = hit && (hit.sourceType < NETWORK_PETAL_TYPE_OFFSET
+      ? MobNames[hit.sourceType] : PetalNames[hit.sourceType - NETWORK_PETAL_TYPE_OFFSET]);
+    const known = hit && hit.sourceType > 0 && knownType &&
+      (hit === ownerDeathSummary?.source || performance.now() - hit.receivedAt < 10000);
+    deathSource.textContent = known
+      ? (hit.sourceType < NETWORK_PETAL_TYPE_OFFSET ? mobTypeName(hit.sourceType) : petalTypeName(hit.sourceType - NETWORK_PETAL_TYPE_OFFSET))
+      : t("ui.death.unknownSource");
+    deathSource.title = known && hit.sourceRarity ? rarityName(hit.sourceRarity) : "";
+  }
   if (!deathLoot) return;
 
   deathLoot.replaceChildren();
@@ -2677,7 +3023,7 @@ export function renderDeathOverlayContent() {
           petalTypeName(b.petalType),
         ),
     )
-    .slice(0, 8);
+    .slice(0, 64);
 
   deathLoot.classList.toggle("empty", items.length === 0);
   for (const item of items) {
@@ -2692,10 +3038,12 @@ export function renderDeathOverlayContent() {
 
 function requestRevive() {
   if (!state.connected || !state.authenticated || !isOwnerDead()) return;
+  const now = performance.now();
+  if (reviveRequestedAt > 0 && now - reviveRequestedAt < 3000) return;
   releaseInputHolds();
   state.digging = false;
   ui.mobileControls?.reset();
-  sendBytes(packChores(false, false, true, false, false));
+  if (sendBytes(packChores(false, false, true, false, false))) reviveRequestedAt = now;
 }
 
 function closeDeathOverlay() {
@@ -2722,7 +3070,7 @@ function submitChat() {
 
 export function closeSliderPanel() {
   state.slider = null;
-  sliderPanel?.classList.add("hidden");
+  setAnimatedVisibility(sliderPanel, false, { duration: 160 });
   sliderPanel?.setAttribute("aria-hidden", "true");
 }
 
@@ -2743,7 +3091,7 @@ export function renderSliderPanel() {
     Math.min(max, Number.isFinite(current) ? current : min),
   );
 
-  sliderPanel.classList.remove("hidden");
+  setAnimatedVisibility(sliderPanel, true, { duration: 160 });
   sliderPanel.setAttribute("aria-hidden", "false");
   sliderTitle.textContent = name;
   sliderValue.textContent = formatClientConfigValue(value);
@@ -2813,12 +3161,77 @@ export function renderInventoryPanel(options = {}) {
     "secondary",
     display.ownerSlots,
   );
+  refreshSlotKeyHints(display.ownerSlots.length);
 
   if (state.backpackOpen || forceInventory) {
     renderInventoryGroups(
       inventoryList,
       inventoryPanelItems(display.inventory),
     );
+  }
+}
+
+// Bottom-bar key hints ([R] beside the secondary row, [1]..[0] under each
+// column), sourced from the live keyboard bindings so a rebind shows here.
+const keyHintAliases = Object.freeze({
+  escape: "Esc",
+  space: "Space",
+  shift: "Shift",
+  control: "Ctrl",
+  ctrl: "Ctrl",
+  alt: "Alt",
+  enter: "Enter",
+  tab: "Tab",
+  backspace: "Bksp",
+  delete: "Del",
+});
+
+function formatKeyHint(key) {
+  const name = String(key || "").toLowerCase();
+  if (!name) return "";
+  if (keyHintAliases[name]) return keyHintAliases[name];
+  if (/^[a-z0-9]$/.test(name)) return name.toUpperCase();
+  const numpad = /^numpad(.+)$/.exec(name);
+  if (numpad) return `N${numpad[1].slice(0, 1).toUpperCase()}${numpad[1].slice(1, 3)}`;
+  return name.charAt(0).toUpperCase() + name.slice(1, 5);
+}
+
+// First keyboard key whose command chain contains `command` (exact match on
+// the whole command string, e.g. "select_slot 3"). Plain digits win over
+// numpad keys so the default table reads [1]..[0] like florr's.
+function keyboardKeyForCommand(command) {
+  const table = bindings?.keyboard || {};
+  let fallback = "";
+  for (const key of Object.keys(table)) {
+    const commands = table[key];
+    if (!commands?.some((entry) => String(entry).trim() === command)) continue;
+    if (/^[0-9]$/.test(key)) return key;
+    if (!fallback) fallback = key;
+  }
+  return fallback;
+}
+
+function refreshSlotKeyHints(slotCount) {
+  if (!slotKeyHints || !slotSwapHint) return;
+  const count = Math.max(0, slotCount | 0);
+  const swapKey = keyboardKeyForCommand("swap");
+  const swapText = swapKey ? `[${formatKeyHint(swapKey)}]` : "";
+  if (slotSwapHint.textContent !== swapText) slotSwapHint.textContent = swapText;
+
+  slotKeyHints.style.setProperty("--slot-count", count);
+  for (let index = 0; index < count; index += 1) {
+    const key = keyboardKeyForCommand(`select_slot ${index}`);
+    const text = key ? `[${formatKeyHint(key)}]` : "";
+    let cell = slotKeyHints.children[index];
+    if (!cell) {
+      cell = document.createElement("span");
+      cell.className = "slot-key-hint slot-select-hint";
+      slotKeyHints.appendChild(cell);
+    }
+    if (cell.textContent !== text) cell.textContent = text;
+  }
+  while (slotKeyHints.children.length > count) {
+    slotKeyHints.lastElementChild?.remove();
   }
 }
 
@@ -2857,7 +3270,7 @@ function slotButtonRenderKey(slot, index, kind, primaryForVisual) {
       })
     : 0;
   // The display name participates: language switches rebuild the label.
-  const name = slotHasItem(slot) ? petalDisplayName(visualType || petalType) : "";
+  const name = slotHasItem(slot) ? getPetalDisplayName(visualType || petalType) : "";
   return `${kind}:${petalType}:${rarity}:${count}:${visualType}:${copy}:${name}`;
 }
 
@@ -2890,10 +3303,11 @@ function renderSlotRow(container, slots, kind, primaryForVisual) {
 }
 
 function updateOwnerSlotRuntimeOverlays() {
+  const slots = displayOwnerSlots();
   for (let index = 0; index < primarySlots.children.length; index += 1) {
     updateSlotDurabilityOverlay(
       primarySlots.children[index],
-      displayOwnerSlots()[index],
+      slots[index],
       index,
       "primary",
     );
@@ -2904,6 +3318,7 @@ function updateSlotDurabilityOverlay(button, slot, index, kind) {
   if (!button) return;
 
   const runtime = kind === "primary" ? state.ownerSlotRuntime[index] : null;
+  updateSlotCounter(button, slot, runtime, kind);
   updateSlotBanOverlay(button, !!runtime?.banned);
   const copies =
     runtime &&
@@ -2940,6 +3355,25 @@ function updateSlotDurabilityOverlay(button, slot, index, kind) {
   });
 }
 
+function updateSlotCounter(button, slot, runtime, kind) {
+  const value = getSlotCounter(slot, runtime, kind);
+  let badge = button.querySelector(":scope > .slot-value");
+  if (value === null) {
+    badge?.remove();
+    return;
+  }
+  if (!badge) {
+    badge = document.createElement("span");
+    badge.className = "slot-value";
+    button.appendChild(badge);
+  }
+  const text = value === undefined ? "\u2014" : formatShortCount(value);
+  if (badge.textContent !== text) badge.textContent = text;
+  const title = kind === "secondary" ? t("ui.slotCounter.inactive")
+    : value === undefined ? t("ui.slotCounter.pending") : t("ui.slotCounter.live", { value });
+  if (badge.title !== title) badge.title = title;
+}
+
 function updateSlotBanOverlay(button, banned) {
   let mark = button.querySelector(":scope > .slot-ban-mark");
   if (!banned) {
@@ -2955,6 +3389,7 @@ function updateSlotBanOverlay(button, banned) {
 }
 
 function updateSlotLiveVisual(button, runtime, copies) {
+  const live = getClientConfigValue(state.clientConfig, "live_icons") >= 0.5;
   const icons = button.querySelectorAll(
     ":scope > .petal-stack > .petal-live-visual",
   );
@@ -2966,7 +3401,7 @@ function updateSlotLiveVisual(button, runtime, copies) {
     let scale = 1;
 
     if (
-      runtime?.visualType === PetalSlotVisualType.Angle &&
+      live && runtime?.visualType === PetalSlotVisualType.Angle &&
       Number.isFinite(copy?.visual)
     ) {
       const targetAngle = livePetalRenderAngle(petalType, copy.visual);
@@ -2981,7 +3416,7 @@ function updateSlotLiveVisual(button, runtime, copies) {
       }
       icon.dataset.liveRenderAngle = String(angle);
     } else if (
-      runtime?.visualType === PetalSlotVisualType.Size &&
+      live && runtime?.visualType === PetalSlotVisualType.Size &&
       Number.isFinite(copy?.visual)
     ) {
       scale = clamp(copy.visual, 0.05, 1);
@@ -2998,7 +3433,6 @@ function updateSlotLiveVisual(button, runtime, copies) {
 export function renderCraftPanel() {
   renderCraftMode();
   hidePetalInfoTooltip();
-  craftList.replaceChildren();
   renderCraftStage();
   renderCraftMatrix();
 }
@@ -3014,202 +3448,19 @@ function renderCraftMode() {
 
 export function renderTalentPanel() {
   if (!talentTree) return;
-  talentPointsLabel.textContent = t("ui.talents.points", {
-    count: state.talentPoints,
+  if (!talentTreeUi) talentTreeUi = createTalentTree({
+    panel: talentPanel, viewport: talentTree, points: talentPointsLabel,
+    getState: () => state,
+    request: (action, nodes) => {
+      const packet = packTalentRequest(action, nodes);
+      return !!packet && sendBytes(packet);
+    },
   });
-  talentTree.replaceChildren();
-
-  const groups = new Map();
-  for (const node of talentRootNodes) {
-    if (!groups.has(node.group)) groups.set(node.group, []);
-    groups.get(node.group).push(node);
-  }
-
-  const ownedKeys = ownedTalentKeys();
-  for (const [groupName, nodes] of groups) {
-    const section = document.createElement("section");
-    section.className = "talent-group";
-
-    const header = document.createElement("div");
-    header.className = "talent-group-title";
-    header.textContent = t(
-      "talents.groups." + localizationSlug(groupName),
-      {},
-      { defaultValue: groupName },
-    );
-    section.appendChild(header);
-
-    const roots = document.createElement("div");
-    roots.className = "talent-root-list";
-    for (const node of nodes) {
-      const branch = renderTalentBranch(node, ownedKeys);
-      if (branch) roots.appendChild(branch);
-    }
-    section.appendChild(roots);
-    talentTree.appendChild(section);
-  }
-}
-
-function renderTalentBranch(node, ownedKeys, path = new Set()) {
-  if (!node || path.has(node.key)) return null;
-
-  const nextPath = new Set(path);
-  nextPath.add(node.key);
-
-  const branch = document.createElement("div");
-  branch.className = "talent-branch";
-
-  const nodeWrap = document.createElement("div");
-  nodeWrap.className = "talent-node-wrap";
-  nodeWrap.appendChild(makeTalentButton(node, ownedKeys));
-  branch.appendChild(nodeWrap);
-
-  const children = talentChildrenByBase.get(node.key) || [];
-  const childBranches = [];
-  for (const child of children) {
-    const childBranch = renderTalentBranch(child, ownedKeys, nextPath);
-    if (childBranch) childBranches.push(childBranch);
-  }
-
-  if (childBranches.length > 0) {
-    const childrenWrap = document.createElement("div");
-    childrenWrap.className = `talent-children${childBranches.length === 1 ? " single" : ""}`;
-    for (const childBranch of childBranches) {
-      const childWrap = document.createElement("div");
-      childWrap.className = "talent-child";
-      childWrap.appendChild(childBranch);
-      childrenWrap.appendChild(childWrap);
-    }
-    branch.appendChild(childrenWrap);
-  }
-
-  return branch;
-}
-
-function makeTalentButton(node, ownedKeys = ownedTalentKeys()) {
-  const owned = ownedKeys.has(node.key);
-  const addChain = owned ? [] : collectTalentAddChain(node, ownedKeys);
-  const chainCost = addChain.reduce(
-    (sum, talent) => sum + (talent.cost || 0),
-    0,
-  );
-  const ready =
-    owned || (addChain.length > 0 && chainCost <= state.talentPoints);
-
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = `talent-node rarity-${node.rarity}${owned ? " owned" : ""}${ready ? "" : " blocked"}`;
-  button.style.setProperty("--talent-color", rarityColor(node.rarity, 1));
-  button.title = owned
-    ? t("ui.talents.holdRemove", { name: localizedTalentName(node) })
-    : t("ui.talents.holdLearn", {
-        names: addChain.map(localizedTalentName).join(" -> "),
-        cost: chainCost,
-      });
-
-  const rarity = document.createElement("span");
-  rarity.className = "talent-rarity";
-  rarity.textContent =
-    rarityShortNames[node.rarity] || rarityName(node.rarity).slice(0, 2);
-  button.appendChild(rarity);
-
-  const name = document.createElement("span");
-  name.className = "talent-name";
-  name.textContent = talentDisplayName(node);
-  button.appendChild(name);
-
-  const cost = document.createElement("span");
-  cost.className = "talent-cost";
-  cost.textContent = t("ui.talents.cost", { cost: node.cost });
-  button.appendChild(cost);
-
-  attachTalentLongPress(button, node);
-  return button;
-}
-
-function talentDisplayName(node) {
-  const name = localizedTalentName(node);
-  if (node.id === TalentId.PoisonDamage && node.rarity === 3)
-    return name + " " + (node.rank + 1);
-  return name;
-}
-
-function ownedTalentKeys() {
-  return new Set(
-    (state.talents || []).map((talent) =>
-      talentKey(talent.id, talent.rarity, talent.rank || 0),
-    ),
-  );
-}
-
-function isTalentOwned(node, ownedKeys = ownedTalentKeys()) {
-  return !!node && ownedKeys.has(node.key);
-}
-
-function collectTalentAddChain(node, ownedKeys = ownedTalentKeys()) {
-  const chain = [];
-  const seen = new Set();
-  let current = node;
-  while (current && !ownedKeys.has(current.key) && !seen.has(current.key)) {
-    seen.add(current.key);
-    chain.push(current);
-    current = current.base ? talentNodeByKey.get(current.base) : null;
-  }
-  return chain.reverse();
-}
-
-function attachTalentLongPress(button, node) {
-  let timer = 0;
-  let fired = false;
-
-  const clear = () => {
-    if (timer) window.clearTimeout(timer);
-    timer = 0;
-    button.classList.remove("holding");
-  };
-
-  button.addEventListener("pointerdown", (event) => {
-    if (event.button !== undefined && event.button !== 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    fired = false;
-    button.classList.add("holding");
-    timer = window.setTimeout(() => {
-      fired = true;
-      clear();
-      submitTalentNode(node);
-    }, 520);
-  });
-  button.addEventListener("pointerup", clear);
-  button.addEventListener("pointerleave", clear);
-  button.addEventListener("pointercancel", clear);
-  button.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!fired) addConsoleLine(t("ui.talents.holdHint"));
-  });
-}
-
-function submitTalentNode(node) {
-  if (!state.authenticated || !node) return;
-
-  const ownedKeys = ownedTalentKeys();
-  const owned = isTalentOwned(node, ownedKeys);
-  const talents = owned ? [node] : collectTalentAddChain(node, ownedKeys);
-  if (talents.length === 0) return;
-
-  const packet = packTalentRequest(owned ? "remove" : "add", talents);
-  if (!packet) return;
-  sendBytes(packet);
-  addConsoleLine(
-    t(owned ? "commands.talent.removing" : "commands.talent.learning", {
-      name: talentDisplayName(node),
-    }),
-  );
+  talentTreeUi.render();
 }
 
 function selectCraftPetal(petalType, rarity, options = {}) {
-  if (state.craftPhase === "spinning") return;
+  if (state.craftPhase === "spinning" || craftResultDismissing) return;
   if (state.forgeMode) {
     if (rarity !== raritySuper || getInventoryCount(petalType, raritySuper) < 5)
       return;
@@ -3300,7 +3551,7 @@ function renderInventoryGroups(container, items) {
           inventoryItemVariants(item)
             .map(
               (variant) =>
-                `${variant.petalType}:${variant.rarity}:${variant.count}:${effectivePetalCardCopy(variant.petalType, variant.rarity)}:${petalDisplayName(variant.petalType)}`,
+                `${variant.petalType}:${variant.rarity}:${variant.count}:${effectivePetalCardCopy(variant.petalType, variant.rarity)}:${getPetalDisplayName(variant.petalType)}`,
             )
             .join("|"),
         )
@@ -3370,34 +3621,45 @@ function makeInventoryGroupSection(group, key) {
 
 function renderCraftMatrix() {
   if (state.forgeMode) {
+    craftList.replaceChildren();
     renderForgeMatrix();
     return;
   }
 
   const rows = buildCraftRows();
   craftList.classList.toggle("hidden", rows.length === 0);
-  if (rows.length === 0) return;
+  const previousMatrix = craftList.querySelector(".craft-matrix");
+  if (rows.length === 0) {
+    previousMatrix?.remove();
+    return;
+  }
 
-  const matrix = document.createElement("div");
+  const matrix = previousMatrix || document.createElement("div");
   matrix.className = "craft-matrix";
   matrix.style.setProperty(
     "--craft-rarity-count",
     String(craftRarityDisplayOrder.length),
   );
 
+  const existing = new Map(
+    Array.from(matrix.children).map((cell) => [cell.dataset.craftKey, cell]),
+  );
+  const ordered = [];
+
   for (const row of rows) {
     for (const rarity of craftRarityDisplayOrder) {
+      const key = `${row.petalType}:${rarity}`;
       const baseCount = row.counts.get(rarity) || 0;
       const heldCount = getCraftHeldCount(row.petalType, rarity);
       const displayCount = Math.max(0, baseCount - heldCount);
       const lit = canLightCraftItem(row.petalType, rarity);
-      const selected =
-        state.craftSource &&
-        state.craftSource.petalType === row.petalType &&
-        state.craftSource.rarity === rarity;
+      const emptyDisplay = baseCount <= 0 || displayCount <= 0;
 
-      const cell = document.createElement(baseCount > 0 ? "button" : "div");
-      cell.className = `craft-matrix-cell${baseCount > 0 ? "" : " empty"}${lit ? " lit" : " locked"}${selected ? " selected" : ""}`;
+      let cell = existing.get(key);
+      if (cell) existing.delete(key);
+      else cell = document.createElement(baseCount > 0 ? "button" : "div");
+      cell.dataset.craftKey = key;
+      cell.className = `craft-matrix-cell${emptyDisplay ? " empty" : ""}${lit ? " lit" : " locked"}`;
       if (baseCount > 0) {
         cell.type = "button";
         cell.title = formatPetalItem(
@@ -3405,23 +3667,47 @@ function renderCraftMatrix() {
           rarity,
           displayCount,
         );
-        cell.appendChild(
-          makePetalStack(row.petalType, rarity, displayCount),
-        );
-        attachPetalInfoTooltip(cell, row.petalType, rarity);
-        cell.addEventListener("pointerdown", (event) => {
+        if (displayCount > 0) {
+          delete cell.dataset.craftVanishing;
+          cell.replaceChildren(
+            makePetalStack(row.petalType, rarity, displayCount, row.petalType, {
+              showCount: true,
+            }),
+          );
+          attachPetalInfoTooltip(cell, row.petalType, rarity);
+        } else if (
+          cell.querySelector(".petal-stack") &&
+          cell.dataset.craftVanishing !== "true"
+        ) {
+          const stack = cell.querySelector(".petal-stack");
+          cell.dataset.craftVanishing = "true";
+          animatePetalCardVanish(stack, {
+            durationMs: 280,
+            onFinish: () => {
+              if (cell.dataset.craftKey !== key) return;
+              stack.remove();
+              delete cell.dataset.craftVanishing;
+            },
+          });
+        }
+        cell.onpointerdown = (event) => {
           if (event.button !== undefined && event.button !== 0) return;
           event.preventDefault();
           event.stopPropagation();
           if (lit)
             selectCraftPetal(row.petalType, rarity, { all: event.shiftKey });
-        });
+        };
+      } else {
+        cell.replaceChildren();
+        cell.onpointerdown = null;
       }
-      matrix.appendChild(cell);
+      ordered.push(cell);
     }
   }
 
-  craftList.appendChild(matrix);
+  for (const leftover of existing.values()) leftover.remove();
+  for (const cell of ordered) matrix.appendChild(cell);
+  if (!matrix.parentElement) craftList.appendChild(matrix);
 }
 
 function renderForgeMatrix() {
@@ -3453,13 +3739,9 @@ function renderForgeMatrix() {
   for (const item of items) {
     const displayCount = item.count;
     const lit = state.craftPhase !== "spinning" && displayCount >= 5;
-    const selected =
-      state.craftSource?.petalType === item.petalType &&
-      state.craftSource?.rarity === raritySuper;
-
     const cell = document.createElement("button");
     cell.type = "button";
-    cell.className = `craft-matrix-cell${lit ? " lit" : " locked"}${selected ? " selected" : ""}`;
+    cell.className = `craft-matrix-cell${lit ? " lit" : " locked"}`;
     cell.title = formatPetalItem(
       item.petalType,
       raritySuper,
@@ -3624,25 +3906,21 @@ function getActiveCraftStagedCount(petalType, rarity) {
 }
 
 function getCraftHeldCount(petalType, rarity) {
-  if (state.craftPhase === "idle") return 0;
-  if (state.craftPhase === "success") {
-    return slotHasItem(state.craftResult) &&
-      state.craftResult.petalType === petalType &&
-      state.craftResult.rarity === rarity
-      ? Math.max(1, state.craftResult.count || 1)
-      : 0;
-  }
-  return getCraftSlotCount(petalType, rarity);
+  // Only cards currently selected on the ring are held back from the matrix.
+  // Returned cards and the successful result are already in the actual
+  // inventory again, so they must not be subtracted from the display count.
+  return state.craftPhase === "staged" || state.craftPhase === "spinning"
+    ? getCraftSlotCount(petalType, rarity)
+    : 0;
 }
 
 function canLightCraftItem(petalType, rarity) {
   if (state.craftPhase === "spinning") return false;
   if (!canCraftRarity(rarity)) return false;
-  const visible = Math.max(
-    0,
-    getInventoryCount(petalType, rarity) - getCraftHeldCount(petalType, rarity),
-  );
-  return visible > 0 && visible + getCraftSlotCount(petalType, rarity) >= 5;
+  // Lit purely from the ACTUAL inventory count: staging cards onto the ring
+  // must not darken the cell. Only the DISPLAYED count shows the subtraction
+  // (see renderCraftMatrix's displayCount).
+  return getInventoryCount(petalType, rarity) >= 5;
 }
 
 function canCraftRarity(rarity) {
@@ -3653,68 +3931,135 @@ function renderCraftStage() {
   const keyRoot = state.forgeMode ? "ui.forge" : "ui.craft";
   craftStage.classList.toggle("spinning", state.craftPhase === "spinning");
   craftStage.classList.toggle("success", state.craftPhase === "success");
-  craftStage.classList.toggle(
-    "burst",
-    state.craftPhase === "returned" &&
-      performance.now() < state.craftBurstUntil,
-  );
 
-  const showRing = state.craftPhase !== "success";
+  // Keep the five ring slots mounted through the result reveal. When a card
+  // converges or vanishes, the empty slot must already be visible behind it;
+  // hiding the ring until the result is dismissed creates a hard visual cut.
+  const showRing = true;
+  const spinning = state.craftPhase === "spinning";
+  const orbitActive = craftSpin.isActive();
   craftStage.querySelectorAll("[data-craft-slot]").forEach((button) => {
     const index = Number(button.dataset.craftSlot || 0);
     const slot = state.craftSlots[index];
-    button.replaceChildren();
-    clearPetalInfoTooltip(button);
-    button.classList.toggle("hidden", !showRing);
-    button.classList.toggle("filled", slotHasItem(slot));
-    button.disabled = state.craftPhase === "spinning";
-    button.title = slotHasItem(slot)
-      ? formatPetalItem(
-          slot.petalType,
-          slot.rarity,
-          slot.count || 1,
-        )
-      : t(`${keyRoot}.slot`);
-    if (slotHasItem(slot)) {
-      button.appendChild(
-        makePetalStack(slot.petalType, slot.rarity, slot.count || 1),
-      );
-      attachPetalInfoTooltip(button, slot.petalType, slot.rarity);
+
+    if (spinning && orbitActive) {
+      // The orbit controller owns the staged cards while the gamble spins;
+      // rebuilding them here would tear the animation down mid-flight
+      // (inventory refreshes re-render this panel while the craft
+      // round-trips).
+      clearPetalInfoTooltip(button);
+      button.disabled = true;
+      return;
+    }
+
+    setAnimatedVisibility(button, showRing, {
+      duration: craftSlotMotionDurationMs,
+    });
+
+    if (showRing) {
+      const itemKey = slotHasItem(slot) ? `${slot.petalType}:${slot.rarity}` : "empty";
+      const sameItem = button.dataset.craftItemKey === itemKey;
+      button.dataset.craftItemKey = itemKey;
+      const key = slotHasItem(slot)
+        ? `${slot.petalType}:${slot.rarity}:${slot.count || 1}:${petalTypeName(slot.petalType)}` : "empty";
+      const changed = button.dataset.craftRenderKey !== key;
+      if (changed) {
+        button.replaceChildren();
+        clearPetalInfoTooltip(button);
+        button.dataset.craftRenderKey = key;
+      }
+      const hasSlot = slotHasItem(slot);
+      button.classList.toggle("filled", hasSlot);
+      button.classList.toggle("empty", !hasSlot);
+      // The motion controller may have exposed the empty backing while a
+      // card was fading. The explicit empty state now owns that appearance.
+      button.classList.remove("craft-card-fading");
+      button.disabled = spinning;
+      button.title = slotHasItem(slot)
+        ? formatPetalItem(
+            slot.petalType,
+            slot.rarity,
+            slot.count || 1,
+          )
+        : t(`${keyRoot}.slot`);
+      if (slotHasItem(slot) && changed) {
+        const stack = makePetalStack(slot.petalType, slot.rarity, slot.count || 1);
+        if (!spinning && state.craftPhase === "staged" && !sameItem) stack.classList.add("craft-card-entering");
+        button.appendChild(stack);
+        attachPetalInfoTooltip(button, slot.petalType, slot.rarity);
+      }
+    } else {
+      // Keep the old slot contents mounted while the exit transition runs.
+      // Replacing them here would make the button go blank before it fades.
+      clearPetalInfoTooltip(button);
+      button.disabled = true;
     }
     button.onclick = (event) => {
       event.preventDefault();
+      if (state.craftPhase === "success" && !slotHasItem(slot)) return;
       clearCraftDisplay();
       renderCraftPanel();
     };
   });
 
-  craftResultSlot.replaceChildren();
-  clearPetalInfoTooltip(craftResultSlot);
-  craftResultSlot.classList.toggle(
-    "hidden",
-    state.craftPhase !== "success" || !slotHasItem(state.craftResult),
-  );
-  if (state.craftPhase === "success" && slotHasItem(state.craftResult)) {
-    craftResultSlot.title = formatPetalItem(
-      state.craftResult.petalType,
-      state.craftResult.rarity,
-      state.craftResult.count || 1,
-    );
-    craftResultSlot.appendChild(
-      makePetalStack(
+  const showResult =
+    state.craftPhase === "success" && slotHasItem(state.craftResult);
+  if (craftResultDismissing) {
+    // The crafted card is vanishing in place; leave the slot alone
+    // so the dismiss animation is not resurrected by a re-render.
+  } else {
+    setAnimatedVisibility(craftResultSlot, showResult, {
+      duration: craftSlotMotionDurationMs,
+    });
+    if (showResult) {
+      craftResultSlot.replaceChildren();
+      clearPetalInfoTooltip(craftResultSlot);
+      craftResultSlot.disabled = false;
+      craftResultSlot.title = formatPetalItem(
         state.craftResult.petalType,
         state.craftResult.rarity,
         state.craftResult.count || 1,
-      ),
-    );
-    attachPetalInfoTooltip(
-      craftResultSlot,
-      state.craftResult.petalType,
-      state.craftResult.rarity,
-    );
+      );
+      craftResultSlot.appendChild(
+        makePetalStack(
+          state.craftResult.petalType,
+          state.craftResult.rarity,
+          state.craftResult.count || 1,
+        ),
+      );
+      attachPetalInfoTooltip(
+        craftResultSlot,
+        state.craftResult.petalType,
+        state.craftResult.rarity,
+      );
+      // Showcase pop: play once per crafted result, not on every re-render.
+      const popKey = `${state.craftResult.petalType}:${state.craftResult.rarity}`;
+      if (craftResultSlot.dataset.popKey !== popKey) {
+        craftResultSlot.dataset.popKey = popKey;
+        craftResultSlot.classList.remove("craft-result-pop");
+        void craftResultSlot.offsetWidth;
+        craftResultSlot.classList.add("craft-result-pop");
+      }
+    } else {
+      // As with the ring slots, leave the result mounted until the reversible
+      // visibility helper finishes its fade-out.
+      clearPetalInfoTooltip(craftResultSlot);
+      craftResultSlot.disabled = true;
+      craftResultSlot.classList.remove("craft-result-pop");
+      delete craftResultSlot.dataset.popKey;
+    }
   }
   craftResultSlot.onclick = (event) => {
     event.preventDefault();
+    if (
+      state.craftPhase === "success" &&
+      slotHasItem(state.craftResult) &&
+      !craftResultDismissing
+    ) {
+      dismissCraftResult();
+      return;
+    }
+    if (craftResultDismissing) return;
     clearCraftDisplay();
     renderCraftPanel();
   };
@@ -3727,6 +4072,8 @@ function renderCraftStage() {
     state.craftPhase === "staged" &&
     (state.forgeMode ? stagedCount === 5 : stagedCount >= 5)
   );
+  const targetRarity = state.forgeMode ? rarityUnique : Math.min(10, (state.craftSource?.rarity || 0) + 1);
+  craftOnceBtn.style.setProperty("--craft-target-color", rarityColor(targetRarity));
   craftChance.textContent = state.forgeMode
     ? ""
     : state.craftSource
@@ -3740,12 +4087,6 @@ function renderCraftStage() {
     craftSelection.textContent = t(`${keyRoot}.success`);
   } else if (state.craftPhase === "returned") {
     craftSelection.textContent = t(`${keyRoot}.failed`);
-  } else if (state.craftSource) {
-    craftSelection.textContent = formatPetalItem(
-      state.craftSource.petalType,
-      state.craftSource.rarity,
-      stagedCount,
-    );
   } else {
     craftSelection.textContent = t(`${keyRoot}.instruction`);
   }
@@ -3780,6 +4121,7 @@ function submitCraft() {
     state.craftPhase = "spinning";
     state.craftSpinStarted = performance.now();
     renderCraftPanel();
+    beginCraftSpinMotion();
     sendBytes(packForge(petalType));
     return;
   }
@@ -3789,26 +4131,75 @@ function submitCraft() {
   state.craftPhase = "spinning";
   state.craftSpinStarted = performance.now();
   renderCraftPanel();
+  beginCraftSpinMotion();
   sendBytes(packCraft(petalType, rarity, count));
 }
 
+// The gamble spin runs on the freshly rendered staged cards. If the server
+// never answers, the watchdog returns the stage to the staged state so the
+// cards are not stuck orbiting forever.
+function beginCraftSpinMotion() {
+  craftVisualGeneration += 1;
+  craftSpin.begin({
+    slotRarities: state.craftSlots.map((slot) =>
+      slotHasItem(slot) ? slot.rarity : 1,
+    ),
+    onWatchdogTimeout: () => {
+      if (state.craftPhase !== "spinning") return;
+      state.craftPhase = "staged";
+      renderCraftPanel();
+    },
+  });
+}
+
 function handleCraftResult(msg) {
+  if (state.craftPhase !== "spinning") return;
+  const generation = craftVisualGeneration;
+  // Resolve the outcome once so the spin animation and the final stage state
+  // agree on which slots survive.
+  const items = compactCraftItems(msg.items || []);
+  const nextSlots = msg.success
+    ? Array.from({ length: 5 }, () => null)
+    : placeCraftReturns(state.craftSlots, items);
+  const resultItem = msg.success
+    ? pickCraftSuccessItem(items, msg) || items[0] || null
+    : null;
+
   const finish = () => {
-    const items = compactCraftItems(msg.items || []);
+    if (generation !== craftVisualGeneration || state.craftPhase !== "spinning") return;
     if (msg.success) {
+      // The old ring stacks were hidden by the convergence. Even an identical
+      // next recipe must create fresh visible cards instead of reusing them.
+      for (const button of craftStage.querySelectorAll("[data-craft-slot]"))
+      {
+        delete button.dataset.craftRenderKey;
+        delete button.dataset.craftItemKey;
+      }
       state.craftPhase = "success";
-      state.craftSlots = Array.from({ length: 5 }, () => null);
-      state.craftResult = pickCraftSuccessItem(items, msg) || items[0] || null;
+      state.craftSlots = nextSlots;
+      state.craftResult = resultItem;
     } else {
       state.craftPhase = "returned";
       state.craftResult = null;
-      state.craftSlots = distributeCraftItems(items);
-      state.craftBurstUntil = performance.now() + 420;
+      state.craftSlots = nextSlots;
     }
     state.craftSource = null;
     renderCraftPanel();
   };
 
+  if (craftSpin.isActive()) {
+    craftSpin.resolve({
+      success: !!msg.success,
+      resultRarity: resultItem?.rarity ?? (msg.rarity || 0) + 1,
+      slotWillBeEmpty: nextSlots.map((slot) => !slotHasItem(slot)),
+      slotLostCount: state.craftSlots.map((slot, index) =>
+        Math.max(0, (slot?.count || 0) - (nextSlots[index]?.count || 0))),
+      onFinished: finish,
+    });
+    return;
+  }
+
+  // Reduced motion / spin unavailable: keep the old fixed suspense delay.
   const elapsed = performance.now() - (state.craftSpinStarted || 0);
   window.setTimeout(finish, Math.max(0, 700 - elapsed));
 }
@@ -3848,30 +4239,6 @@ function pickCraftSuccessItem(items, msg) {
   );
 }
 
-function distributeCraftItems(items) {
-  if (items.length === 1) {
-    const item = items[0];
-    return distributeCraftCount(item.petalType, item.rarity, item.count || 0);
-  }
-
-  const slots = Array.from({ length: 5 }, () => null);
-  let slotIndex = 0;
-  for (const item of items) {
-    let remaining = Math.max(0, item.count || 0);
-    while (remaining > 0 && slotIndex < slots.length) {
-      const count = slotIndex === slots.length - 1 ? remaining : 1;
-      slots[slotIndex] = {
-        petalType: item.petalType,
-        rarity: item.rarity,
-        count,
-      };
-      remaining -= count;
-      slotIndex += 1;
-    }
-  }
-  return slots;
-}
-
 function distributeCraftCount(petalType, rarity, count) {
   const slots = Array.from({ length: 5 }, () => null);
   const total = Math.max(0, Math.min(1000000000, Math.floor(count || 0)));
@@ -3886,11 +4253,33 @@ function distributeCraftCount(petalType, rarity, count) {
 
 function clearCraftDisplay() {
   if (state.craftPhase === "spinning") return;
+  craftVisualGeneration += 1;
+  craftResultDismissing = false;
   state.craftSlots = Array.from({ length: 5 }, () => null);
   state.craftSource = null;
   state.craftResult = null;
   state.craftPhase = "idle";
-  state.craftBurstUntil = 0;
+}
+
+// Result card clicked: it vanishes in place (the unified card vanish - the
+// item is already in the backpack data-wise), then the empty ring slots
+// re-enter with their own rotation (see .craft-stage-slot.ui-motion-entering).
+function dismissCraftResult() {
+  const generation = craftVisualGeneration;
+  craftResultDismissing = true;
+  const stack = craftResultSlot.querySelector(".petal-stack");
+  clearPetalInfoTooltip(craftResultSlot);
+  craftResultSlot.disabled = true;
+  craftResultSlot.classList.remove("craft-result-pop");
+  const finishDismiss = () => {
+    if (generation !== craftVisualGeneration) return;
+    craftResultDismissing = false;
+    clearCraftDisplay();
+    renderCraftPanel();
+  };
+  if (stack)
+    animatePetalCardVanish(stack, { durationMs: 280, onFinish: finishDismiss });
+  else finishDismiss();
 }
 
 function makeSlotButton(
@@ -3907,6 +4296,7 @@ function makeSlotButton(
 
   if (slotHasItem(slot)) {
     button.title = formatPetalItem(slot.petalType, slot.rarity);
+    button.style.setProperty("--slot-rarity-color", getSlotCounterColor(slot.rarity));
     const visualPetalType = slotVisualPetalType(
       slot,
       index,
@@ -3933,6 +4323,15 @@ function makeSlotButton(
     button.addEventListener("pointerdown", (event) =>
       beginDrag(event, button, kind, index, slot),
     );
+    bindTouchLongPress(button, () => {
+      if (state.ownerLoadoutLocked) return;
+      hidePetalInfoTooltip();
+      ui.mobileControls?.showSlotActions({
+        title: formatPetalItem(slot.petalType, slot.rarity),
+        onSwap: () => quickSwapSlot(index),
+        onRemove: () => kind === "primary" ? unequipSlot(index) : clearSecondarySlot(index),
+      });
+    });
   }
 
   if (kind === "primary") {
@@ -3943,6 +4342,7 @@ function makeSlotButton(
     });
     button.addEventListener("contextmenu", (event) => {
       event.preventDefault();
+      if (ui.mobileControls?.isMobileMode()) return;
       unequipSlot(index);
     });
   } else {
@@ -3952,6 +4352,7 @@ function makeSlotButton(
     });
     button.addEventListener("contextmenu", (event) => {
       event.preventDefault();
+      if (ui.mobileControls?.isMobileMode()) return;
       clearSecondarySlot(index);
     });
   }
@@ -3989,11 +4390,12 @@ function slotsHavePetal(slots, petalType, rarity = null) {
   );
 }
 
-function ownerHasPetal(petalType, rarity = null) {
+function hasOwnerPetal(petalType, rarity = null) {
   return slotsHavePetal(displayOwnerSlots(), petalType, rarity);
 }
 
 function equipFromInventory(item) {
+  if (state.ownerLoadoutLocked) return;
   if (!state.authenticated || !slotHasItem(item)) return;
   // Click-to-equip: fill use slots 0-9 first (smallest index first), then
   // secondary slots 0-9.
@@ -4014,6 +4416,7 @@ function equipFromInventory(item) {
 }
 
 function equipFromInventoryAt(index, item) {
+  if (state.ownerLoadoutLocked) return;
   if (!state.authenticated || !slotHasItem(item)) return;
   const ownerSlots = displayOwnerSlots();
   const secondarySlots = displaySecondarySlots();
@@ -4040,6 +4443,7 @@ function equipFromInventoryAt(index, item) {
 }
 
 function unequipSlot(index) {
+  if (state.ownerLoadoutLocked) return;
   const ownerSlots = displayOwnerSlots();
   const secondarySlots = displaySecondarySlots();
   let inventory = displayInventory();
@@ -4063,6 +4467,7 @@ function unequipSlot(index) {
 }
 
 function setSecondaryFromInventory(index, item) {
+  if (state.ownerLoadoutLocked) return;
   if (!state.authenticated || !slotHasItem(item)) return;
   const ownerSlots = displayOwnerSlots();
   const secondarySlots = displaySecondarySlots();
@@ -4089,6 +4494,7 @@ function setSecondaryFromInventory(index, item) {
 }
 
 function clearSecondarySlot(index) {
+  if (state.ownerLoadoutLocked) return;
   const ownerSlots = displayOwnerSlots();
   const secondarySlots = displaySecondarySlots();
   let inventory = displayInventory();
@@ -4113,7 +4519,7 @@ function clearSecondarySlot(index) {
 
 let lastSlotSwapAt = 0;
 
-function launchPetalFlight(fromButton, toButton, slot, done) {
+function launchPetalFlight(fromButton, toButton, slot, done, options = {}) {
   if (!fromButton || !toButton || !slotHasItem(slot)) {
     done?.();
     return;
@@ -4132,8 +4538,10 @@ function launchPetalFlight(fromButton, toButton, slot, done) {
   );
   document.body.appendChild(ghost);
 
-  const startSize = fromRect.width;
-  const endSize = toRect.width;
+  const startSize = Math.max(1, fromRect.width);
+  const endSize = options.endSize || toRect.width;
+  const spinTurns = options.spinTurns || 0;
+  const durationMs = options.durationMs || 260;
   const startX = fromRect.left + fromRect.width / 2 - startSize / 2;
   const startY = fromRect.top + fromRect.height / 2 - startSize / 2;
   const endX = toRect.left + toRect.width / 2 - endSize / 2;
@@ -4142,17 +4550,15 @@ function launchPetalFlight(fromButton, toButton, slot, done) {
   ghost.style.top = `${startY}px`;
   ghost.style.width = `${startSize}px`;
   ghost.style.height = `${startSize}px`;
+  ghost.style.transformOrigin = "top left";
+  ghost.style.willChange = "transform";
 
-  const durationMs = 100;
   const startTime = performance.now();
   const tick = (now) => {
     const t = Math.min(1, (now - startTime) / durationMs);
     const k = 1 - Math.pow(1 - t, 3);
-    ghost.style.left = `${startX + (endX - startX) * k}px`;
-    ghost.style.top = `${startY + (endY - startY) * k}px`;
     const size = startSize + (endSize - startSize) * k;
-    ghost.style.width = `${size}px`;
-    ghost.style.height = `${size}px`;
+    ghost.style.transform = `translate(${(endX - startX) * k}px, ${(endY - startY) * k}px) scale(${size / startSize})${spinTurns ? ` rotate(${k * spinTurns * Math.PI * 2}rad)` : ""}`;
     if (t < 1) requestAnimationFrame(tick);
     else {
       ghost.remove();
@@ -4188,12 +4594,31 @@ function animateSlotSwapFlight(index, done) {
     done?.();
   };
   if (hasPrimary)
-    launchPetalFlight(primaryButton, secondaryButton, sourcePrimary, landed);
+    launchPetalFlight(primaryButton, secondaryButton, sourcePrimary, landed, {
+      spinTurns: 0,
+    });
   if (hasSecondary)
-    launchPetalFlight(secondaryButton, primaryButton, sourceSecondary, landed);
+    launchPetalFlight(secondaryButton, primaryButton, sourceSecondary, landed, {
+      spinTurns: 0,
+    });
+}
+
+function animateAllSlotSwapFlight(slotCount, done) {
+  let pending = slotCount;
+  if (pending <= 0) {
+    done?.();
+    return;
+  }
+  const landed = () => {
+    pending -= 1;
+    if (pending <= 0) done?.();
+  };
+  for (let index = 0; index < slotCount; index += 1)
+    animateSlotSwapFlight(index, landed);
 }
 
 function quickSwapSlot(index) {
+  if (state.ownerLoadoutLocked) return;
   const now = performance.now();
   if (now - lastSlotSwapAt < 100) return;
   lastSlotSwapAt = now;
@@ -4254,6 +4679,7 @@ function quickSwapSlot(index) {
 }
 
 function quickSwapAllSlots() {
+  if (state.ownerLoadoutLocked) return;
   if (!state.authenticated) return;
   const display = makeDisplaySlotState();
   const slotCount = display.ownerSlots.length;
@@ -4267,6 +4693,11 @@ function quickSwapAllSlots() {
   ) {
     return;
   }
+
+  // Keep the existing slot DOM in place while every card flies to its
+  // corresponding slot. The optimistic state is committed immediately, but
+  // the visual re-render waits until all flights have landed.
+  animateAllSlotSwapFlight(slotCount, () => renderInventoryPanel());
 
   const packets = [];
   for (let index = 0; index < slotCount; index += 1) {
@@ -4296,10 +4727,10 @@ function quickSwapAllSlots() {
     display.inventory,
     [...display.ownerSlots, ...display.secondarySlots],
   );
-  renderInventoryPanel();
 }
 
 function saveActiveLoadoutPreset() {
+  if (state.ownerLoadoutLocked) return false;
   if (!state.authenticated || !state.ownerStateLoaded) {
     addConsoleLine(t("commands.loadout.notReady"), "error");
     return false;
@@ -4321,6 +4752,7 @@ function saveActiveLoadoutPreset() {
 }
 
 function applyLoadoutPreset(index) {
+  if (state.ownerLoadoutLocked) return false;
   if (
     !state.authenticated ||
     !state.ownerStateLoaded ||
@@ -4553,12 +4985,17 @@ function moveSecondaryToSecondary(fromIndex, toIndex) {
 }
 
 function beginDrag(event, element, source, index, item) {
+  // Native touch scrolling and tap-to-equip/swap have priority over desktop
+  // dragging. A second finger must never move or finish another pointer's drag.
+  if (event.pointerType === "touch" || state.drag) return;
+  if (state.ownerLoadoutLocked) return;
   if (event.button !== 0 || !slotHasItem(item)) return;
   if (!state.authenticated && source !== "inventory") return;
   // Remember whether the backpack was open before this drag: a plain click
   // (no movement) must keep the panel and the click-to-equip behavior; only
   // a real drag folds it away (see updateDrag).
   state.drag = {
+    pointerId: event.pointerId,
     source,
     index,
     item: copySlot(item),
@@ -4576,7 +5013,7 @@ function beginDrag(event, element, source, index, item) {
 
 function updateDrag(event) {
   const drag = state.drag;
-  if (!drag) return;
+  if (!drag || event.pointerId !== drag.pointerId) return;
 
   drag.x = event.clientX;
   drag.y = event.clientY;
@@ -4597,9 +5034,9 @@ function updateDrag(event) {
   highlightDropTarget(dropTargetFromPoint(drag.x, drag.y));
 }
 
-function finishDrag() {
+function finishDrag(event) {
   const drag = state.drag;
-  if (!drag) return;
+  if (!drag || (event && event.pointerId !== drag.pointerId)) return;
 
   if (drag.active) {
     state.suppressClickUntil = performance.now() + 240;
@@ -4677,6 +5114,7 @@ function highlightDropTarget(target) {
 }
 
 function performDrop(target, drag) {
+  if (state.ownerLoadoutLocked) return;
   if (!target) return;
 
   if (target.kind === "backpack") {
@@ -4709,22 +5147,6 @@ function performDrop(target, drag) {
   }
 }
 
-function drawPixelEntity(snap, pos, radius, isOwner, isPetal, isDrop) {
-  const size = Math.max(1, Math.min(2, Math.round(radius * 2)));
-  const x = Math.round(pos.x - size * 0.5);
-  const y = Math.round(pos.y - size * 0.5);
-  const alpha = clamp(radius / entityDetailMinScreenRadius, 0.18, 0.72);
-
-  ctx.save();
-  ctx.globalAlpha *= alpha;
-  if (isOwner) ctx.fillStyle = "#ffd446";
-  else if (isPetal || isDrop)
-    ctx.fillStyle = rarityColor(snap.rarity || 1, 0.9);
-  else ctx.fillStyle = rarityColor(snap.rarity || 1, 0.72);
-  ctx.fillRect(x, y, size, size);
-  ctx.restore();
-}
-
 function hurtFlashAmount(entity) {
   const age = Number.isFinite(entity?.hurtFlashAge)
     ? entity.hurtFlashAge
@@ -4734,36 +5156,27 @@ function hurtFlashAmount(entity) {
   return (1 - progress) * (1 - progress);
 }
 
-function drawDeathEffect(pos, radius, progress, rarity) {
-  if (radius < entityDetailMinScreenRadius) return;
-
+// Restore the original mob retirement burst. Drops keep their card vanish,
+// and player corpses keep the separate inertial death presentation.
+function drawMobDeathEffect(pos, radius, progress, rarity) {
   const eased = progress * progress * (3 - progress * 2);
   const alpha = 1 - eased;
-  const ringRadius = radius * (0.72 + eased * 1.36);
-  const ringWidth = Math.max(1.2, radius * (0.13 - eased * 0.07));
-  const glowColor = rarityColor(rarity || 1, alpha * 0.26);
-
   ctx.save();
   ctx.filter = "none";
   ctx.globalCompositeOperation = "lighter";
   ctx.globalAlpha *= alpha;
-  ctx.strokeStyle = glowColor;
-  ctx.lineWidth = ringWidth;
+  ctx.strokeStyle = rarityColor(rarity || 1, alpha * 0.26);
+  ctx.lineWidth = Math.max(1.2, radius * (0.13 - eased * 0.07));
   ctx.beginPath();
-  ctx.arc(pos.x, pos.y, ringRadius, 0, Math.PI * 2);
+  ctx.arc(pos.x, pos.y, radius * (0.72 + eased * 1.36), 0, Math.PI * 2);
   ctx.stroke();
-
-  const shardCount = 7;
   ctx.fillStyle = rarityColor(rarity || 1, alpha * 0.42);
-  for (let i = 0; i < shardCount; i += 1) {
-    const phase = i / shardCount;
-    const angle = phase * Math.PI * 2 + progress * 0.9;
+  for (let i = 0; i < 7; i++) {
+    const angle = i / 7 * Math.PI * 2 + progress * 0.9;
     const spread = radius * (0.34 + eased * 1.12);
     const size = Math.max(1.1, radius * (0.08 + (1 - progress) * 0.05));
-    const x = pos.x + Math.cos(angle) * spread;
-    const y = pos.y + Math.sin(angle) * spread;
     ctx.beginPath();
-    ctx.arc(x, y, size, 0, Math.PI * 2);
+    ctx.arc(pos.x + Math.cos(angle) * spread, pos.y + Math.sin(angle) * spread, size, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
@@ -4913,37 +5326,28 @@ function updateParticles(dt) {
   }
 }
 
-// Sprite-level hit-flash pass. The old implementation redrew every flashing
-// entity through ctx.filter (brightness/saturate), which forces an
-// intermediate surface per filtered draw — hitting a whole pack at once
-// stalled the frame. Now the raster cache substitutes pre-tinted white
-// copies of its bitmaps (built once per sprite bucket), so the flash is a
-// plain alpha-blended blit of the same sprites: no filters anywhere.
-// Vector-drawn details redraw over themselves at flash alpha, which leaves
-// them visually unchanged — only the bitmap body whitens, like florr.
+// Cached warm hit tint, flushed at each body's depth. No filtered intermediate
+// surface, no final scene-wide pass that paints through foreground flowers.
 function drawHurtFlashPass() {
   if (!currentHurtFlashSprites.length) return;
-  setSpriteWhiteTint(true);
+  setSpriteHitTint(true);
   for (const entry of currentHurtFlashSprites) {
     ctx.save();
     ctx.globalAlpha = clamp(entry.flash, 0, 1);
     drawEntity(entry.entity, { visualOnly: true });
     ctx.restore();
   }
-  setSpriteWhiteTint(false);
+  setSpriteHitTint(false);
   currentHurtFlashSprites.length = 0;
 }
 
-// Batched hit-flash pass: all non-priority flashing entities are drawn here
-// as one "screen"-blended pass with a single state setup, instead of each
-// entity switching ctx.filter / globalCompositeOperation mid-frame (which
-// broke draw batching and caused lag when large mob groups were hit).
+// Tiny pixel-level bodies use a plain warm circle at the same scene depth.
 function drawHurtFlashOverlays() {
   if (!currentHurtFlashOverlays.length) return;
   ctx.save();
   ctx.filter = "none";
-  ctx.globalCompositeOperation = "screen";
-  ctx.fillStyle = "#ffffff";
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "#ff7954";
   for (const overlay of currentHurtFlashOverlays) {
     ctx.globalAlpha = overlay.a * 0.9;
     ctx.beginPath();
@@ -5083,7 +5487,7 @@ function emitZeroCopyFlowerParticleBurst(entity, snap) {
     const slot = slots[index];
     if (!slotHasItem(slot) || !isPetalBurstRarity(slot.rarity)) continue;
     const visualPetalType = slotVisualPetalType(slot, index, "primary", slots);
-    if (petalBaseCopy(visualPetalType, slot.rarity) !== 0) continue;
+    if (getPetalBaseCopy(visualPetalType, slot.rarity) !== 0) continue;
     eligibleRarities.push(slot.rarity);
   }
 
@@ -5346,7 +5750,7 @@ function drawBloodSacrificeEffect(
   entity = null,
 ) {
   const phase = bloodSacrificePhase(progress);
-  if (phase.alpha <= 0 || outerRadius < entityPixelMinScreenRadius) return;
+  if (phase.alpha <= 0) return;
 
   const innerRadius = Math.max(1, outerRadius * bloodSacrificeInnerRadiusScale);
   const outerPoints = bloodSacrificeStarPoints(pos, outerRadius, angle);
@@ -5422,31 +5826,15 @@ function hornetSkill2WindupMissileWobble(entity, time) {
   return Math.sin((time || 0) * Math.PI * 4) * 0.42;
 }
 
-function detailMinRadiusForEntity(snap, isOwner, isPetal, isDrop) {
-  const base = isPetal
-    ? petalDetailMinScreenRadius
-    : isDrop
-      ? dropDetailMinScreenRadius
-      : entityDetailMinScreenRadius;
-  if (currentRenderLoad <= 0 || isOwner || shouldAlwaysDrawDetailed(snap))
-    return base;
-  if (isPetal) return currentRenderLoad >= 2 ? base * 3.8 : base * 2.2;
-  if (isDrop) return currentRenderLoad >= 2 ? base * 3.2 : base * 2.0;
-  return currentRenderLoad >= 2 ? base * 3.0 : base * 1.8;
+function frameEntityAppearance(entity) {
+  if (entity.renderAppearanceFrame !== currentRenderFrameId) {
+    entity.renderAppearanceFrame = currentRenderFrameId;
+    entity.renderAppearance = getEntityAppearance(entity);
+  }
+  return entity.renderAppearance;
 }
 
-function shouldAlwaysDrawDetailed(snap) {
-  if (!snap) return false;
-  if (
-    snap.entityType === playerFlowerType ||
-    snap.entityType === spiderWebZoneType ||
-    snap.entityType === bloodSacrificeEffectType
-  )
-    return true;
-  return raritySortRank(snap.rarity) >= raritySortRank(bossRarity);
-}
-
-function flowerMobVisualScale(entityType) {
+function getFlowerMobVisualScale(entityType) {
   if (entityType === titanType)
     return getClientConfigValue(state.clientConfig, "titan_sprite_scale");
   if (entityType === dummyType)
@@ -5454,9 +5842,9 @@ function flowerMobVisualScale(entityType) {
   return 1;
 }
 
-function flowerMobCullScale(entityType) {
+function getFlowerMobCullScale(entityType) {
   if (entityType !== titanType && entityType !== dummyType) return 1;
-  return Math.max(1, flowerMobVisualScale(entityType) * 1.35);
+  return Math.max(1, getFlowerMobVisualScale(entityType) * 1.35);
 }
 
 function activeOwnerHallucinationEntity() {
@@ -5559,6 +5947,10 @@ function drawEntity(entity, options = {}) {
   const visualOnly = options.visualOnly === true;
   if (!visualOnly) {
     drawEntityVisual(entity, options);
+    // Retint immediately at the body's own depth. A late scene-wide flash
+    // pass used to paint a hurt mob over the flower and petals in front of it.
+    if (currentHurtFlashSprites.length) drawHurtFlashPass();
+    if (currentHurtFlashOverlays.length) drawHurtFlashOverlays();
     return;
   }
 
@@ -5579,14 +5971,13 @@ function drawEntityVisual(entity, options = {}) {
   const isPetal = isPetalEntity(snap.entityType);
   const isDrop = isDropEntity(snap.entityType);
   const dead = (snap.flags & flagDead) !== 0;
-  const deathProgress = entity.dying
-    ? clamp((entity.deathAge || 0) / deathFadeDuration, 0, 1)
-    : 0;
-  const deathEase = deathProgress * deathProgress * (3 - deathProgress * 2);
-  const deathScale = entity.dying ? 1 + deathEase * deathScaleBoost : 1;
-  const deathAlpha = entity.dying ? 1 - deathEase : 1;
+  const appearance = frameEntityAppearance(entity);
+  const deathScale = appearance.scale;
+  const deathAlpha = appearance.alpha;
+  const animationTime = entity.dying && Number.isFinite(entity.retirementTime)
+    ? entity.retirementTime : currentRenderTimeSeconds;
   const hurtFlash = entity.dying ? 0 : hurtFlashAmount(entity);
-  const spriteScale = flowerMobVisualScale(snap.entityType);
+  const spriteScale = getFlowerMobVisualScale(snap.entityType);
 
   if (!options.visualOnly) {
     if (isPetal) emitPetalParticleBurst(entity, snap);
@@ -5602,21 +5993,9 @@ function drawEntityVisual(entity, options = {}) {
   ctx.globalAlpha *= deathAlpha * renderAlpha;
 
   const visibleRadius = radius * spriteScale * deathScale;
-  if (visibleRadius < entityPixelMinScreenRadius) {
-    ctx.restore();
-    return;
-  }
-
-  const detailMinRadius = detailMinRadiusForEntity(
-    snap,
-    isOwner,
-    isPetal,
-    isDrop,
-  );
-  const pixelDraw = visibleRadius < detailMinRadius;
-
-  if (!options.visualOnly && hurtFlash > 0) {
-    if (pixelDraw || snap.entityType === bloodSacrificeEffectType) {
+  const nativeFlower = snap.entityType === playerFlowerType || snap.entityType === titanType || snap.entityType === dummyType;
+  if (!options.visualOnly && hurtFlash > 0 && !nativeFlower) {
+    if (snap.entityType === bloodSacrificeEffectType) {
       currentHurtFlashOverlays.push({
         x: pos.x,
         y: pos.y,
@@ -5626,12 +6005,6 @@ function drawEntityVisual(entity, options = {}) {
     } else {
       currentHurtFlashSprites.push({ entity, flash: hurtFlash });
     }
-  }
-
-  if (pixelDraw) {
-    drawPixelEntity(snap, pos, visibleRadius, isOwner, isPetal, isDrop);
-    ctx.restore();
-    return;
   }
 
   if (!isPetal && !isDrop && snap.entityType === bloodSacrificeEffectType) {
@@ -5646,8 +6019,10 @@ function drawEntityVisual(entity, options = {}) {
     return;
   }
 
-  if (entity.dying)
-    drawDeathEffect(pos, visibleRadius, deathProgress, snap.rarity);
+  if (!options.visualOnly && entity.dying && entity.visualMotion?.mob) {
+    const progress = clamp(entity.visualMotion.age / entity.visualMotion.duration, 0, 1);
+    drawMobDeathEffect(pos, visibleRadius, progress, snap.rarity);
+  }
 
   if (
     !isPetal &&
@@ -5662,7 +6037,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
       {
         summoned,
         forwardOffset: radius * deathScale * beetleSpriteForwardOffsetScale,
@@ -5721,7 +6096,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -5736,7 +6111,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -5751,7 +6126,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -5794,7 +6169,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -5809,7 +6184,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -5824,7 +6199,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -5839,7 +6214,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -5854,7 +6229,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -5869,7 +6244,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -5891,7 +6266,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -5904,7 +6279,7 @@ function drawEntityVisual(entity, options = {}) {
       pos,
       radius * deathScale,
       snap.entityId,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -5919,7 +6294,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -5933,7 +6308,7 @@ function drawEntityVisual(entity, options = {}) {
       pos,
       radius * deathScale,
       snap.entityId,
-      currentRenderTimeSeconds,
+      animationTime,
       entity.renderAngle ?? snap.angle,
     );
     ctx.restore();
@@ -5957,7 +6332,7 @@ function drawEntityVisual(entity, options = {}) {
         snap.entityId,
         entity.renderAngle ?? snap.angle,
         entity.motionBlend || 0,
-        currentRenderTimeSeconds,
+        animationTime,
       );
     } else if (snap.entityType === soldierTermiteType) {
       drawSoldierTermite(
@@ -5967,7 +6342,7 @@ function drawEntityVisual(entity, options = {}) {
         snap.entityId,
         entity.renderAngle ?? snap.angle,
         entity.motionBlend || 0,
-        currentRenderTimeSeconds,
+        animationTime,
       );
     } else if (snap.entityType === leafcutterSoldierType) {
       drawLeafcutterSoldier(
@@ -5977,7 +6352,7 @@ function drawEntityVisual(entity, options = {}) {
         snap.entityId,
         entity.renderAngle ?? snap.angle,
         entity.motionBlend || 0,
-        currentRenderTimeSeconds,
+        animationTime,
         (snap.flags & flagCarryingLeafPiece) !== 0,
       );
     } else {
@@ -5988,7 +6363,7 @@ function drawEntityVisual(entity, options = {}) {
         snap.entityId,
         entity.renderAngle ?? snap.angle,
         entity.motionBlend || 0,
-        currentRenderTimeSeconds,
+        animationTime,
         { summoned },
       );
     }
@@ -6006,7 +6381,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
       { forwardOffset: radius * deathScale * beetleSpriteForwardOffsetScale },
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
@@ -6022,7 +6397,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -6037,7 +6412,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -6048,7 +6423,7 @@ function drawEntityVisual(entity, options = {}) {
     const windupId = skillWindupIdFromFlags(snap.flags);
     const antennaWobble =
       windupId === 2
-        ? Math.sin((currentRenderTimeSeconds || 0) * Math.PI * 4) * 0.34
+        ? Math.sin((animationTime || 0) * Math.PI * 4) * 0.34
         : 0;
     drawHornet(
       ctx,
@@ -6057,7 +6432,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityId,
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
-      currentRenderTimeSeconds,
+      animationTime,
       {
         antennaWobble,
         spriteScale: getClientConfigValue(
@@ -6100,7 +6475,7 @@ function drawEntityVisual(entity, options = {}) {
       pos,
       radius * deathScale,
       snap.entityId,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     ctx.restore();
     return;
@@ -6122,7 +6497,7 @@ function drawEntityVisual(entity, options = {}) {
       pos,
       radius * deathScale,
       snap.entityId,
-      currentRenderTimeSeconds,
+      animationTime,
       {
         playerOwned: snap.team === playerTeam,
       },
@@ -6134,7 +6509,7 @@ function drawEntityVisual(entity, options = {}) {
   if (!isPetal && !isDrop && snap.entityType === hornetMissileType) {
     const wobble = hornetSkill2WindupMissileWobble(
       entity,
-      currentRenderTimeSeconds,
+      animationTime,
     );
     drawHornetMissile(
       ctx,
@@ -6210,6 +6585,10 @@ function drawEntityVisual(entity, options = {}) {
   }
 
   if (isDrop) {
+    const idleTilt = getDropCardTilt(snap.entityId, animationTime);
+    ctx.translate(pos.x, pos.y);
+    ctx.rotate(idleTilt + appearance.rotation);
+    ctx.translate(-pos.x, -pos.y);
     drawDropPetalCard(
       petalTypeFromSnap(snap),
       snap.rarity,
@@ -6446,15 +6825,15 @@ function drawLightningChains(now = performance.now()) {
 }
 
 
-function drawPlayerFlower(snap, pos, radius, angle, isOwner) {
-  drawFlower(snap, pos, radius, angle, isOwner, "player");
+function drawPlayerFlower(snap, pos, radius, angle, isOwner, portrait = false) {
+  drawFlower(snap, pos, radius, angle, isOwner, "player", portrait);
 }
 
 function drawMechaFlower(snap, pos, radius, angle) {
   drawFlower(snap, pos, radius, angle, false, "mecha");
 }
 
-function drawFlower(snap, pos, radius, angle, isOwner, bodyKind) {
+function drawFlower(snap, pos, radius, angle, isOwner, bodyKind, portrait = false) {
   const flags = snap.flags || 0;
   const digging = entityHasState(snap, stateDigging);
   if (digging) {
@@ -6471,46 +6850,53 @@ function drawFlower(snap, pos, radius, angle, isOwner, bodyKind) {
 
   const hasAntennae =
     (flags & flagAntennae) !== 0 ||
-    playerSnapHasPetal(snap, petalAntennaeType) ||
-    (isOwner && ownerHasPetal(petalAntennaeType));
+    hasPlayerSnapPetal(snap, petalAntennaeType) ||
+    (isOwner && hasOwnerPetal(petalAntennaeType));
   const hasDouli =
-    playerSnapHasPetal(snap, petalDouliType) ||
-    (isOwner && ownerHasPetal(petalDouliType));
+    hasPlayerSnapPetal(snap, petalDouliType) ||
+    (isOwner && hasOwnerPetal(petalDouliType));
   const hasThirdEye =
-    playerSnapHasPetal(snap, petalThirdEyeType) ||
-    (isOwner && ownerHasPetal(petalThirdEyeType));
+    hasPlayerSnapPetal(snap, petalThirdEyeType) ||
+    (isOwner && hasOwnerPetal(petalThirdEyeType));
   const hasBandage =
-    playerSnapHasPetal(snap, petalBandageType) ||
-    (isOwner && ownerHasPetal(petalBandageType));
+    hasPlayerSnapPetal(snap, petalBandageType) ||
+    (isOwner && hasOwnerPetal(petalBandageType));
   const nullified = entityHasState(snap, stateNullification);
-  const undead = entityHasState(snap, stateUndead);
   const dead = (flags & flagDead) !== 0;
+  const entity = state.entities.get(snap.entityId);
+  const face = entity?.flowerFace || stepFlowerFace(null, {
+    attacking: !!(flags & flagAttacking), defending: !!(flags & flagDefending), dead,
+    lookX: Math.cos(angle || 0), lookY: Math.sin(angle || 0),
+  }, 0);
+  const palette = getFlowerPalette({
+    poisoned: entityHasState(snap, statePoison), undead: entityHasState(snap, stateUndead),
+    corrupted: entityHasState(snap, stateCorruption), psionic: entityHasState(snap, statePsionicConnection),
+    antiHeal: entityHasState(snap, stateAntiHeal), dummy: snap.entityType === dummyType,
+    portrait, hit: entity ? hurtFlashAmount(entity) : 0,
+  });
   ctx.save();
   ctx.translate(pos.x, pos.y);
-  if (dead && Number.isFinite(angle)) ctx.rotate(angle);
+  if (face.tilt) ctx.rotate(face.tilt);
   if (nullified) ctx.globalAlpha *= 0.58;
-  drawFlowerBody(bodyKind, radius, snap);
-  if (hasBandage) drawBandagePetalLayer(radius);
-  const attacking = (flags & flagAttacking) !== 0;
-  const defending = (flags & flagDefending) !== 0;
-  drawPlayerFlowerFace(
-    radius,
-    angle,
-    undead ? "undead" : "normal",
-    dead ? "dead" : attacking ? "attack" : defending ? "defend" : "normal",
-  );
-  if (hasAntennae) drawAntennaeOverlay(radius);
-  if (hasThirdEye) drawThirdEyeOverlay(radius);
+  if (bodyKind === "mecha") drawFlowerBody(bodyKind, radius, snap);
+  else drawFlowerDisc(ctx, radius, palette, hasPlayerSnapPetal(snap, petalDiscType) || (isOwner && hasOwnerPetal(petalDiscType)));
+  if (hasBandage) drawFlowerBandage(ctx, radius, bandageOverlayImage(), drawSpriteImage);
+  drawFlowerFace(ctx, radius, face, palette, { dummy: snap.entityType === dummyType });
+  if (hasAntennae) drawFlowerAntennae(ctx, radius, antennaeOverlayImage(), drawSpriteImage);
+  if (hasThirdEye) drawThirdEyeOverlay(radius, face.dead);
   if (hasDouli) drawDouliOverlay(radius);
   ctx.restore();
 }
 
 function drawFlowerBody(bodyKind, radius, snap) {
-  const image = assetImage(flowerBodyTexturePath(bodyKind));
-  const size = Math.max(0.5, radius * 2.36);
+  const image = assetImage(getFlowerBodyTexturePath(bodyKind));
+  // player_flower.svg follows Flower.cc's 50-unit diameter directly.  The
+  // mecha texture has its own 110-unit artwork and intentionally keeps the
+  // previous cover scale.
+  const size = Math.max(0.5, radius * (bodyKind === "mecha" ? 2.36 : 2));
 
   ctx.save();
-  ctx.filter = flowerBodyFilter(snap, bodyKind === "mecha", ctx.filter);
+  ctx.filter = getFlowerBodyFilter(snap, bodyKind === "mecha", ctx.filter);
   if (imageReady(image)) {
     drawSpriteImage(ctx, image, -size * 0.5, -size * 0.5, size, size);
   } else if (bodyKind === "mecha") {
@@ -6521,7 +6907,7 @@ function drawFlowerBody(bodyKind, radius, snap) {
   ctx.restore();
 }
 
-function flowerBodyFilter(snap, mechanical, inheritedFilter) {
+function getFlowerBodyFilter(snap, mechanical, inheritedFilter) {
   const filters = [];
   const corrupted = entityHasState(snap, stateCorruption);
   const undead = entityHasState(snap, stateUndead);
@@ -6531,7 +6917,7 @@ function flowerBodyFilter(snap, mechanical, inheritedFilter) {
   if (mechanical && (corrupted || undead || poisoned || psionic))
     filters.push("sepia(0.55)");
   if (psionic)
-    filters.push("saturate(0.82) brightness(0.88)");
+    filters.push("saturate(0.7) brightness(0.45) contrast(1.15)");
   if (poisoned)
     filters.push("hue-rotate(-165deg) saturate(2.4) brightness(0.94)");
   if (undead)
@@ -6569,134 +6955,59 @@ function drawMobSvg(src, pos, radius, angle) {
   ctx.restore();
 }
 
-function flowerBodyTexturePath(bodyKind) {
+function getFlowerBodyTexturePath(bodyKind) {
   const textureFile = bodyKind === "mecha" ? "mecha_flower" : "player_flower";
   return `./assets/${textureFile}.svg?v=${flowerTextureVersion}`;
 }
 
-function drawBandagePetalLayer(radius) {
-  const icon = bandageOverlayImage();
-  const size = Math.max(0.5, radius * 4.48);
-  const offsetY = radius * 0.22;
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(0, 0, radius * 1.08, 0, Math.PI * 2);
-  ctx.clip();
-  if (imageReady(icon)) {
-    drawSpriteImage(ctx, icon, -size * 0.5, -size * 0.5 + offsetY, size, size);
-  } else {
-    drawBandagePetalLayerFallback(radius);
-  }
-  ctx.restore();
-}
-
-function drawBandagePetalLayerFallback(radius) {
-  ctx.save();
-  ctx.rotate(-0.26);
-  ctx.fillStyle = "#e8dba6";
-  ctx.strokeStyle = "#a89d73";
-  ctx.lineJoin = "round";
-  ctx.lineWidth = Math.max(1.1, radius * 0.07);
-  const strips = [
-    { y: -radius * 0.48, w: radius * 1.62 },
-    { y: -radius * 0.08, w: radius * 1.94 },
-    { y: radius * 0.34, w: radius * 1.18 },
-  ];
-  for (const strip of strips) {
-    ctx.beginPath();
-    ctx.rect(-strip.w * 0.5, strip.y - radius * 0.12, strip.w, radius * 0.24);
-    ctx.fill();
-    ctx.stroke();
-    ctx.strokeStyle = "rgba(251, 241, 191, 0.82)";
-    ctx.lineWidth = Math.max(1, radius * 0.055);
-    ctx.beginPath();
-    ctx.moveTo(-strip.w * 0.42, strip.y - radius * 0.04);
-    ctx.lineTo(strip.w * 0.42, strip.y - radius * 0.04);
-    ctx.stroke();
-    ctx.strokeStyle = "#a89d73";
-    ctx.lineWidth = Math.max(1.1, radius * 0.07);
-  }
-  ctx.restore();
-}
-
-function drawAntennaeOverlay(radius) {
-  const icon = antennaeOverlayImage();
-  const size = Math.max(0.5, radius * 2.8);
-  ctx.save();
-  ctx.translate(0, -radius);
-  ctx.globalAlpha *= 0.92;
-  if (imageReady(icon)) {
-    drawSpriteImage(ctx, icon, -size * 0.5, -size * 0.5, size, size);
-  } else {
-    ctx.strokeStyle = "#111";
-    ctx.lineWidth = Math.max(2, radius * 0.14);
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(-radius * 0.22, -radius * 0.08);
-    ctx.quadraticCurveTo(
-      -radius * 0.66,
-      -radius * 0.9,
-      -radius * 1.08,
-      -radius * 1.24,
-    );
-    ctx.moveTo(radius * 0.22, -radius * 0.08);
-    ctx.quadraticCurveTo(
-      radius * 0.66,
-      -radius * 0.9,
-      radius * 1.08,
-      -radius * 1.24,
-    );
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
 function drawDouliOverlay(radius) {
   const icon = douliOverlayImage();
-  const size = Math.max(0.5, radius * douliOverlaySizeScale);
+  const layout = flowerAttachmentLayout.douli;
+  const size = Math.max(0.5, radius * layout.size);
   ctx.save();
-  ctx.translate(0, radius * douliOverlayOffsetYScale);
-  ctx.rotate(douliOverlayAngle);
+  ctx.translate(0, radius * layout.y);
+  ctx.rotate(layout.angle);
   if (imageReady(icon)) {
     drawSpriteImage(ctx, icon, -size * 0.5, -size * 0.5, size, size);
   }
   ctx.restore();
 }
 
-function drawThirdEyeOverlay(radius) {
+function drawThirdEyeOverlay(radius, dead = false) {
   const icon = thirdEyeOverlayImage();
-  const size = Math.max(0.5, radius * 0.82);
-  const offsetY = -radius * 0.52;
+  const layout = flowerAttachmentLayout.thirdEye;
+  const size = Math.max(0.5, radius * layout.size);
   ctx.save();
-  ctx.translate(0, offsetY);
-  ctx.globalAlpha *= 0.96;
-  if (imageReady(icon)) {
+  ctx.translate(0, radius * layout.y);
+  if (dead) {
+    ctx.strokeStyle = "#222";
+    ctx.lineWidth = radius * 0.06;
+    ctx.lineCap = "round";
+    const arm = radius * 0.08;
+    ctx.beginPath();
+    ctx.moveTo(-arm, -arm); ctx.lineTo(arm, arm);
+    ctx.moveTo(arm, -arm); ctx.lineTo(-arm, arm);
+    ctx.stroke();
+  } else if (imageReady(icon)) {
     drawSpriteImage(ctx, icon, -size * 0.5, -size * 0.5, size, size);
   } else {
     ctx.fillStyle = "#f4f0e9";
     ctx.strokeStyle = "#322a35";
-    ctx.lineWidth = Math.max(1, radius * 0.055);
+    ctx.lineWidth = size * 0.06;
     ctx.beginPath();
-    ctx.ellipse(0, 0, radius * 0.28, radius * 0.18, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, size * 0.21, size * 0.43, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = "#333127";
     ctx.beginPath();
-    ctx.arc(0, 0, radius * 0.095, 0, Math.PI * 2);
+    ctx.arc(0, 0, size * 0.13, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
 }
 
 function drawPlayerFlowerFallback(radius) {
-  ctx.fillStyle = "#d7bd3c";
-  ctx.beginPath();
-  ctx.arc(0, 0, radius * 0.9, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#f4dc59";
-  ctx.beginPath();
-  ctx.arc(0, 0, radius * 0.74, 0, Math.PI * 2);
-  ctx.fill();
+  drawFlowerDisc(ctx, radius, getFlowerPalette());
 }
 
 function drawMechaFlowerFallback(radius) {
@@ -6731,155 +7042,13 @@ function drawMechaFlowerFallback(radius) {
   ctx.stroke();
 }
 
-function drawPlayerFlowerFace(radius, angle, faceStyle, expression = "normal") {
-  const look = Number.isFinite(angle)
-    ? { x: Math.cos(angle), y: Math.sin(angle) }
-    : { x: 0, y: 0 };
-  const eyeFill = faceStyle === "undead" ? "#27351f" : "#333127";
-  const smileFill = faceStyle === "undead" ? "#35472a" : "#5a4a26";
-
-  ctx.save();
-  ctx.translate(0, radius * 0.06);
-  ctx.scale(0.86, 0.86);
-  if (expression === "dead") drawPlayerFlowerDeadEyes(radius, eyeFill);
-  else if (expression === "attack")
-    drawPlayerFlowerAngryEyes(radius, look, eyeFill);
-  else drawPlayerFlowerNormalEyes(radius, look, eyeFill);
-
-  if (expression === "dead") drawPlayerFlowerDeadMouth(radius, smileFill);
-  else if (expression === "attack" || expression === "defend")
-    drawPlayerFlowerAngryMouth(radius, smileFill);
-  else drawPlayerFlowerSmile(radius, faceStyle, smileFill);
-  ctx.restore();
-}
-
-function drawPlayerFlowerNormalEyes(radius, look, eyeFill) {
-  const eyeOffset = radius * 0.055;
-  const leftEye = { x: -radius * 0.23, y: -radius * 0.31 };
-  const rightEye = { x: radius * 0.23, y: -radius * 0.31 };
-
-  ctx.fillStyle = eyeFill;
-  ctx.beginPath();
-  ctx.ellipse(
-    leftEye.x,
-    leftEye.y,
-    radius * 0.105,
-    radius * 0.27,
-    0,
-    0,
-    Math.PI * 2,
-  );
-  ctx.ellipse(
-    rightEye.x,
-    rightEye.y,
-    radius * 0.105,
-    radius * 0.27,
-    0,
-    0,
-    Math.PI * 2,
-  );
-  ctx.fill();
-
-  ctx.fillStyle = "rgba(255, 255, 222, 0.92)";
-  ctx.beginPath();
-  ctx.ellipse(
-    leftEye.x - radius * 0.035 + look.x * eyeOffset,
-    leftEye.y - radius * 0.09 + look.y * eyeOffset,
-    radius * 0.032,
-    radius * 0.065,
-    0,
-    0,
-    Math.PI * 2,
-  );
-  ctx.ellipse(
-    rightEye.x - radius * 0.035 + look.x * eyeOffset,
-    rightEye.y - radius * 0.09 + look.y * eyeOffset,
-    radius * 0.032,
-    radius * 0.065,
-    0,
-    0,
-    Math.PI * 2,
-  );
-  ctx.fill();
-}
-
-function drawPlayerFlowerAngryEyes(radius, look, eyeFill) {
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(-radius * 0.48, -radius * 0.62);
-  ctx.lineTo(0, -radius * 0.29);
-  ctx.lineTo(radius * 0.48, -radius * 0.62);
-  ctx.lineTo(radius * 0.48, radius * 0.16);
-  ctx.lineTo(-radius * 0.48, radius * 0.16);
-  ctx.closePath();
-  ctx.clip();
-
-  drawPlayerFlowerNormalEyes(radius, look, eyeFill);
-  ctx.restore();
-}
-
-function drawPlayerFlowerDeadEyes(radius, eyeFill) {
-  const centers = [
-    { x: -radius * 0.23, y: -radius * 0.31 },
-    { x: radius * 0.23, y: -radius * 0.31 },
-  ];
-  ctx.strokeStyle = eyeFill;
-  ctx.lineWidth = Math.max(0.45, radius * 0.115);
-  ctx.lineCap = "round";
-  for (const eye of centers) {
-    const dx = radius * 0.12;
-    const dy = radius * 0.16;
-    ctx.beginPath();
-    ctx.moveTo(eye.x - dx, eye.y - dy);
-    ctx.lineTo(eye.x + dx, eye.y + dy);
-    ctx.moveTo(eye.x + dx, eye.y - dy);
-    ctx.lineTo(eye.x - dx, eye.y + dy);
-    ctx.stroke();
-  }
-}
-
-function drawPlayerFlowerSmile(radius, faceStyle, smileFill) {
-  ctx.strokeStyle = smileFill;
-  ctx.lineWidth = Math.max(0.45, radius * 0.075);
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  if (faceStyle === "undead") {
-    ctx.arc(0, radius * 0.37, radius * 0.2, Math.PI * 1.16, Math.PI * 1.84);
-  } else {
-    ctx.arc(0, radius * 0.02, radius * 0.29, 0.22 * Math.PI, 0.78 * Math.PI);
-  }
-  ctx.stroke();
-}
-
-function drawPlayerFlowerAngryMouth(radius, smileFill) {
-  ctx.strokeStyle = smileFill;
-  ctx.lineWidth = Math.max(0.45, radius * 0.075);
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.beginPath();
-  ctx.moveTo(-radius * 0.22, radius * 0.27);
-  ctx.quadraticCurveTo(0, radius * 0.16, radius * 0.22, radius * 0.27);
-  ctx.stroke();
-}
-
-function drawPlayerFlowerDeadMouth(radius, smileFill) {
-  ctx.strokeStyle = smileFill;
-  ctx.lineWidth = Math.max(0.45, radius * 0.075);
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.beginPath();
-  ctx.moveTo(-radius * 0.24, radius * 0.34);
-  ctx.quadraticCurveTo(0, radius * 0.17, radius * 0.24, radius * 0.34);
-  ctx.stroke();
-}
-
 function drawLivePetal(petalType, rarity, pos, radius, angle, entityId = 0) {
   const size = radius * worldPetalSizeScale;
-  if (size < 0.5) return;
+  if (!(size > 0) || !Number.isFinite(size)) return;
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
-  if (petalHasMultiCopyVisual(petalType, rarity))
+  if (hasPetalMultiCopyVisual(petalType, rarity))
     ctx.translate(0, -size * 0.035);
   if (petalType !== petalMoonType && Number.isFinite(angle))
     ctx.rotate(livePetalRenderAngle(petalType, angle));
@@ -7216,7 +7385,7 @@ function drawDustParticlePetal(size, rarity) {
 
 function drawDropPetalCard(petalType, rarity, pos, radius, stackCount = 1) {
   const size = radius * worldDropSizeScale;
-  if (size < 0.5) return;
+  if (!(size > 0) || !Number.isFinite(size)) return;
   const base = petalBaseImage(rarity);
   const copy = effectivePetalCardCopy(petalType, rarity);
   const splitLabel = copy > 1;
@@ -7246,33 +7415,32 @@ function dropStackCountFromSnap(snap) {
   return state ? Math.max(1, state.value || 0) : 1;
 }
 
-// Canvas twin of the inventory cards' .petal-count badge: a black pill with
-// the stack count in the card's top-right corner, proportional to card size.
+// Canvas twin of the inventory cards' .petal-count label: outlined white
+// text hanging off the card's top-right corner, tilted clockwise like
+// florr's, proportional to card size.
+const dropStackBadgeTilt = (12 * Math.PI) / 180;
 function drawDropStackBadge(size, stackCount) {
   const text = `x${formatShortCount(stackCount)}`;
-  const fontSize = Math.max(5, size * 0.19);
+  const fontSize = Math.max(5, size * 0.2);
   ctx.save();
-  ctx.font = `800 ${fontSize}px Florr UI, Sarasa SC, Segoe UI, sans-serif`;
-  const textWidth = ctx.measureText(text).width;
-  const padX = fontSize * 0.4;
-  const pillWidth = textWidth + padX * 2;
-  const pillHeight = fontSize * 1.35;
-  const x = size * 0.52 - pillWidth;
-  const y = -size * 0.52;
-  ctx.fillStyle = "#000000";
-  ctx.beginPath();
-  ctx.roundRect(x, y, pillWidth, pillHeight, pillHeight / 2);
-  ctx.fill();
-  ctx.fillStyle = "#ffffff";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, x + pillWidth / 2, y + pillHeight * 0.52);
+  // Anchor at the card corner; the text's right/bottom edge sits just
+  // outside it so the label overhangs the way the DOM badge does.
+  ctx.translate(size * 0.56, -size * 0.44);
+  ctx.rotate(dropStackBadgeTilt);
+  drawOutlinedText(text, 0, 0, {
+    font: `900 ${fontSize}px Florr UI, Sarasa SC, Segoe UI, sans-serif`,
+    fill: "#ffffff",
+    stroke: "#000000",
+    lineWidth: Math.max(1, fontSize * 0.3),
+    align: "right",
+    baseline: "bottom",
+  });
   ctx.restore();
 }
 
 function drawPetalCardName(petalType, size) {
   if (!petalType) return;
-  const name = petalDisplayName(petalType);
+  const name = getPetalDisplayName(petalType);
   if (!name) return;
 
   // Matches the DOM card proportions: text bottom sits ~22% above the card
@@ -7304,7 +7472,7 @@ function drawPetalCardName(petalType, size) {
 }
 
 function drawPetalCardCopies(icon, size, rarity, copy, petalType = 0) {
-  const layout = petalCopyLayout(copy, petalType);
+  const layout = getPetalCopyLayout(copy, petalType);
   for (const part of layout) {
     ctx.save();
     if (layout.length > 1) {
@@ -7322,11 +7490,11 @@ function drawPetalCardCopies(icon, size, rarity, copy, petalType = 0) {
 }
 
 function petalIconImage(petalType, rarity = 0) {
-  return assetImage(petalIconPath(petalType, rarity));
+  return assetImage(getPetalIconPath(petalType, rarity));
 }
 
 function petalCardIconImage(petalType, rarity = 0, options = {}) {
-  const src = petalIconPath(petalType, rarity);
+  const src = getPetalIconPath(petalType, rarity);
   if (!src) return null;
   if (options.stripped)
     return transformedPetalImage(src, stripLivePetalLabel, "card-stripped");
@@ -7334,7 +7502,7 @@ function petalCardIconImage(petalType, rarity = 0, options = {}) {
 }
 
 function petalLabelImage(petalType, rarity = 0) {
-  const src = petalIconPath(petalType, rarity);
+  const src = getPetalIconPath(petalType, rarity);
   if (!src) return null;
   return transformedPetalImage(src, extractPetalLabelSvg, "card-label");
 }
@@ -7344,38 +7512,9 @@ function transformedPetalImage(src, transformSvg, cachePrefix) {
   let entry = transformedPetalImages.get(cacheKey);
   if (entry) return entry.image;
 
-  const image = new Image();
-  image.decoding = "async";
-  entry = { image, url: "" };
+  const image = prepareSvgImage(src, cachePrefix, transformSvg);
+  entry = { image };
   transformedPetalImages.set(cacheKey, entry);
-
-  fetch(src)
-    .then((response) => {
-      if (!response.ok) throw new Error(`Petal SVG failed: ${src}`);
-      return response.text();
-    })
-    .then((svgText) => {
-      const blob = new Blob([transformSvg(svgText)], { type: "image/svg+xml" });
-      const url = URL.createObjectURL(blob);
-      entry.url = url;
-      image.addEventListener("load", () => requestAnimationFrame(drawScene), {
-        once: true,
-      });
-      image.addEventListener(
-        "error",
-        () => {
-          image.failed = true;
-          if (entry.url) URL.revokeObjectURL(entry.url);
-          requestAnimationFrame(drawScene);
-        },
-        { once: true },
-      );
-      image.src = url;
-    })
-    .catch(() => {
-      image.failed = true;
-      requestAnimationFrame(drawScene);
-    });
 
   return image;
 }
@@ -7386,45 +7525,16 @@ function livePetalIconImage(
   transformSvg = stripLivePetalLabel,
   cacheSuffix = "live",
 ) {
-  const src = petalIconPath(petalType, rarity, { live: true });
+  const src = getPetalIconPath(petalType, rarity, { live: true });
   if (!src) return null;
 
   const cacheKey = `${cacheSuffix}:${src}`;
   let entry = livePetalImages.get(cacheKey);
   if (entry) return entry.image;
 
-  const image = new Image();
-  image.decoding = "async";
-  entry = { image, url: "" };
+  const image = prepareSvgImage(src, cacheSuffix, transformSvg);
+  entry = { image };
   livePetalImages.set(cacheKey, entry);
-
-  fetch(src)
-    .then((response) => {
-      if (!response.ok) throw new Error(`Petal SVG failed: ${src}`);
-      return response.text();
-    })
-    .then((svgText) => {
-      const blob = new Blob([transformSvg(svgText)], { type: "image/svg+xml" });
-      const url = URL.createObjectURL(blob);
-      entry.url = url;
-      image.addEventListener("load", () => requestAnimationFrame(drawScene), {
-        once: true,
-      });
-      image.addEventListener(
-        "error",
-        () => {
-          image.failed = true;
-          if (entry.url) URL.revokeObjectURL(entry.url);
-          requestAnimationFrame(drawScene);
-        },
-        { once: true },
-      );
-      image.src = url;
-    })
-    .catch(() => {
-      image.failed = true;
-      requestAnimationFrame(drawScene);
-    });
 
   return image;
 }
@@ -7499,72 +7609,41 @@ function extractFirstLivePetalPathsSvg(svgText, pathCount, minSide) {
 }
 
 function bandageOverlayImage() {
-  const src = petalIconPath(petalBandageType);
+  const src = getPetalIconPath(petalBandageType);
   if (!src) return null;
 
   let entry = bandageOverlayImages.get(src);
   if (entry) return entry.image;
 
-  const image = new Image();
-  image.decoding = "async";
-  entry = { image, url: "" };
+  const image = prepareSvgImage(src, "bandage-overlay", text => centerPetalArtSvg(extractBandageOverlaySvg(text)));
+  entry = { image };
   bandageOverlayImages.set(src, entry);
-
-  fetch(src)
-    .then((response) => {
-      if (!response.ok) throw new Error(`Bandage SVG failed: ${src}`);
-      return response.text();
-    })
-    .then((svgText) => {
-      const blob = new Blob([extractBandageOverlaySvg(svgText)], {
-        type: "image/svg+xml",
-      });
-      const url = URL.createObjectURL(blob);
-      entry.url = url;
-      image.addEventListener("load", () => requestAnimationFrame(drawScene), {
-        once: true,
-      });
-      image.addEventListener(
-        "error",
-        () => {
-          image.failed = true;
-          if (entry.url) URL.revokeObjectURL(entry.url);
-          requestAnimationFrame(drawScene);
-        },
-        { once: true },
-      );
-      image.src = url;
-    })
-    .catch(() => {
-      image.failed = true;
-      requestAnimationFrame(drawScene);
-    });
 
   return image;
 }
 
 function antennaeOverlayImage() {
-  const src = petalIconPath(petalAntennaeType);
+  const src = getPetalIconPath(petalAntennaeType);
   if (!src) return null;
-  return transformedPetalImage(src, stripLivePetalLabel, "antennae-overlay");
+  return transformedPetalImage(src, svg => centerPetalArtSvg(stripLivePetalLabel(svg)), "antennae-overlay-centered");
 }
 
 function douliOverlayImage() {
-  const src = petalIconPath(petalDouliType);
+  const src = getPetalIconPath(petalDouliType);
   if (!src) return null;
-  return transformedPetalImage(src, stripLivePetalLabel, "douli-overlay");
+  return transformedPetalImage(src, svg => centerPetalArtSvg(stripLivePetalLabel(svg)), "douli-overlay-centered");
 }
 
 function thirdEyeOverlayImage() {
-  const src = petalIconPath(petalThirdEyeType);
+  const src = getPetalIconPath(petalThirdEyeType);
   if (!src) return null;
-  return transformedPetalImage(src, stripLivePetalLabel, "third-eye-overlay");
+  return transformedPetalImage(src, svg => centerPetalArtSvg(stripLivePetalLabel(svg)), "third-eye-overlay-centered");
 }
 
 
 function drawCenteredImage(image, size, scale) {
   const drawSize = size * scale;
-  if (drawSize < 0.5) return;
+  if (!(drawSize > 0) || !Number.isFinite(drawSize)) return;
   drawSpriteImage(ctx, image, -drawSize * 0.5, -drawSize * 0.5, drawSize, drawSize);
 }
 
@@ -7713,6 +7792,19 @@ function healthBarColor(snap) {
   return entityHasState(snap, stateInvincible) ? "#e8d64b" : "#68d443";
 }
 
+function drawTrackedHealthBar(snap, x, y, width, height, progress, fill, border) {
+  const identity = state.entities.get(snap.entityId);
+  let record = healthTrails.get(snap.entityId);
+  if (!record || record.identity !== identity) record = { identity, motion: null };
+  record.motion = stepHealthTrail(record.motion, snap.hpPercent, currentRenderTimeSeconds * 1000);
+  healthTrails.set(snap.entityId, record);
+  if (healthTrails.size > 512) healthTrails.delete(healthTrails.keys().next().value);
+  drawCapsuleBar(x, y, width, height, Math.max(progress, record.motion.trail), "#d56565", border);
+  const inset = Math.min(border, width * 0.35, height * 0.35);
+  drawSolidProgressBar(ctx, { x: x + inset, y: y + inset, maxLength: Math.max(0, width - inset * 2),
+    width: Math.max(0, height - inset * 2), progress, color: fill });
+}
+
 function drawShieldBar(x, y, width, height, shieldPercent) {
   const shield = clamp(shieldPercent || 0, 0, 1);
   if (shield <= 0) return;
@@ -7733,7 +7825,7 @@ function normalizedLayeredBarMembers(members) {
   return (members || [])
     .map((member) => ({
       hp: clamp(member?.hp || 0, 0, 1),
-      count: Math.max(1, Math.floor(member?.count || 1)),
+      count: Math.max(0, Number(member?.count) || 0),
     }))
     .filter((member) => Number.isFinite(member.hp) && member.count > 0);
 }
@@ -7830,7 +7922,7 @@ function hitboxStyleForSnap(snap) {
 }
 
 function drawCollisionHitbox(pos, radius, style = hitboxStyleForSnap(null)) {
-  if (radius < 0.5) return;
+  if (!(radius > 0) || !Number.isFinite(radius)) return;
 
   ctx.save();
   ctx.lineWidth = Math.max(1.25, Math.min(3, radius * 0.08));
@@ -7853,29 +7945,74 @@ function drawCollisionHitbox(pos, radius, style = hitboxStyleForSnap(null)) {
   ctx.restore();
 }
 
+function drawFlowerFrame(snap, pos, radius) {
+  const isOwner = snap.entityId === state.ownerEntityId || (snap.flags & flagOwner) !== 0;
+  const hp = clamp(snap.hpPercent || 0, 0, 1);
+  const shield = clamp(snap.shieldPercent || 0, 0, 1);
+  // The local player's name/level already live in the HUD. In the world,
+  // show only a useful health/shield bar, like the reference's own flower.
+  if (isOwner && ((snap.flags & flagDead) !== 0 || (hp >= 0.999 && shield <= 0))) return;
+  const frame = getFlowerFrameLayout(radius, mobileUiScale(), isOwner);
+  const x = pos.x - frame.width / 2;
+  const y = pos.y + frame.barY;
+  if (!isOwner && snap.name) {
+    let nameSize = frame.nameSize;
+    ctx.font = `800 ${nameSize}px Florr UI, Sarasa SC, Segoe UI, sans-serif`;
+    // Long account names must remain centred and contained, not overflow to
+    // one side merely because their anchor was the left edge of a short bar.
+    const maxWidth = Math.max(frame.width, frame.nameSize * 7);
+    const measured = ctx.measureText(snap.name).width;
+    if (measured > maxWidth) nameSize *= maxWidth / measured;
+    drawOutlinedText(snap.name, pos.x, pos.y + frame.nameBaseline, {
+      font: `800 ${nameSize}px Florr UI, Sarasa SC, Segoe UI, sans-serif`,
+      fill: playerNameColor(snap, "#f7f7f7"), lineWidth: Math.max(1, nameSize * 0.25),
+      align: "center", baseline: "bottom",
+    });
+  }
+  drawTrackedHealthBar(snap, x, y, frame.width, frame.barHeight, hp, healthBarColor(snap),
+    Math.max(0.8, frame.barHeight * 0.26));
+  drawShieldBar(x, y, frame.width, frame.barHeight, shield);
+  if (!isOwner) drawOutlinedText(rarityOrLevelLabel(snap), pos.x, pos.y + frame.levelY, {
+    font: `800 ${frame.levelSize}px Florr UI, Sarasa SC, Segoe UI, sans-serif`,
+    fill: rarityColor(getPlayerLevelRarity(snap), 1), lineWidth: Math.max(1, frame.levelSize * 0.25),
+    align: "center", baseline: "top",
+  });
+}
+
 function drawMobFrame(snap, pos, radius) {
   if (entityVisualOnlyRenderDepth > 0) return;
-  if (radius < entityFrameMinScreenRadius) return;
+  if (radius < entityNameMinScreenRadius) return;
   if (shouldSkipMobFrame(snap, radius)) return;
+
+  if (snap.entityType === playerFlowerType) {
+    drawFlowerFrame(snap, pos, radius);
+    return;
+  }
 
   if (!isMobHitboxSnap(snap)) {
     drawEntityLabel(snap, pos, radius);
     return;
   }
 
-  const width = Math.max(10, radius * 2.08);
-  const barHeight = Math.max(3, radius * 0.14);
-  const y = pos.y + radius + Math.max(4, radius * 0.2);
+  // Names remain useful at a smaller size than the full health/rarity frame.
+  // Keep the old frame threshold for the latter so zooming out does not turn
+  // every distant mob into a dense stack of tiny bars.
+  if (radius < entityFrameMinScreenRadius) {
+    drawEntityLabel(snap, pos, radius);
+    return;
+  }
+
+  // Width follows the whole body even for ET/P; thickness, text and gaps
+  // stay compact so a giant mob does not acquire giant UI lettering.
+  const frame = getMobFrameLayout(radius, mobileUiScale());
+  const { width, barHeight, textSize, labelGap } = frame;
+  const y = pos.y + frame.y;
   const x = pos.x - width * 0.5;
   const hp = clamp(snap.hpPercent, 0, 1);
-  const isPlayerFlower = snap.entityType === playerFlowerType;
-  const labelColor = isPlayerFlower
-    ? rarityColor(playerLevelRarity(snap), 1)
-    : rarityColor(snap.rarity, 1);
-  const textSize = Math.max(4, radius * (isPlayerFlower ? 0.24 : 0.2));
+  const labelColor = rarityColor(snap.rarity, 1);
   const strokeColor = "#050506";
 
-  drawOutlinedText(mobDisplayName(snap), x, y - Math.max(1, radius * 0.05), {
+  drawOutlinedText(mobDisplayName(snap), x, y - labelGap, {
     font: `800 ${textSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
     fill: playerNameColor(snap, "#f7f7f7"),
     stroke: strokeColor,
@@ -7884,7 +8021,8 @@ function drawMobFrame(snap, pos, radius) {
     baseline: "bottom",
   });
 
-  drawCapsuleBar(
+  drawTrackedHealthBar(
+    snap,
     x,
     y,
     width,
@@ -7898,7 +8036,7 @@ function drawMobFrame(snap, pos, radius) {
   drawOutlinedText(
     rarityOrLevelLabel(snap),
     x + width,
-    y + barHeight + Math.max(1, radius * 0.05),
+    y + barHeight + labelGap,
     {
       font: `800 ${textSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
       fill: labelColor,
@@ -7911,7 +8049,7 @@ function drawMobFrame(snap, pos, radius) {
 }
 
 function drawEntityLabel(snap, pos, radius) {
-  if (!snap.name || radius < entityFrameMinScreenRadius) return;
+  if (!snap.name || radius < entityNameMinScreenRadius) return;
   if (shouldSkipMobFrame(snap, radius)) return;
   ctx.font = "12px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif";
   ctx.textAlign = "center";
@@ -7962,8 +8100,8 @@ function shouldSkipMobFrame(snap, radius) {
   if (raritySortRank(snap.rarity) >= raritySortRank(bossRarity)) return false;
   const minRadius =
     currentRenderLoad >= 2
-      ? entityFrameMinScreenRadius * 2.5
-      : entityFrameMinScreenRadius * 1.5;
+      ? entityNameMinScreenRadius * 2.5
+      : entityNameMinScreenRadius * 1.5;
   return radius < minRadius;
 }
 
@@ -8035,10 +8173,67 @@ function bossBarCandidates(entities) {
     .slice(0, maxBossBars);
 }
 
-function drawBossBars(entities) {
-  const groups = bossBarCandidates(entities);
-  if (groups.length === 0) return;
+function motionFactor(now, previous, rate) {
+  if (!Number.isFinite(previous)) return 1;
+  const dt = clamp((now - previous) / 1000, 0, 0.12);
+  return dt <= 0 ? 0 : 1 - Math.exp(-Math.max(0, rate) * dt);
+}
 
+function approachMotion(current, target, factor) {
+  if (!Number.isFinite(current)) return target;
+  return current + (target - current) * clamp(factor, 0, 1);
+}
+
+function cloneLayeredBarMembers(members) {
+  return normalizedLayeredBarMembers(members).map((member) => ({
+    hp: member.hp,
+    count: member.count,
+  }));
+}
+
+// Match health buckets by sorted percentage. Bucket order is not an identity
+// (entity iteration order can change between snapshots), and a sorted linear
+// pairing avoids the quadratic search cost when a boss group contains many
+// members.
+function smoothLayeredBarMembers(previous, target, factor) {
+  const oldMembers = normalizedLayeredBarMembers(previous).sort(
+    (a, b) => a.hp - b.hp,
+  );
+  const nextMembers = normalizedLayeredBarMembers(target).sort(
+    (a, b) => a.hp - b.hp,
+  );
+  const result = [];
+  const blend = clamp(factor, 0, 1);
+
+  const pairedCount = Math.min(oldMembers.length, nextMembers.length);
+  for (let index = 0; index < nextMembers.length; index += 1) {
+    const next = nextMembers[index];
+    if (index < pairedCount) {
+      const previousMember = oldMembers[index];
+      result.push({
+        hp: approachMotion(previousMember.hp, next.hp, blend),
+        count: approachMotion(previousMember.count, next.count, blend),
+      });
+    } else {
+      // New layers fade in through their copy count instead of appearing as
+      // a full opaque stripe on the first snapshot.
+      result.push({
+        hp: next.hp,
+        count: next.count * blend,
+      });
+    }
+  }
+
+  for (let index = pairedCount; index < oldMembers.length; index += 1) {
+    const previousMember = oldMembers[index];
+    const count = previousMember.count * (1 - blend);
+    if (count > 0.001)
+      result.push({ hp: previousMember.hp, count });
+  }
+  return result;
+}
+
+function bossBarGeometry(groupCount) {
   const maxScreenWidth = Math.max(
     1,
     state.canvasWidth - bossBarHorizontalMarginPx * 2,
@@ -8053,7 +8248,7 @@ function drawBossBars(entities) {
     bandTop + 1,
     state.canvasHeight * bossBarBandBottomRatio,
   );
-  const slotHeight = (bandBottom - bandTop) / groups.length;
+  const slotHeight = (bandBottom - bandTop) / Math.max(1, groupCount);
   const outlinePadding =
     Math.max(bossBarTitleOutlinePx, bossBarRarityOutlinePx) * 0.5;
   const naturalBlockHeight =
@@ -8064,92 +8259,230 @@ function drawBossBars(entities) {
     bossBarLabelGapPx +
     bossBarRarityFontPx;
   const scale = Math.min(1, slotHeight / naturalBlockHeight);
-  const height = bossBarHeightPx * scale;
-  const titleFontSize = bossBarTitleFontPx * scale;
-  const rarityFontSize = bossBarRarityFontPx * scale;
-  const labelGap = bossBarLabelGapPx * scale;
-  const blockHeight = naturalBlockHeight * scale;
-  const x = (state.canvasWidth - width) * 0.5;
+  return {
+    width,
+    bandTop,
+    slotHeight,
+    outlinePadding,
+    scale,
+    height: bossBarHeightPx * scale,
+    titleFontSize: bossBarTitleFontPx * scale,
+    rarityFontSize: bossBarRarityFontPx * scale,
+    labelGap: bossBarLabelGapPx * scale,
+    blockHeight: naturalBlockHeight * scale,
+    x: (state.canvasWidth - width) * 0.5,
+  };
+}
+
+function bossBarTargetY(index, geometry) {
+  const slotTop = geometry.bandTop + index * geometry.slotHeight;
+  return (
+    slotTop +
+    (geometry.slotHeight - geometry.blockHeight) * 0.5 +
+    geometry.outlinePadding * geometry.scale +
+    geometry.titleFontSize +
+    geometry.labelGap
+  );
+}
+
+function updateBossBarMotion(group, targetY, now) {
+  let motion = bossBarMotions.get(group.key);
+  if (!motion) {
+    motion = {
+      key: group.key,
+      alpha: 0,
+      y: targetY - bossBarExitLiftPx,
+      targetY,
+      count: Math.max(1, group.count || group.members.length),
+      members: cloneLayeredBarMembers(group.members),
+      shieldMembers: cloneLayeredBarMembers(group.shieldMembers),
+      shieldAlpha: group.hasShield ? 1 : 0,
+      exitTargetY: targetY - bossBarExitLiftPx,
+      lastUpdatedAt: now,
+      group,
+    };
+    bossBarMotions.set(group.key, motion);
+    return motion;
+  }
+
+  const factor = motionFactor(now, motion.lastUpdatedAt, bossBarMotionRate);
+  motion.lastUpdatedAt = now;
+  motion.targetY = targetY;
+  motion.y = approachMotion(motion.y, targetY, factor);
+  motion.alpha = approachMotion(motion.alpha, 1, factor);
+  motion.count = approachMotion(
+    motion.count,
+    Math.max(1, group.count || group.members.length),
+    factor,
+  );
+  motion.members = smoothLayeredBarMembers(motion.members, group.members, factor);
+  motion.shieldMembers = smoothLayeredBarMembers(
+    motion.shieldMembers,
+    group.shieldMembers,
+    factor,
+  );
+  motion.shieldAlpha = approachMotion(
+    motion.shieldAlpha,
+    group.hasShield ? 1 : 0,
+    factor,
+  );
+  motion.group = group;
+  motion.exitTargetY = motion.y - bossBarExitLiftPx;
+  return motion;
+}
+
+function updateExitingBossBarMotion(motion, now) {
+  const factor = motionFactor(now, motion.lastUpdatedAt, bossBarMotionRate);
+  motion.lastUpdatedAt = now;
+  motion.alpha = approachMotion(motion.alpha, 0, factor);
+  motion.y = approachMotion(motion.y, motion.exitTargetY, factor);
+  motion.count = approachMotion(motion.count, 0, factor);
+  motion.members = smoothLayeredBarMembers(motion.members, [], factor);
+  motion.shieldMembers = smoothLayeredBarMembers(
+    motion.shieldMembers,
+    [],
+    factor,
+  );
+  motion.shieldAlpha = approachMotion(motion.shieldAlpha, 0, factor);
+}
+
+function drawBossBars(entities, now = performance.now()) {
+  const groups = bossBarCandidates(entities);
+  // Include bars that are still leaving in the layout calculation. Otherwise
+  // removing the last live bar immediately expands the remaining geometry
+  // (or snaps it to the single-slot layout) while the old bar is fading.
+  const geometry = bossBarGeometry(
+    Math.max(groups.length, bossBarMotions.size),
+  );
+  const currentKeys = new Set();
 
   groups.forEach((group, index) => {
-    const slotTop = bandTop + index * slotHeight;
-    const y =
-      slotTop +
-      (slotHeight - blockHeight) * 0.5 +
-      outlinePadding * scale +
-      titleFontSize +
-      labelGap;
+    currentKeys.add(group.key);
+    updateBossBarMotion(group, bossBarTargetY(index, geometry), now);
+  });
+
+  for (const [key, motion] of bossBarMotions) {
+    if (currentKeys.has(key)) continue;
+    updateExitingBossBarMotion(motion, now);
+    if (motion.alpha <= 0.01 && motion.count <= 0.01)
+      bossBarMotions.delete(key);
+  }
+
+  if (bossBarMotions.size === 0) return;
+  const motions = [...bossBarMotions.values()]
+    .filter((motion) => motion.alpha > 0.001)
+    .sort((a, b) => a.y - b.y);
+  for (const motion of motions) {
+    const group = motion.group;
+    if (!group) continue;
     const rarityFill = rarityColor(group.rarity, 1);
-    const count = Math.max(1, group.count || group.members.length);
+    const count = Math.max(1, Math.round(motion.count));
     const title = count > 1 ? `${group.name} x${count}` : group.name;
 
     ctx.save();
-    drawOutlinedText(title, x + width * 0.5, y - labelGap, {
-      font: `900 ${titleFontSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
+    ctx.globalAlpha *= clamp(motion.alpha, 0, 1);
+    drawOutlinedText(title, geometry.x + geometry.width * 0.5, motion.y - geometry.labelGap, {
+      font: `900 ${geometry.titleFontSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
       fill: "#f7f7f7",
-      lineWidth: bossBarTitleOutlinePx * scale,
+      lineWidth: bossBarTitleOutlinePx * geometry.scale,
       baseline: "bottom",
     });
     drawLayeredCapsuleBar(
-      x,
-      y,
-      width,
-      height,
-      group.members,
+      geometry.x,
+      motion.y,
+      geometry.width,
+      geometry.height,
+      motion.members,
       group.invincible ? "#e8d64b" : "#69d33e",
-      bossBarRadiusPx * scale,
+      bossBarRadiusPx * geometry.scale,
     );
-    if (group.hasShield) {
-      const shieldLength = width * 0.82;
-      const shieldHeight = height * 0.48;
+    if (motion.shieldAlpha > 0.001) {
+      const shieldLength = geometry.width * 0.82;
+      const shieldHeight = geometry.height * 0.48;
+      ctx.save();
+      ctx.globalAlpha *= clamp(motion.shieldAlpha, 0, 1);
       drawLayeredSolidProgressBar(
-        x + (width - shieldLength) * 0.5,
-        y + (height - shieldHeight) * 0.5,
+        geometry.x + (geometry.width - shieldLength) * 0.5,
+        motion.y + (geometry.height - shieldHeight) * 0.5,
         shieldLength,
         shieldHeight,
-        group.shieldMembers,
+        motion.shieldMembers,
         "#ffffff",
       );
+      ctx.restore();
     }
     drawOutlinedText(
       rarityName(group.rarity),
-      x + width * 0.5,
-      y + height + labelGap,
+      geometry.x + geometry.width * 0.5,
+      motion.y + geometry.height + geometry.labelGap,
       {
-        font: `900 ${rarityFontSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
+        font: `900 ${geometry.rarityFontSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
         fill: rarityFill,
-        lineWidth: bossBarRarityOutlinePx * scale,
+        lineWidth: bossBarRarityOutlinePx * geometry.scale,
         baseline: "top",
       },
     );
     ctx.restore();
-  });
+  }
 }
 
-function drawSelfHud() {
+function smoothHudStats(key, target, identity, now) {
+  const normalized = {
+    health: clamp(Number(target?.health) || 0, 0, 1),
+    shield: clamp(Number(target?.shield) || 0, 0, 1),
+    experience: clamp(Number(target?.experience) || 0, 0, 1),
+  };
+  let motion = hudValueMotions.get(key);
+  if (!motion || motion.identity !== identity) {
+    motion = {
+      identity,
+      ...normalized,
+      lastUpdatedAt: now,
+    };
+    hudValueMotions.set(key, motion);
+    return motion;
+  }
+
+  const factor = motionFactor(now, motion.lastUpdatedAt, hudMotionRate);
+  motion.lastUpdatedAt = now;
+  motion.health = approachMotion(motion.health, normalized.health, factor);
+  motion.shield = approachMotion(motion.shield, normalized.shield, factor);
+  motion.experience = approachMotion(
+    motion.experience,
+    normalized.experience,
+    factor,
+  );
+  return motion;
+}
+
+function drawSelfHud(now = performance.now()) {
   const owner = state.authenticated
     ? state.entities.get(state.ownerEntityId)
     : null;
   if (!owner) return;
 
-  const health = owner ? clamp(owner.snapshot.hpPercent || 0, 0, 1) : 0;
-  const expProgress = clamp(state.ownerExpProgress || 0, 0, 1);
+  const ownerDead = (owner.snapshot.flags & flagDead) !== 0;
+  const hudStats = smoothHudStats(
+    "owner",
+    {
+      health: owner.snapshot.hpPercent,
+      shield: owner.snapshot.shieldPercent,
+      experience: state.ownerExpProgress,
+    },
+    `${owner.snapshot.entityId}:${ownerDead ? 1 : 0}`,
+    now,
+  );
+  const health = hudStats.health;
+  const expProgress = hudStats.experience;
   const name = owner.snapshot?.name || "Player";
   const level = Math.max(1, state.ownerLevel || owner?.snapshot?.rarity || 1);
-  const levelColor = rarityColor(playerLevelRarity(owner.snapshot), 1);
-  const fadeProgress = owner.dying
-    ? clamp((owner.deathAge || 0) / deathFadeDuration, 0, 1)
-    : 0;
-  const fadeEase = fadeProgress * fadeProgress * (3 - fadeProgress * 2);
-  const fadeAlpha = owner.dying ? 1 - fadeEase : 1;
-  const fadeScale = owner.dying ? 1 + fadeEase * deathScaleBoost : 1;
-  const ownerDead = (owner.snapshot.flags & flagDead) !== 0;
+  const levelColor = rarityColor(getPlayerLevelRarity(owner.snapshot), 1);
   const scale = Math.min(1, Math.max(0.7, state.canvasWidth / 320));
   // Slight downward offset so the portrait/health block clears the top-left
   // action buttons.
-  const hudShiftY = 10 * scale;
+  const hudShiftY = 43 * scale;
   const flowerPos = { x: 55 * scale, y: 60 * scale + hudShiftY };
-  const flowerRadius = 30 * scale;
+  const flowerRadius = 32 * scale;
   const healthX = 94 * scale;
   const healthY = 43 * scale + hudShiftY;
   const healthW = 220 * scale;
@@ -8162,7 +8495,6 @@ function drawSelfHud() {
   const expH = 20 * scale;
 
   ctx.save();
-  ctx.globalAlpha *= fadeAlpha;
   drawCapsuleBar(
     healthBackX,
     healthY,
@@ -8172,7 +8504,8 @@ function drawSelfHud() {
     "#69d348",
     6 * scale,
   );
-  drawCapsuleBar(
+  drawTrackedHealthBar(
+    owner.snapshot,
     healthX,
     healthY,
     healthW,
@@ -8186,16 +8519,17 @@ function drawSelfHud() {
     healthY,
     healthW,
     healthH,
-    owner.snapshot.shieldPercent,
+    hudStats.shield,
   );
   drawCapsuleBar(expX, expY, expW, expH, expProgress, "#e8e95a", 4 * scale);
   drawPlayerFlower(
     owner.snapshot,
     flowerPos,
-    flowerRadius * fadeScale,
+    flowerRadius,
     ownerDead
       ? (owner.deathAngle ?? owner.renderAngle ?? owner.snapshot.angle)
       : (owner.renderAngle ?? owner.snapshot.angle),
+    true,
     true,
   );
   drawOutlinedText(name, healthX + healthW * 0.5, healthY + healthH * 0.5, {
@@ -8212,28 +8546,35 @@ function drawSelfHud() {
   ctx.restore();
 }
 
-function drawSquadHud() {
+function drawSquadHud(now = performance.now()) {
   const members = currentSquadMemberEntities().slice(0, 3);
   if (!members.length) return;
 
   const scale = Math.min(1, Math.max(0.7, state.canvasWidth / 320));
-  const memberHudScale = 0.6;
-  const flowerX = 55 * memberHudScale * scale;
-  const flowerRadius = 30 * memberHudScale * scale;
-  const healthX = 94 * memberHudScale * scale;
-  const healthW = 220 * memberHudScale * scale;
-  const healthH = 36 * memberHudScale * scale;
-  const healthBackX = 57 * memberHudScale * scale;
+  const memberHudScale = 0.78;
+  const flowerX = 55 * scale;
+  const flowerRadius = 32 * memberHudScale * scale;
+  const healthX = 88 * scale;
+  const healthW = 168 * scale;
+  const healthH = 28 * scale;
+  const healthBackX = 55 * scale;
   const healthBackW = healthX + healthW - healthBackX;
   const healthBorder = 6 * memberHudScale * scale;
-  const firstCenterY = 131 * scale;
-  const rowGap = 42 * scale;
+  const firstCenterY = 204 * scale;
+  const rowGap = 62 * scale;
 
   for (let index = 0; index < members.length; index += 1) {
     const entity = members[index];
     const snap = entity.snapshot;
     const centerY = firstCenterY + index * rowGap;
-    const health = clamp(snap.hpPercent || 0, 0, 1);
+    const memberDead = (snap.flags & flagDead) !== 0;
+    const hudStats = smoothHudStats(
+      `squad:${snap.entityId}`,
+      { health: snap.hpPercent, shield: snap.shieldPercent },
+      `${snap.entityId}:${memberDead ? 1 : 0}`,
+      now,
+    );
+    const health = hudStats.health;
     const level = Math.max(1, snap.rarity || 1);
     const levelText = `Lvl ${level}`;
     const levelFont = `900 ${11.5 * scale}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`;
@@ -8248,7 +8589,8 @@ function drawSquadHud() {
       "#69d348",
       healthBorder,
     );
-    drawCapsuleBar(
+    drawTrackedHealthBar(
+      snap,
       healthX,
       centerY - healthH * 0.5,
       healthW,
@@ -8262,7 +8604,7 @@ function drawSquadHud() {
       centerY - healthH * 0.5,
       healthW,
       healthH,
-      snap.shieldPercent,
+      hudStats.shield,
     );
     drawPlayerFlower(
       snap,
@@ -8272,7 +8614,20 @@ function drawSquadHud() {
         ? (entity.deathAngle ?? entity.renderAngle ?? snap.angle)
         : (entity.renderAngle ?? snap.angle),
       false,
+      true,
     );
+
+    const ownerPos = state.entities.get(state.ownerEntityId)?.renderPos;
+    if (ownerPos && entity.renderPos && !memberDead) {
+      const direction = Math.atan2(entity.renderPos.y - ownerPos.y, entity.renderPos.x - ownerPos.x);
+      ctx.save();
+      ctx.translate(flowerX, centerY); ctx.rotate(direction);
+      const markerX = flowerRadius + 7 * scale;
+      ctx.fillStyle = "#f7f4e8"; ctx.strokeStyle = "#333"; ctx.lineWidth = 1.5 * scale;
+      ctx.beginPath(); ctx.moveTo(markerX + 6 * scale, 0);
+      ctx.lineTo(markerX - 3 * scale, -4 * scale); ctx.lineTo(markerX - 3 * scale, 4 * scale);
+      ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+    }
 
     ctx.font = levelFont;
     const levelWidth = ctx.measureText(levelText).width;
@@ -8294,7 +8649,7 @@ function drawSquadHud() {
     });
     drawOutlinedText(levelText, levelX, centerY, {
       font: levelFont,
-      fill: rarityColor(playerLevelRarity(snap), 1),
+      fill: rarityColor(getPlayerLevelRarity(snap), 1),
       lineWidth: 2.8 * scale,
       align: "right",
     });
@@ -8302,15 +8657,16 @@ function drawSquadHud() {
 }
 
 function mobileUiScale() {
-  // Mirrors the CSS --mob-scale formula; only on the mobile-ui layout.
+  // Decorative canvas HUD only; DOM touch targets keep independent sizes.
   if (!document.body.classList.contains("mobile-ui")) return 1;
   const vw = state.canvasWidth || window.innerWidth;
   return clamp(vw / 678, 0.566, 0.848);
 }
 
-function minimapLayout() {
+function minimapLayout(mode = state.minimapMode) {
   const s = mobileUiScale();
-  const y = minimapMarginPx * s;
+  const insets = ui.mobileControls?.isMobileMode() ? ui.mobileControls.getSafeInsets() : null;
+  const y = Math.max(minimapMarginPx * s, insets?.top || 0);
   const maxByScreen = Math.max(
     96,
     Math.min(
@@ -8333,11 +8689,72 @@ function minimapLayout() {
     132,
     minimapFullMaxPx * s,
   );
-  const size = state.minimapMode === "full" ? fullSize : localSize;
-  return { x: state.canvasWidth - minimapMarginPx * s - size, y, size };
+  const size = mode === "full" ? fullSize : localSize;
+  return { x: state.canvasWidth - Math.max(minimapMarginPx * s, insets?.right || 0) - size, y, size };
 }
 
-function minimapWorldBounds(map) {
+// florr frames its minimap as a small rounded card with the current area's
+// name printed underneath. We have no named regions, so the label is the map
+// name (localized when a `maps.<slug>` string exists, prettified otherwise).
+const minimapCardRadiusPx = 5;
+const minimapCardBorderPx = 3;
+const minimapLabelFontPx = 13;
+const minimapLabelGapPx = 3;
+
+function minimapAreaLabel() {
+  const raw = String(state.mapDisplayName || state.mapName || "");
+  if (!raw) return "";
+  const slug = raw
+    .split(/[\\/]/)
+    .pop()
+    .replace(/\.[^.]+$/, "")
+    .toLowerCase();
+  if (!slug) return "";
+  const pretty = slug
+    .split(/[_\-\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+  return t(`maps.${slug}`, {}, { defaultValue: pretty });
+}
+
+function drawMinimapCard(layout, scale) {
+  const radius = minimapCardRadiusPx * scale;
+  const border = minimapCardBorderPx * scale;
+  // The rim is a darkened version of whatever sits inside, the same way the
+  // panels step their shades instead of drawing an outline.
+  ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
+  ctx.beginPath();
+  ctx.roundRect(
+    layout.x - border,
+    layout.y - border,
+    layout.size + border * 2,
+    layout.size + border * 2,
+    radius + border,
+  );
+  ctx.fill();
+}
+
+function drawMinimapLabel(layout, scale) {
+  const label = minimapAreaLabel();
+  if (!label) return;
+  const fontSize = minimapLabelFontPx * scale;
+  drawOutlinedText(
+    label,
+    layout.x + layout.size * 0.5,
+    layout.y + layout.size + minimapCardBorderPx * scale + minimapLabelGapPx * scale,
+    {
+      font: `900 ${fontSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
+      fill: "#ffffff",
+      stroke: "#050506",
+      lineWidth: Math.max(1.5, fontSize * 0.28),
+      align: "center",
+      baseline: "top",
+    },
+  );
+}
+
+function minimapWorldBounds(map, mode = state.minimapMode) {
   const mapWidth = Math.max(
     1,
     (map.width || map.layers?.[0]?.width || 1) * map.tileWidth,
@@ -8346,13 +8763,13 @@ function minimapWorldBounds(map) {
     1,
     (map.height || map.layers?.[0]?.height || 1) * map.tileHeight,
   );
-  if (state.minimapMode === "full") {
+  if (mode === "full") {
     const side = Math.max(mapWidth, mapHeight);
     return { left: 0, top: 0, width: side, height: side };
   }
 
   const tileSize = Math.max(map.tileWidth || 1, map.tileHeight || 1);
-  const side = Math.max(tileSize * 14, state.viewRadius * 2.35, tileSize);
+  const side = Math.max(tileSize * 14, effectiveViewRadius() * 2.35, tileSize);
   return {
     left: state.camera.x - side * 0.5,
     top: state.camera.y - side * 0.5,
@@ -8361,23 +8778,56 @@ function minimapWorldBounds(map) {
   };
 }
 
-function drawMinimap() {
+function drawMinimap(now = performance.now()) {
   const map = state.map;
   if (!map || !map.tileWidth || !map.tileHeight) {
     minimapHitRect = null;
     return;
   }
 
-  const layout = minimapLayout();
-  minimapHitRect = layout;
-  const bounds = minimapWorldBounds(map);
+  // Hit testing follows the target immediately, while the pixels crossfade
+  // between the two layouts. This keeps the minimap responsive during the
+  // transition instead of making the click target lag behind the icon.
+  minimapHitRect = minimapLayout(state.minimapMode);
+  if (minimapTransition) {
+    const progress = clamp(
+      (now - minimapTransition.startedAt) / minimapTransitionDurationMs,
+      0,
+      1,
+    );
+    const eased = progress * progress * (3 - 2 * progress);
+    if (progress >= 1) {
+      minimapTransition = null;
+      drawMinimapLayer(map, state.minimapMode, 1);
+    } else {
+      drawMinimapLayer(map, minimapTransition.from, 1 - eased);
+      drawMinimapLayer(map, minimapTransition.to, eased);
+    }
+    return;
+  }
+  drawMinimapLayer(map, state.minimapMode, 1);
+}
+
+function drawMinimapLayer(map, mode, alpha) {
+  if (alpha <= 0) return;
+  const layout = minimapLayout(mode);
+  const bounds = minimapWorldBounds(map, mode);
   const scale = layout.size / Math.max(bounds.width, bounds.height, 1);
   const s = mobileUiScale();
   const cache = getMinimapCache(map);
 
   ctx.save();
+  ctx.globalAlpha *= clamp(alpha, 0, 1);
+  drawMinimapCard(layout, s);
+  drawMinimapLabel(layout, s);
   ctx.beginPath();
-  ctx.rect(layout.x, layout.y, layout.size, layout.size);
+  ctx.roundRect(
+    layout.x,
+    layout.y,
+    layout.size,
+    layout.size,
+    minimapCardRadiusPx * s,
+  );
   ctx.clip();
   ctx.fillStyle = colorfulMinimapEnabled()
     ? minimapBackgroundColor
@@ -8404,19 +8854,19 @@ function drawMinimap() {
 
     ctx.fillStyle = "#f17cab";
     ctx.strokeStyle = "rgba(45, 24, 38, 0.88)";
-    ctx.lineWidth = state.minimapMode === "full" ? 1.5 * s : 1.8 * s;
+    ctx.lineWidth = mode === "full" ? 1.5 * s : 1.8 * s;
     ctx.beginPath();
     ctx.arc(
       teammateX,
       teammateY,
-      state.minimapMode === "full" ? 3.5 * s : 4 * s,
+      mode === "full" ? 3.5 * s : 4 * s,
       0,
       Math.PI * 2,
     );
     ctx.fill();
     ctx.stroke();
 
-    if (state.minimapMode === "full")
+    if (mode === "full")
       drawOutlinedText(
         teammate.snapshot.name || "Player",
         teammateX,
@@ -8449,12 +8899,12 @@ function drawMinimap() {
 
     ctx.fillStyle = "#ffd84f";
     ctx.strokeStyle = "rgba(45, 24, 38, 0.88)";
-    ctx.lineWidth = state.minimapMode === "full" ? 1.5 * s : 1.8 * s;
+    ctx.lineWidth = mode === "full" ? 1.5 * s : 1.8 * s;
     ctx.beginPath();
     ctx.arc(
       portalX,
       portalY,
-      state.minimapMode === "full" ? 3.5 * s : 4 * s,
+      mode === "full" ? 3.5 * s : 4 * s,
       0,
       Math.PI * 2,
     );
@@ -8474,7 +8924,7 @@ function drawMinimap() {
   ) {
     ctx.fillStyle = "#ffd84f";
     ctx.beginPath();
-    ctx.arc(px, py, state.minimapMode === "full" ? 3 * s : 4 * s, 0, Math.PI * 2);
+    ctx.arc(px, py, mode === "full" ? 3 * s : 4 * s, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -8830,7 +9280,15 @@ function rasterizeMinimapDifficulty(
 }
 
 function toggleMinimapMode() {
-  state.minimapMode = state.minimapMode === "full" ? "local" : "full";
+  const from = state.minimapMode;
+  const to = from === "full" ? "local" : "full";
+  state.minimapMode = to;
+  minimapTransition = {
+    from,
+    to,
+    startedAt: performance.now(),
+  };
+  requestRedraw();
 }
 
 function eventCanvasPoint(event) {
@@ -8860,14 +9318,10 @@ function isEntityInRenderView(entity, scale) {
   if (!snap || !pos || scale <= 0) return false;
   if (snap.entityId === state.ownerEntityId) return true;
 
-  const deathProgress = entity.dying
-    ? clamp((entity.deathAge || 0) / deathFadeDuration, 0, 1)
-    : 0;
-  const deathEase = deathProgress * deathProgress * (3 - deathProgress * 2);
   const radius =
     Math.max(0, snap.radius || 0) *
-    flowerMobCullScale(snap.entityType) *
-    (entity.dying ? 1 + deathEase * deathScaleBoost : 1);
+    getFlowerMobCullScale(snap.entityType) *
+    Math.max(1, frameEntityAppearance(entity).scale);
   const padding = renderCullPaddingPx / scale;
   const halfW = (state.canvasWidth * 0.5) / scale + radius + padding;
   const halfH = (state.canvasHeight * 0.5) / scale + radius + padding;
@@ -8953,7 +9407,7 @@ function drawHitboxPass(entities) {
     const snap = entity?.snapshot;
     if (!snap || !entity.renderPos) continue;
     const radius = Math.max(0, worldLengthToScreen(snap.radius));
-    if (radius < 0.5) continue;
+    if (!(radius > 0) || !Number.isFinite(radius)) continue;
     drawCollisionHitbox(
       worldToScreen(entity.renderPos),
       radius,
@@ -9082,7 +9536,7 @@ function estimatedServerTick(
 function applyWeatherSmoothing(dt) {
   if (!state.environment?.received) return;
   const intensities = state.environment.weatherIntensity || [];
-  const targetRain = Math.pow(clamp(intensities[2] || 0, 0, 1), 1.4);
+  const targetRain = Math.pow(clamp(intensities[2] || 0, 0, 1), 1.12);
   const targetFog = Math.pow(clamp(intensities[3] || 0, 0, 1), 1.4);
   const targetCloudy = Math.pow(clamp(intensities[1] || 0, 0, 1), 1.2);
   if (dt <= 0) return;
@@ -9384,14 +9838,10 @@ function drawDiurnalLighting(now = performance.now()) {
   }
 }
 
-// Weather visuals: a smooth-blended wash stack tuned for 2D top-down play.
-// Three layers, no occluding sprites so the player never loses sight of the
-// field: (1) a subtle cloudy gray wash that brightens/desaturates the world,
-// (2) wind-driven rain streaks split into near/far depth layers. Fog no
-// longer draws its own overlay: it tints the diurnal darkness mask from
-// black toward a milky gray-blue instead (see drawDiurnalLighting).
-// A final source-over cool tint ties the rain into one cohesive atmosphere
-// instead of stacking translucent rectangles.
+// Weather visuals: subdued atmosphere plus a continuous, deterministic rain
+// sheet. The rain renderer deliberately uses parallel fine strokes instead of
+// independent sprite-like drops: this matches the reference's readable field
+// and avoids per-frame spawn/cull churn at high refresh rates.
 function drawWeatherEffects(now = performance.now()) {
   if (!state.environment?.received) return;
   const dt = Math.min(0.1, Math.max(0, (now - lastWeatherEffectsAt) / 1000));
@@ -9399,132 +9849,58 @@ function drawWeatherEffects(now = performance.now()) {
   if (dt <= 0) return;
   applyWeatherSmoothing(dt);
   const env = state.environment;
+  rainField.step(dt);
 
   ctx.save();
   ctx.filter = "none";
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = "source-over";
 
-  // (1) Cloudy: thin neutral-cool wash. Subtle enough that the world only
-  // feels hazier; nothing solid blocks the playfield.
-  if (actualCloudyTint > 0.005) {
-    const alpha = actualCloudyTint * 0.07;
-    ctx.fillStyle = `rgba(190, 196, 204, ${alpha})`;
+  // Rain in the reference desaturates/darkens the terrain a little, but never
+  // paints an opaque blue veil over entities or the map.
+  const atmosphereAlpha = clamp(
+    actualCloudyTint * 0.045 + actualRain * 0.07,
+    0,
+    0.12,
+  );
+  if (atmosphereAlpha > 0.001) {
+    ctx.fillStyle = `rgba(61, 71, 72, ${atmosphereAlpha})`;
     ctx.fillRect(0, 0, state.canvasWidth, state.canvasHeight);
   }
 
-  // (2) Rain: two depth layers. Drops spawn just outside the screen and fall
-  // along a wind-driven tilt fixed at spawn:
-  //   - mostly north/south wind -> streaks lean toward the screen center
-  //   - mostly east/west wind   -> the left half leans left and the right half
-  //     leans right, fanning outward to at most 45掳
-  // Each drop disappears at a random spot once it has fallen at least into the
-  // lower half of the screen: some land between mid-screen and the bottom edge,
-  // others keep going and fall off the bottom (or a side).
-  if (actualRain > 0.005) {
-    const windSpeed = clamp(env.windSpeed || 0, 0, 20);
-    const directionRad = ((env.windDirection || 0) * Math.PI) / 180;
-    const windX = Math.sin(directionRad); // east/west component, -1..1
-    const windY = Math.cos(directionRad); // north/south component, -1..1
-    // Full lean once wind speed reaches 12.
-    const windStrength = clamp(windSpeed / 12, 0, 1);
-    // >0 leans outward (E/W dominant), <0 leans toward center (N/S dominant).
-    const lateralStrength = (Math.abs(windX) - Math.abs(windY)) * windStrength;
-    const halfWidth = Math.max(1, state.canvasWidth / 2);
+  const owner = state.entities.get(state.ownerEntityId);
+  const ownerPosition = owner?.renderPos || owner?.snapshot?.pos;
+  const fogCenter = ownerPosition
+    ? worldToScreen(ownerPosition)
+    : { x: state.canvasWidth * 0.5, y: state.canvasHeight * 0.5 };
+  blockFogField.draw(
+    ctx,
+    state.canvasWidth,
+    state.canvasHeight,
+    actualFog,
+    fogCenter,
+  );
 
-    const spawnPerSecond = 30 + 200 * actualRain;
-    const spawnCount = Math.round(
-      spawnPerSecond * dt * (0.7 + Math.random() * 0.6),
-    );
-    const spawnMargin = 300;
-    for (let i = 0; i < spawnCount; i += 1) {
-      const isFar = Math.random() < 0.35;
-      const x =
-        Math.random() * (state.canvasWidth + spawnMargin * 2) - spawnMargin;
-      const p = clamp((x - halfWidth) / halfWidth, -1, 1);
-      const leanX = clamp(p * lateralStrength, -1, 1);
-      rainDrops.push({
-        layer: isFar ? "far" : "near",
-        x,
-        y: -Math.random() * 500,
-        leanX,
-        speed: isFar
-          ? 720 + Math.random() * 220
-          : 1000 + Math.random() * 360 + windSpeed * 45,
-        length: isFar
-          ? 8 + Math.random() * 5
-          : 16 + Math.random() * 8 + windSpeed * 0.8,
-        targetY:
-          state.canvasHeight * 0.5 +
-          Math.random() * (state.canvasHeight * 0.6 + 60),
-      });
-    }
-    const cap = Math.floor(160 + 360 * actualRain);
-    if (rainDrops.length > cap) rainDrops.splice(0, rainDrops.length - cap);
-
-    // Advance every drop once per frame along its fixed tilt.
-    for (let i = 0; i < rainDrops.length; i += 1) {
-      const drop = rainDrops[i];
-      drop.y += drop.speed * dt;
-      drop.x += drop.speed * drop.leanX * dt;
-    }
-
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-
-    // Far layer: thin + dim, behind.
-    ctx.strokeStyle = `rgba(178, 200, 230, ${0.06 + 0.12 * actualRain})`;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let i = 0; i < rainDrops.length; i += 1) {
-      const drop = rainDrops[i];
-      if (drop.layer !== "far") continue;
-      ctx.moveTo(drop.x, drop.y - drop.length);
-      ctx.lineTo(drop.x - drop.leanX * drop.length, drop.y);
-    }
-    ctx.stroke();
-
-    // Near layer: chunky + brighter, in front.
-    ctx.strokeStyle = `rgba(184, 204, 232, ${0.14 + 0.22 * actualRain})`;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (let i = 0; i < rainDrops.length; i += 1) {
-      const drop = rainDrops[i];
-      if (drop.layer !== "near") continue;
-      ctx.moveTo(drop.x, drop.y - drop.length);
-      ctx.lineTo(drop.x - drop.leanX * drop.length, drop.y);
-    }
-    ctx.stroke();
-
-    // Cull drops that reached their random landing spot, or ran off a side.
-    const sideMargin = 400;
-    for (let i = rainDrops.length - 1; i >= 0; i -= 1) {
-      const drop = rainDrops[i];
-      if (
-        drop.y >= drop.targetY ||
-        drop.x < -sideMargin ||
-        drop.x > state.canvasWidth + sideMargin
-      ) {
-        rainDrops.splice(i, 1);
-      }
-    }
-  }
+  rainField.draw(
+    ctx,
+    state.canvasWidth,
+    state.canvasHeight,
+    actualRain,
+    env.windDirection,
+    env.windSpeed,
+  );
 
   ctx.restore();
 
-  // (4) Cohesive atmospheric tint via a source-over cool wash. Earlier
-  // iterations used a multiply blend here; combined with the fog vignette's
-  // anti-aliased radial edges the multiply mode produced visible shimmer
-  // whenever the camera moved (a known browser artifact for non-trivial
-  // blends over sub-pixel content). A source-over wash is fully deterministic
-  // and gives the same "world feels damp" read.
-  const tintAlpha = clamp(actualRain * 0.06, 0, 0.09);
+  // A nearly invisible cool lift separates the rain strokes from a green map
+  // without turning the whole screen blue.
+  const tintAlpha = clamp(actualRain * 0.028, 0, 0.04);
   if (tintAlpha > 0.005) {
     ctx.save();
     ctx.filter = "none";
     ctx.globalCompositeOperation = "source-over";
     ctx.globalAlpha = 1;
-    ctx.fillStyle = `rgba(178, 198, 222, ${tintAlpha})`;
+    ctx.fillStyle = `rgba(170, 184, 184, ${tintAlpha})`;
     ctx.fillRect(0, 0, state.canvasWidth, state.canvasHeight);
     ctx.restore();
   }
@@ -9532,6 +9908,16 @@ function drawWeatherEffects(now = performance.now()) {
 
 export function drawScene(now = performance.now()) {
   noteFrameDrawn(now);
+  currentRenderFrameId = (currentRenderFrameId + 1) >>> 0;
+  setSpriteRasterFrameTime(now);
+  if (devDebugUi?.isOpen()) {
+    if (!state.connected || !state.authenticated) devDebugUi.close();
+    else {
+      try { devDebugUi.render(now); }
+      catch (error) { devDebugUi.close(); addConsoleLine(`Dev Debug render: ${error.message}`, "error"); }
+      return;
+    }
+  }
   currentRenderTimeSeconds = now / 1000;
   // Per-phase timing, only while the render benchmark is active.
   let phaseStart = benchPhaseTimes ? performance.now() : 0;
@@ -9547,7 +9933,8 @@ export function drawScene(now = performance.now()) {
     : null;
 
   updateBloodSacrificeScreenShake(now);
-  drawGrid();
+  if (getClientConfigValue(state.clientConfig, "screen_shake") < 0.5) state.screenShake = { x: 0, y: 0 };
+  drawGrid(now);
   mark?.("grid");
   const scale = worldScale();
   const passes = collectSceneRenderPasses({
@@ -9563,6 +9950,13 @@ export function drawScene(now = performance.now()) {
   const hallucinationOwner = activeOwnerHallucinationEntity();
   mark?.("collect");
 
+  if (state.authenticated && !ui.mobileControls?.isMobileMode() && state.movementMode === "mouse" && state.mouse.seen && !state.mouse.inUi &&
+      !isMainPanelOpen() && !state.consoleOpen && !isOwnerDead() &&
+      getClientConfigValue(state.clientConfig, "movement_arrow") >= 0.5) {
+    const owner = state.entities.get(state.ownerEntityId);
+    if (owner?.renderPos) drawMovementGuide(ctx, worldToScreen(owner.renderPos), state.mouse, worldLengthToScreen(owner.snapshot.radius));
+  }
+
   drawEntityPass(passes.ground, hallucinationOwner);
   drawEntityPass(passes.underlay, hallucinationOwner);
   drawEntityPass(passes.world, hallucinationOwner);
@@ -9572,10 +9966,9 @@ export function drawScene(now = performance.now()) {
     drawEntityWithHallucinationGhosts(passes.owner, hallucinationOwner);
   drawEntityPass(passes.overlays, hallucinationOwner);
   mark?.("petals");
-  drawHurtFlashPass();
-  drawHurtFlashOverlays();
   mark?.("hurtFlash");
   drawParticlePass();
+  burrowParticles.draw(ctx, scale, worldToScreen({ x: 0, y: 0 }));
   if (state.weatherEnabled) {
     drawDiurnalLighting(now);
     drawWeatherEffects(now);
@@ -9585,13 +9978,25 @@ export function drawScene(now = performance.now()) {
   drawCheckpointZoneOutlines();
   mark?.("weather");
   drawSceneHitboxes(passes);
-  drawBossBars(passes.bosses);
+  combatFeedback.draw(ctx, now, worldToScreen, drawOutlinedText,
+    getClientConfigValue(state.clientConfig, "damage_numbers") >= 0.5);
+  drawBossBars(passes.bosses, now);
   mark?.("bossBars");
-  drawSelfHud();
-  drawSquadHud();
+  drawSelfHud(now);
+  drawSquadHud(now);
   mark?.("hud");
-  drawMinimap();
+  drawMinimap(now);
   updateDeathOverlay();
+  if (isOwnerDead() && !state.deathOverlayClosed) drawDeathPortrait(deathPortrait, ownerDeathSummary, now, {
+    getImage: (type, rarity) => livePetalIconImage(type, rarity),
+    getCopyCount: (type, rarity) => effectivePetalCardCopy(type, rarity),
+    getAttachmentImage: kind => {
+      if (kind === "bandage") return bandageOverlayImage();
+      if (kind === "antennae") return antennaeOverlayImage();
+      if (kind === "douli") return douliOverlayImage();
+      return null;
+    },
+  });
   mark?.("minimap");
 }
 
@@ -9888,32 +10293,41 @@ function updateDebugInfo() {
   debugInfo.textContent = [
     `pos (${debugNumber(ownerPos?.x)}, ${debugNumber(ownerPos?.y)})  id ${state.ownerEntityId || "-"}  hp ${debugNumber(ownerSnap?.hpPercent * 100, 0)}%`,
     `cam (${debugNumber(state.camera.x)}, ${debugNumber(state.camera.y)})  mouse ${mouseWorld ? `(${debugNumber(mouseWorld.x)}, ${debugNumber(mouseWorld.y)})` : "(-, -)"}`,
-    `view ${debugNumber(state.viewRadius, 0)}  scale ${debugNumber(worldScale(), 4)}  fps ${debugNumber(state.fps, 1)}  dpr ${debugNumber(state.dpr, 2)}  pred err ${debugNumber(prediction.errorDistance)} mmt ${debugNumber(prediction.speedScale, 2)} tick ${debugNumber(prediction.tickScale, 2)} pkt ${debugNumber((prediction.snapshotInterval || 0) * 1000, 0)}ms stale ${debugNumber(prediction.staleTime, 2)}${prediction.snapped ? " snap" : ""}`,
-    `entities ${state.entities.size}/${currentVisibleEntityCount}  render load ${currentRenderLoad}  map ${map?.path || "-"}  chunks ${chunkCache}/${visibleChunks} q${chunkQueue} ${chunkProfile}  input ${inputMode}  ws ${socketState}`,
+    `view ${debugNumber(state.viewRadius, 0)} (${viewZoomPercent()}%)  scale ${debugNumber(worldScale(), 4)}  fps ${debugNumber(state.fps, 1)}  dpr ${debugNumber(state.dpr, 2)}  pred err ${debugNumber(prediction.errorDistance)} mmt ${debugNumber(prediction.speedScale, 2)} tick ${debugNumber(prediction.tickScale, 2)} pkt ${debugNumber((prediction.snapshotInterval || 0) * 1000, 0)}ms stale ${debugNumber(prediction.staleTime, 2)}${prediction.snapped ? " snap" : ""}`,
+    `entities ${state.entities.size}/${currentVisibleEntityCount}  render load ${currentRenderLoad}  map ${map?.path || "-"}  chunks ${chunkCache}/${visibleChunks} q${chunkQueue} ${chunkProfile}  raster ${(sceneRasterBudget.bytes / 1048576).toFixed(1)}/${sceneRasterBudget.limitBytes / 1048576}MiB  input ${inputMode}  ws ${socketState}`,
   ].join("\n");
 }
 
 function tick(now) {
-  const dt = Math.min(0.05, Math.max(0, (now - state.lastFrameTime) / 1000));
+  const frameStart = performance.now();
+  const elapsed = Math.max(0, (now - state.lastFrameTime) / 1000);
+  const timing = getRenderFrameTiming(elapsed);
+  const dt = timing.dt;
   state.lastFrameTime = now;
   if (dt > 0) {
-    const instantFps = 1 / dt;
+    const instantFps = 1 / Math.max(elapsed, 0.001);
     state.fps =
       state.fps <= 0 ? instantFps : state.fps + (instantFps - state.fps) * 0.08;
   }
   flushPendingSnapshot();
   if (benchRun) benchFrameUpdate(now);
   updateViewRadius(now);
+  updateViewZoom(dt);
+  ui.mobileControls?.setBlocked(state.devDebugOpen || isMainPanelOpen() || state.chatOpen ||
+    state.consoleOpen || isEmailBindingPanelOpen() || isTyping() || isOwnerDead());
   flushInput(dt);
   updateParticles(dt);
-  updateRenderPositions(dt);
+  burrowParticles.step(dt);
+  // Catch up a short hitch in bounded substeps, instead of throwing away
+  // elapsed time and snapping back to the server on the next snapshot.
+  for (let i = 0; i < timing.steps; i++) updateRenderPositions(timing.step);
   ui.mysteryAudio.updateProximity({
     enabled: state.authenticated,
     owner: state.entities.get(state.ownerEntityId),
     entities: state.entities.values(),
     viewRadius: state.viewRadius,
   });
-  if (!state.mapLoadPromise) {
+  if (state.devDebugOpen || !state.mapLoadPromise) {
     const drawStart = performance.now();
     drawScene(now);
     const drawCostMs = performance.now() - drawStart;
@@ -9922,7 +10336,8 @@ function tick(now) {
   }
   updateChatVisibility(now);
   updateDebugInfo();
-  updateAdaptiveRenderScale(!!benchRun);
+  noteRenderFrameCost(performance.now() - frameStart + takeRenderPreparationCost());
+  if (!state.devDebugOpen) updateAdaptiveRenderScale(!!benchRun);
 
   requestAnimationFrame(tick);
 }
@@ -9952,6 +10367,8 @@ const inputCtx = {
   toggleConsole: () => toggleConsole(),
   toggleFullscreen: () => void toggleFullscreen(),
   toggleMinimap: () => toggleMinimapMode(),
+  zoomIn: () => adjustViewZoomPercent(1),
+  zoomOut: () => adjustViewZoomPercent(-1),
   closeTopPanel: () => closeTopPanel(),
   openChat: (prefix) => openChat(prefix),
   quickSwapAllSlots: () => quickSwapAllSlots(),
@@ -9979,45 +10396,6 @@ function closeTopPanel() {
   return toggleSettings(true);
 }
 
-let softKeyboardShiftTimer = null;
-
-function softKeyboardApplyShift() {
-  if (!document.body.classList.contains("mobile-ui")) return;
-  const el = document.activeElement;
-  if (!el || !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
-    softKeyboardClearShift();
-    return;
-  }
-  const rect = el.getBoundingClientRect();
-  const vv = window.visualViewport;
-  const viewportBottom = vv ? vv.height : state.canvasHeight;
-  if (rect.bottom > viewportBottom - 12) {
-    const shift = rect.bottom - viewportBottom + 12;
-    document.body.style.setProperty("--input-shift", `${-shift}px`);
-    document.body.classList.add("input-shift-active");
-  } else {
-    softKeyboardClearShift();
-  }
-}
-
-function softKeyboardClearShift() {
-  document.body.classList.remove("input-shift-active");
-  document.body.style.removeProperty("--input-shift");
-}
-
-function bindSoftKeyboardViewport() {
-  window.visualViewport?.addEventListener("resize", () => {
-    if (softKeyboardShiftTimer) clearTimeout(softKeyboardShiftTimer);
-    // Keyboard heights animate in; re-evaluate slightly after it settles.
-    softKeyboardShiftTimer = setTimeout(softKeyboardApplyShift, 120);
-  });
-  window.visualViewport?.addEventListener("scroll", () => {
-    if (softKeyboardShiftTimer) clearTimeout(softKeyboardShiftTimer);
-    softKeyboardShiftTimer = setTimeout(softKeyboardApplyShift, 120);
-  });
-  document.addEventListener("focusout", softKeyboardClearShift);
-}
-
 function setupEvents() {
   window.addEventListener("keydown", () => ui.mysteryAudio.unlock(), {
     capture: true,
@@ -10028,8 +10406,14 @@ function setupEvents() {
     saveSettings();
     if (state.settingsOpen) ui.settingsUi?.render();
   });
-  bindSoftKeyboardViewport();
+  bindMobileViewport({ onTyping: () => {
+    releaseInputHolds(); ui.mobileControls?.reset();
+    sendNeutralGameplayState({ includeInput: true });
+  } });
+  document.getElementById("mobileConsoleCloseBtn")?.addEventListener("click", () => toggleConsole(false));
   const slotCollapseBtn = document.getElementById("slotCollapseBtn");
+  document.body.classList.toggle("slots-collapsed", state.slotPanelCollapsed);
+  slotCollapseBtn?.setAttribute("aria-pressed", String(state.slotPanelCollapsed));
   slotCollapseBtn?.addEventListener("click", () => {
     state.slotPanelCollapsed = !state.slotPanelCollapsed;
     document.body.classList.toggle("slots-collapsed", state.slotPanelCollapsed);
@@ -10093,7 +10477,14 @@ function setupEvents() {
 
   ui.mobileControls = createMobileControls({
     isUiTarget,
-    onQuickSwap: () => quickSwapAllSlots(),
+    movementSurface: canvas,
+    onAction: (action, phase) => executeBinding(mobileActionBindings, "touch", action, phase, {
+      typing: isTyping(), now: performance.now(),
+    }),
+    onSurfaceTap: event => {
+      if (!isMinimapPoint(eventCanvasPoint(event))) return false;
+      toggleMinimapMode(); return true;
+    },
   });
   ui.mobileControls.setMode(state.mobileControlMode);
   ui.mobileControls.setEnabled(state.authenticated);
@@ -10128,7 +10519,11 @@ function setupEvents() {
   }
 
   window.addEventListener("keydown", (event) => {
-    if (!emailBindingPanel.classList.contains("hidden")) {
+    if (state.devDebugOpen) {
+      if (event.key === "F1") { event.preventDefault(); devDebugUi?.focusConsole(); }
+      return;
+    }
+    if (isEmailBindingPanelOpen()) {
       if (event.key === "Escape" && !state.emailBindingRequired) {
         event.preventDefault();
         cancelEmailBinding();
@@ -10159,6 +10554,7 @@ function setupEvents() {
   });
 
   window.addEventListener("keyup", (event) => {
+    if (state.devDebugOpen) return;
     const key = inputKeyFromEvent(event);
     if (key === "alt") event.preventDefault();
     // Releases always run, typing or not: letting go can only ever stop an
@@ -10171,6 +10567,7 @@ function setupEvents() {
   window.addEventListener(
     "pointermove",
     (event) => {
+      if (state.devDebugOpen) return;
       updateMousePointer(event);
       syncPetalInfoTooltipHover();
       updateDrag(event);
@@ -10178,7 +10575,9 @@ function setupEvents() {
     { passive: false },
   );
   window.addEventListener("pointerup", finishDrag);
-  window.addEventListener("pointercancel", clearDrag);
+  window.addEventListener("pointercancel", event => {
+    if (state.drag?.pointerId === event.pointerId) clearDrag();
+  });
 
   // Focus loss and tab hiding both swallow the keyup that would have released
   // whatever is held, so drop every hold source explicitly.
@@ -10190,10 +10589,12 @@ function setupEvents() {
   };
   window.addEventListener("blur", releaseAllInput);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") releaseAllInput();
+    if (document.visibilityState === "hidden") { releaseAllInput(); burrowParticles.clear(); }
   });
 
   window.addEventListener("mousedown", (event) => {
+    if (state.devDebugOpen) return;
+    if (event.sourceCapabilities?.firesTouchEvents || ui.mobileControls?.isMobileMode()) return;
     updateMousePointer(event);
     if (shouldSuppressClick()) return;
     if (event.button === 0 && isMinimapPoint(eventCanvasPoint(event))) {
@@ -10211,6 +10612,7 @@ function setupEvents() {
   });
 
   window.addEventListener("mouseup", (event) => {
+    if (state.devDebugOpen) return;
     const buttonKey = mouseKeyFromButton(event.button);
     if (buttonKey)
       executeBinding(bindings, "mouse", buttonKey, "up", { now: event.timeStamp });
@@ -10221,6 +10623,8 @@ function setupEvents() {
   window.addEventListener(
     "wheel",
     (event) => {
+      if (state.devDebugOpen) return;
+      updateMousePointer(event);
       if (isUiTarget(event.target) || state.mouse.inUi) return;
       const wheelKey = event.deltaY < 0 ? "wheelup" : event.deltaY > 0 ? "wheeldown" : null;
       if (!wheelKey) return;
@@ -10253,11 +10657,7 @@ const appVersionElement = document.getElementById("appVersion");
 if (appVersionElement) appVersionElement.textContent = `v${appVersion}`;
 
 function warmPetalImage(image) {
-  if (!image || imageReady(image)) return Promise.resolve();
-  return new Promise((resolve) => {
-    image.addEventListener("load", resolve, { once: true });
-    image.addEventListener("error", resolve, { once: true });
-  });
+  return whenVisualReady(image);
 }
 
 // Pre-heats every petal card visual while the loading screen is still up:
@@ -10267,6 +10667,26 @@ function warmPetalImage(image) {
 // eou_pheromone is proxy-only) are skipped.
 function warmPetalCardImages() {
   const jobs = [];
+  for (const src of [getFlowerBodyTexturePath("mecha"), getFlowerBodyTexturePath("normal"), "./assets/trap.svg?v=2"])
+    jobs.push(warmPetalImage(assetImage(src)));
+  // Start the shared equipment transforms during loading too, so equipping
+  // them doesn't first fetch/measure their SVG in the middle of gameplay.
+  jobs.push(...[bandageOverlayImage(), antennaeOverlayImage(), douliOverlayImage(), thirdEyeOverlayImage()]
+    .map(warmPetalImage));
+  jobs.push(warmPetalImage(transformedPetalImage(getPetalIconPath(petalMimicType), extractMimicLabelSvg, "mimic-label")));
+  for (const [type, crop, key] of [
+    [petalAntEggType, extractSingleAntEggLiveSvg, "single-ant-egg"],
+    [petalWaxType, extractWaxLiveSvg, "wax-petal"],
+    [petalDandelionType, extractDandelionLiveSvg, "dandelion-petal"],
+    [petalDandelionType, extractDandelionLiveSvg, "dandelion-missile"],
+    [petalTrapperType, extractTrapperLiveSvg, "trapper-petal-centered"],
+    [petalHallucinogenicMushroomType, extractHallucinogenicMushroomLiveSvg, "hallucinogenic-mushroom-centered"],
+  ]) jobs.push(warmPetalImage(livePetalIconImage(type, 0, crop, key)));
+  // Rarity-specific art uses a different URL/cache entry from its common form.
+  for (const [type, rarity] of [[petalStingerType, stingerSplitIconMinRarity], [petalCompassType, compassUltraIconMinRarity]]) {
+    jobs.push(warmPetalImage(livePetalIconImage(type, rarity)));
+    jobs.push(warmPetalImage(petalCardIconImage(type, rarity, { stripped: true })));
+  }
   for (let rarity = 0; rarity <= 18; rarity += 1) {
     const base = petalBaseImage(rarity);
     if (base) jobs.push(warmPetalImage(base));
@@ -10280,7 +10700,7 @@ function warmPetalCardImages() {
       iconId === "eou_pheromone"
     )
       continue;
-    const src = petalIconPath(petalType);
+    const src = getPetalIconPath(petalType);
     if (!src) continue;
     // Original icon (inventory / slot DOM cards).
     jobs.push(warmPetalImage(assetImage(src)));
@@ -10296,12 +10716,15 @@ function warmPetalCardImages() {
 loadSettings();
 // Kick the game fonts now so canvas text (and its raster cache) can use them
 // from the first frames instead of falling back to system fonts.
-if (document.fonts?.load) {
-  void document.fonts.load('900 16px "Florr UI"', "FlorrBt");
-  void document.fonts.load('700 16px "Sarasa SC"', "花瓣");
-  void document.fonts.load('400 16px "Sarasa SC"', "花瓣");
-}
-assetsPreloadPromise = preloadAssets().then(() => warmPetalCardImages());
+const fontPreparation = document.fonts?.load ? Promise.allSettled([
+  document.fonts.load('900 16px "Florr UI"', "FlorrBt"),
+  document.fonts.load('700 16px "Sarasa SC"', "花瓣"),
+  document.fonts.load('400 16px "Sarasa SC"', "花瓣"),
+]) : Promise.resolve();
+assetsPreloadPromise = Promise.all([
+  fontPreparation, preloadAssets(), warmPetalCardImages(), prepareBeeSprites(), prepareBeetleSprites(),
+  prepareSoldierAntSprites(), prepareSpiderSprites(), prepareGardenSprites(), prepareLadybugSprites(),
+]).then(() => primeSpriteRasters(getPreparedVisualImages()));
 void ensurePetalCopyDistanceData();
 await initI18n(state.locale);
 state.locale = getLocale();
@@ -10318,9 +10741,23 @@ initRenderScale({ addConsoleLine, saveSettings });
 // Per-connection state owned by other modules resets through this hook when
 // the socket goes away (remote close or local disconnect).
 registerConnectionReset(noteConnectionReset);
+// A craft spinning when the connection drops will never get its verdict:
+// stop the orbit and hand the staged cards back.
+registerConnectionReset(() => {
+  craftVisualGeneration += 1;
+  talentTreeUi?.reset();
+  craftResultDismissing = false;
+  if (!craftSpin.isActive()) return;
+  craftSpin.cancel();
+  if (state.craftPhase === "spinning") {
+    state.craftPhase = "staged";
+    renderCraftPanel();
+  }
+});
 // Console command handlers live in console_commands.js; they receive the
 // game-bound surface here instead of importing this module (no new cycles).
 initClientCommands({
+  requestDevDebug,
   addConsoleLine,
   saveSettings,
   refreshLocalizedUi,
@@ -10333,6 +10770,13 @@ initClientCommands({
   renderSliderPanel,
   requestRedraw,
   bindings,
+  onBindingsChanged: () => scheduleInventoryUiRender(),
+  setViewZoomPercent,
+  clearConsole: () => ui.consoleUi?.clear(),
+  onClientConfigChanged: (name) => {
+    if (name === "auto_register" || name === "all")
+      autoRegisterAttempted = false;
+  },
 });
 initFreezeWatchdog({
   addConsoleLine,

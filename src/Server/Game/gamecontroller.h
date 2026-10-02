@@ -1,7 +1,7 @@
 ﻿#pragma once
 #include "../../Shared/talent_type.h"
 #include "controller_params.h"
-#include <SFML/System/Vector2.hpp>
+#include "../../Shared/math_types.h"
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -89,7 +89,7 @@ class IGameController
     // Slot proxy (eou-style worlds): logical skill slots disguised as vanilla
     // petal slots on the wire. The snapshot service fills locked/empty player
     // slots from this when non-null.
-    virtual const CEouSlotProxy* SlotProxy() const { return nullptr; }
+    virtual const CEouSlotProxy* SlotProxy(int team_id) const { return nullptr; }
     // A pheromone petal finished its throw and reports its resting position;
     // eou controllers forward it to the bound pheromone group as its new
     // target (attack throw) or toggle the cells beneath it (defend throw).

@@ -55,7 +55,7 @@ function main() {
   }
 
   const sendFile = createFileSender(webRoot, dataRoot);
-  const server = http.createServer((req, res) => sendFile(res, req.url || "/"));
+  const server = http.createServer((req, res) => sendFile(res, req.url || "/", req.headers));
 
   server.on("upgrade", (req, socket) => {
     if (req.url && !req.url.startsWith("/ws")) {
@@ -86,6 +86,7 @@ function main() {
     const forwardServerPackets = createServerPacketForwarder(socket, {
       snapshotFlushMs,
       snapshotBacklogDropBytes,
+      onOverflow: () => closePair(socket, tcp),
     });
     tcp.on("data", (data) => forwardServerPackets.push(data));
     tcp.on("close", () => {
@@ -100,6 +101,7 @@ function main() {
 
     const parse = createFrameParser(
       (payload) => {
+        if (!forwardServerPackets.selectProtocol(payload, tcp.writableLength || 0)) return;
         if (!tcp.destroyed) tcp.write(payload);
       },
       () => closePair(socket, tcp),

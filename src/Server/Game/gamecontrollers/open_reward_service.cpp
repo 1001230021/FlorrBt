@@ -160,7 +160,7 @@ std::vector<CPlayer*> FindDefeatCreditPlayers(COpenController& controller, CGame
     return squad;
 }
 
-std::string JoinPlayerNames(const std::vector<CPlayer*>& players)
+std::string JoinGetPlayerNames(const std::vector<CPlayer*>& players)
 {
     std::string result;
     for (CPlayer* player : players)
@@ -182,7 +182,7 @@ void ReportMobDefeat(COpenController& controller, CGameWorld& world, const CMobB
         return;
 
     std::string action = "has been defeated";
-    const std::string credited_players = JoinPlayerNames(FindDefeatCreditPlayers(controller, world, mob));
+    const std::string credited_players = JoinGetPlayerNames(FindDefeatCreditPlayers(controller, world, mob));
     if (!credited_players.empty()) action += " by " + credited_players;
     context->Events().ReportMob(action, mob.GetRarity(), MobName(mob));
 }

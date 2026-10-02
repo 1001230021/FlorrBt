@@ -1,4 +1,4 @@
-﻿#include "melee_controller.h"
+#include "melee_controller.h"
 #include "../../../Shared/game_config.h"
 #include "../../HotReload/snapshot_archive.h"
 #include "../entities/mob.h"
@@ -79,7 +79,7 @@ float TargetSearchQueryRange(CMobBase* mob, float edge_range)
     if (!mob) return edge_range;
     float max_target_radius = std::max(game_config::default_flower_radius,
                                        game_config::mob_queen_ant_radius *
-                                           game_config::MobRadiusScaleForLevel(GetLevel(ERarity::Primordial)));
+                                           game_config::GetMobRadiusScaleForLevel(GetLevel(ERarity::Primordial)));
     return edge_range + std::max(0.f, mob->Radius()) + max_target_radius;
 }
 
@@ -88,6 +88,12 @@ float HornetMissileSpeed(ERarity rarity)
     int level = GetLevel(rarity);
     return game_config::mob_hornet_missile_speed *
            (1.f + game_config::mob_hornet_missile_speed_level_step * static_cast<float>(level));
+}
+
+float ComputeHornetSkill2OrbitRadius(const CMobBase& mob)
+{
+    return std::max(mob.Radius() * game_config::mob_hornet_skill2_orbit_radius_multiplier,
+                    game_config::entity_collision_epsilon);
 }
 
 float HornetSkill2AngularSpeed(float speed, float orbit_radius)
@@ -1836,8 +1842,7 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
                 forward = { 1.f, 0.f };
             florrbt::Vector2f left = { -forward.y, forward.x };
             float side = CheckChance(0.5) ? -1.f : 1.f;
-            m_skill2_orbit_radius = std::max(mob->Radius() * game_config::mob_hornet_skill2_orbit_radius_multiplier,
-                                             game_config::entity_collision_epsilon);
+            m_skill2_orbit_radius = ComputeHornetSkill2OrbitRadius(*mob);
             m_skill2_orbit_center = mob->Pos() + left * (side * m_skill2_orbit_radius);
             m_skill2_orbit_angle =
                 std::atan2(mob->Pos().y - m_skill2_orbit_center.y, mob->Pos().x - m_skill2_orbit_center.x);
@@ -1856,6 +1861,10 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
         }
         return;
     case EState::Skill2Dash: {
+        // Recompute from the live body size, including a restored old orbit or
+        // a runtime config change. The drift correction below reanchors the
+        // center at the current position, so changing radius cannot teleport it.
+        m_skill2_orbit_radius = ComputeHornetSkill2OrbitRadius(*mob);
         const SMobStats* stats = mob->GetFinalStats();
         float speed = stats
                           ? stats->max_velocity * game_config::mob_hornet_skill2_move_speed_multiplier
@@ -2220,7 +2229,7 @@ bool CSpecialHornetController::FireSkill2Missile(CMobBase* mob, const florrbt::V
         std::make_unique<CMissile>(mob->GameWorld(), pos, radius, rear_direction, HornetMissileSpeed(missile_rarity),
                                    damage, health, game_config::mob_hornet_skill2_missile_lifetime, mob);
     missile->Team() = mob->Team();
-    missile->Mass() = game_config::MobProjectileMassForLevel(GetLevel(missile_rarity));
+    missile->Mass() = game_config::GetMobProjectileMassForLevel(GetLevel(missile_rarity));
     return mob->GameWorld()->InsertEntity(std::move(missile)) != nullptr;
 }
 
@@ -2388,7 +2397,7 @@ float CSpecialHornetController::HornetMissileRadius(CMobBase* mob, ERarity)
 {
     if (!mob) return game_config::mob_hornet_missile_radius;
     int level = std::max(1, GetLevel(mob->GetRarity()) - 1);
-    float radius_scale = game_config::MobRadiusScaleForLevel(level);
+    float radius_scale = game_config::GetMobRadiusScaleForLevel(level);
     return game_config::mob_hornet_missile_radius * radius_scale;
 }
 
@@ -2401,7 +2410,7 @@ float CSpecialHornetController::HornetMissileDamage(ERarity rarity)
 float CSpecialHornetController::HornetMissileHealth(ERarity rarity)
 {
     return game_config::mob_hornet_missile_base_health *
-           game_config::MobHealthScaleForLevel(GetLevel(rarity));
+           game_config::GetMobHealthScaleForLevel(GetLevel(rarity));
 }
 
 // ============ Bumble Bee ============
@@ -2421,8 +2430,8 @@ void CBumbleBeeController::SpawnPollen(CMobBase* mob) const
     float damage = game_config::mob_bumblebee_pollen_base_damage *
                    std::pow(game_config::mob_damage_scale_base, static_cast<float>(level - 1));
     float health = game_config::mob_bumblebee_pollen_base_health *
-                   game_config::MobHealthScaleForLevel(level);
-    float mass = game_config::MobProjectileMassForLevel(level);
+                   game_config::GetMobHealthScaleForLevel(level);
+    float mass = game_config::GetMobProjectileMassForLevel(level);
     float radius = std::max(1.f, mob->Radius() * game_config::mob_bumblebee_pollen_radius_multiplier);
 
     auto pollen = std::make_unique<CPollenProjectile>(mob->GameWorld(), mob->Pos(), radius, damage, health,

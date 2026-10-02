@@ -4,6 +4,8 @@ import { clientRuntimeConfig } from "./client_config.js";
 import { rarityExotic, rarityPrimordial } from "./game_ids.js";
 import { t } from "./i18n.js";
 import { createTextInput } from "./text_input.js";
+import { runMotionPhase, setAnimatedVisibility } from "./ui_motion.js";
+import { clientCommandSpecs } from "./client_commands_spec.js";
 
 const {
   chatMaxHistory,
@@ -30,6 +32,20 @@ export function createChatUi({
 } = {}) {
   let composeKind = composeKinds[0];
   let textInput = null;
+  const commandHint = document.createElement("div");
+  commandHint.className = "chat-command-hint hidden";
+  chatPanel.insertBefore(commandHint, chatComposer);
+  let completion = null;
+  const refreshCommandHint = () => {
+    const value = chatInput.value.trimStart();
+    const word = value.startsWith("/") ? value.slice(1).split(/\s+/)[0].toLowerCase() : "";
+    const matches = word ? clientCommandSpecs.filter(spec => spec.name.startsWith(word) || spec.aliases?.some(alias => alias.startsWith(word))) : [];
+    const exact = matches.find(spec => spec.name === word || spec.aliases?.includes(word));
+    completion = exact || matches[0] || null;
+    commandHint.classList.toggle("hidden", !state.chatOpen || !completion);
+    commandHint.textContent = completion ? `/${completion.name} ${completion.params || ""} — ${t(completion.help)}` : "";
+  };
+  chatInput.addEventListener("input", refreshCommandHint);
 
   const refreshComposer = () => {
     const channel = chatFlagLabel(composeKind);
@@ -92,9 +108,14 @@ export function createChatUi({
   const close = ({ focus = true } = {}) => {
     state.chatOpen = false;
     textInput.clear();
-    chatComposer.classList.add("hidden");
-    chatChannels.classList.add("hidden");
+    refreshCommandHint();
+    setAnimatedVisibility(chatComposer, false, { duration: 150 });
+    setAnimatedVisibility(chatChannels, false, { duration: 150 });
     chatPanel.classList.remove("open");
+    runMotionPhase(chatPanel, "exiting", {
+      classPrefix: "chat-panel",
+      duration: 180,
+    });
     render();
     if (focus) focusTarget?.focus?.();
   };
@@ -104,10 +125,15 @@ export function createChatUi({
     beforeOpen?.();
     state.chatOpen = true;
     chatPanel.classList.add("open");
-    chatChannels.classList.remove("hidden");
+    runMotionPhase(chatPanel, "entering", {
+      classPrefix: "chat-panel",
+      duration: 180,
+    });
+    setAnimatedVisibility(chatChannels, true, { duration: 150 });
     textInput.setValue(prefix);
+    refreshCommandHint();
     refreshComposer();
-    chatComposer.classList.remove("hidden");
+    setAnimatedVisibility(chatComposer, true, { duration: 150 });
     textInput.focus({ cursor: "end" });
     render();
   };
@@ -128,6 +154,12 @@ export function createChatUi({
     onKeyDown: (event) => {
       if (event.key !== "Tab") return false;
       event.preventDefault();
+      if (completion && chatInput.value.trimStart().startsWith("/") && !chatInput.value.trim().includes(" ")) {
+        textInput.setValue(`/${completion.name} `);
+        textInput.focus({ cursor: "end" });
+        refreshCommandHint();
+        return true;
+      }
       cycleChannel(event.shiftKey ? -1 : 1);
       return true;
     },
@@ -148,7 +180,7 @@ export function createChatUi({
   };
 
   const setVisible = (visible) => {
-    chatPanel?.classList.toggle("hidden", !visible);
+    setAnimatedVisibility(chatPanel, visible, { duration: 220 });
     if (!visible) close({ focus: false });
   };
 
@@ -161,6 +193,7 @@ export function createChatUi({
 
   const refreshTranslations = () => {
     refreshComposer();
+    refreshCommandHint();
     render();
   };
 

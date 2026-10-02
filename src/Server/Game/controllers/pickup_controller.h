@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "../../../Shared/game_config.h"
 #include <cstdint>
 

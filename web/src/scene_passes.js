@@ -39,7 +39,9 @@ export function collectSceneRenderPasses({
       continue;
     }
 
-    if (entityHasState(snap, stateDigging)) {
+    if (isDropEntity(snap.entityType) || entityHasState(snap, stateDigging)) {
+      // Loose cards lie on the terrain, not on top of mobs whose IDs happen
+      // to sort earlier. Their fade/rotation stays in this same layer.
       passes.ground.push(entity);
     } else if (
       snap.entityType === spiderWebZoneType ||

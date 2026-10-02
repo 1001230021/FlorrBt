@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>FlorrBt v1.0</title>
     <link
       rel="preload"
@@ -26,6 +26,8 @@
       crossorigin
     />
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./mobile.css" />
+    <link rel="stylesheet" href="./dev_debug.css" />
   </head>
   <body>
     <canvas
@@ -172,18 +174,8 @@
         >
           A mysterious entity
         </div>
-        <div class="death-loot-title" data-i18n="ui.death.collected">
-          Collected this run
-        </div>
-        <div
-          id="deathLoot"
-          class="death-loot"
-          aria-label="Collected petals"
-          data-i18n-aria-label="ui.death.collectedAriaLabel"
-        ></div>
-        <div class="death-revive-note" data-i18n="ui.death.reviveNote">
-          You'll be revived soon.
-        </div>
+        <canvas id="deathPortrait" class="death-portrait" width="176" height="176"
+          aria-label="Your defeated flower and equipped petals" data-i18n-aria-label="ui.death.portrait"></canvas>
         <div class="death-actions">
           <button
             id="reviveBtn"
@@ -191,7 +183,7 @@
             type="button"
             data-i18n="ui.death.revive"
           >
-            Revive
+            Continue
           </button>
           <button
             id="deathCloseBtn"
@@ -203,6 +195,11 @@
           </button>
         </div>
       </div>
+      <aside class="death-loot-panel">
+        <div class="death-loot-title" data-i18n="ui.death.collected">Collected this run</div>
+        <div id="deathLoot" class="death-loot" aria-label="Collected petals"
+          data-i18n-aria-label="ui.death.collectedAriaLabel"></div>
+      </aside>
     </section>
 
     <section
@@ -276,8 +273,8 @@
         id="codexBtn"
         class="top-action top-action-codex"
         type="button"
-        title="Bestiary"
-        aria-label="Bestiary"
+        title="Mob Gallery"
+        aria-label="Mob Gallery"
         aria-pressed="false"
         data-i18n-title="ui.quick.bestiaryTitle"
         data-i18n-aria-label="ui.quick.bestiary"
@@ -340,6 +337,7 @@
           autocomplete="off"
           spellcheck="false"
           maxlength="180"
+          enterkeyhint="send"
           placeholder="Message"
           data-i18n-placeholder="ui.chat.messagePlaceholder"
         />
@@ -374,10 +372,12 @@
     </section>
 
     <section id="consolePanel" class="console-panel ui">
+      <button id="mobileConsoleCloseBtn" class="mobile-console-close" type="button" data-i18n="ui.mobile.close">Close</button>
       <div id="debugInfo" class="console-debug"></div>
       <input
         id="consoleInput"
         class="console-input"
+        enterkeyhint="send"
         autocomplete="off"
         spellcheck="false"
         maxlength="240"
@@ -396,6 +396,8 @@
           class="slot-collapse-btn"
           type="button"
           aria-pressed="false"
+          aria-label="Show or hide reserve petals"
+          data-i18n-aria-label="ui.mobile.toggleReserve"
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path
@@ -408,7 +410,15 @@
           </svg>
         </button>
       </div>
-      <div id="secondarySlots" class="slot-row secondary"></div>
+      <div class="slot-row-wrap secondary-wrap">
+        <span
+          id="slotSwapHint"
+          class="slot-key-hint slot-swap-hint"
+          aria-hidden="true"
+        ></span>
+        <div id="secondarySlots" class="slot-row secondary"></div>
+      </div>
+      <div id="slotKeyHints" class="slot-key-hints" aria-hidden="true"></div>
     </section>
 
     <section
@@ -460,6 +470,7 @@
           x
         </button>
       </div>
+      <div class="craft-workbench">
       <div
         id="craftStage"
         class="craft-stage"
@@ -501,6 +512,10 @@
         <button id="craftOnceBtn" type="button" data-i18n="ui.craft.once">
           Craft
         </button>
+        <div id="craftChance" class="craft-chance"></div>
+      </div>
+      </div>
+      <div class="craft-notes">
         <div
           id="craftSelection"
           class="craft-selection"
@@ -508,7 +523,7 @@
         >
           Combine 5 of the same petal to craft an upgrade
         </div>
-        <div id="craftChance" class="craft-chance"></div>
+        <div class="craft-failure-note" data-i18n="ui.craft.failureHint">Failure consumes petals</div>
       </div>
       <div id="craftList" class="craft-list" data-scrollbar></div>
     </section>
@@ -529,11 +544,10 @@
       <div
         id="talentPoints"
         class="talent-points"
-        data-i18n="ui.talents.points"
       >
-        Talent Points: 0
+        0 TP
       </div>
-      <div id="talentTree" class="talent-tree" data-scrollbar></div>
+      <div id="talentTree" class="talent-tree"></div>
     </section>
 
     <section
@@ -569,11 +583,11 @@
     <section
       id="codexPanel"
       class="game-panel codex-panel ui"
-      aria-label="Bestiary"
+      aria-label="Mob Gallery"
       data-i18n-aria-label="ui.codex.title"
     >
       <div class="panel-title">
-        <span data-i18n="ui.codex.title">Bestiary</span>
+        <span data-i18n="ui.codex.title">Mob Gallery</span>
         <button
           id="codexCloseBtn"
           class="panel-close"
@@ -581,7 +595,7 @@
           aria-label="Close bestiary"
           data-i18n-aria-label="ui.codex.close"
         >
-          x
+          ×
         </button>
       </div>
       <div id="codexGrid" class="codex-grid" data-scrollbar></div>

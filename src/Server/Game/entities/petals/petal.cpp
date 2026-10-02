@@ -9,7 +9,7 @@
 
 namespace
 {
-bool IsLiveSlotPetal(const CPetal* petal, const CFlower* flower)
+bool IsActiveSlotPetal(const CPetal* petal, const CFlower* flower)
 {
     if (!petal || !flower) return false;
 
@@ -18,32 +18,32 @@ bool IsLiveSlotPetal(const CPetal* petal, const CFlower* flower)
     return world->GetEntity(petal->Id()) == petal && !petal->IsMarkedForDes();
 }
 
-const CPetalPrototype* RuntimePrototypeForSlot(const CPetalSlot* slot, const CFlower* flower)
+const CPetalPrototype* GetRuntimeSlotPrototype(const CPetalSlot* slot, const CFlower* flower)
 {
     if (!slot || !slot->m_p_proto || !slot->m_p_proto->m_p_behavior) return nullptr;
 
     const CPetalPrototype* runtime =
-        slot->m_p_proto->m_p_behavior->GetRuntimePrototypeForSlot(slot->m_stored_rarity, slot, flower);
+        slot->m_p_proto->m_p_behavior->GetRuntimeSlotPrototype(slot->m_stored_rarity, slot, flower);
     if (runtime && runtime->m_p_behavior && runtime->m_factory) return runtime;
     return slot->m_p_proto;
 }
 
-const CPetalPrototype* ActivePrototypeForPetal(const CPetalSlot* slot, const CPetal* petal, const CFlower* flower)
+const CPetalPrototype* GetActivePetalPrototype(const CPetalSlot* slot, const CPetal* petal, const CFlower* flower)
 {
     if (petal)
     {
         const CPetalPrototype* active = FindPetalPrototype(petal->GetPetalType());
         if (active && active->m_p_behavior) return active;
     }
-    return RuntimePrototypeForSlot(slot, flower);
+    return GetRuntimeSlotPrototype(slot, flower);
 }
 
-SPetalStats PetalStatsForSlot(const CPetalSlot* slot, const CFlower* flower)
+SPetalStats GetSlotPetalStats(const CPetalSlot* slot, const CFlower* flower)
 {
     if (!slot || !slot->m_p_proto || !slot->m_p_proto->m_p_behavior) return {};
 
-    SPetalStats stats = slot->m_p_proto->m_p_behavior->GetPetalStatsForSlot(slot->m_stored_rarity, slot, flower);
-    const CPetalPrototype* runtime_proto = RuntimePrototypeForSlot(slot, flower);
+    SPetalStats stats = slot->m_p_proto->m_p_behavior->GetSlotPetalStats(slot->m_stored_rarity, slot, flower);
+    const CPetalPrototype* runtime_proto = GetRuntimeSlotPrototype(slot, flower);
     NormalizePetalStatsPerCopy(stats);
 
     CFlower* mutable_flower = const_cast<CFlower*>(flower);
@@ -65,7 +65,7 @@ SPetalStats PetalStatsForSlot(const CPetalSlot* slot, const CFlower* flower)
     return stats;
 }
 
-void ApplyPetalStatsForSlot(CPetal* petal, SPetalStats stats, CFlower* flower, bool refill_health)
+void ApplySlotPetalStats(CPetal* petal, SPetalStats stats, CFlower* flower, bool refill_health)
 {
     if (!petal) return;
 
@@ -89,17 +89,17 @@ void ApplyPetalStatsForSlot(CPetal* petal, SPetalStats stats, CFlower* flower, b
                                                  petal->m_final_petal_stats.health);
 }
 
-EPetalBonusMode BonusModeForSlot(const CPetalSlot* slot, const CFlower* flower)
+EPetalBonusMode GetSlotBonusMode(const CPetalSlot* slot, const CFlower* flower)
 {
     if (!slot || !slot->m_p_proto || !slot->m_p_proto->m_p_behavior) return EPetalBonusMode::AliveOnly;
-    return slot->m_p_proto->m_p_behavior->GetBonusModeForSlot(slot->m_stored_rarity, slot, flower);
+    return slot->m_p_proto->m_p_behavior->GetSlotBonusMode(slot->m_stored_rarity, slot, flower);
 }
 
-void ClearLivePetalFromSlot(const CPetalSlot* slot, CPetal* petal, CFlower* flower)
+void ClearSlotPetal(const CPetalSlot* slot, CPetal* petal, CFlower* flower)
 {
     if (!petal) return;
 
-    const CPetalPrototype* active_proto = ActivePrototypeForPetal(slot, petal, flower);
+    const CPetalPrototype* active_proto = GetActivePetalPrototype(slot, petal, flower);
     if (active_proto && active_proto->m_p_behavior)
         active_proto->m_p_behavior->OnPetalCleared(petal, slot ? slot->m_stored_rarity : petal->m_rarity, flower);
     else if (slot && slot->m_p_proto && slot->m_p_proto->m_p_behavior)
@@ -115,6 +115,7 @@ CPetal::CPetal(float r, CFlower* owner, int slot, SPetalStats petal_stats, EPeta
       m_base_petal_stats(petal_stats), m_final_petal_stats(petal_stats), m_petal_type(type),
       m_max_slot_num(petal_stats.copy), m_slot_index(slot)
 {
+    SetPetalType(type);
     SkipWorldTick() = true;
     Mass() = petal_stats.mass;
     Health() = petal_stats.health;
@@ -296,6 +297,8 @@ void CThrownPetal::Tick(float dt)
 
 void CEouPheromonePetal::OnThrowStopped()
 {
+    m_thrown = false;
+    m_lifetime = 0.f;
     CGameWorld* world = GameWorld();
     IGameController* controller = world ? world->GetController() : nullptr;
     if (controller) controller->OnPheromonePetalStopped(*world, m_team_id, m_group_id, Pos(), m_throw_was_defend);
@@ -303,7 +306,7 @@ void CEouPheromonePetal::OnThrowStopped()
 
 void CPetalSlot::SpawnCopy(int copy_index, CFlower* flower)
 {
-    const CPetalPrototype* runtime_proto = RuntimePrototypeForSlot(this, flower);
+    const CPetalPrototype* runtime_proto = GetRuntimeSlotPrototype(this, flower);
     if (!flower || !m_p_proto || !m_p_proto->m_p_behavior || !runtime_proto || !runtime_proto->m_factory) return;
     if (copy_index < 0 || copy_index >= static_cast<int>(m_p_petals.size())) return;
     if (m_p_petals[copy_index] != nullptr || m_banned) return;
@@ -313,7 +316,7 @@ void CPetalSlot::SpawnCopy(int copy_index, CFlower* flower)
 
     petal->m_copy_index = copy_index;
     petal->m_max_slot_num = static_cast<int>(m_p_petals.size());
-    ApplyPetalStatsForSlot(petal.get(), PetalStatsForSlot(this, flower), flower, true);
+    ApplySlotPetalStats(petal.get(), GetSlotPetalStats(this, flower), flower, true);
     petal->Pos() = flower->Pos();
     petal->PrevPos() = flower->Pos();
     petal->m_spawn_flight_boost = true;
@@ -356,7 +359,7 @@ void CPetalSlot::ClearPetal()
     {
         if (!petal) continue;
         auto* flower = dynamic_cast<CFlower*>(petal->GetOwner());
-        ClearLivePetalFromSlot(this, petal, flower);
+        ClearSlotPetal(this, petal, flower);
     }
     m_p_petals.clear();
     m_bonus_active.clear();
@@ -399,15 +402,15 @@ void CPetalSlot::RefreshPetalState(CFlower* flower)
 {
     if (m_banned || !m_p_proto || !m_p_proto->m_p_behavior) return;
 
-    const CPetalPrototype* runtime_proto = RuntimePrototypeForSlot(this, flower);
+    const CPetalPrototype* runtime_proto = GetRuntimeSlotPrototype(this, flower);
     EPetalType runtime_type = runtime_proto ? runtime_proto->m_type : EPetalType::None;
-    SPetalStats petal_stats = PetalStatsForSlot(this, flower);
+    SPetalStats petal_stats = GetSlotPetalStats(this, flower);
     int copies = std::max(0, petal_stats.copy);
 
     if (runtime_type != m_runtime_type)
     {
         for (CPetal* petal : m_p_petals)
-            ClearLivePetalFromSlot(this, petal, flower);
+            ClearSlotPetal(this, petal, flower);
 
         m_p_petals.assign(copies, nullptr);
         m_bonus_active.assign(copies, false);
@@ -426,7 +429,7 @@ void CPetalSlot::RefreshPetalState(CFlower* flower)
     if (copies < old_copies)
     {
         for (int i = copies; i < old_copies; ++i)
-            ClearLivePetalFromSlot(this, m_p_petals[i], flower);
+            ClearSlotPetal(this, m_p_petals[i], flower);
     }
 
     if (copy_count_changed)
@@ -443,7 +446,7 @@ void CPetalSlot::RefreshPetalState(CFlower* flower)
     {
         if (!petal) continue;
         petal->m_max_slot_num = copies;
-        ApplyPetalStatsForSlot(petal, petal_stats, flower, false);
+        ApplySlotPetalStats(petal, petal_stats, flower, false);
     }
     if (copy_count_changed && flower) flower->MarkFinalStatsDirty();
 }
@@ -478,7 +481,7 @@ void CPetalSlot::Tick(float dt, CFlower* flower, bool state_refreshed)
         CPetal* petal = m_p_petals[i];
         if (!petal) continue;
         petal->m_max_slot_num = static_cast<int>(m_p_petals.size());
-        const CPetalPrototype* active_proto = ActivePrototypeForPetal(this, petal, flower);
+        const CPetalPrototype* active_proto = GetActivePetalPrototype(this, petal, flower);
         CPetalBehavior* active_behavior = active_proto && active_proto->m_p_behavior ? active_proto->m_p_behavior.get()
                                                                                      : m_p_proto->m_p_behavior.get();
         if (petal->m_hidden)
@@ -500,7 +503,7 @@ void CPetalSlot::Tick(float dt, CFlower* flower, bool state_refreshed)
             continue;
         }
 
-        if (!IsLiveSlotPetal(petal, flower))
+        if (!IsActiveSlotPetal(petal, flower))
         {
             auto* egg = dynamic_cast<CBeetleEggPetal*>(petal);
             if (egg && egg->m_has_spawned_summon)
@@ -522,7 +525,7 @@ void CPetalSlot::Tick(float dt, CFlower* flower, bool state_refreshed)
         }
 
         petal->Tick(dt);
-        if (IsLiveSlotPetal(petal, flower)) active_behavior->OnTick(petal, m_stored_rarity, flower, dt);
+        if (IsActiveSlotPetal(petal, flower)) active_behavior->OnTick(petal, m_stored_rarity, flower, dt);
 
         if (petal->m_detach_from_slot)
         {
@@ -570,10 +573,10 @@ int CPetalSlot::GetBonusCopyCount(const CFlower* flower) const
 {
     if (!m_p_proto || !m_p_proto->m_p_behavior) return 0;
 
-    SPetalStats petal_stats = PetalStatsForSlot(this, flower);
+    SPetalStats petal_stats = GetSlotPetalStats(this, flower);
     if (petal_stats.copy <= 0) return 1;
 
-    EPetalBonusMode bonus_mode = BonusModeForSlot(this, flower);
+    EPetalBonusMode bonus_mode = GetSlotBonusMode(this, flower);
     if (KeepsBonusDuringPreload(bonus_mode)) return static_cast<int>(m_bonus_active.size());
 
     if (LosesBonusDuringReload(bonus_mode))
@@ -597,7 +600,7 @@ int CPetalSlot::GetBonusCopyCount(const CFlower* flower) const
 int CPetalSlot::GetCurrentCopyCount(const CFlower* flower) const
 {
     if (!m_p_proto || !m_p_proto->m_p_behavior) return 0;
-    const CPetalPrototype* runtime_proto = RuntimePrototypeForSlot(this, flower);
+    const CPetalPrototype* runtime_proto = GetRuntimeSlotPrototype(this, flower);
     const CPetalBehavior* behavior = runtime_proto && runtime_proto->m_p_behavior ? runtime_proto->m_p_behavior.get()
                                                                                   : m_p_proto->m_p_behavior.get();
     if (behavior->IsOpen()) return static_cast<int>(m_p_petals.size());
@@ -621,5 +624,5 @@ void CPetalSlot::ApplyStatsTo(SFlowerStats& target, const CFlower* flower) const
 
 const CPetalPrototype* FindPetalPrototype(EPetalType type)
 {
-    return PetalRegistry().Find(type);
+    return GetPetalRegistry().Find(type);
 }

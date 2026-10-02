@@ -50,6 +50,9 @@ class CAntHelPvpController : virtual public COpenController
     int PlayerTeam(std::uint32_t player_id) const;
     bool HasMatchTeam(std::uint32_t player_id) const;
 
+  protected:
+    virtual bool PreservesControllerPetal(EPetalType) const { return false; }
+
   private:
     static std::vector<SControllerParamInfo> ParamSchemaStatic();
     static bool ValidateStartTeam(const std::string& value);

@@ -1,0 +1,375 @@
+/* Classic mobile HUD with the reference's minimal A/B/X touch controls.
+   Input safety and software-keyboard fixes are independent of this layout. */
+.mobile-console-close { display: none; }
+
+body.mobile-ui {
+  /* mobile_controls.js supplies the old clamped width/678 scale as a number. */
+  --mob-scale: 0.848;
+  --mobile-left: max(10px, env(safe-area-inset-left));
+  --mobile-right: max(10px, env(safe-area-inset-right));
+  --mobile-top: max(10px, env(safe-area-inset-top));
+  --mobile-bottom: max(10px, env(safe-area-inset-bottom));
+  --mobile-a-size: clamp(76px, 16vmin, 108px);
+  --mobile-small-size: clamp(52px, 10vmin, 68px);
+  overscroll-behavior: none;
+}
+body.mobile-ui .mobile-controls:not(.hidden) { display: block; }
+body.mobile-ui .mobile-controls { pointer-events: none; }
+
+/* A is larger, X is above B; the unused space never captures a touch. */
+body.mobile-ui .mobile-action-cluster {
+  right: var(--mobile-right); bottom: var(--mobile-bottom);
+  grid-template-columns: var(--mobile-a-size) var(--mobile-small-size);
+  grid-template-rows: repeat(2, var(--mobile-small-size));
+  grid-template-areas: "attack swap" "attack defend";
+  gap: 10px; pointer-events: none;
+}
+body.mobile-ui .mobile-control-button {
+  width: var(--mobile-small-size); height: var(--mobile-small-size);
+  min-width: 44px; min-height: 44px; padding: 0;
+  border: 0; border-radius: 50%; background: rgba(0, 0, 0, .32);
+  color: rgba(255, 255, 255, .72);
+  font: 700 28px/1 "Florr UI", sans-serif; text-shadow: none; box-shadow: none;
+  transform: none; pointer-events: auto; touch-action: none;
+}
+body.mobile-ui .mobile-attack-button {
+  grid-area: attack; align-self: center;
+  width: var(--mobile-a-size); height: var(--mobile-a-size); font-size: 36px;
+}
+body.mobile-ui .mobile-defend-button { grid-area: defend; }
+body.mobile-ui .mobile-swap-button { grid-area: swap; }
+body.mobile-ui .mobile-control-button.pressed,
+body.mobile-ui .mobile-control-button:active { background: rgba(0, 0, 0, .46); color: rgba(255, 255, 255, .9); }
+
+/* No idle marker or instructions: only two plain circles under the finger. */
+body.mobile-ui .mobile-joystick {
+  width: 120px; height: 120px; transform: translate(-50%, -50%);
+}
+body.mobile-ui .mobile-joystick-base {
+  width: 120px; height: 120px; border: 0; background: rgba(0, 0, 0, .16);
+}
+body.mobile-ui .mobile-joystick-knob {
+  width: 44px; height: 44px; border: 0; background: rgba(0, 0, 0, .30);
+}
+.mobile-controls.gameplay-blocked .mobile-action-cluster,
+.mobile-controls.gameplay-blocked .mobile-joystick,
+.mobile-controls.menu-open .mobile-action-cluster,
+.mobile-controls.menu-open .mobile-joystick { visibility: hidden; pointer-events: none; }
+
+/* The slot safety menu is transient, never a replacement HUD/navigation bar. */
+.mobile-slot-menu {
+  position: fixed; left: var(--mobile-left);
+  bottom: calc(var(--mobile-bottom) + 126px * var(--mob-scale));
+  width: min(300px, calc(100vw - var(--mobile-left) - var(--mobile-right)));
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
+  padding: 10px; border: 0; border-radius: 6px; background: rgba(0, 0, 0, .7);
+  pointer-events: auto;
+}
+.mobile-slot-menu.hidden { display: none; }
+.mobile-slot-menu strong { grid-column: 1 / -1; overflow-wrap: anywhere; color: white; }
+.mobile-slot-menu .mobile-menu-button {
+  min-width: 44px; min-height: 44px; height: auto; padding: 8px;
+  border: 0; border-radius: 4px; background: rgba(255,255,255,.14); color: white;
+  font: 700 14px/1.2 "Florr UI", "Sarasa SC", sans-serif; touch-action: manipulation;
+}
+
+/* Bottom slots: left-aligned, just right of the quick-actions column. */
+body.mobile-ui .slots-panel {
+  left: calc(78px * var(--mob-scale));
+  right: auto;
+  bottom: max(calc(10px * var(--mob-scale)), env(safe-area-inset-bottom));
+  width: max-content;
+  max-width: calc(100vw - 78px * var(--mob-scale) - calc(8px * var(--mob-scale)));
+  transform: none;
+}
+
+body.mobile-ui .slot-row {
+  grid-template-columns: repeat(
+    var(--slot-count, 5),
+    calc(var(--slot-primary-size) * var(--mob-scale))
+  );
+  gap: calc(6px * var(--mob-scale));
+  margin-left: 0;
+  margin-right: 0;
+  max-width: none;
+}
+
+body.mobile-ui .slot-row.secondary {
+  grid-template-columns: repeat(
+    var(--slot-count, 5),
+    calc(var(--slot-secondary-size) * var(--mob-scale))
+  );
+  gap: calc(5px * var(--mob-scale));
+}
+
+body.mobile-ui .slot-row-wrap.secondary-wrap {
+  margin: 0;
+}
+
+body.mobile-ui .slot {
+  width: calc(var(--slot-primary-size) * var(--mob-scale));
+  height: calc(var(--slot-primary-size) * var(--mob-scale));
+}
+
+body.mobile-ui .slot-row.secondary .slot {
+  width: calc(var(--slot-secondary-size) * var(--mob-scale));
+  height: calc(var(--slot-secondary-size) * var(--mob-scale));
+}
+
+body.mobile-ui .slot:not(.empty) .petal-stack {
+  width: calc(var(--slot-primary-size) * var(--mob-scale));
+  height: calc(var(--slot-primary-size) * var(--mob-scale));
+}
+
+body.mobile-ui .secondary .slot:not(.empty) .petal-stack {
+  width: calc(var(--slot-secondary-size) * var(--mob-scale));
+  height: calc(var(--slot-secondary-size) * var(--mob-scale));
+}
+
+body.mobile-ui .petal-flight {
+  width: calc(56px * var(--mob-scale));
+  height: calc(56px * var(--mob-scale));
+}
+
+body.mobile-ui .slot .petal-name {
+  font-size: calc(11px * var(--mob-scale));
+  max-width: calc(100% - 10px * var(--mob-scale));
+}
+
+body.mobile-ui .slot .rarity-name {
+  font-size: calc(9px * var(--mob-scale));
+}
+
+/* Quick action buttons (Z/X/C). */
+body.mobile-ui .quick-actions {
+  left: calc(6px * var(--mob-scale));
+  bottom: max(
+    calc(14px * var(--mob-scale)),
+    calc(env(safe-area-inset-bottom) + 10px * var(--mob-scale))
+  );
+  gap: calc(6px * var(--mob-scale));
+}
+
+body.mobile-ui .quick-action {
+  width: calc(56px * var(--mob-scale));
+  height: calc(56px * var(--mob-scale));
+  background-size: calc(44px * var(--mob-scale)) calc(44px * var(--mob-scale));
+}
+
+/* Chat: above the slots, left-aligned with them. */
+body.mobile-ui .chat-panel {
+  left: calc(78px * var(--mob-scale));
+  bottom: calc(
+    max(calc(10px * var(--mob-scale)), env(safe-area-inset-bottom)) +
+      126px * var(--mob-scale)
+  );
+  width: min(
+    calc(420px * var(--mob-scale)),
+    calc(100vw - 86px * var(--mob-scale))
+  );
+  transition: bottom 0.2s ease;
+}
+
+body.mobile-ui.slots-collapsed .chat-panel {
+  bottom: calc(
+    max(calc(10px * var(--mob-scale)), env(safe-area-inset-bottom)) +
+      62px * var(--mob-scale)
+  );
+}
+
+body.mobile-ui .chat-panel.open .chat-log {
+  max-height: min(calc(230px * var(--mob-scale)), calc(100vh - 200px));
+}
+
+/* Slot collapse toggle (right of the primary row). */
+
+
+body.mobile-ui .slot-row-wrap {
+  position: relative;
+}
+
+body.mobile-ui .slot-collapse-btn {
+  position: absolute;
+  left: calc(100% + 8px * var(--mob-scale));
+  top: 50%;
+  z-index: 6;
+  width: calc(52px * var(--mob-scale));
+  height: calc(52px * var(--mob-scale));
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-radius: calc(14px * var(--mob-scale));
+  background: rgba(0, 0, 0, 0.34);
+  color: #fff;
+  transform: translateY(-50%);
+  transition:
+    background-color 100ms ease,
+    border-color 100ms ease;
+}
+
+body.mobile-ui .slot-collapse-btn:hover {
+  background: rgba(0, 0, 0, 0.5);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+body.mobile-ui .slot-collapse-btn svg {
+  width: 62%;
+  height: 62%;
+  transition: transform 0.2s ease;
+}
+
+body.mobile-ui.slots-collapsed .slot-collapse-btn svg {
+  transform: rotate(180deg);
+}
+
+body.mobile-ui .slot-row.secondary {
+  max-height: calc(44px * var(--mob-scale));
+  overflow: hidden;
+  transition:
+    max-height 0.2s ease,
+    opacity 0.2s ease,
+    margin-bottom 0.2s ease;
+}
+
+body.mobile-ui.slots-collapsed .slot-row.secondary {
+  max-height: 0;
+  opacity: 0;
+  margin-bottom: 0;
+}
+
+body.mobile-ui .quick-action kbd {
+  right: calc(2px * var(--mob-scale));
+  bottom: calc(1px * var(--mob-scale));
+  font-size: calc(12px * var(--mob-scale));
+}
+
+body.mobile-ui .quick-talent-points {
+  min-width: calc(18px * var(--mob-scale));
+  height: calc(18px * var(--mob-scale));
+  font-size: calc(13px * var(--mob-scale));
+  line-height: calc(18px * var(--mob-scale));
+}
+
+body.mobile-ui .chat-hint {
+  width: calc(255px * var(--mob-scale));
+  height: calc(31px * var(--mob-scale));
+  font-size: calc(13px * var(--mob-scale));
+}
+
+body.mobile-ui .chat-line {
+  min-height: calc(18px * var(--mob-scale));
+  font-size: calc(14px * var(--mob-scale));
+}
+
+body.mobile-ui .chat-input {
+  font-size: calc(14px * var(--mob-scale));
+}
+
+/* Keep the old chat strip; only lift it when the keyboard would cover it. */
+body.mobile-ui .chat-input { font-size: 16px; }
+body.mobile-ui.mobile-keyboard-open .chat-panel.open {
+  bottom: calc(var(--mobile-keyboard-inset, 0px) + 8px);
+}
+body.mobile-ui.mobile-keyboard-open .chat-panel.open .chat-log {
+  min-height: 0; max-height: max(0px, calc(var(--mobile-vv-height, 100dvh) - 120px));
+}
+@media (max-width: 640px) {
+  /* In portrait the restored bottom-left slots share the same narrow width. */
+  body.mobile-ui .mobile-action-cluster {
+    bottom: calc(var(--mobile-bottom) + 126px * var(--mob-scale));
+  }
+  body.mobile-ui.slots-collapsed .mobile-action-cluster {
+    bottom: calc(var(--mobile-bottom) + 62px * var(--mob-scale));
+  }
+}
+
+body.mobile-ui .game-panel {
+  z-index: 35; left: 0; right: 0;
+  top: var(--mobile-vv-top, 0px); bottom: auto;
+  width: auto; max-width: none;
+  height: var(--mobile-vv-height, 100dvh);
+  max-height: var(--mobile-vv-height, 100dvh);
+  padding: var(--mobile-top) var(--mobile-right) var(--mobile-bottom) var(--mobile-left);
+  border: 0; border-radius: 0;
+}
+body.mobile-ui .panel-title { min-height: 44px; padding: 0 48px; font-size: 19px; gap: 8px; }
+body.mobile-ui .panel-close, body.mobile-ui .slider-close {
+  width: 44px; min-width: 44px; height: 44px; min-height: 44px; font-size: 20px;
+  touch-action: manipulation;
+}
+body.mobile-ui .inventory-list, body.mobile-ui .craft-list,
+body.mobile-ui .settings-list, body.mobile-ui .codex-grid {
+  min-height: 0; touch-action: pan-y; overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+body.mobile-ui .inventory-grid { grid-template-columns: repeat(auto-fill, 64px); gap: 12px; justify-content: space-evenly; padding: 8px 2px; }
+body.mobile-ui .inventory-item, body.mobile-ui .inventory-item .petal-stack { width: 64px; height: 64px; }
+body.mobile-ui .inventory-item { touch-action: pan-y; }
+body.mobile-ui .inventory-search { min-width: 0; height: 44px; font-size: 16px; }
+body.mobile-ui .inventory-controls { gap: 8px; flex-wrap: wrap; }
+body.mobile-ui .inventory-stacking { min-height: 44px; }
+body.mobile-ui input, body.mobile-ui select, body.mobile-ui textarea { font-size: 16px; }
+body.mobile-ui input[type=checkbox] { width: 22px; height: 22px; }
+body.mobile-ui .settings-row { grid-template-columns: minmax(0, 1fr) minmax(120px, 46%); gap: 10px; min-height: 60px; }
+body.mobile-ui .settings-label { font-size: 15px; }
+body.mobile-ui .settings-choice, body.mobile-ui .settings-action,
+body.mobile-ui .settings-tabs button { min-width: 0; min-height: 44px; height: auto; font-size: 14px; }
+body.mobile-ui .settings-square-toggle { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+body.mobile-ui .settings-email-control { min-width: 0; flex-wrap: wrap; }
+body.mobile-ui .craft-workbench { --craft-card-size: 48px; --craft-orbit-radius: 68px; grid-template-columns: minmax(0, 1fr) 80px; }
+body.mobile-ui .craft-stage { height: 218px; margin: 0; transform: none; }
+body.mobile-ui .craft-action { padding: 0; }
+body.mobile-ui .craft-action button { min-width: 0; min-height: 48px; height: auto; padding: 8px; font-size: 14px; }
+body.mobile-ui .craft-matrix { grid-template-columns: repeat(auto-fill, 56px); gap: 10px; justify-content: space-evenly; }
+body.mobile-ui .craft-matrix-cell, body.mobile-ui .craft-matrix-cell .petal-stack { width: 56px; height: 56px; touch-action: pan-y; }
+body.mobile-ui .craft-selection, body.mobile-ui .craft-chance { font-size: 13px; }
+body.mobile-ui .talent-panel { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+body.mobile-ui .talent-points { position: static; font-size: 18px; }
+body.mobile-ui .talent-footer { flex-wrap: wrap; gap: 6px; height: auto; min-height: 44px; }
+body.mobile-ui .talent-help { flex-basis: 100%; }
+body.mobile-ui .talent-footer button { min-width: 44px; min-height: 44px; height: auto; }
+.talent-zoom-control { display: none; }
+body.mobile-ui .talent-zoom-control { display: inline-block; }
+body.mobile-ui .codex-loot-rate-row { font-size: 13px; }
+
+body.mobile-ui .console-panel {
+  height: min(65dvh, var(--mobile-vv-height, 100dvh));
+  top: calc(-100dvh - 24px); padding-top: var(--mobile-top);
+}
+body.mobile-ui .console-panel.open { top: var(--mobile-vv-top, 0px); }
+body.mobile-ui .mobile-console-close {
+  display: block; position: absolute; right: var(--mobile-right); top: var(--mobile-top);
+  z-index: 2; height: 44px; min-width: 48px; padding: 6px; font-size: 14px;
+}
+body.mobile-ui .console-debug { padding-right: 76px; }
+body.mobile-ui .console-input { min-height: 44px; font-size: 16px; }
+body.mobile-ui .console-debug { font-size: 12px; }
+body.mobile-ui.mobile-keyboard-open .mobile-controls,
+body.mobile-ui.mobile-keyboard-open .slots-panel { visibility: hidden; }
+body.mobile-ui .auth-panel { max-height: calc(var(--mobile-vv-height, 100dvh) - 24px); overflow-y: auto; }
+body.mobile-ui.mobile-keyboard-open .auth-panel { top: calc(var(--mobile-vv-top, 0px) + 8px); transform: translateX(-50%); }
+body.mobile-ui .auth-panel input, body.mobile-ui .auth-panel button { min-height: 44px; }
+body.mobile-ui .auth-health-notice { display: none; }
+body.mobile-ui .death-card { max-height: calc(var(--mobile-vv-height, 100dvh) - 24px); overflow-y: auto; }
+body.mobile-ui .death-portrait { width: clamp(80px, 20dvh, 160px); height: clamp(80px, 20dvh, 160px); }
+body.mobile-ui .revive-button, body.mobile-ui .death-close-button { min-height: 44px; }
+
+@media (orientation: landscape) and (max-height: 520px) {
+  body.mobile-ui .mobile-joystick, body.mobile-ui .mobile-joystick-base { width: 104px; height: 104px; }
+}
+@media (orientation: landscape) and (max-height: 520px) and (min-width: 600px) {
+  body.mobile-ui .craft-panel { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; column-gap: 16px; }
+  body.mobile-ui .craft-panel > .panel-title { grid-column: 1 / -1; }
+  body.mobile-ui .craft-workbench { grid-column: 1; grid-row: 2; --craft-orbit-radius: 58px; }
+  body.mobile-ui .craft-stage { height: 190px; }
+  body.mobile-ui .craft-notes { grid-column: 1; grid-row: 3; }
+  body.mobile-ui .craft-list { grid-column: 2; grid-row: 2 / 4; }
+}
+@media (max-width: 359px) {
+  body.mobile-ui .craft-workbench { --craft-card-size: 44px; --craft-orbit-radius: 58px; grid-template-columns: minmax(0, 1fr) 64px; }
+  body.mobile-ui .craft-stage { height: 190px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-ui .slot-collapse-btn svg { transition: none; }
+}

@@ -335,7 +335,7 @@ std::vector<SInventoryItem> DefaultSlots()
     return slots;
 }
 
-int TalentPointGainForLevel(int level)
+int CalculateTalentPointsForLevel(int level)
 {
     if (level <= 1) return 0;
 
@@ -349,11 +349,11 @@ int TotalTalentPointsForLevel(int level)
 {
     int total = 0;
     for (int current_level = 2; current_level <= std::max(1, level); ++current_level)
-        total += TalentPointGainForLevel(current_level);
+        total += CalculateTalentPointsForLevel(current_level);
     return total;
 }
 
-uint8_t CraftResultRarity(uint8_t rarity)
+uint8_t CalculateCraftResultRarity(uint8_t rarity)
 {
     if (rarity == static_cast<uint8_t>(ERarity::Super)) return static_cast<uint8_t>(ERarity::Eternal);
     if (rarity == static_cast<uint8_t>(ERarity::Eternal)) return static_cast<uint8_t>(ERarity::Primordial);
@@ -362,7 +362,7 @@ uint8_t CraftResultRarity(uint8_t rarity)
     return 0;
 }
 
-float CraftSuccessChance(uint8_t rarity)
+float CalculateCraftSuccessChance(uint8_t rarity)
 {
     if (rarity == static_cast<uint8_t>(ERarity::Super)) return 0.0033f;
     if (rarity == static_cast<uint8_t>(ERarity::Eternal)) return 0.001f;
@@ -1791,8 +1791,8 @@ bool CAccountDataStore::CraftItem(const std::string& name, uint8_t petal_type, u
     if (result) *result = {};
     if (petal_type == 0 || rarity == 0 || count < 5) return false;
 
-    uint8_t result_rarity = CraftResultRarity(rarity);
-    float success_chance = CraftSuccessChance(rarity);
+    uint8_t result_rarity = CalculateCraftResultRarity(rarity);
+    float success_chance = CalculateCraftSuccessChance(rarity);
     if (result_rarity == 0 || success_chance <= 0.f) return false;
 
     SPlayerAccount* account = FindAccount(name);

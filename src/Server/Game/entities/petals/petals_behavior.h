@@ -1,5 +1,6 @@
 #pragma once
 #include "../../../../Shared/game_config.h"
+#include "../../../../Shared/math_types.h"
 #include "../../controllers/melee_controller.h"
 #include "../../gameworld.h"
 #include "../../state_zone.h"
@@ -54,28 +55,28 @@ inline SFlowerStats EmptyFlowerStats()
     return stats;
 }
 
-inline float PetalRarityScale(ERarity rarity)
+inline float GetPetalRarityScale(ERarity rarity)
 {
     return std::pow(game_config::default_petal_pow, static_cast<float>(GetLevel(rarity) - 1));
 }
 
 inline float RoseMedicineScale(ERarity rarity);
 
-inline int PetalLevel(ERarity rarity) { return GetLevel(rarity); }
+inline int GetPetalLevel(ERarity rarity) { return GetLevel(rarity); }
 
-inline float PetalValueLevel(ERarity rarity) { return GetRarityValueLevel(rarity); }
+inline float GetPetalValueLevel(ERarity rarity) { return GetRarityValueLevel(rarity); }
 
-inline float PetalSpecialValueLevel(ERarity rarity)
+inline float GetSpecialPetalLevel(ERarity rarity)
 {
     return static_cast<float>(GetLevel(rarity));
 }
 
 inline float TriBonusDamage(ERarity rarity)
 {
-    return game_config::default_triangle_bonus_damage * PetalRarityScale(rarity);
+    return game_config::default_triangle_bonus_damage * GetPetalRarityScale(rarity);
 }
 
-inline float PetalOrbitBaseRadius(const CPetal* owner, const CFlower* flower)
+inline float GetBaseOrbitRadius(const CPetal* owner, const CFlower* flower)
 {
     if (!owner || !flower || !flower->GetFinalStats()) return 0.f;
     if (owner->GetPetalType() == EPetalType::Moon) return flower->GetFinalStats()->radius;
@@ -85,18 +86,18 @@ inline float PetalOrbitBaseRadius(const CPetal* owner, const CFlower* flower)
     return flower->GetFinalStats()->radius;
 }
 
-inline float PetalOrbitReach(const CPetal* owner, const CFlower* flower, bool include_mode_offset)
+inline float GetOrbitReach(const CPetal* owner, const CFlower* flower, bool include_mode_offset)
 {
     if (!flower || !flower->GetFinalStats()) return 0.f;
 
     float reach = game_config::default_petal_neutral_reach;
-    if (owner && PetalUsesBaseAndDefenseReach(owner->GetPetalType()))
+    if (owner && UsesBaseAndDefenseReach(owner->GetPetalType()))
     {
         if (include_mode_offset && flower->m_defending)
             reach += game_config::default_petal_defend_offset;
         return reach;
     }
-    if (owner && PetalIgnoresReachBonus(owner->GetPetalType())) return reach;
+    if (owner && IgnoresReachBonus(owner->GetPetalType())) return reach;
 
     if (flower->m_attacking) reach += flower->GetFinalStats()->reach;
     if (!include_mode_offset) return reach;
@@ -106,28 +107,28 @@ inline float PetalOrbitReach(const CPetal* owner, const CFlower* flower, bool in
     return reach;
 }
 
-inline float PetalOrbitReach(const CFlower* flower, bool include_mode_offset)
+inline float GetOrbitReach(const CFlower* flower, bool include_mode_offset)
 {
-    return PetalOrbitReach(nullptr, flower, include_mode_offset);
+    return GetOrbitReach(nullptr, flower, include_mode_offset);
 }
 
-inline float PetalOrbitNeutralDistance(const CPetal* owner, const CFlower* flower)
+inline float GetNeutralOrbitDistance(const CPetal* owner, const CFlower* flower)
 {
     if (!owner || !flower || !flower->GetFinalStats()) return 0.f;
-    return PetalOrbitBaseRadius(owner, flower) + game_config::default_petal_orbit_radius +
+    return GetBaseOrbitRadius(owner, flower) + game_config::default_petal_orbit_radius +
            game_config::default_petal_neutral_reach;
 }
 
-inline float PetalOrbitDistance(const CPetal* owner, const CFlower* flower)
+inline float GetOrbitDistance(const CPetal* owner, const CFlower* flower)
 {
     if (!owner || !flower || !flower->GetFinalStats()) return 0.f;
 
-    float distance = PetalOrbitBaseRadius(owner, flower) + game_config::default_petal_orbit_radius +
-                     PetalOrbitReach(owner, flower, true);
+    float distance = GetBaseOrbitRadius(owner, flower) + game_config::default_petal_orbit_radius +
+                     GetOrbitReach(owner, flower, true);
     return distance;
 }
 
-inline florrbt::Vector2f PetalOrbitCenter(const CPetal* owner, CFlower* flower)
+inline florrbt::Vector2f GetOrbitCenter(const CPetal* owner, CFlower* flower)
 {
     if (!owner || !flower) return {};
     if (owner->GetPetalType() == EPetalType::Moon) return flower->Pos();
@@ -137,7 +138,7 @@ inline florrbt::Vector2f PetalOrbitCenter(const CPetal* owner, CFlower* flower)
     return moon->Pos();
 }
 
-inline float PetalClosedClusterSpacing(const CPetal* owner)
+inline float GetClosedClusterSpacing(const CPetal* owner)
 {
     if (!owner) return game_config::default_petal_closed_cluster_spacing;
 
@@ -154,17 +155,17 @@ inline float PetalClosedClusterSpacing(const CPetal* owner)
     }
 }
 
-inline float PetalClosedClusterRadius(const CPetal* owner, int copies_in_group)
+inline float GetClosedClusterRadius(const CPetal* owner, int copies_in_group)
 {
     if (!owner || copies_in_group <= 1) return 0.f;
 
     const float sin_step = std::max(game_config::default_petal_closed_cluster_sin_min,
                                     std::sin(game_config::pi / static_cast<float>(copies_in_group)));
-    const float adjacent_center_distance = owner->Radius() * PetalClosedClusterSpacing(owner);
+    const float adjacent_center_distance = owner->Radius() * GetClosedClusterSpacing(owner);
     return adjacent_center_distance / (2.0f * sin_step);
 }
 
-inline std::optional<florrbt::Vector2f> PetalOrbitGlobal(CPetal* owner, CFlower* flower, float orbit_distance, bool is_open)
+inline std::optional<florrbt::Vector2f> GetGlobalOrbitPosition(CPetal* owner, CFlower* flower, float orbit_distance, bool is_open)
 {
     if (!owner || !flower) return std::nullopt;
 
@@ -173,7 +174,7 @@ inline std::optional<florrbt::Vector2f> PetalOrbitGlobal(CPetal* owner, CFlower*
     if (start_index < 0 || total_copies <= 0) return std::nullopt;
 
     florrbt::Vector2f global;
-    florrbt::Vector2f orbit_center = PetalOrbitCenter(owner, flower);
+    florrbt::Vector2f orbit_center = GetOrbitCenter(owner, flower);
     if // yinyang旋轉模式
         (flower->GetFinalStats()->petal_rotation_mode == EPetalRotationMode::YinYang && flower->GetYinYangCount() > 0)
     {
@@ -195,7 +196,7 @@ inline std::optional<florrbt::Vector2f> PetalOrbitGlobal(CPetal* owner, CFlower*
             if (copies_in_group <= 0) copies_in_group = owner->m_base_petal_stats.copy;
             if (copies_in_group <= 0) return std::nullopt;
 
-            float spread_radius = PetalClosedClusterRadius(owner, copies_in_group);
+            float spread_radius = GetClosedClusterRadius(owner, copies_in_group);
             float sub_angle = (2.0f * game_config::pi * owner->m_copy_index) / static_cast<float>(copies_in_group);
             global += florrbt::Vector2f(std::cos(sub_angle), std::sin(sub_angle)) * spread_radius;
         }
@@ -215,7 +216,7 @@ inline std::optional<florrbt::Vector2f> PetalOrbitGlobal(CPetal* owner, CFlower*
         if (copies_in_group <= 0) copies_in_group = owner->m_base_petal_stats.copy;
         if (copies_in_group <= 0) return std::nullopt;
 
-        float spread_radius = PetalClosedClusterRadius(owner, copies_in_group);
+        float spread_radius = GetClosedClusterRadius(owner, copies_in_group);
         float sub_angle = (2.0f * game_config::pi * owner->m_copy_index) / static_cast<float>(copies_in_group);
         global = group_global + florrbt::Vector2f(std::cos(sub_angle), std::sin(sub_angle)) * spread_radius;
     }
@@ -223,10 +224,10 @@ inline std::optional<florrbt::Vector2f> PetalOrbitGlobal(CPetal* owner, CFlower*
     return global;
 }
 
-inline void PetalOrbitMove(CPetal* owner, CFlower* flower, float orbit_distance, float k, bool is_open)
+inline void MovePetalToOrbit(CPetal* owner, CFlower* flower, float orbit_distance, float k, bool is_open)
 {
     if (!owner || !flower) return;
-    std::optional<florrbt::Vector2f> global = PetalOrbitGlobal(owner, flower, orbit_distance, is_open);
+    std::optional<florrbt::Vector2f> global = GetGlobalOrbitPosition(owner, flower, orbit_distance, is_open);
     if (!global) return;
 
     florrbt::Vector2f delta = *global - owner->Pos();
@@ -239,7 +240,7 @@ inline void PetalOrbitMove(CPetal* owner, CFlower* flower, float orbit_distance,
     owner->m_vel = delta * effective_k;
 }
 
-inline void PetalMoveTo(CPetal* owner, florrbt::Vector2f pos, float time, int* timer_ptr, float dt)
+inline void MovePetalTo(CPetal* owner, florrbt::Vector2f pos, float time, int* timer_ptr, float dt)
 {
     if (!owner || !timer_ptr) return;
     if (time <= game_config::entity_collision_epsilon || dt <= game_config::entity_collision_epsilon)
@@ -274,27 +275,27 @@ inline bool IsValidPetalEnemyTarget(const CPetal* owner, const CFlower* flower, 
     return dynamic_cast<const CMobBase*>(entity) != nullptr;
 }
 
-inline float PetalEdgeDistance(const florrbt::Vector2f& center, const CEntity* entity)
+inline float GetEdgeDistance(const florrbt::Vector2f& center, const CEntity* entity)
 {
     if (!entity) return std::numeric_limits<float>::max();
     return std::max(0.f, Distance(center, entity->Pos()) - entity->Radius());
 }
 
-inline bool PetalTargetInRange(const florrbt::Vector2f& center, float range, const CEntity* entity)
+inline bool IsTargetInRange(const florrbt::Vector2f& center, float range, const CEntity* entity)
 {
-    return entity && PetalEdgeDistance(center, entity) <= range;
+    return entity && GetEdgeDistance(center, entity) <= range;
 }
 
-inline void PetalSetTarget(CPetal* owner, const CEntity* target)
+inline void SetPetalTarget(CPetal* owner, const CEntity* target)
 {
     if (!owner) return;
     owner->m_target_entity_id = target ? target->Id() : -1;
     owner->m_target_entity_generation = target ? target->Generation() : 0;
 }
 
-inline void PetalClearTarget(CPetal* owner) { PetalSetTarget(owner, nullptr); }
+inline void ClearPetalTarget(CPetal* owner) { SetPetalTarget(owner, nullptr); }
 
-inline CEntity* PetalGetCachedTarget(CPetal* owner, CFlower* flower, const florrbt::Vector2f& center, float range,
+inline CEntity* GetCachedTarget(CPetal* owner, CFlower* flower, const florrbt::Vector2f& center, float range,
                                      const std::function<bool(const CEntity*)>& filter)
 {
     if (!owner || !flower || !flower->GameWorld() || owner->m_target_entity_id < 0) return nullptr;
@@ -302,15 +303,15 @@ inline CEntity* PetalGetCachedTarget(CPetal* owner, CFlower* flower, const florr
     CEntity* target = owner->m_target_entity_generation != 0
                           ? flower->GameWorld()->GetEntity(owner->m_target_entity_id, owner->m_target_entity_generation)
                           : flower->GameWorld()->GetEntity(owner->m_target_entity_id);
-    if (!target || !filter(target) || !PetalTargetInRange(center, range, target))
+    if (!target || !filter(target) || !IsTargetInRange(center, range, target))
     {
-        PetalClearTarget(owner);
+        ClearPetalTarget(owner);
         return nullptr;
     }
     return target;
 }
 
-inline CEntity* PetalFindClosestTarget(CPetal* owner, CFlower* flower, const florrbt::Vector2f& center, float range,
+inline CEntity* FindClosestTarget(CPetal* owner, CFlower* flower, const florrbt::Vector2f& center, float range,
                                        const std::function<bool(const CEntity*)>& filter)
 {
     if (!owner || !flower) return nullptr;
@@ -322,7 +323,7 @@ inline CEntity* PetalFindClosestTarget(CPetal* owner, CFlower* flower, const flo
     return world->FindClosestEntityByEdge(center, range, filter);
 }
 
-inline float PetalEnemyTargetRange(const CPetal* owner, const CFlower* flower, bool include_final_bonus)
+inline float GetEnemyTargetRange(const CPetal* owner, const CFlower* flower, bool include_final_bonus)
 {
     if (!owner) return 0.f;
 
@@ -332,24 +333,24 @@ inline float PetalEnemyTargetRange(const CPetal* owner, const CFlower* flower, b
     return range;
 }
 
-inline CEntity* PetalFindTarget(CPetal* owner, CFlower* flower)
+inline CEntity* FindTarget(CPetal* owner, CFlower* flower)
 {
     if (!owner || !flower || !flower->GetFinalStats()) return nullptr;
     if (owner->GetPetalType() == EPetalType::Glass)
     {
-        PetalClearTarget(owner);
+        ClearPetalTarget(owner);
         return nullptr;
     }
 
-    float range = PetalEnemyTargetRange(owner, flower, true);
+    float range = GetEnemyTargetRange(owner, flower, true);
     auto filter = [owner, flower](const CEntity* entity) -> bool {
         return IsValidPetalEnemyTarget(owner, flower, entity);
     };
 
-    return PetalFindClosestTarget(owner, flower, owner->Pos(), range, filter);
+    return FindClosestTarget(owner, flower, owner->Pos(), range, filter);
 }
 
-inline florrbt::Vector2f PetalSeekVelocity(const CPetal* owner, const CEntity* target, float velocity)
+inline florrbt::Vector2f GetSeekVelocity(const CPetal* owner, const CEntity* target, float velocity)
 {
     if (!owner || !target || velocity <= 0.f) return {};
 
@@ -362,37 +363,37 @@ inline florrbt::Vector2f PetalSeekVelocity(const CPetal* owner, const CEntity* t
     return delta / len * velocity;
 }
 
-inline florrbt::Vector2f PetalEntityVelocity(const CEntity* target)
+inline florrbt::Vector2f GetEntityVelocity(const CEntity* target)
 {
     if (const auto* mob = dynamic_cast<const CMobBase*>(target)) return mob->m_vel;
     if (const auto* projectile = dynamic_cast<const CProjectile*>(target)) return projectile->m_vel;
     return { 0.f, 0.f };
 }
 
-inline float PetalDefaultTargetRangeScale()
+inline float GetDefaultTargetRangeScale()
 {
     const float base_range =
         std::max(game_config::entity_collision_epsilon, game_config::default_lentil_petal_attraction_range);
     return std::max(1.f, game_config::stats_default_flower_petal_attraction_range / base_range);
 }
 
-inline float PetalMaximumTargetRangeScale()
+inline float GetMaximumTargetRangeScale()
 {
     const float primordial_lentils =
         static_cast<float>(std::max(0, game_config::default_petal_target_max_primordial_lentils));
-    return PetalDefaultTargetRangeScale() + primordial_lentils * PetalValueLevel(ERarity::Primordial);
+    return GetDefaultTargetRangeScale() + primordial_lentils * GetPetalValueLevel(ERarity::Primordial);
 }
 
-inline float PetalTargetRangeScale(const CFlower* flower)
+inline float GetTargetRangeScale(const CFlower* flower)
 {
     const float base_range =
         std::max(game_config::entity_collision_epsilon, game_config::default_lentil_petal_attraction_range);
-    float range_scale = PetalDefaultTargetRangeScale();
+    float range_scale = GetDefaultTargetRangeScale();
     if (flower && flower->GetFinalStats()) range_scale = flower->GetFinalStats()->petal_attraction_range / base_range;
-    return std::clamp(range_scale, PetalDefaultTargetRangeScale(), PetalMaximumTargetRangeScale());
+    return std::clamp(range_scale, GetDefaultTargetRangeScale(), GetMaximumTargetRangeScale());
 }
 
-inline float PetalTargetAcceleration(const CFlower* flower,
+inline float GetTargetAcceleration(const CFlower* flower,
                                      float multiplier = game_config::default_petal_target_acceleration_multiplier,
                                      bool include_range_scale = true)
 {
@@ -400,29 +401,29 @@ inline float PetalTargetAcceleration(const CFlower* flower,
     if (flower && flower->GetFinalStats())
         acceleration = std::max(acceleration, flower->GetFinalStats()->acceleration);
 
-    const float range_scale = include_range_scale ? PetalTargetRangeScale(flower) : 1.f;
+    const float range_scale = include_range_scale ? GetTargetRangeScale(flower) : 1.f;
     return acceleration * multiplier * range_scale * game_config::default_petal_target_acceleration_scale;
 }
 
-inline float PetalLockedTargetAcceleration(const CFlower* flower,
+inline float GetLockedTargetAcceleration(const CFlower* flower,
                                            float multiplier = game_config::default_petal_target_acceleration_multiplier,
                                            bool include_range_scale = true)
 {
-    return PetalTargetAcceleration(flower, multiplier, include_range_scale) *
+    return GetTargetAcceleration(flower, multiplier, include_range_scale) *
            game_config::default_petal_locked_target_acceleration_scale;
 }
 
-inline florrbt::Vector2f PetalGlobalPullVelocity(CPetal* owner, CFlower* flower, float orbit_distance, float k, bool is_open)
+inline florrbt::Vector2f GetGlobalPullVelocity(CPetal* owner, CFlower* flower, float orbit_distance, float k, bool is_open)
 {
     if (!owner || !flower) return {};
 
-    std::optional<florrbt::Vector2f> global = PetalOrbitGlobal(owner, flower, orbit_distance, is_open);
+    std::optional<florrbt::Vector2f> global = GetGlobalOrbitPosition(owner, flower, orbit_distance, is_open);
     if (!global) return {};
 
     return (*global - owner->Pos()) * k * game_config::default_petal_target_orbit_tether;
 }
 
-inline florrbt::Vector2f PetalConstrainTargetVelocity(const CPetal* owner, const CFlower* flower, const CEntity* target,
+inline florrbt::Vector2f ConstrainTargetVelocity(const CPetal* owner, const CFlower* flower, const CEntity* target,
                                                  float acceleration_multiplier, florrbt::Vector2f target_velocity,
                                                  florrbt::Vector2f global_pull_velocity, float dt)
 {
@@ -434,7 +435,7 @@ inline florrbt::Vector2f PetalConstrainTargetVelocity(const CPetal* owner, const
         // Homing speed is clamped to [1x, 2x] of the locked-target
         // acceleration: the petal always closes at a controlled rate instead
         // of scaling wildly with the flower's attraction range.
-        const float base_velocity = PetalLockedTargetAcceleration(flower, acceleration_multiplier, false);
+        const float base_velocity = GetLockedTargetAcceleration(flower, acceleration_multiplier, false);
         const float min_velocity = std::max(0.f, base_velocity);
         const float max_velocity = std::max(min_velocity, base_velocity * 2.f);
         target_velocity *= std::clamp(target_speed, min_velocity, max_velocity) / target_speed;
@@ -444,10 +445,10 @@ inline florrbt::Vector2f PetalConstrainTargetVelocity(const CPetal* owner, const
 
     if (dt <= game_config::entity_collision_epsilon) return actual_velocity;
 
-    const florrbt::Vector2f predicted_target = target->Pos() + PetalEntityVelocity(target) * dt;
+    const florrbt::Vector2f predicted_target = target->Pos() + GetEntityVelocity(target) * dt;
     const florrbt::Vector2f to_target = predicted_target - owner->Pos();
     const float distance = Length(to_target);
-    if (distance <= game_config::entity_collision_epsilon) return PetalEntityVelocity(target);
+    if (distance <= game_config::entity_collision_epsilon) return GetEntityVelocity(target);
 
     const florrbt::Vector2f direction = to_target / distance;
     const float approach_speed = actual_velocity.x * direction.x + actual_velocity.y * direction.y;
@@ -458,23 +459,23 @@ inline florrbt::Vector2f PetalConstrainTargetVelocity(const CPetal* owner, const
     return target_velocity + global_pull_velocity;
 }
 
-inline void PetalOrbitMoveAndAttract(CPetal* owner, CFlower* flower, float orbit_distance, float k, bool is_open,
+inline void MovePetalToOrbitAndAttract(CPetal* owner, CFlower* flower, float orbit_distance, float k, bool is_open,
                                      float dt, float acceleration_multiplier = 1.f)
 {
-    CEntity* target = PetalFindTarget(owner, flower);
+    CEntity* target = FindTarget(owner, flower);
     if (!owner || !target)
     {
-        PetalClearTarget(owner);
-        PetalOrbitMove(owner, flower, orbit_distance, k, is_open);
+        ClearPetalTarget(owner);
+        MovePetalToOrbit(owner, flower, orbit_distance, k, is_open);
         return;
     }
 
-    PetalSetTarget(owner, target);
+    SetPetalTarget(owner, target);
     const florrbt::Vector2f target_velocity =
-        PetalSeekVelocity(owner, target, PetalLockedTargetAcceleration(flower, acceleration_multiplier, true));
+        GetSeekVelocity(owner, target, GetLockedTargetAcceleration(flower, acceleration_multiplier, true));
     const florrbt::Vector2f global_pull_velocity =
-        PetalGlobalPullVelocity(owner, flower, orbit_distance, k, is_open);
-    owner->m_vel = PetalConstrainTargetVelocity(owner, flower, target, acceleration_multiplier, target_velocity,
+        GetGlobalPullVelocity(owner, flower, orbit_distance, k, is_open);
+    owner->m_vel = ConstrainTargetVelocity(owner, flower, target, acceleration_multiplier, target_velocity,
                                                 global_pull_velocity, dt);
 }
 
@@ -490,7 +491,7 @@ class CAirBehavior : public CPetalBehavior
     SFlowerStats GetStats(ERarity rarity) const override
     {
         SFlowerStats stats = EmptyFlowerStats();
-        float level = PetalValueLevel(rarity);
+        float level = GetPetalValueLevel(rarity);
         stats.radius = game_config::default_air_base_radius * level;
         stats.mass = game_config::default_air_base_mass;
         return stats;
@@ -792,8 +793,8 @@ class CBasicBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_basic_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_basic_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_basic_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_basic_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_basic_reload;
         stats.preload = game_config::default_basic_reload;
         stats.copy = static_cast<int>(game_config::default_basic_copy);
@@ -804,8 +805,8 @@ class CBasicBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        float orbit_distance = PetalOrbitDistance(owner, flower);
-        PetalOrbitMoveAndAttract(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true, dt);
+        float orbit_distance = GetOrbitDistance(owner, flower);
+        MovePetalToOrbitAndAttract(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true, dt);
     }
 
     void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
@@ -840,7 +841,7 @@ class CLightBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         int copy = LightCopy(rarity);
-        float scale = PetalRarityScale(rarity);
+        float scale = GetPetalRarityScale(rarity);
 
         SPetalStats stats;
         stats.damage = game_config::default_light_base_damage * scale;
@@ -855,7 +856,7 @@ class CLightBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -874,8 +875,8 @@ class CCornBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_corn_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_corn_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_corn_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_corn_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_corn_reload;
         stats.preload = game_config::default_corn_reload;
         stats.copy = static_cast<int>(game_config::default_corn_copy);
@@ -886,7 +887,7 @@ class CCornBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -905,8 +906,8 @@ class CRiceBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_rice_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_rice_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_rice_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_rice_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_rice_reload;
         stats.preload = game_config::default_rice_reload;
         stats.copy = static_cast<int>(game_config::default_rice_copy);
@@ -917,7 +918,7 @@ class CRiceBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -936,8 +937,8 @@ class CRockPetalBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_rock_petal_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_rock_petal_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_rock_petal_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_rock_petal_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_rock_petal_reload;
         stats.preload = game_config::default_rock_petal_reload;
         stats.copy = static_cast<int>(game_config::default_rock_petal_copy);
@@ -948,7 +949,7 @@ class CRockPetalBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -966,15 +967,15 @@ class CCactusBehavior : public CPetalBehavior
     SFlowerStats GetStats(ERarity rarity) const override
     {
         SFlowerStats stats = EmptyFlowerStats();
-        stats.max_health = game_config::default_cactus_flower_health * PetalRarityScale(rarity);
+        stats.max_health = game_config::default_cactus_flower_health * GetPetalRarityScale(rarity);
         return stats;
     }
 
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_cactus_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_cactus_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_cactus_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_cactus_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_cactus_reload;
         stats.preload = game_config::default_cactus_reload;
         stats.copy = static_cast<int>(game_config::default_cactus_copy);
@@ -985,7 +986,7 @@ class CCactusBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -1003,7 +1004,7 @@ class CSoilBehavior : public CPetalBehavior
     SFlowerStats GetStats(ERarity rarity) const override
     {
         SFlowerStats stats = EmptyFlowerStats();
-        stats.max_health = game_config::default_soil_flower_health * PetalRarityScale(rarity);
+        stats.max_health = game_config::default_soil_flower_health * GetPetalRarityScale(rarity);
         stats.radius = game_config::default_soil_flower_radius;
         return stats;
     }
@@ -1011,8 +1012,8 @@ class CSoilBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_soil_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_soil_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_soil_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_soil_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_soil_reload;
         stats.preload = game_config::default_soil_reload;
         stats.copy = static_cast<int>(game_config::default_soil_copy);
@@ -1023,7 +1024,7 @@ class CSoilBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -1081,7 +1082,7 @@ class CBasilBehavior : public CPetalBehavior
     {
         SPetalStats stats;
         stats.damage = 0.f;
-        stats.health = game_config::default_basil_base_health * PetalRarityScale(rarity);
+        stats.health = game_config::default_basil_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_basil_reload;
         stats.preload = game_config::default_basil_reload;
         stats.copy = static_cast<int>(game_config::default_basil_copy);
@@ -1092,7 +1093,7 @@ class CBasilBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float) override
     {
-        PetalOrbitMove(owner, flower, PetalOrbitNeutralDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbit(owner, flower, GetNeutralOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                        true);
     }
 
@@ -1103,22 +1104,22 @@ class CBasilBehavior : public CPetalBehavior
 
 inline float LightningChainDamage(ERarity rarity)
 {
-    return game_config::default_lightning_base_damage * PetalRarityScale(rarity);
+    return game_config::default_lightning_base_damage * GetPetalRarityScale(rarity);
 }
 
 inline int LightningChainBounces(ERarity rarity)
 {
-    return static_cast<int>(game_config::default_lightning_bounces) + PetalLevel(rarity) - 1;
+    return static_cast<int>(game_config::default_lightning_bounces) + GetPetalLevel(rarity) - 1;
 }
 
 inline float BatteryChainDamage(ERarity rarity)
 {
-    return game_config::default_battery_base_damage * PetalRarityScale(rarity);
+    return game_config::default_battery_base_damage * GetPetalRarityScale(rarity);
 }
 
 inline int BatteryChainBounces(ERarity rarity)
 {
-    return static_cast<int>(game_config::default_battery_bounces) + PetalLevel(rarity) - 1;
+    return static_cast<int>(game_config::default_battery_bounces) + GetPetalLevel(rarity) - 1;
 }
 
 class CLightningBehavior : public CPetalBehavior
@@ -1131,8 +1132,8 @@ class CLightningBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_lightning_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_lightning_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_lightning_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_lightning_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_lightning_reload;
         stats.preload = game_config::default_lightning_reload;
         stats.copy = static_cast<int>(game_config::default_lightning_copy);
@@ -1150,10 +1151,10 @@ class CLightningBehavior : public CPetalBehavior
             CEntity* target =
                 world ? world->GetEntity(owner->m_chain_target_id, owner->m_chain_target_generation) : nullptr;
             if (!target || target->IsMarkedForDes() || target->IsDead() ||
-                !PetalStillTouching(owner, target))
+                !IsStillTouching(owner, target))
                 ReleaseChain(owner, rarity, flower);
         }
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -1191,7 +1192,7 @@ class CLightningBehavior : public CPetalBehavior
     }
 
   private:
-    static bool PetalStillTouching(const CPetal* owner, const CEntity* target)
+    static bool IsStillTouching(const CPetal* owner, const CEntity* target)
     {
         if (!owner || !target) return false;
         const float contact = owner->Radius() + target->Radius();
@@ -1226,7 +1227,7 @@ class CBatteryBehavior : public CPetalBehavior
     {
         SPetalStats stats;
         stats.damage = 0.f;
-        stats.health = game_config::default_battery_base_health * PetalRarityScale(rarity);
+        stats.health = game_config::default_battery_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_battery_reload;
         stats.preload = game_config::default_battery_reload;
         stats.copy = static_cast<int>(game_config::default_battery_copy);
@@ -1237,7 +1238,7 @@ class CBatteryBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float) override
     {
-        PetalOrbitMove(owner, flower, PetalOrbitNeutralDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbit(owner, flower, GetNeutralOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                        true);
     }
 
@@ -1289,8 +1290,8 @@ class CBulbBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_bulb_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_bulb_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_bulb_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_bulb_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_bulb_reload;
         stats.preload = game_config::default_bulb_preload;
         stats.copy = static_cast<int>(game_config::default_bulb_copy);
@@ -1302,7 +1303,7 @@ class CBulbBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float) override
     {
-        PetalOrbitMove(owner, flower, PetalOrbitNeutralDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbit(owner, flower, GetNeutralOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                        true);
     }
 
@@ -1321,9 +1322,9 @@ class CBoneBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_bone_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_bone_base_health * PetalRarityScale(rarity);
-        stats.armor = game_config::default_bone_base_armor * PetalRarityScale(rarity);
+        stats.damage = game_config::default_bone_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_bone_base_health * GetPetalRarityScale(rarity);
+        stats.armor = game_config::default_bone_base_armor * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_bone_reload;
         stats.preload = game_config::default_bone_reload;
         stats.copy = static_cast<int>(game_config::default_bone_copy);
@@ -1334,7 +1335,7 @@ class CBoneBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -1353,8 +1354,8 @@ class CCoinBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_coin_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_coin_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_coin_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_coin_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_coin_reload;
         stats.preload = game_config::default_coin_reload;
         stats.copy = static_cast<int>(game_config::default_coin_copy);
@@ -1365,7 +1366,7 @@ class CCoinBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -1388,10 +1389,10 @@ class CHeavyBehavior : public CPetalBehavior
 
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
-        float level = PetalValueLevel(rarity);
+        float level = GetPetalValueLevel(rarity);
         SPetalStats stats;
-        stats.damage = game_config::default_heavy_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_heavy_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_heavy_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_heavy_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_heavy_reload;
         stats.preload = game_config::default_heavy_reload;
         stats.copy = static_cast<int>(game_config::default_heavy_copy);
@@ -1405,13 +1406,13 @@ class CHeavyBehavior : public CPetalBehavior
     {
         if (flower && flower->m_defending)
         {
-            float orbit_distance = PetalOrbitBaseRadius(owner, flower) + game_config::default_petal_orbit_radius +
-                                   PetalOrbitReach(owner, flower, false);
-            PetalOrbitMoveAndAttract(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true, dt);
+            float orbit_distance = GetBaseOrbitRadius(owner, flower) + game_config::default_petal_orbit_radius +
+                                   GetOrbitReach(owner, flower, false);
+            MovePetalToOrbitAndAttract(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true, dt);
         }
         else
         {
-            PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower),
+            MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower),
                                      game_config::default_petal_orbit_k, true, dt);
         }
 
@@ -1437,7 +1438,7 @@ class CHeavyBehavior : public CPetalBehavior
         if (auto* mob = dynamic_cast<CMobBase*>(target)) mob->m_vel *= scale;
     }
 
-    void OnPetalHit(CPetal* owner, ERarity, CEntity* target, float&) override { PetalSetTarget(owner, target); }
+    void OnPetalHit(CPetal* owner, ERarity, CEntity* target, float&) override { SetPetalTarget(owner, target); }
 
     void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
     void OnPetalSpawned(CPetal*, ERarity, CFlower*) override {}
@@ -1455,15 +1456,15 @@ class CFasterBehavior : public CPetalBehavior
     {
         SFlowerStats stats = EmptyFlowerStats();
         stats.petal_rotation_speed = game_config::default_faster_rotation_speed_base +
-                                     game_config::default_faster_rotation_speed_level * PetalValueLevel(rarity);
+                                     game_config::default_faster_rotation_speed_level * GetPetalValueLevel(rarity);
         return stats;
     }
 
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_faster_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_faster_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_faster_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_faster_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_faster_reload;
         stats.preload = game_config::default_faster_reload;
         stats.copy = static_cast<int>(game_config::default_faster_copy);
@@ -1474,7 +1475,7 @@ class CFasterBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -1493,8 +1494,8 @@ class CGlassBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_glass_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_glass_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_glass_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_glass_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_glass_reload;
         stats.preload = game_config::default_glass_reload;
         stats.copy = static_cast<int>(game_config::default_glass_copy);
@@ -1516,7 +1517,7 @@ class CGlassBehavior : public CPetalBehavior
             }
         }
 
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -1552,7 +1553,7 @@ class CStingerBehavior : public CPetalBehavior
         int copy = GetLevel(rarity) > GetLevel(ERarity::Legendary) ? 3 : 1;
 
         SPetalStats stats;
-        stats.damage = game_config::default_stinger_base_damage * PetalRarityScale(rarity);
+        stats.damage = game_config::default_stinger_base_damage * GetPetalRarityScale(rarity);
         stats.health = game_config::default_stinger_base_health;
         stats.reload = game_config::default_stinger_reload;
         stats.preload = game_config::default_stinger_reload;
@@ -1564,7 +1565,7 @@ class CStingerBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  false, dt);
     }
 
@@ -1611,7 +1612,7 @@ inline float BrokenEggSummonedHealthMultiplier(ERarity rarity)
     const float first_level = static_cast<float>(GetLevel(ERarity::Common));
     const float pivot_level = static_cast<float>(GetLevel(ERarity::Ultra));
     const float last_level = static_cast<float>(GetLevel(ERarity::Primordial));
-    float level = std::clamp(PetalSpecialValueLevel(rarity), first_level, last_level);
+    float level = std::clamp(GetSpecialPetalLevel(rarity), first_level, last_level);
     if (level <= pivot_level)
     {
         float t = (level - first_level) / (pivot_level - first_level);
@@ -1632,7 +1633,7 @@ inline float BrokenEggSummonedDamageMultiplier(ERarity rarity)
     const float first_level = static_cast<float>(GetLevel(ERarity::Common));
     const float pivot_level = static_cast<float>(GetLevel(ERarity::Ultra));
     const float last_level = static_cast<float>(GetLevel(ERarity::Primordial));
-    float level = std::clamp(PetalSpecialValueLevel(rarity), first_level, last_level);
+    float level = std::clamp(GetSpecialPetalLevel(rarity), first_level, last_level);
     if (level <= pivot_level)
     {
         float t = (level - first_level) / (pivot_level - first_level);
@@ -1648,7 +1649,7 @@ inline float BrokenEggSummonedDamageMultiplier(ERarity rarity)
                t;
 }
 
-inline bool FlowerHasSummonStatMultiplier(const CFlower* flower)
+inline bool HasSummonStatMultiplier(const CFlower* flower)
 {
     const SFlowerStats* stats = flower ? flower->GetFinalStats() : nullptr;
     return stats && (std::abs(stats->mult_summoned_health - 1.f) > game_config::entity_collision_epsilon ||
@@ -1727,9 +1728,9 @@ class CSummonEggBehavior : public CPetalBehavior
 
         if (!egg->m_has_spawned_summon)
         {
-            PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower),
+            MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower),
                                      game_config::default_petal_orbit_k, true, dt);
-            if (FlowerHasSummonStatMultiplier(flower) && owner->m_lifetime >= 1.f) owner->Health() = 0.f;
+            if (HasSummonStatMultiplier(flower) && owner->m_lifetime >= 1.f) owner->Health() = 0.f;
             return;
         }
 
@@ -1906,7 +1907,7 @@ class CBrokenEggBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float) override
     {
-        PetalOrbitMove(owner, flower, PetalOrbitNeutralDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbit(owner, flower, GetNeutralOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                        false);
     }
 
@@ -1940,9 +1941,9 @@ class CBubbleBehavior : public CPetalBehavior
     {
         if (!owner || !flower) return;
 
-        float orbit_distance = PetalOrbitNeutralDistance(owner, flower);
+        float orbit_distance = GetNeutralOrbitDistance(owner, flower);
         (void)dt;
-        PetalOrbitMove(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true);
+        MovePetalToOrbit(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true);
 
         // Defense destroys the bubble only after its prep window (the petal's
         // reload time, which shrinks as rarity rises). The speed boost is
@@ -2028,8 +2029,8 @@ class CCogwheelBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_cogwheel_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_cogwheel_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_cogwheel_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_cogwheel_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_cogwheel_reload;
         stats.preload = game_config::default_cogwheel_reload;
         stats.copy = static_cast<int>(game_config::default_cogwheel_copy);
@@ -2040,7 +2041,7 @@ class CCogwheelBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -2057,7 +2058,7 @@ class CDustBehavior : public CPetalBehavior
     SFlowerStats GetStats(ERarity rarity) const override
     {
         SFlowerStats stats = EmptyFlowerStats();
-        float level = PetalSpecialValueLevel(rarity);
+        float level = GetSpecialPetalLevel(rarity);
         stats.petal_reload_multiplier = std::max(game_config::default_petal_stat_reload_multiplier_min,
                                                  1.0f - level * game_config::default_dust_reload_reduction);
         return stats;
@@ -2066,8 +2067,8 @@ class CDustBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_dust_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_dust_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_dust_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_dust_base_health * GetPetalRarityScale(rarity);
         stats.copy = static_cast<int>(game_config::default_dust_copy);
         stats.mass = game_config::default_dust_mass;
         stats.radius = game_config::default_dust_base_radius;
@@ -2076,9 +2077,9 @@ class CDustBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        float orbit_distance = PetalOrbitDistance(owner, flower);
+        float orbit_distance = GetOrbitDistance(owner, flower);
         m_is_open = flower->m_attacking;
-        PetalOrbitMoveAndAttract(owner, flower, orbit_distance, game_config::default_petal_orbit_k, m_is_open, dt);
+        MovePetalToOrbitAndAttract(owner, flower, orbit_distance, game_config::default_petal_orbit_k, m_is_open, dt);
     }
 
     void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
@@ -2098,7 +2099,7 @@ class CGoldenLeafBehavior : public CPetalBehavior
     SFlowerStats GetStats(ERarity rarity) const override
     {
         SFlowerStats stats = EmptyFlowerStats();
-        float level = PetalSpecialValueLevel(rarity);
+        float level = GetSpecialPetalLevel(rarity);
         stats.petal_reload_multiplier = std::max(game_config::default_petal_stat_reload_multiplier_min,
                                                  1.0f - level * game_config::default_goldenleaf_base_reload_reduction);
         return stats;
@@ -2107,8 +2108,8 @@ class CGoldenLeafBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_goldenleaf_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_goldenleaf_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_goldenleaf_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_goldenleaf_base_health * GetPetalRarityScale(rarity);
         stats.copy = static_cast<int>(game_config::default_goldenleaf_copy);
         stats.mass = game_config::default_goldenleaf_mass;
         stats.radius = game_config::default_goldenleaf_base_radius;
@@ -2117,8 +2118,8 @@ class CGoldenLeafBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        float orbit_distance = PetalOrbitDistance(owner, flower);
-        PetalOrbitMoveAndAttract(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true, dt);
+        float orbit_distance = GetOrbitDistance(owner, flower);
+        MovePetalToOrbitAndAttract(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true, dt);
     }
 
     void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
@@ -2142,8 +2143,8 @@ class CLeafBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_leaf_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_leaf_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_leaf_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_leaf_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_leaf_reload;
         stats.preload = game_config::default_leaf_reload;
         stats.copy = static_cast<int>(game_config::default_leaf_copy);
@@ -2154,7 +2155,7 @@ class CLeafBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -2180,8 +2181,8 @@ class CYuccaBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_yucca_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_yucca_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_yucca_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_yucca_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_yucca_reload;
         stats.preload = game_config::default_yucca_reload;
         stats.copy = static_cast<int>(game_config::default_yucca_copy);
@@ -2192,7 +2193,7 @@ class CYuccaBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -2229,8 +2230,8 @@ class CMagnetBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_magnet_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_magnet_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_magnet_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_magnet_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_magnet_reload;
         stats.preload = game_config::default_magnet_reload;
         stats.copy = 1;
@@ -2242,7 +2243,7 @@ class CMagnetBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -2290,7 +2291,7 @@ class CFungusBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -2314,8 +2315,8 @@ class CWhiteFungusBehavior final : public CFungusBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_white_fungus_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_white_fungus_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_white_fungus_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_white_fungus_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_white_fungus_reload;
         stats.preload = game_config::default_white_fungus_reload;
         stats.copy = static_cast<int>(game_config::default_white_fungus_copy);
@@ -2338,8 +2339,8 @@ class CBlackFungusBehavior final : public CFungusBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_black_fungus_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_black_fungus_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_black_fungus_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_black_fungus_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_black_fungus_reload;
         stats.preload = game_config::default_black_fungus_reload;
         stats.copy = static_cast<int>(game_config::default_black_fungus_copy);
@@ -2389,7 +2390,7 @@ inline float MobMaxHealth(const CMobBase* mob)
     return stats ? stats->max_health : 0.f;
 }
 
-inline bool MobNeedsHealing(const CMobBase* mob)
+inline bool NeedsMobHealing(const CMobBase* mob)
 {
     float max_health = MobMaxHealth(mob);
     return max_health > 0.f && mob->Health() < max_health - game_config::entity_collision_epsilon;
@@ -2404,7 +2405,7 @@ enum class EMedicRecoveryNeed
 
 inline EMedicRecoveryNeed MedicRecoveryNeed(const CMobBase* mob)
 {
-    if (MobNeedsHealing(mob)) return EMedicRecoveryNeed::Health;
+    if (NeedsMobHealing(mob)) return EMedicRecoveryNeed::Health;
 
     const auto* flower = dynamic_cast<const CFlower*>(mob);
     const SFlowerStats* stats = flower ? flower->GetFinalStats() : nullptr;
@@ -2455,7 +2456,7 @@ class CBroccoliBehavior final : public CPetalBehavior
         SPetalStats stats;
         const float raw_health = game_config::default_broccoli_base_health * RoseMedicineScale(rarity);
         const float rounding_step = game_config::default_broccoli_health_rounding_step;
-        stats.damage = game_config::default_broccoli_base_damage * PetalRarityScale(rarity);
+        stats.damage = game_config::default_broccoli_base_damage * GetPetalRarityScale(rarity);
         stats.health = rounding_step > game_config::entity_collision_epsilon
                            ? std::round(raw_health / rounding_step) * rounding_step
                            : raw_health;
@@ -2471,11 +2472,11 @@ class CBroccoliBehavior final : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalClearTarget(owner);
-        PetalOrbitMove(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
+        ClearPetalTarget(owner);
+        MovePetalToOrbit(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
 
         if (!owner || !flower || dt <= 0.f || owner->Health() <= 0.f || flower->IsDead() ||
-            !MobNeedsHealing(flower))
+            !NeedsMobHealing(flower))
             return;
 
         const float received_multiplier = HealingReceivedMultiplier(flower);
@@ -2553,7 +2554,7 @@ class CYggdrasilBehavior : public CPetalBehavior
     {
         SPetalStats stats;
         stats.damage = 0.f;
-        stats.health = game_config::default_yggdrasil_base_health * PetalRarityScale(rarity);
+        stats.health = game_config::default_yggdrasil_base_health * GetPetalRarityScale(rarity);
         stats.medicine = game_config::default_yggdrasil_heal_fraction;
         stats.reload = game_config::default_yggdrasil_preload;
         stats.preload = game_config::default_yggdrasil_preload;
@@ -2580,8 +2581,8 @@ class CYggdrasilBehavior : public CPetalBehavior
         if (range <= 0.f) return nullptr;
 
         const auto can_revive = [owner, flower](const CEntity* entity) { return IsValidCorpse(owner, flower, entity); };
-        CEntity* target = PetalGetCachedTarget(owner, flower, owner->Pos(), range, can_revive);
-        return target ? target : PetalFindClosestTarget(owner, flower, owner->Pos(), range, can_revive);
+        CEntity* target = GetCachedTarget(owner, flower, owner->Pos(), range, can_revive);
+        return target ? target : FindClosestTarget(owner, flower, owner->Pos(), range, can_revive);
     }
 
     void OnTick(CPetal* raw_owner, ERarity rarity, CFlower* flower, float dt) override
@@ -2593,20 +2594,20 @@ class CYggdrasilBehavior : public CPetalBehavior
         {
             owner->m_revive_timer = 0.f;
             owner->m_move_timer = 0;
-            PetalClearTarget(owner);
-            PetalOrbitMove(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
+            ClearPetalTarget(owner);
+            MovePetalToOrbit(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
             return;
         }
 
         const bool target_changed =
             owner->m_target_entity_id != target->Id() || owner->m_target_entity_generation != target->Generation();
-        PetalSetTarget(owner, target);
+        SetPetalTarget(owner, target);
         if (target_changed)
         {
             owner->m_revive_timer = 0.f;
             owner->m_move_timer = 0;
         }
-        PetalMoveTo(owner, target->Pos(), game_config::default_healing_petal_target_move_time,
+        MovePetalTo(owner, target->Pos(), game_config::default_healing_petal_target_move_time,
                     &owner->m_move_timer, dt);
 
         if (!owner->IsCollision(*target))
@@ -2622,7 +2623,7 @@ class CYggdrasilBehavior : public CPetalBehavior
         if (!corpse->ReviveFromYggdrasil(1.f))
         {
             owner->m_revive_timer = 0.f;
-            PetalClearTarget(owner);
+            ClearPetalTarget(owner);
             return;
         }
         owner->m_reload_override = YggdrasilChannelTime(rarity);
@@ -2660,15 +2661,15 @@ inline CEntity* RoseFindTarget(CPetal* owner, CFlower* flower)
         if (RoseCanHealTarget(owner, flower, flower, need)) return flower;
         if (range <= 0.f) return nullptr;
 
-        CEntity* raw = PetalGetCachedTarget(owner, flower, owner->Pos(), range, is_valid_heal_target);
-        return raw ? raw : PetalFindClosestTarget(owner, flower, owner->Pos(), range, is_valid_heal_target);
+        CEntity* raw = GetCachedTarget(owner, flower, owner->Pos(), range, is_valid_heal_target);
+        return raw ? raw : FindClosestTarget(owner, flower, owner->Pos(), range, is_valid_heal_target);
     };
 
     if (CEntity* target = find_target_for_need(EMedicRecoveryNeed::Health)) return target;
     if (CEntity* target = find_target_for_need(EMedicRecoveryNeed::Shield)) return target;
     if (range <= 0.f)
     {
-        PetalClearTarget(owner);
+        ClearPetalTarget(owner);
     }
     return nullptr;
 }
@@ -2683,8 +2684,8 @@ class CRoseBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_rose_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_rose_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_rose_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_rose_base_health * GetPetalRarityScale(rarity);
         stats.medicine = game_config::default_rose_base_medicine * RoseMedicineScale(rarity);
         stats.reload = game_config::default_rose_reload;
         stats.preload = game_config::default_rose_preload;
@@ -2704,18 +2705,18 @@ class CRoseBehavior : public CPetalBehavior
         {
             const bool target_changed = owner->m_target_entity_id != target->Id() ||
                                         owner->m_target_entity_generation != target->Generation();
-            PetalSetTarget(owner, target);
+            SetPetalTarget(owner, target);
             if (target_changed) owner->m_move_timer = 0;
-            PetalMoveTo(owner, target->Pos(), game_config::default_healing_petal_target_move_time,
+            MovePetalTo(owner, target->Pos(), game_config::default_healing_petal_target_move_time,
                         &owner->m_move_timer, dt);
-            owner->m_vel += PetalGlobalPullVelocity(owner, flower, PetalOrbitDistance(owner, flower),
+            owner->m_vel += GetGlobalPullVelocity(owner, flower, GetOrbitDistance(owner, flower),
                                                     game_config::default_petal_orbit_k, true);
             return;
         }
 
         owner->m_move_timer = 0;
-        PetalClearTarget(owner);
-        PetalOrbitMove(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
+        ClearPetalTarget(owner);
+        MovePetalToOrbit(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
     }
 
     void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
@@ -2765,8 +2766,8 @@ class CDahliaBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_dahlia_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_dahlia_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_dahlia_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_dahlia_base_health * GetPetalRarityScale(rarity);
         stats.medicine = game_config::default_dahlia_base_medicine * RoseMedicineScale(rarity);
         stats.reload = game_config::default_dahlia_reload;
         stats.preload = game_config::default_dahlia_reload;
@@ -2786,18 +2787,18 @@ class CDahliaBehavior : public CPetalBehavior
         {
             const bool target_changed = owner->m_target_entity_id != target->Id() ||
                                         owner->m_target_entity_generation != target->Generation();
-            PetalSetTarget(owner, target);
+            SetPetalTarget(owner, target);
             if (target_changed) owner->m_move_timer = 0;
-            PetalMoveTo(owner, target->Pos(), game_config::default_healing_petal_target_move_time,
+            MovePetalTo(owner, target->Pos(), game_config::default_healing_petal_target_move_time,
                         &owner->m_move_timer, dt);
-            owner->m_vel += PetalGlobalPullVelocity(owner, flower, PetalOrbitDistance(owner, flower),
+            owner->m_vel += GetGlobalPullVelocity(owner, flower, GetOrbitDistance(owner, flower),
                                                     game_config::default_petal_orbit_k, false);
             return;
         }
 
         owner->m_move_timer = 0;
-        PetalClearTarget(owner);
-        PetalOrbitMove(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, false);
+        ClearPetalTarget(owner);
+        MovePetalToOrbit(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k, false);
     }
 
     void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
@@ -2846,8 +2847,8 @@ class CWingBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_wing_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_wing_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_wing_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_wing_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_wing_reload;
         stats.preload = game_config::default_wing_reload;
         stats.copy = static_cast<int>(game_config::default_wing_copy);
@@ -2858,14 +2859,14 @@ class CWingBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        float distance = PetalOrbitDistance(owner, flower);
+        float distance = GetOrbitDistance(owner, flower);
         if (owner && flower && flower->m_attacking)
         {
             float wave = std::sin(owner->m_lifetime * game_config::pi * 2.f) + game_config::default_wing_wave_offset;
-            distance = PetalOrbitBaseRadius(owner, flower) + game_config::default_petal_orbit_radius +
-                       PetalOrbitReach(owner, flower, true) * wave;
+            distance = GetBaseOrbitRadius(owner, flower) + game_config::default_petal_orbit_radius +
+                       GetOrbitReach(owner, flower, true) * wave;
         }
-        PetalOrbitMoveAndAttract(owner, flower, distance, game_config::default_petal_orbit_k, true, dt);
+        MovePetalToOrbitAndAttract(owner, flower, distance, game_config::default_petal_orbit_k, true, dt);
     }
 
     void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
@@ -2891,8 +2892,8 @@ class CTriangleBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_triangle_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_triangle_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_triangle_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_triangle_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_triangle_reload;
         stats.preload = game_config::default_triangle_reload;
         stats.copy = static_cast<int>(game_config::default_triangle_copy);
@@ -2903,7 +2904,7 @@ class CTriangleBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -2922,8 +2923,8 @@ class CSawbladeBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_sawblade_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_sawblade_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_sawblade_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_sawblade_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_sawblade_reload;
         stats.preload = game_config::default_sawblade_reload;
         stats.copy = static_cast<int>(game_config::default_sawblade_copy);
@@ -2936,8 +2937,8 @@ class CSawbladeBehavior : public CPetalBehavior
     {
         float reach = game_config::default_petal_neutral_reach;
         if (flower && flower->m_defending) reach += game_config::default_petal_defend_offset;
-        float distance = PetalOrbitBaseRadius(owner, flower) + game_config::default_petal_orbit_radius + reach;
-        PetalOrbitMoveAndAttract(owner, flower, distance, game_config::default_petal_orbit_k, true, dt);
+        float distance = GetBaseOrbitRadius(owner, flower) + game_config::default_petal_orbit_radius + reach;
+        MovePetalToOrbitAndAttract(owner, flower, distance, game_config::default_petal_orbit_k, true, dt);
     }
 
     void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
@@ -2952,7 +2953,7 @@ inline float FragmentValue(ERarity rarity)
     case ERarity::Ultra:
         return game_config::default_fragment_value_ultra;
     case ERarity::Exotic:
-        return PetalRarityScale(ERarity::Common);
+        return GetPetalRarityScale(ERarity::Common);
     case ERarity::Super:
         return game_config::default_fragment_value_super;
     case ERarity::Eternal:
@@ -2962,7 +2963,7 @@ inline float FragmentValue(ERarity rarity)
     case ERarity::Primordial:
         return game_config::default_fragment_value_primordial;
     default:
-        return PetalRarityScale(rarity);
+        return GetPetalRarityScale(rarity);
     }
 }
 
@@ -2993,7 +2994,7 @@ class CFragmentBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -3055,20 +3056,20 @@ class CMimicBehavior : public CPetalBehavior
         return proto->m_p_behavior->GetStats(rarity);
     }
 
-    SPetalStats GetPetalStatsForSlot(ERarity rarity, const CPetalSlot* slot, const CFlower* flower) const override
+    SPetalStats GetSlotPetalStats(ERarity rarity, const CPetalSlot* slot, const CFlower* flower) const override
     {
         const CPetalPrototype* proto = MimicTargetPrototype(slot, flower);
         if (!proto || !proto->m_p_behavior) return GetPetalStats(rarity);
         return proto->m_p_behavior->GetPetalStats(rarity);
     }
 
-    const CPetalPrototype* GetRuntimePrototypeForSlot(ERarity, const CPetalSlot* slot,
+    const CPetalPrototype* GetRuntimeSlotPrototype(ERarity, const CPetalSlot* slot,
                                                       const CFlower* flower) const override
     {
         return MimicTargetPrototype(slot, flower);
     }
 
-    EPetalBonusMode GetBonusModeForSlot(ERarity, const CPetalSlot* slot, const CFlower* flower) const override
+    EPetalBonusMode GetSlotBonusMode(ERarity, const CPetalSlot* slot, const CFlower* flower) const override
     {
         const CPetalPrototype* proto = MimicTargetPrototype(slot, flower);
         if (!proto || !proto->m_p_behavior) return EPetalBonusMode::AliveOnly;
@@ -3080,7 +3081,7 @@ class CMimicBehavior : public CPetalBehavior
         const CPetalPrototype* proto = MimicTargetPrototype(owner, flower);
         if (!proto || !proto->m_p_behavior)
         {
-            PetalOrbitMove(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
+            MovePetalToOrbit(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
             return;
         }
 
@@ -3171,8 +3172,8 @@ class CIrisBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_iris_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_iris_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_iris_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_iris_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_iris_reload;
         stats.preload = game_config::default_iris_reload;
         stats.copy = static_cast<int>(game_config::default_iris_copy);
@@ -3183,7 +3184,7 @@ class CIrisBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -3221,15 +3222,15 @@ class CLentilBehavior : public CPetalBehavior
     SFlowerStats GetStats(ERarity rarity) const override
     {
         SFlowerStats stats = EmptyFlowerStats();
-        stats.petal_attraction_range = game_config::default_lentil_petal_attraction_range * PetalValueLevel(rarity);
+        stats.petal_attraction_range = game_config::default_lentil_petal_attraction_range * GetPetalValueLevel(rarity);
         return stats;
     }
 
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_lentil_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_lentil_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_lentil_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_lentil_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_lentil_reload;
         stats.preload = game_config::default_lentil_reload;
         stats.copy = static_cast<int>(game_config::default_lentil_copy);
@@ -3242,37 +3243,37 @@ class CLentilBehavior : public CPetalBehavior
     {
         if (!owner || !flower || !flower->GameWorld() || !flower->GetFinalStats()) return nullptr;
 
-        const float range = PetalEnemyTargetRange(owner, flower, true);
+        const float range = GetEnemyTargetRange(owner, flower, true);
         if (range <= 0.f) return nullptr;
 
         auto filter = [owner, flower](const CEntity* entity) -> bool {
             return IsValidPetalEnemyTarget(owner, flower, entity);
         };
 
-        CEntity* raw = PetalGetCachedTarget(owner, flower, owner->Pos(), range, filter);
-        if (!raw) raw = PetalFindClosestTarget(owner, flower, owner->Pos(), range, filter);
+        CEntity* raw = GetCachedTarget(owner, flower, owner->Pos(), range, filter);
+        if (!raw) raw = FindClosestTarget(owner, flower, owner->Pos(), range, filter);
         return raw;
     }
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
         CEntity* target = LentilFindTarget(owner, flower);
-        PetalOrbitMove(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
+        MovePetalToOrbit(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
         if (owner && target)
         {
-            PetalSetTarget(owner, target);
+            SetPetalTarget(owner, target);
             const float acceleration_multiplier = game_config::default_petal_target_acceleration_multiplier;
             const florrbt::Vector2f target_velocity =
-                PetalSeekVelocity(owner, target, PetalLockedTargetAcceleration(flower, acceleration_multiplier));
+                GetSeekVelocity(owner, target, GetLockedTargetAcceleration(flower, acceleration_multiplier));
             const florrbt::Vector2f global_pull_velocity =
-                PetalGlobalPullVelocity(owner, flower, PetalOrbitDistance(owner, flower),
+                GetGlobalPullVelocity(owner, flower, GetOrbitDistance(owner, flower),
                                         game_config::default_petal_orbit_k, true);
-            owner->m_vel = PetalConstrainTargetVelocity(owner, flower, target, acceleration_multiplier,
+            owner->m_vel = ConstrainTargetVelocity(owner, flower, target, acceleration_multiplier,
                                                         target_velocity, global_pull_velocity, dt);
             return;
         }
 
-        PetalClearTarget(owner);
+        ClearPetalTarget(owner);
     }
 
     void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
@@ -3281,7 +3282,7 @@ class CLentilBehavior : public CPetalBehavior
 };
 inline float MoonVisibleRadius(ERarity rarity)
 {
-    float level = PetalValueLevel(rarity);
+    float level = GetPetalValueLevel(rarity);
     return game_config::default_flower_radius + std::max(0.f, level - 1.f) * game_config::default_moon_radius_step;
 }
 
@@ -3297,8 +3298,8 @@ class CMoonBehavior : public CPetalBehavior
         float visible_radius = MoonVisibleRadius(rarity);
 
         SPetalStats stats;
-        stats.damage = game_config::default_moon_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_moon_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_moon_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_moon_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_moon_reload;
         stats.preload = game_config::default_moon_reload;
         stats.copy = static_cast<int>(game_config::default_moon_copy);
@@ -3359,8 +3360,8 @@ class CPincerBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_pincer_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_pincer_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_pincer_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_pincer_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_pincer_reload;
         stats.preload = game_config::default_pincer_reload;
         stats.copy = static_cast<int>(game_config::default_pincer_copy);
@@ -3371,7 +3372,7 @@ class CPincerBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -3386,7 +3387,7 @@ class CPincerBehavior : public CPetalBehavior
         const SFlowerStats* flower_stats = flower ? flower->GetFinalStats() : nullptr;
         float poison_duration = game_config::default_pincer_poison_duration *
                                 (flower_stats ? flower_stats->poison_duration_multiplier : 1.f);
-        float poison_total = game_config::default_pincer_poison_total_damage * PetalRarityScale(rarity);
+        float poison_total = game_config::default_pincer_poison_total_damage * GetPetalRarityScale(rarity);
         float poison_per_second = game_config::default_pincer_poison_duration > 0.f
                                       ? poison_total / game_config::default_pincer_poison_duration
                                       : 0.f;
@@ -3421,8 +3422,8 @@ class CDandelionBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_dandelion_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_dandelion_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_dandelion_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_dandelion_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_dandelion_reload;
         stats.preload = game_config::default_dandelion_reload;
         stats.copy = DandelionCopy(rarity);
@@ -3435,11 +3436,11 @@ class CDandelionBehavior : public CPetalBehavior
     {
         if (!owner || !flower) return;
 
-        float distance = PetalOrbitDistance(owner, flower);
+        float distance = GetOrbitDistance(owner, flower);
         if (flower->m_attacking) distance += game_config::default_dandelion_attack_extra_reach;
-        PetalOrbitMoveAndAttract(owner, flower, distance, game_config::default_petal_orbit_k, true, dt);
+        MovePetalToOrbitAndAttract(owner, flower, distance, game_config::default_petal_orbit_k, true, dt);
 
-        florrbt::Vector2f direction = owner->Pos() - PetalOrbitCenter(owner, flower);
+        florrbt::Vector2f direction = owner->Pos() - GetOrbitCenter(owner, flower);
         if (LengthSq(direction) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
             direction = { std::cos(flower->FacingAngle()), std::sin(flower->FacingAngle()) };
         if (LengthSq(direction) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
@@ -3468,8 +3469,8 @@ class CMissileBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_missile_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_missile_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_missile_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_missile_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_missile_reload;
         stats.preload = game_config::default_missile_reload;
         stats.copy = static_cast<int>(game_config::default_missile_copy);
@@ -3483,9 +3484,9 @@ class CMissileBehavior : public CPetalBehavior
         auto* missile = dynamic_cast<CMissilePetal*>(owner);
         if (!missile || !flower || missile->m_fired) return;
 
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
-        florrbt::Vector2f radial = owner->Pos() - PetalOrbitCenter(owner, flower);
+        florrbt::Vector2f radial = owner->Pos() - GetOrbitCenter(owner, flower);
         if (LengthSq(radial) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
             radial = { std::cos(flower->FacingAngle()), std::sin(flower->FacingAngle()) };
         if (LengthSq(radial) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
@@ -3585,11 +3586,11 @@ class CTrapperBehavior final : public CPetalBehavior
         const float recoil_distance = std::max(0.f, game_config::default_trapper_recoil_distance) * recoil_ratio *
                                       recoil_ratio;
         const float orbit_distance = std::max(0.f, mount_distance - recoil_distance);
-        PetalClearTarget(owner);
+        ClearPetalTarget(owner);
 
-        const florrbt::Vector2f layout_center = PetalOrbitCenter(owner, flower);
+        const florrbt::Vector2f layout_center = GetOrbitCenter(owner, flower);
         florrbt::Vector2f direction = owner->Pos() - mount_center;
-        if (const std::optional<florrbt::Vector2f> mount = PetalOrbitGlobal(owner, flower, orbit_distance, true))
+        if (const std::optional<florrbt::Vector2f> mount = GetGlobalOrbitPosition(owner, flower, orbit_distance, true))
             direction = *mount - layout_center;
         float direction_length = Length(direction);
         if (direction_length <= game_config::entity_collision_epsilon)
@@ -3663,8 +3664,8 @@ class CCarrotBehavior : public CMissileBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_carrot_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_carrot_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_carrot_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_carrot_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_carrot_reload;
         stats.preload = game_config::default_carrot_reload;
         stats.copy = static_cast<int>(game_config::default_carrot_copy);
@@ -3753,7 +3754,7 @@ inline float WebDesiredSpeedMultiplier(ERarity rarity)
 {
     const float first_level = static_cast<float>(GetLevel(ERarity::Common));
     const float last_level = static_cast<float>(GetLevel(ERarity::Primordial));
-    float t = std::clamp(PetalSpecialValueLevel(rarity) - first_level, 0.f, last_level - first_level) /
+    float t = std::clamp(GetSpecialPetalLevel(rarity) - first_level, 0.f, last_level - first_level) /
               (last_level - first_level);
     float target_slow =
         game_config::default_web_target_slow_common +
@@ -3789,8 +3790,8 @@ class CWebBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_web_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_web_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_web_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_web_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_web_reload;
         stats.preload = game_config::default_web_reload;
         stats.copy = static_cast<int>(game_config::default_web_copy);
@@ -3804,7 +3805,7 @@ class CWebBehavior : public CPetalBehavior
         auto* thrown = dynamic_cast<CThrownPetal*>(owner);
         if (thrown && thrown->m_thrown) return;
 
-        PetalOrbitMove(owner, flower, PetalOrbitNeutralDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbit(owner, flower, GetNeutralOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                        true);
         if (!owner || !flower || owner->m_lifetime < game_config::default_web_fire_cooldown) return;
         if (!flower->m_attacking && !flower->m_defending) return;
@@ -3839,7 +3840,7 @@ class CPollenBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         int copy = PollenCopy(rarity);
-        float scale = PetalRarityScale(rarity);
+        float scale = GetPetalRarityScale(rarity);
 
         SPetalStats stats;
         stats.damage = game_config::default_pollen_base_damage * scale;
@@ -3857,7 +3858,7 @@ class CPollenBehavior : public CPetalBehavior
         auto* thrown = dynamic_cast<CThrownPetal*>(owner);
         if (thrown && thrown->m_thrown) return;
 
-        PetalOrbitMove(owner, flower, PetalOrbitNeutralDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbit(owner, flower, GetNeutralOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                        true);
         if (!owner || !flower || owner->m_lifetime < game_config::default_pollen_fire_cooldown) return;
         if (!flower->m_attacking && !flower->m_defending) return;
@@ -3898,7 +3899,7 @@ class CHoneyBehavior : public CPetalBehavior
     {
         SPetalStats stats;
         stats.damage = 0.f;
-        stats.health = game_config::default_honey_base_health * PetalRarityScale(rarity);
+        stats.health = game_config::default_honey_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_honey_reload;
         stats.preload = game_config::default_honey_reload;
         stats.copy = static_cast<int>(game_config::default_honey_copy);
@@ -3913,7 +3914,7 @@ class CHoneyBehavior : public CPetalBehavior
         auto* thrown = dynamic_cast<CThrownPetal*>(owner);
         if (thrown && thrown->m_thrown) return;
 
-        PetalOrbitMove(owner, flower, PetalOrbitNeutralDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbit(owner, flower, GetNeutralOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                        true);
         if (!owner || !flower || owner->m_lifetime < game_config::default_honey_fire_cooldown) return;
         if (!flower->m_attacking && !flower->m_defending) return;
@@ -3950,6 +3951,7 @@ class CEouPheromoneBehavior : public CHoneyBehavior
     {
         SPetalStats stats = CHoneyBehavior::GetPetalStats(rarity);
         stats.stack = true;
+        stats.copy = 1;
         return stats;
     }
 
@@ -3958,24 +3960,26 @@ class CEouPheromoneBehavior : public CHoneyBehavior
     // a cell at the resting point (see the ant-kingdom controller).
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        auto* thrown = dynamic_cast<CThrownPetal*>(owner);
-        if (thrown && thrown->m_thrown) return;
+        auto* thrown = dynamic_cast<CEouPheromonePetal*>(owner);
+        if (!thrown || !flower) return;
+        const bool pressed = flower->m_attacking || flower->m_defending;
+        if (!pressed) thrown->m_input_latched = false;
+        if (thrown->m_thrown) return;
 
-        PetalOrbitMove(owner, flower, PetalOrbitNeutralDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbit(owner, flower, GetNeutralOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                        true);
-        if (!owner || !flower || owner->m_lifetime < game_config::default_web_fire_cooldown) return;
-        if (!flower->m_attacking && !flower->m_defending) return;
-
-        float flower_speed =
+        if (!pressed || thrown->m_input_latched || owner->m_lifetime < game_config::default_web_fire_cooldown) return;
+        thrown->m_input_latched = true;
+        const bool defend = !flower->m_attacking && flower->m_defending;
+        // Building is one action per press, not one toggle per petal/copy.
+        if (defend && (thrown->m_group_id != 1 || owner->m_copy_index != 0)) return;
+        const float flower_speed =
             flower->GetFinalStats() ? flower->GetFinalStats()->max_velocity : game_config::default_max_velocity;
-        float speed_mult = flower->m_attacking ? game_config::default_web_throw_attack_speed
-                                               : game_config::default_web_throw_defend_speed;
-        if (thrown)
-        {
-            thrown->m_throw_was_defend = flower->m_defending;
-            thrown->BeginThrow(PetalThrowDirection(owner, flower), flower_speed * speed_mult,
-                               game_config::default_web_throw_deceleration, false, false, true);
-        }
+        const float speed_mult = defend ? game_config::default_web_throw_defend_speed
+                                        : game_config::default_web_throw_attack_speed;
+        thrown->m_throw_was_defend = defend;
+        thrown->BeginThrow(PetalThrowDirection(owner, flower), flower_speed * speed_mult,
+                           game_config::default_web_throw_deceleration, false, false, true);
     }
 
     void OnPetalHit(CPetal*, ERarity, CEntity*, float& damage) override
@@ -4004,7 +4008,7 @@ class CWaxBehavior : public CPetalBehavior
     {
         SPetalStats stats;
         stats.damage = 0.f;
-        stats.health = game_config::default_wax_base_health * PetalRarityScale(rarity);
+        stats.health = game_config::default_wax_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_wax_reload;
         stats.preload = game_config::default_wax_reload;
         stats.copy = static_cast<int>(game_config::default_wax_copy);
@@ -4094,8 +4098,8 @@ class CShovelBehavior : public CPetalBehavior
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float) override
     {
         if (!owner || !flower) return;
-        PetalClearTarget(owner);
-        PetalOrbitMove(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
+        ClearPetalTarget(owner);
+        MovePetalToOrbit(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
     }
 
     void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
@@ -4114,8 +4118,8 @@ class COrangeBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_orange_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_orange_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_orange_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_orange_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_orange_reload;
         stats.preload = game_config::default_orange_reload;
         stats.copy = std::max(1, static_cast<int>(std::round(game_config::default_orange_copy)));
@@ -4140,7 +4144,7 @@ class COrangeBehavior : public CPetalBehavior
         else if (flower->m_defending) reach += game_config::default_petal_defend_offset;
 
         const float reach_distance =
-            PetalOrbitBaseRadius(owner, flower) + game_config::default_petal_orbit_radius + reach;
+            GetBaseOrbitRadius(owner, flower) + game_config::default_petal_orbit_radius + reach;
         const float circle_radius = game_config::default_orange_circle_radius;
         float group_angle =
             flower->GetPetalRotationAngle() +
@@ -4248,8 +4252,8 @@ class CCompassBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_compass_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_compass_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_compass_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_compass_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_compass_reload;
         stats.preload = game_config::default_compass_reload;
         stats.copy = static_cast<int>(game_config::default_compass_copy);
@@ -4263,7 +4267,7 @@ class CCompassBehavior : public CPetalBehavior
         auto* owner = dynamic_cast<CCompassPetal*>(raw_owner);
         if (!owner || !flower) return;
 
-        PetalOrbitMove(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
+        MovePetalToOrbit(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
         if (!CompassCanPoint(rarity)) return;
 
         if (rarity != ERarity::Super)
@@ -4358,8 +4362,8 @@ class CRelicBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_relic_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_relic_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_relic_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_relic_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_relic_reload;
         stats.preload = game_config::default_relic_reload;
         stats.copy = static_cast<int>(game_config::default_relic_copy);
@@ -4371,7 +4375,7 @@ class CRelicBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity rarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
         RefreshPsionicZone(owner, rarity, flower);
     }
@@ -4460,15 +4464,15 @@ class CAmuletBehavior final : public CPetalBehavior
     {
         SFlowerStats stats = EmptyFlowerStats();
         stats.overheal_to_shield =
-            game_config::default_amulet_overheal_conversion_per_level * PetalSpecialValueLevel(rarity);
+            game_config::default_amulet_overheal_conversion_per_level * GetSpecialPetalLevel(rarity);
         return stats;
     }
 
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_amulet_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_amulet_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_amulet_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_amulet_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_amulet_reload;
         stats.preload = game_config::default_amulet_reload;
         stats.copy = static_cast<int>(game_config::default_amulet_copy);
@@ -4479,8 +4483,8 @@ class CAmuletBehavior final : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float) override
     {
-        PetalClearTarget(owner);
-        PetalOrbitMove(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
+        ClearPetalTarget(owner);
+        MovePetalToOrbit(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k, true);
     }
 
     void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}
@@ -4498,8 +4502,8 @@ class CPlankBehavior final : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_plank_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_plank_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_plank_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_plank_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_plank_reload;
         stats.preload = game_config::default_plank_reload;
         stats.copy = static_cast<int>(game_config::default_plank_copy);
@@ -4510,11 +4514,11 @@ class CPlankBehavior final : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float) override
     {
-        PetalClearTarget(owner);
-        float orbit_distance = PetalOrbitNeutralDistance(owner, flower);
+        ClearPetalTarget(owner);
+        float orbit_distance = GetNeutralOrbitDistance(owner, flower);
         if (flower && flower->m_defending && !flower->m_attacking)
             orbit_distance += game_config::default_petal_defend_offset;
-        PetalOrbitMove(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true);
+        MovePetalToOrbit(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true);
     }
 
     void OnPetalHit(CPetal*, ERarity, CEntity* target, float& damage) override
@@ -4538,8 +4542,8 @@ class CTomatoBehavior final : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_tomato_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_tomato_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_tomato_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_tomato_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_tomato_reload;
         stats.preload = game_config::default_tomato_reload;
         stats.copy = static_cast<int>(game_config::default_tomato_copy);
@@ -4586,7 +4590,7 @@ class CTomatoBehavior final : public CPetalBehavior
         owner->Health() = std::clamp(owner->Health(), 0.f, new_max_health);
         owner->Radius() = owner->m_final_petal_stats.radius;
 
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -4608,8 +4612,8 @@ class CHallucinogenicMushroomBehavior final : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_hallucinogenic_mushroom_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_hallucinogenic_mushroom_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_hallucinogenic_mushroom_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_hallucinogenic_mushroom_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_hallucinogenic_mushroom_reload;
         stats.preload = game_config::default_hallucinogenic_mushroom_reload;
         stats.copy = static_cast<int>(game_config::default_hallucinogenic_mushroom_copy);
@@ -4620,7 +4624,7 @@ class CHallucinogenicMushroomBehavior final : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        PetalOrbitMoveAndAttract(owner, flower, PetalOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
+        MovePetalToOrbitAndAttract(owner, flower, GetOrbitDistance(owner, flower), game_config::default_petal_orbit_k,
                                  true, dt);
     }
 
@@ -4653,8 +4657,8 @@ class CYinYangBehavior : public CPetalBehavior
     SPetalStats GetPetalStats(ERarity rarity) const override
     {
         SPetalStats stats;
-        stats.damage = game_config::default_yinyang_base_damage * PetalRarityScale(rarity);
-        stats.health = game_config::default_yinyang_base_health * PetalRarityScale(rarity);
+        stats.damage = game_config::default_yinyang_base_damage * GetPetalRarityScale(rarity);
+        stats.health = game_config::default_yinyang_base_health * GetPetalRarityScale(rarity);
         stats.reload = game_config::default_yinyang_reload;
         stats.preload = game_config::default_yinyang_reload;
         stats.copy = static_cast<int>(game_config::default_yinyang_copy);
@@ -4665,8 +4669,8 @@ class CYinYangBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
-        float orbit_distance = PetalOrbitDistance(owner, flower);
-        PetalOrbitMoveAndAttract(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true, dt);
+        float orbit_distance = GetOrbitDistance(owner, flower);
+        MovePetalToOrbitAndAttract(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true, dt);
     }
 
     void OnFlowerTakeDamage(CPetal*, ERarity, CFlower*, float&, EDamageType, CEntity*) override {}

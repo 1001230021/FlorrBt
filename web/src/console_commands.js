@@ -23,6 +23,7 @@ import {
   getClientConfigEntry,
   getClientConfigValue,
   listClientConfigEntries,
+  normalizeViewZoomPercent,
   resetClientConfig,
   setClientConfigValue,
 } from "./client_config.js";
@@ -62,6 +63,14 @@ export function executeClientCommand(line) {
   if (args.length === 0) return;
 
   const name = args.shift().replace(/^\//, "").toLowerCase();
+  if (name === "dev_debug" || name === "dev") {
+    context.requestDevDebug?.();
+    return;
+  }
+  if (name === "clear" || name === "clear_console") {
+    context.clearConsole?.();
+    return;
+  }
   if (name === "version" || name === "ver") {
     context.addConsoleLine(appDisplayName);
     return;
@@ -107,6 +116,34 @@ export function executeClientCommand(line) {
       t("commands.renderScale.changed", {
         mode: String(state.renderScaleMode),
         dpr: state.dpr.toFixed(2),
+      }),
+    );
+    return;
+  }
+  if (name === "view_zoom" || name === "viewzoom" || name === "zoom") {
+    if (args.length === 0) {
+      context.addConsoleLine(
+        t("commands.viewZoom.current", {
+          percent: normalizeViewZoomPercent(state.viewZoomPercent),
+        }),
+      );
+      return;
+    }
+    const rawValue = String(args[0] || "")
+      .trim()
+      .replace(/%$/, "");
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed)) {
+      context.addConsoleLine(
+        t("commands.viewZoom.invalid", { value: args[0] }),
+        "error",
+      );
+      return;
+    }
+    context.setViewZoomPercent(parsed);
+    context.addConsoleLine(
+      t("commands.viewZoom.changed", {
+        percent: normalizeViewZoomPercent(state.viewZoomPercent),
       }),
     );
     return;
@@ -350,6 +387,7 @@ function executeBindCommand(args) {
   // Rebinding a key while it is held would strand its hold sources.
   releaseInputHolds({ device: target, key: parsed.key });
   bindInputKey(context.bindings, target, parsed.key, parsed.commands);
+  context.onBindingsChanged?.();
   context.addConsoleLine(
     t("commands.bind.bound", {
       device: target,
@@ -369,6 +407,7 @@ function executeUnbindCommand(args) {
   const target = device || deviceForInputKey(key);
   releaseInputHolds({ device: target, key });
   unbindInputKey(context.bindings, target, key);
+  context.onBindingsChanged?.();
   context.addConsoleLine(t("commands.unbind.unbound", { device: target, key }));
 }
 
@@ -380,6 +419,7 @@ function executeUnbindAllCommand(args) {
     unbindAllInputs(context.bindings, target);
     context.addConsoleLine(t("commands.unbindall.unbound", { device: target }));
   }
+  context.onBindingsChanged?.();
 }
 
 // `reset <target>`: put a group of client-side state back to its defaults.
@@ -397,6 +437,7 @@ function executeResetCommand(args) {
   const resetInputBindings = () => {
     releaseInputHolds();
     resetBindings(context.bindings);
+    context.onBindingsChanged?.();
     context.addConsoleLine(t("commands.reset.bindings"));
   };
   const resetPreferences = () => {
@@ -702,6 +743,7 @@ function executeClientSetCommand(args) {
 
   state.clientConfig = result.config;
   context.saveSettings();
+  context.onClientConfigChanged?.(result.name);
   context.requestRedraw();
   // Petal label config changes need the cards rebuilt in their new size.
   if (

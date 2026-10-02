@@ -2,11 +2,12 @@ import { dom, loadoutPresetCount, state } from "./app_context.js";
 import {
   clientRuntimeConfig,
   defaultClientConfig,
+  normalizeViewZoomPercent,
   normalizeClientConfig,
 } from "./client_config.js";
 
 const settingsKey = "florrbt.web.settings";
-const settingsVersion = 14;
+const settingsVersion = 15;
 const dandelionRightFacingConfigVersion = 7;
 const loginMapViewDefaultsVersion = 10;
 const titanHalfScaleConfigVersion = 14;
@@ -127,6 +128,7 @@ export function loadClientSettings() {
         finiteSettingNumber(saved.loginMapHorizon, loginMapDefaultHorizon),
       )
     : loginMapDefaultHorizon;
+  state.viewZoomPercent = normalizeViewZoomPercent(saved.viewZoomPercent);
   state.clientConfig = normalizeClientConfig(saved.clientConfig);
   state.holdAttack = saved.holdAttack === true;
   state.holdDefense = saved.holdDefense === true;
@@ -169,6 +171,7 @@ export function resetClientPreferences() {
   state.loginMapX = loginMapDefaultX;
   state.loginMapY = loginMapDefaultY;
   state.loginMapHorizon = loginMapDefaultHorizon;
+  state.viewZoomPercent = clientRuntimeConfig.viewZoomMaxPercent;
 }
 
 export function saveClientSettings() {
@@ -191,6 +194,7 @@ export function saveClientSettings() {
       loginMapX: state.loginMapX,
       loginMapY: state.loginMapY,
       loginMapHorizon: state.loginMapHorizon,
+      viewZoomPercent: normalizeViewZoomPercent(state.viewZoomPercent),
       clientConfig: normalizeClientConfig(state.clientConfig),
     }),
   );

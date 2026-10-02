@@ -50,6 +50,21 @@ jobs:
       - name: Run input hold regression tests
         run: node tools/test_input_holds.mjs
 
+      - name: Check analog motion and live slot values
+        run: node tools/test_motion_and_slot_values.mjs
+
+      - name: Check craft motion and talent tree models
+        run: node tools/test_craft_talent_ui.mjs
+
+      - name: Check flower rendering and combat feedback
+        run: node tools/test_flower_feedback.mjs
+
+      - name: Check entity animation and UI regressions
+        run: |
+          node tools/test_entity_motion.mjs
+          node tools/test_codex_ui.mjs
+          node tools/test_death_presentation.mjs
+
   web-bridge-tests:
     name: Web bridge unit tests
     runs-on: ubuntu-latest
@@ -132,6 +147,15 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force package/FlorrBt_Server | Out-Null
           Copy-Item "${{ matrix.executable }}" package/FlorrBt_Server/
+          # libmysql.dll loads the OpenSSL runtime DLLs dynamically on
+          # Windows. Keep them beside the executable in downloadable builds.
+          $runtimeNames = @("libmysql.dll", "libssl-3-x64.dll", "libcrypto-3-x64.dll")
+          foreach ($runtimeName in $runtimeNames) {
+            $runtimePath = Join-Path "build/Release" $runtimeName
+            if (Test-Path $runtimePath) {
+              Copy-Item $runtimePath package/FlorrBt_Server/
+            }
+          }
           Copy-Item data package/FlorrBt_Server/data -Recurse
 
       - name: Upload server artifact

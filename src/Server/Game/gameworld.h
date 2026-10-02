@@ -1,11 +1,13 @@
 ﻿#pragma once
 #include "../../Engine/logger.h"
 #include "../../Engine/map_tools.h"
+#include "../../Shared/math_types.h"
 #include "../../Engine/spatial_hash_grid.h"
 #include "../../Shared/shared.h"
 #include "entity.h"
 #include "gamecontroller.h"
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -68,6 +70,9 @@ class CGameWorld
     explicit CGameWorld(const std::string& path, std::uint32_t world_id = 0);
     ~CGameWorld();
     std::uint32_t GetId() const { return m_world_id; }
+    // World IDs can be reused after deleting the last room. Debug/editor
+    // references additionally carry this process-local instance identity.
+    std::uint64_t GetInstanceGeneration() const { return m_instance_generation; }
 
     int GetNewID();
     void FreeID(int id);
@@ -103,6 +108,9 @@ class CGameWorld
     bool IsCarriedEntity(const CEntity& carried);
     void QueueEntityForCleanup(CEntity* entity);
     void QueuePsionicDamage(CMobBase* receiver, float damage, CEntity* attacker, EDamageType damage_type);
+    void RecordCombatDamage(const CEntity& target, float amount, EDamageType kind, CEntity* source);
+    const std::vector<ServerMessage::SCombatHit>& GetCombatFeedback() const { return m_combat_feedback; }
+    void ClearCombatFeedback() { m_combat_feedback.clear(); m_combat_feedback_indices.clear(); }
     CEntity* FindClosestEntity(const florrbt::Vector2f& center, float max_range,
                                std::function<bool(const CEntity*)> filter = nullptr) const;
     CEntity* FindClosestEntityByEdge(const florrbt::Vector2f& center, float max_edge_range,
@@ -167,6 +175,8 @@ class CGameWorld
     void ChainLightning(CEntity& origin, float damage, int bounces, CEntity* owner);
 
   private:
+    inline static std::atomic<std::uint64_t> s_next_instance_generation{ 0 };
+    const std::uint64_t m_instance_generation = ++s_next_instance_generation;
     struct SPsionicReceiverKey
     {
         int entity_id = -1;
@@ -311,4 +321,6 @@ class CGameWorld
     float m_retire_sweep_timer = 0.f;
     float m_normal_entity_radius_limit = 1.f;
     STickPhaseTelemetry m_tick_phase_telemetry;
+    std::vector<ServerMessage::SCombatHit> m_combat_feedback;
+    std::unordered_map<std::uint32_t, size_t> m_combat_feedback_indices;
 };

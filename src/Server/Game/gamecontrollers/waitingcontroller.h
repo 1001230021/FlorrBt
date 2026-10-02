@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "../controller_params.h"
+#include "../../../Shared/math_types.h"
 #include "../gamecontroller.h"
 #include <cstddef>
 #include <cstdint>
@@ -47,6 +48,10 @@ class CWaitingController : public IGameController
                              EPlayerSpawnReason reason) override;
     void OnPlayerEnteredWorld(CGameWorld& world, CPlayer& player) override;
     void OnPlayerLeftWorld(CGameWorld& world, CPlayer& player) override;
+    // The waiting world is only a staging area. Its slots are banned while a
+    // player waits, so expose the same rule to every loadout entry point
+    // (primary and secondary slots alike).
+    bool LocksPetalLoadout() const override { return true; }
     bool HandlePlayerCommand(CGameWorld& world, CPlayer& player,
                              const std::vector<std::string>& args) override;
     std::string_view SnapshotKey() const override { return "world_controller.waiting"; }

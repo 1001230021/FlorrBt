@@ -1,5 +1,6 @@
 #pragma once
 #include "../../../Shared/game_config.h"
+#include "../../../Shared/math_types.h"
 #include "../../../Shared/shared.h"
 #include "../entity.h"
 #include <algorithm>

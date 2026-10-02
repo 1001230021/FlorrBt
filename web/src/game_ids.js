@@ -179,7 +179,7 @@ export const petalEraserType = PETAL_IDS.eraser;
 
 export const stingerSplitIconMinRarity = 6;
 export const compassUltraIconMinRarity = 7;
-export const flowerTextureVersion = "20260802a";
+export const flowerTextureVersion = "20260925b";
 
 export const PetalIconIds = GENERATED_PETAL_ICON_IDS;
 

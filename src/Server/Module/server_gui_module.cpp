@@ -38,11 +38,11 @@ std::vector<std::string> RarityNames()
     return names;
 }
 
-std::vector<std::string> PetalNames()
+std::vector<std::string> GetPetalNames()
 {
     std::vector<std::string> names;
-    names.reserve(PetalRegistry().size());
-    for (const auto& [type, proto] : PetalRegistry())
+    names.reserve(GetPetalRegistry().size());
+    for (const auto& [type, proto] : GetPetalRegistry())
     {
         if (proto && !proto->m_name.empty()) names.push_back(proto->m_name);
         else names.emplace_back(GetPetalTypeName(type));
@@ -51,11 +51,11 @@ std::vector<std::string> PetalNames()
     return names;
 }
 
-std::vector<std::string> MobNames()
+std::vector<std::string> GetMobNames()
 {
     std::vector<std::string> names;
-    names.reserve(MobRegistry().size());
-    for (const auto& [type, proto] : MobRegistry())
+    names.reserve(GetMobRegistry().size());
+    for (const auto& [type, proto] : GetMobRegistry())
     {
         if (proto && !proto->m_name.empty()) names.push_back(proto->m_name);
         else names.emplace_back(GetMobTypeName(type));
@@ -95,7 +95,7 @@ bool IsUnsignedInteger(std::string_view text)
 
 std::vector<std::string> SplitWhitespace(const std::string& input);
 
-std::vector<std::string> PlayerNames()
+std::vector<std::string> GetPlayerNames()
 {
     std::vector<std::string> names;
     CServer* server = CServer::GetInstance();
@@ -231,8 +231,8 @@ std::vector<std::string> CompletionCandidates(std::string_view kind, std::string
     if (kind == "command") return console.CommandNames();
     if (kind == "config") return game_config::ConfigNames();
     if (kind == "rarity") return RarityNames();
-    if (kind == "petal") return PetalNames();
-    if (kind == "mob") return MobNames();
+    if (kind == "petal") return GetPetalNames();
+    if (kind == "mob") return GetMobNames();
     if (kind == "player" || kind == "target")
     {
         std::vector<std::string> candidates = snapshot.players;
@@ -485,7 +485,7 @@ void IServerGuiModule::Tick(float dt)
 void IServerGuiModule::RefreshCompletionSnapshot()
 {
     SCompletionSnapshot snapshot;
-    snapshot.players = PlayerNames();
+    snapshot.players = GetPlayerNames();
     snapshot.world_ids = WorldIds();
     snapshot.world_ids_and_maps = WorldIdsAndMapNames();
     CollectEntityRefs(snapshot.entity_ref_stubs, snapshot.entity_refs);

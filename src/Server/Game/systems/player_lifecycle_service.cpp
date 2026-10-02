@@ -364,8 +364,8 @@ CEntity* CPlayerLifecycleService::SpawnPlayer(CPlayer& player, CGameWorld& world
     if (old_flower) old_flower->PrepareRespawnDestroy(EEntityRemovalReason::Replaced);
     player.SetOwnedEntity(raw_flower);
     player.ApplySavedProgress();
-    player.ApplySavedTalents();
-    player.ApplySavedSlots();
+    player.LoadSavedTalents();
+    player.LoadSavedSlots();
 
     if (auto* controller = world.GetController())
     {

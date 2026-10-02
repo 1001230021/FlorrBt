@@ -11,7 +11,7 @@ inline constexpr std::string_view name = "FlorrBt";
 // with web/src/version.js.
 inline constexpr std::uint8_t version_major = 1;
 inline constexpr std::uint8_t version_minor = 0;
-inline constexpr std::uint8_t version_patch = 1;
-inline constexpr std::string_view version = "1.0.1";
-inline constexpr std::string_view version_label = "FlorrBt v1.0.1";
+inline constexpr std::uint8_t version_patch = 3;
+inline constexpr std::string_view version = "1.0.3";
+inline constexpr std::string_view version_label = "FlorrBt v1.0.3";
 } // namespace florrbt

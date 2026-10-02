@@ -1,5 +1,6 @@
 #pragma once
 #include "../../../Shared/shared.h"
+#include "../../../Shared/math_types.h"
 #include "../controller.h"
 #include <array>
 #include <cstddef>

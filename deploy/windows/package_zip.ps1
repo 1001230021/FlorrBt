@@ -2,7 +2,8 @@ param(
     [ValidateSet("Release", "Debug")]
     [string]$Configuration = "Release",
     [string]$OutputZip = "",
-    [switch]$IncludePdb
+    [switch]$IncludePdb,
+    [string]$MySqlRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -74,6 +75,33 @@ Get-ChildItem $BuildDir -Filter "sfml*.dll" -File -ErrorAction SilentlyContinue 
     Copy-File $_.FullName (Join-Path $RuntimeDir $_.Name)
 }
 
+# Keep the MySQL client and the OpenSSL DLLs it loads together in the
+# self-contained package.  New builds place these beside the executable; the
+# fallback locations also make packaging an older local build less surprising.
+$mysqlRuntimeNames = @("libmysql.dll", "libssl-3-x64.dll", "libcrypto-3-x64.dll")
+$mysqlRoots = @(
+    $MySqlRoot,
+    $env:FLORRBT_MYSQL_ROOT,
+    "D:\库\mysql-8.4.6-winx64"
+) | Where-Object { $_ } | Select-Object -Unique
+foreach ($runtimeName in $mysqlRuntimeNames) {
+    $runtimeSource = Join-Path $BuildDir $runtimeName
+    if (-not (Test-Path $runtimeSource)) {
+        foreach ($mysqlRootCandidate in $mysqlRoots) {
+            $runtimeCandidates = @(
+                (Join-Path $mysqlRootCandidate "lib\$runtimeName"),
+                (Join-Path $mysqlRootCandidate "bin\$runtimeName"),
+                (Join-Path $mysqlRootCandidate $runtimeName)
+            )
+            $runtimeSource = $runtimeCandidates |
+                Where-Object { Test-Path $_ } |
+                Select-Object -First 1
+            if ($runtimeSource) { break }
+        }
+    }
+    Copy-File $runtimeSource (Join-Path $RuntimeDir $runtimeName)
+}
+
 if ($IncludePdb) {
     Get-ChildItem $BuildDir -Filter "*.pdb" -File -ErrorAction SilentlyContinue | ForEach-Object {
         Copy-File $_.FullName (Join-Path $RuntimeDir $_.Name)
@@ -102,7 +130,7 @@ Get-ChildItem -LiteralPath $StageRoot -Filter "*.log" -File -Recurse -ErrorActio
 $StartAll = @'
 @echo off
 cd /d "%~dp0"
-call deploy\windows\deploy.cmd -Mode start
+call deploy\windows\deploy.cmd -Mode start %*
 '@
 Write-TextFile (Join-Path $StageRoot "START_ALL.cmd") $StartAll
 
@@ -117,10 +145,42 @@ Write-TextFile (Join-Path $StageRoot "START_WEB_ONLY.cmd") $StartWeb
 $StartServer = @'
 @echo off
 cd /d "%~dp0"
-call deploy\windows\deploy.cmd -Mode start-server
+call deploy\windows\deploy.cmd -Mode start-server %*
 pause
 '@
 Write-TextFile (Join-Path $StageRoot "START_SERVER_ONLY.cmd") $StartServer
+
+$StartMysql = @'
+@echo off
+cd /d "%~dp0"
+call deploy\windows\start_mysql.cmd %*
+pause
+'@
+Write-TextFile (Join-Path $StageRoot "START_MYSQL.cmd") $StartMysql
+
+$StopMysql = @'
+@echo off
+cd /d "%~dp0"
+call deploy\windows\stop_mysql.cmd %*
+pause
+'@
+Write-TextFile (Join-Path $StageRoot "STOP_MYSQL.cmd") $StopMysql
+
+$MysqlStatus = @'
+@echo off
+cd /d "%~dp0"
+call deploy\windows\mysql_status.cmd %*
+pause
+'@
+Write-TextFile (Join-Path $StageRoot "MYSQL_STATUS.cmd") $MysqlStatus
+
+$MigrateAccounts = @'
+@echo off
+cd /d "%~dp0"
+call deploy\windows\migrate_accounts_to_mysql.cmd %*
+pause
+'@
+Write-TextFile (Join-Path $StageRoot "MIGRATE_ACCOUNTS_TO_MYSQL.cmd") $MigrateAccounts
 
 $OpenFirewall = @'
 @echo off
@@ -157,12 +217,18 @@ FlorrBt v$AppVersion one-click deployment package
 
 1. Extract this zip on the Windows server.
 2. Install Microsoft Visual C++ Redistributable 2022+ if FlorrBt.Server.exe cannot start.
-3. Double-click START_ALL.cmd. The package uses its bundled Node.js runtime.
-4. Open http://SERVER_IP:8080 from another computer.
+3. Set FLORRBT_MYSQL_ROOT or pass `-MySqlRoot <directory>` to the MySQL commands.
+4. Run START_MYSQL.cmd once, then MIGRATE_ACCOUNTS_TO_MYSQL.cmd.
+5. Double-click START_ALL.cmd. The package uses its bundled Node.js runtime.
+6. Open http://SERVER_IP:8080 from another computer.
 
 Useful files:
 - START_ALL.cmd: starts the hot-reload launcher, game server, and web bridge.
 - START_SERVER_ONLY.cmd: starts the server through FlorrBt.Launcher.exe.
+- START_MYSQL.cmd: initializes/starts the package-managed MySQL data directory.
+- MIGRATE_ACCOUNTS_TO_MYSQL.cmd: imports data/accounts.json into MySQL and verifies it.
+- STOP_MYSQL.cmd / MYSQL_STATUS.cmd: controls or checks the package-managed MySQL process.
+- mysql\: package-managed MySQL data/log files; a generated `my.ini` is removed on clean shutdown.
 - START_WEB_ONLY.cmd: starts only the web client bridge.
 - deploy/windows-web/start_web.cmd: standalone web bridge launcher.
 - OPEN_FIREWALL_ADMIN.cmd: opens TCP 8080 and 10012 as Administrator.

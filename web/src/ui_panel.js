@@ -1,3 +1,5 @@
+import { runMotionPhase } from "./ui_motion.js";
+
 export class UiPanelManager {
   constructor() {
     this.panels = new Map();
@@ -86,6 +88,13 @@ export class UiPanel {
     if (next && this.exclusive) this.manager?.closeGroup(this.group, this);
     this.state[this.stateKey] = next;
     this.syncDom();
+    // Asymmetric on purpose: the slide-in is slow and confident, the dismissal
+    // is a quick shrink. Matching the two durations is what made every panel
+    // toggle feel sluggish. Keep these in sync with --m-enter-dur/--m-exit-dur.
+    runMotionPhase(this.root, next ? "entering" : "exiting", {
+      classPrefix: "ui-panel",
+      duration: next ? 260 : 110,
+    });
 
     if (next) this.onOpen?.(this);
     else {

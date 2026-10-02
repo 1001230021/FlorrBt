@@ -1,11 +1,18 @@
 param(
-    [ValidateSet("start", "start-server", "start-web", "firewall", "install", "uninstall", "stop", "restart", "status")]
+    [ValidateSet("start", "start-server", "start-web", "start-mysql", "stop-mysql", "status-mysql", "migrate-accounts", "firewall", "install", "uninstall", "stop", "restart", "status")]
     [string]$Mode = "start",
     [string]$WebHost = "0.0.0.0",
     [int]$WebPort = 8080,
     [string]$GameHost = "127.0.0.1",
     [int]$GamePort = 10012,
     [string]$ServerExe = "",
+    [string]$MySqlRoot = "",
+    [string]$MySqlDataDir = "",
+    [int]$MySqlPort = 0,
+    [string]$MySqlBindAddress = "",
+    [string]$MySqlRootPassword = "",
+    [switch]$SkipMySqlProvision,
+    [string]$JsonPath = "",
     [switch]$NoServer,
     [switch]$NoWeb
 )
@@ -60,12 +67,40 @@ function Build-SelfArgs([string]$ChildMode) {
     if ($ServerExe) {
         $items += @("-ServerExe", $ServerExe)
     }
+    if ($MySqlRoot) {
+        $items += @("-MySqlRoot", $MySqlRoot)
+    }
+    if ($MySqlDataDir) {
+        $items += @("-MySqlDataDir", $MySqlDataDir)
+    }
+    if ($MySqlPort -gt 0) {
+        $items += @("-MySqlPort", [string]$MySqlPort)
+    }
+    if ($MySqlBindAddress) {
+        $items += @("-MySqlBindAddress", $MySqlBindAddress)
+    }
+    if ($MySqlRootPassword) {
+        $items += @("-MySqlRootPassword", $MySqlRootPassword)
+    }
 
     return Join-Args $items
 }
 
 function Build-InteractiveSelfArgs([string]$ChildMode) {
     return "-NoExit " + (Build-SelfArgs $ChildMode)
+}
+
+function Invoke-MySqlScript([string]$Action) {
+    $script = Join-Path $PSScriptRoot "mysql.ps1"
+    $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $script, "-Action", $Action)
+    if ($MySqlRoot) { $arguments += @("-MySqlRoot", $MySqlRoot) }
+    if ($MySqlDataDir) { $arguments += @("-DataDir", $MySqlDataDir) }
+    if ($MySqlPort -gt 0) { $arguments += @("-Port", [string]$MySqlPort) }
+    if ($MySqlBindAddress) { $arguments += @("-BindAddress", $MySqlBindAddress) }
+    if ($MySqlRootPassword) { $arguments += @("-RootPassword", $MySqlRootPassword) }
+    if ($SkipMySqlProvision) { $arguments += "-SkipProvision" }
+    & powershell.exe @arguments
+    if ($LASTEXITCODE -ne 0) { throw "MySQL $Action failed with exit code $LASTEXITCODE." }
 }
 
 function Find-Node {
@@ -162,6 +197,7 @@ function Start-ServerForeground {
     Set-Location $RepoRoot
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
     Ensure-ServerCfg
+    Invoke-MySqlScript "start"
 
     $exe = Resolve-ServerExe
     $launcher = Resolve-LauncherExe
@@ -258,6 +294,7 @@ function Stop-Tasks {
             Write-Host "Stopped task: $taskName"
         }
     }
+    Invoke-MySqlScript "stop"
 }
 
 function Uninstall-Tasks {
@@ -293,12 +330,28 @@ function Show-Status {
             Write-Host "TCP ${port}: not listening"
         }
     }
+    Invoke-MySqlScript "status"
 }
 
 switch ($Mode) {
     "start" { Start-Interactive }
     "start-server" { Start-ServerForeground }
     "start-web" { Start-WebForeground }
+    "start-mysql" { Invoke-MySqlScript "start" }
+    "stop-mysql" { Invoke-MySqlScript "stop" }
+    "status-mysql" { Invoke-MySqlScript "status" }
+    "migrate-accounts" {
+        $migrationScript = Join-Path $PSScriptRoot "migrate_accounts_to_mysql.ps1"
+        $migrationArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $migrationScript)
+        if ($JsonPath) { $migrationArguments += @("-JsonPath", $JsonPath) }
+        if ($ServerExe) { $migrationArguments += @("-ServerExe", $ServerExe) }
+        if ($MySqlRoot) { $migrationArguments += @("-MySqlRoot", $MySqlRoot) }
+        if ($MySqlDataDir) { $migrationArguments += @("-DataDir", $MySqlDataDir) }
+        if ($MySqlRootPassword) { $migrationArguments += @("-RootPassword", $MySqlRootPassword) }
+        if ($SkipMySqlProvision) { $migrationArguments += "-SkipProvision" }
+        & powershell.exe @migrationArguments
+        if ($LASTEXITCODE -ne 0) { throw "Account migration failed with exit code $LASTEXITCODE." }
+    }
     "firewall" {
         Require-Admin
         Open-Port $WebPort "FlorrBt Web $WebPort"

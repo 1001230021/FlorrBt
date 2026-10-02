@@ -228,9 +228,9 @@ test("packVersion matches the server's wire version", async () => {
     [...packet],
     [0xfb, appVersionMajor, appVersionMinor, appVersionPatch],
   );
-  assert.equal(appVersionMajor, 1);
-  assert.equal(appVersionMinor, 0);
-  assert.equal(appVersionPatch, 1);
+  const serverVersion = fs.readFileSync(path.join(repoRoot, "src/Shared/version.h"), "utf8");
+  const triple = ["major", "minor", "patch"].map(part => Number(serverVersion.match(new RegExp(`version_${part}\\s*=\\s*(\\d+)`))?.[1]));
+  assert.deepEqual([appVersionMajor, appVersionMinor, appVersionPatch], triple);
 });
 
 test("live bridge survives malformed URL and oversized frames", async () => {
@@ -303,5 +303,39 @@ test("live bridge survives malformed URL and oversized frames", async () => {
   } finally {
     child.kill("SIGTERM");
     await exited;
+  }
+});
+
+test("asset ETags revalidate content without caching HTML or account data", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "florrbt-assets-"));
+  const dataDir = path.join(dir, "data");
+  fs.mkdirSync(path.join(dir, "assets")); fs.mkdirSync(dataDir);
+  fs.writeFileSync(path.join(dir, "assets", "unit.svg"), "<svg/>");
+  fs.writeFileSync(path.join(dir, "index.html"), "page");
+  fs.writeFileSync(path.join(dataDir, "accounts.json"), "{}");
+  const sender = createFileSender(dir, dataDir);
+  const request = (url, headers = {}) => new Promise(resolve => {
+    const result = {};
+    sender({ writeHead(code, responseHeaders) { result.code = code; result.headers = responseHeaders; },
+      end(body) { result.body = body; resolve(result); } }, url, headers);
+  });
+  try {
+    const first = await request("/assets/unit.svg");
+    assert.equal(first.code, 200); assert.ok(first.headers.ETag);
+    const cached = await request("/assets/unit.svg", { "if-none-match": first.headers.ETag });
+    assert.equal(cached.code, 304); assert.equal(cached.body, undefined);
+    fs.writeFileSync(path.join(dir, "assets", "unit.svg"), "<svg><path/></svg>");
+    const changed = await request("/assets/unit.svg", { "if-none-match": first.headers.ETag });
+    assert.equal(changed.code, 200); assert.notEqual(changed.headers.ETag, first.headers.ETag);
+    for (const url of ["/", "/data/accounts.json"]) {
+      const reply = await request(url);
+      assert.equal(reply.headers["Cache-Control"], "no-store, max-age=0");
+      assert.equal(reply.headers.ETag, undefined);
+    }
+  } finally {
+    const target = fs.realpathSync(dir), tempRoot = fs.realpathSync(os.tmpdir());
+    assert.equal(path.dirname(target), tempRoot);
+    assert.ok(path.basename(target).startsWith("florrbt-assets-"));
+    fs.rmSync(target, { recursive: true, force: true });
   }
 });

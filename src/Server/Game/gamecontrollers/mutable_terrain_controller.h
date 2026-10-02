@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "opencontroller.h"
+#include "../../../Shared/math_types.h"
 #include <cstdint>
 #include <unordered_map>
 #include <vector>

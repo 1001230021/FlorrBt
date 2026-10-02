@@ -58,6 +58,43 @@ function fallbackCopy(text) {
   holder.remove();
 }
 
+function splitCommandChain(source) {
+  const commands = [];
+  let current = "";
+  let quote = "";
+  let escaped = false;
+  for (const character of String(source || "")) {
+    if (escaped) {
+      current += character;
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      current += character;
+      escaped = true;
+      continue;
+    }
+    if ((character === '"' || character === "'") && !quote) {
+      quote = character;
+      current += character;
+      continue;
+    }
+    if (character === quote) {
+      quote = "";
+      current += character;
+      continue;
+    }
+    if (character === ";" && !quote) {
+      if (current.trim()) commands.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  if (current.trim()) commands.push(current.trim());
+  return commands;
+}
+
 export function createGameConsole({
   panel,
   input,
@@ -478,19 +515,34 @@ function backlogCapacity() {
     dirty = true;
   }
 
+  function clearBacklog() {
+    backlog.length = 0;
+    visualLines.length = 0;
+    entryStartLine.clear();
+    totalLines = 0;
+    scrollUp = 0;
+    maxScroll = 0;
+    selection = null;
+    searchMatches = [];
+    currentMatchIndex = -1;
+    wrapDirty = true;
+    dirty = true;
+  }
+
   function executeLine(line) {
-    const trimmed = String(line || "").trim();
+    const source = String(line || "");
+    const commandChain = splitCommandChain(source);
     input.value = "";
     input.setSelectionRange(0, 0);
     completion = null;
     completionIndex = -1;
-    history.push(line);
+    if (source.trim()) history.push(source);
     if (history.length > MAX_HISTORY) history.shift();
     historyIndex = -1;
     historyDraft = "";
-    if (trimmed) {
-      addLine(`> ${trimmed}`, "command");
-      executeCommand?.(trimmed);
+    for (const command of commandChain) {
+      addLine(`> ${command}`, "command");
+      executeCommand?.(command);
     }
     dirty = true;
   }
@@ -1113,6 +1165,11 @@ function backlogCapacity() {
       }
       return;
     }
+    if (event.ctrlKey && event.key.toLowerCase() === "l") {
+      event.preventDefault();
+      clearBacklog();
+      return;
+    }
     updateCompletion();
   }
 
@@ -1339,6 +1396,7 @@ function backlogCapacity() {
 
   return Object.freeze({
     addLine,
+    clear: clearBacklog,
     copySelection,
     focusInput() {
       input.focus({ preventScroll: true });

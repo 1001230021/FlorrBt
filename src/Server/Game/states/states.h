@@ -1,5 +1,6 @@
 #pragma once
 #include "../../../Shared/shared.h"
+#include "../../../Shared/math_types.h"
 #include "../entities/flower.h"
 #include "../state.h"
 #include <array>

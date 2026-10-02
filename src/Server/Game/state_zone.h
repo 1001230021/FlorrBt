@@ -1,7 +1,7 @@
 #pragma once
 #include "entity.h"
 #include "state.h"
-#include <SFML/System/Vector2.hpp>
+#include "../../Shared/math_types.h"
 #include <functional>
 #include <memory>
 #include <utility>

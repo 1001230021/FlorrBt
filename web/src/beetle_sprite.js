@@ -1,9 +1,10 @@
 import { drawSpriteImage } from "./sprite_raster_cache.js";
+import { getSpritePhase, getLimbMotionAmount } from "./sprite_motion.js";
+import { prepareSvgImage, whenVisualReady } from "./visual_assets.js";
 const BEETLE_VIEWBOX_SIZE = 110;
 const BEETLE_EFFECTIVE_BOX = 91.667;
 const BEETLE_BASE_FACE_ANGLE = -Math.PI * 0.75;
 const BEETLE_SPRITE_SCALE = 2.4;
-const BEETLE_MOTION_DEADZONE = 0.12;
 const BEETLE_LIMB_FILL = "#333";
 const BEETLE_LIMB_STROKE = "#333";
 const BEETLE_LIMB_STROKE_WIDTH = 4.667;
@@ -74,10 +75,8 @@ export function drawBeetle(
 }
 
 function beetleAnimation(entityId, motion, time) {
-  const activeMotion =
-    clamp01(motion) < BEETLE_MOTION_DEADZONE ? 0 : clamp01(motion);
-  if (activeMotion <= 0) return { swing: 0 };
-  const phase = time * (4.8 + activeMotion * 16.5) + entityId * 0.81;
+  const activeMotion = getLimbMotionAmount(motion);
+  const phase = getSpritePhase(entityId, "beetle", time, 4.8 + activeMotion * 16.5, entityId * 0.81);
   return {
     swing: Math.sin(phase) * activeMotion * 0.24,
   };
@@ -113,29 +112,23 @@ function beetleBaseImage(src, summoned) {
   let entry = BEETLE_BASE_CACHE.get(cacheKey);
   if (entry) return entry.image;
 
-  const image = new Image();
-  image.decoding = "async";
-  entry = { image, url: "" };
+  const image = prepareSvgImage(src, `beetle-${summoned}`, text => {
+    const body = stripStaticForelimbs(text);
+    return summoned ? recolorSummonedBodySvg(body) : body;
+  });
+  entry = { image };
   BEETLE_BASE_CACHE.set(cacheKey, entry);
 
-  fetch(src)
-    .then((response) => {
-      if (!response.ok) throw new Error(`Beetle SVG failed: ${src}`);
-      return response.text();
-    })
-    .then((svgText) => {
-      let bodySvg = stripStaticForelimbs(svgText);
-      if (summoned) bodySvg = recolorSummonedBodySvg(bodySvg);
-      const blob = new Blob([bodySvg], { type: "image/svg+xml" });
-      const url = URL.createObjectURL(blob);
-      entry.url = url;
-      image.src = url;
-    })
-    .catch(() => {
-      image.failed = true;
-    });
-
   return image;
+}
+
+export function prepareBeetleSprites() {
+  getForelimbPaths();
+  return Promise.all([
+    beetleBaseImage("./assets/beetle.svg", false),
+    beetleBaseImage("./assets/beetle.svg", true),
+    beetleBaseImage("./assets/bandage_beetle.svg", false),
+  ].map(whenVisualReady));
 }
 
 function stripStaticForelimbs(svgText) {
@@ -222,10 +215,6 @@ function getForelimbPaths() {
 
 function isImageReady(image) {
   return image && !image.failed && image.complete && image.naturalWidth > 0;
-}
-
-function clamp01(value) {
-  return Math.max(0, Math.min(1, value));
 }
 
 function drawFallback(ctx, radius, summoned = false) {

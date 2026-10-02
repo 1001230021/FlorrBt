@@ -5,7 +5,7 @@
 #include "../Shared/rarity.h"
 #include "Game/game_services.h"
 #include "Module/module.h"
-#include <SFML/System/Vector2.hpp>
+#include "../Shared/math_types.h"
 #include <array>
 #include <cstddef>
 #include <cstdint>

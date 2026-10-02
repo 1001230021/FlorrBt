@@ -1,6 +1,30 @@
 #include "test_framework.h"
 #include "Shared/network_msg.h"
 
+TEST(SlotCounterRoundTripsAndParticipatesInDeltaComparison)
+{
+    SOwnerPetalSlot slot;
+    slot.petal_type = 65;
+    slot.rarity = 6;
+    slot.visual_type = SOwnerPetalSlot::EVisualType::Counter;
+    slot.copies.push_back({ SOwnerPetalSlot::ECopyState::Alive, 255, 0 });
+    slot.copies.push_back({ SOwnerPetalSlot::ECopyState::Alive, 128, UINT16_MAX });
+    slot.copies.push_back({ SOwnerPetalSlot::ECopyState::Loading, 50, 0 });
+    std::vector<uint8_t> bytes(GetEntityOwnerPetalSlotPackedSize(slot));
+    size_t offset = 0;
+    PackEntityOwnerPetalSlot(slot, bytes.data(), offset);
+    CHECK(offset == bytes.size());
+    SOwnerPetalSlot parsed;
+    offset = 0;
+    CHECK(ParseEntityOwnerPetalSlot(bytes.data(), bytes.size(), offset, parsed));
+    CHECK(offset == bytes.size());
+    CHECK(snap_eq::OwnerSlots({ slot }, { parsed }));
+    parsed.copies[0].visual_value = 1;
+    CHECK(!snap_eq::OwnerSlots({ slot }, { parsed }));
+    offset = 0;
+    CHECK(!ParseEntityOwnerPetalSlot(bytes.data(), bytes.size() - 1, offset, parsed));
+}
+
 // Guards the macro-generated snapshot comparison: SameServerEntitySnap is
 // generated from PER_SNAPSHOT_FIELD, the same table that declares
 // ServerEntitySnap. These tests exist to catch a regression where the

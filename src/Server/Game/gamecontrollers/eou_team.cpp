@@ -9,6 +9,7 @@
 
 void CEouPheromoneGroup::SetPheromoneTarget(florrbt::Vector2f target)
 {
+    if (EouDistance(target, m_pheromone_target) < 1.f) return;
     m_pheromone_target = target;
     m_unupdated.clear();
     m_unupdated.reserve(m_members.size());
@@ -188,6 +189,7 @@ std::size_t CTeam::MemberCount() const
 
 void CTeam::OnTick(CGameWorld& world, float dt)
 {
+    m_cells.SetTileSize(m_board.TileSize());
     for (std::size_t i = 0; i < m_groups.size();)
     {
         m_groups[i]->OnTick(world, dt);
@@ -216,6 +218,15 @@ void CTeam::Dissolve(CGameWorld& world)
     m_groups.clear();
     if (CEntity* queen = world.GetEntity(m_queen.id, m_queen.generation)) queen->MarkForDestroy();
     m_queen = {};
+    for (const auto& handle : m_cells.AllCells())
+    {
+        auto* cell = dynamic_cast<CEouCellMob*>(world.GetEntity(handle.id, handle.generation));
+        if (!cell) continue;
+        if (CEntity* egg = world.GetEntity(cell->EggId(), cell->EggGeneration())) egg->MarkForDestroy();
+        if (CEntity* ant = world.GetEntity(cell->BoundAntId(), cell->BoundAntGeneration())) ant->MarkForDestroy();
+        cell->MarkForDestroy();
+    }
+    m_cells = CCellGroupSet{};
 }
 
 void CTeam::CaptureSnapshot(CSnapshotWriter& writer) const
@@ -228,6 +239,7 @@ void CTeam::CaptureSnapshot(CSnapshotWriter& writer) const
     writer.Field("eou_team_food_stash", m_food_stash);
     writer.Field("eou_team_queen_id", m_queen.id);
     writer.UInt64("eou_team_queen_gen", m_queen.generation);
+    m_cells.CaptureSnapshot(writer);
     writer.Field("eou_team_group_count", static_cast<std::uint32_t>(m_groups.size()));
     for (std::uint32_t i = 0; i < m_groups.size(); ++i)
     {
@@ -252,6 +264,7 @@ bool CTeam::RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version
     m_food_stash = std::max(0.f, reader.Float("eou_team_food_stash", m_food_stash));
     m_queen.id = reader.Int("eou_team_queen_id", 0);
     m_queen.generation = reader.UInt64("eou_team_queen_gen", 0);
+    if (!m_cells.RestoreSnapshot(reader, version, error)) return false;
     m_groups.clear();
     const std::uint32_t count = reader.UInt32("eou_team_group_count", 0);
     for (std::uint32_t i = 0; i < count; ++i)
@@ -300,20 +313,18 @@ std::vector<SEouEntityHandle> CCellGroupSet::NeighboursOf(CGameWorld& world, SEo
     return result;
 }
 
-std::vector<SEouEntityHandle> CCellGroupSet::AllCells() const
-{
-    std::vector<SEouEntityHandle> result;
-    result.reserve(m_cells.size());
-    for (const SEouEntityHandle& handle : m_cells) result.push_back(handle);
-    return result;
-}
-
 void CCellGroupSet::RebuildGroups(CGameWorld& world)
 {
     // Rebuild the union partition from scratch (cell counts stay small):
     // same-type, 4-neighbour connected components become one group each.
     m_groups.clear();
     m_next_group_id = 1;
+    std::erase_if(m_cells, [&world](const SEouEntityHandle& handle) {
+        auto* cell = dynamic_cast<CEouCellMob*>(world.GetEntity(handle.id, handle.generation));
+        if (!cell || cell->IsMarkedForDes() || cell->IsDead()) return true;
+        cell->SetGroupId(0);
+        return false;
+    });
 
     std::vector<SEouEntityHandle> remaining = m_cells;
     while (!remaining.empty())
@@ -367,6 +378,8 @@ void CCellGroupSet::RebuildGroups(CGameWorld& world)
 int CCellGroupSet::AddCell(CGameWorld& world, SEouEntityHandle handle, int cell_type)
 {
     (void)cell_type;
+    for (const auto& existing : m_cells)
+        if (existing.id == handle.id && existing.generation == handle.generation) return 0;
     m_cells.push_back(handle);
     RebuildGroups(world);
     for (const CCellGroup& group : m_groups)
@@ -379,16 +392,14 @@ int CCellGroupSet::AddCell(CGameWorld& world, SEouEntityHandle handle, int cell_
     return 0;
 }
 
-void CCellGroupSet::RemoveCell(SEouEntityHandle handle)
+void CCellGroupSet::RemoveCell(CGameWorld& world, SEouEntityHandle handle)
 {
     m_cells.erase(std::remove_if(m_cells.begin(), m_cells.end(),
                                  [&handle](const SEouEntityHandle& candidate) {
                                      return candidate.id == handle.id && candidate.generation == handle.generation;
                                  }),
                   m_cells.end());
-    // Groups are rebuilt lazily by the controller on the next add; the
-    // removed cell is simply gone from the set (stale handles resolve null
-    // during the rebuild).
+    RebuildGroups(world);
 }
 
 void CCellGroupSet::CaptureSnapshot(CSnapshotWriter& writer) const
@@ -397,7 +408,7 @@ void CCellGroupSet::CaptureSnapshot(CSnapshotWriter& writer) const
     for (std::uint32_t i = 0; i < m_cells.size(); ++i)
     {
         writer.Field("cell_group_member_" + std::to_string(i) + "_id", m_cells[i].id);
-        writer.Field("cell_group_member_" + std::to_string(i) + "_gen", static_cast<int>(m_cells[i].generation));
+        writer.UInt64("cell_group_member_" + std::to_string(i) + "_gen", m_cells[i].generation);
     }
 }
 
@@ -420,17 +431,17 @@ bool CCellGroupSet::RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t
 
 void CTeam::AddCell(CGameWorld& world, CEouCellMob& cell)
 {
+    m_cells.SetTileSize(m_board.TileSize());
     cell.SetTeamId(m_team_id);
     SEouEntityHandle handle{ cell.Id(), cell.Generation() };
     const int group_id = m_cells.AddCell(world, handle, static_cast<int>(cell.CellType()));
-    cell.SetGroupId(group_id);
+    if (group_id > 0) cell.SetGroupId(group_id);
 }
 
 void CTeam::RemoveCell(CGameWorld& world, CEouCellMob& cell)
 {
-    m_cells.RemoveCell({ cell.Id(), cell.Generation() });
+    m_cells.RemoveCell(world, { cell.Id(), cell.Generation() });
     cell.SetGroupId(0);
-    (void)world;
 }
 
 
@@ -442,7 +453,7 @@ float CTeam::StorageFoodTotal(CGameWorld& world) const
     {
         CEntity* entity = world.GetEntity(handle.id, handle.generation);
         auto* cell = dynamic_cast<CEouCellMob*>(entity);
-        if (!cell || cell->CellType() != ECouCellType::Storage) continue;
+        if (!cell || cell->IsMarkedForDes() || cell->IsDead() || cell->CellType() != ECouCellType::Storage) continue;
         total += cell->StoredFood();
     }
     return total + m_food_stash;
@@ -451,6 +462,7 @@ float CTeam::StorageFoodTotal(CGameWorld& world) const
 bool CTeam::TryConsumeFood(CGameWorld& world, float amount)
 {
     if (amount <= 0.f) return true;
+    if (!std::isfinite(amount) || StorageFoodTotal(world) < amount) return false;
     float remaining = amount;
     // Drain the stash first, then the storage cells.
     if (m_food_stash > 0.f)
@@ -465,31 +477,52 @@ bool CTeam::TryConsumeFood(CGameWorld& world, float amount)
         if (remaining <= 0.f) break;
         CEntity* entity = world.GetEntity(handle.id, handle.generation);
         auto* cell = dynamic_cast<CEouCellMob*>(entity);
-        if (!cell || cell->CellType() != ECouCellType::Storage) continue;
+        if (!cell || cell->IsMarkedForDes() || cell->IsDead() || cell->CellType() != ECouCellType::Storage) continue;
         remaining -= cell->TakeFood(remaining);
     }
-    return remaining <= 0.f;
+    return true;
+}
+
+float CTeam::FoodCapacity(CGameWorld& world) const
+{
+    float total = std::max(0.f, game_config::eou_stash_capacity);
+    for (const auto& handle : m_cells.AllCells())
+    {
+        auto* cell = dynamic_cast<CEouCellMob*>(world.GetEntity(handle.id, handle.generation));
+        if (cell && !cell->IsMarkedForDes() && !cell->IsDead() && cell->CellType() == ECouCellType::Storage)
+            total += std::max(0.f, game_config::eou_cell_food_capacity);
+    }
+    return total;
+}
+
+void CTeam::RefundFood(CGameWorld& world, float amount)
+{
+    // Preserve the whole payment even after a config/hot-reload capacity change.
+    const float stored = DepositToNearestStorage(world, m_home_pos, std::max(0.f, amount));
+    m_food_stash += std::max(0.f, amount - stored);
 }
 
 float CTeam::DepositToNearestStorage(CGameWorld& world, florrbt::Vector2f pos, float amount)
 {
     if (amount <= 0.f) return 0.f;
-    CEouCellMob* best = nullptr;
-    float best_dist_sq = std::numeric_limits<float>::max();
+    std::vector<CEouCellMob*> stores;
     for (const SEouEntityHandle& handle : m_cells.AllCells())
     {
         CEntity* entity = world.GetEntity(handle.id, handle.generation);
         auto* cell = dynamic_cast<CEouCellMob*>(entity);
-        if (!cell || cell->CellType() != ECouCellType::Storage) continue;
-        const float dist_sq = EouDistance(cell->Pos(), pos);
-        if (dist_sq < best_dist_sq)
-        {
-            best_dist_sq = dist_sq;
-            best = cell;
-        }
+        if (!cell || cell->IsMarkedForDes() || cell->IsDead() || cell->CellType() != ECouCellType::Storage) continue;
+        if (cell->StoredFood() < game_config::eou_cell_food_capacity) stores.push_back(cell);
     }
-    if (!best) return 0.f; // no storage cell: the food is dropped
-    return best->StoreFood(amount);
+    std::sort(stores.begin(), stores.end(), [pos](const auto* a, const auto* b) {
+        return EouDistance(a->Pos(), pos) < EouDistance(b->Pos(), pos);
+    });
+    float remaining = amount;
+    for (auto* cell : stores)
+    {
+        remaining -= cell->StoreFood(remaining);
+        if (remaining <= 0.f) break;
+    }
+    return amount - remaining;
 }
 
 CEouCellMob* CTeam::GetCellAt(CGameWorld& world, florrbt::Vector2f pos)
@@ -501,7 +534,7 @@ CEouCellMob* CTeam::GetCellAt(CGameWorld& world, florrbt::Vector2f pos)
     {
         CEntity* entity = world.GetEntity(handle.id, handle.generation);
         auto* cell = dynamic_cast<CEouCellMob*>(entity);
-        if (!cell) continue;
+        if (!cell || cell->IsMarkedForDes() || cell->IsDead()) continue;
         const int cell_row = static_cast<int>(std::floor(cell->Pos().y / tile));
         const int cell_col = static_cast<int>(std::floor(cell->Pos().x / tile));
         if (cell_row == row && cell_col == col) return cell;

@@ -33,6 +33,7 @@ export const dom = {
   deathOverlay: document.getElementById("deathOverlay"),
   deathSource: document.getElementById("deathSource"),
   deathLoot: document.getElementById("deathLoot"),
+  deathPortrait: document.getElementById("deathPortrait"),
   reviveBtn: document.getElementById("reviveBtn"),
   deathCloseBtn: document.getElementById("deathCloseBtn"),
   quickActions: document.getElementById("quickActions"),
@@ -85,6 +86,8 @@ export const dom = {
   openEmailBindingBtn: document.getElementById("openEmailBindingBtn"),
   primarySlots: document.getElementById("primarySlots"),
   secondarySlots: document.getElementById("secondarySlots"),
+  slotSwapHint: document.getElementById("slotSwapHint"),
+  slotKeyHints: document.getElementById("slotKeyHints"),
   inventoryList: document.getElementById("inventoryList"),
   inventoryStacking: document.getElementById("inventoryStacking"),
   inventorySearch: document.getElementById("inventorySearch"),
@@ -114,6 +117,7 @@ export const state = {
   emailPolicy: 0,
   emailBound: false,
   emailBindingRequired: false,
+  emailBindingPanelOpen: false,
   // Render resolution: "auto" (adaptive), "native", or a fixed number.
   renderScaleMode: "auto",
   // Auto mode's current scale; 0 = untouched native DPI.
@@ -156,6 +160,10 @@ export const state = {
   viewRadius: 0,
   targetViewRadius: 0,
   viewRadiusTransition: null,
+  // Client-only field-of-view percentage. The server view radius remains
+  // authoritative for snapshots and audio; this value only affects camera
+  // projection and local render culling.
+  viewZoomPercent: clientRuntimeConfig.viewZoomMaxPercent,
   map: null,
   mapName: "",
   mapDisplayName: "",
@@ -181,6 +189,7 @@ export const state = {
   })),
   activeLoadoutPreset: 0,
   ownerStateLoaded: false,
+  ownerLoadoutLocked: false,
   inventoryLoaded: false,
   inventoryStacked: false,
   inventorySearchQuery: "",
@@ -233,6 +242,7 @@ export const state = {
   debugHitbox: false,
   altFeaturesEnabled: false,
   deathOverlayClosed: false,
+  deathViewFactor: 1,
   wasOwnerDead: false,
   slider: null,
   minimapMode: "local",
@@ -247,7 +257,6 @@ export const state = {
   craftSource: null,
   craftPhase: "idle",
   craftResult: null,
-  craftBurstUntil: 0,
   craftSpinStarted: 0,
   petalInfoHoverElement: null,
   drag: null,

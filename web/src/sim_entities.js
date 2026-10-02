@@ -1,9 +1,21 @@
 import { slotHasItem, state, ui } from "./app_context.js";
-import { lerpAngle, smoothFactor } from "./camera.js";
+import { lerpAngle, smoothFactor, worldToScreen } from "./camera.js";
+import { stepFlowerFace } from "./flower_renderer.js";
 import { clientRuntimeConfig } from "./client_config.js";
+import { resolveStaticCircleMotion } from "./circle_contact.js";
+import { stepEntityAppearance, stepEntityGait } from "./entity_motion.js";
+import { clearSpriteMotion } from "./sprite_motion.js";
+import { beginDeathMotion, stepDeathMotion, getDeathTilt, stepDeathViewFactor } from "./death_motion.js";
 import {
   entityHasState,
   entityState,
+  dummyType,
+  titanType,
+  normalFlowerType,
+  mechaFlowerType,
+  flagAttacking,
+  flagDefending,
+  flagDead,
   petalMoonType,
   petalTrapperType,
   petalYinYangType,
@@ -23,7 +35,6 @@ import { clamp, isPetalEntity, petalTypeFromEntity } from "./protocol.js";
 // lock. game.js applies snapshots and calls into this module; drawing reads
 // entity.renderPos/renderAngle.
 const {
-  deathFadeDuration,
   entityAngleLerpRate,
   entityExtrapolateMaxDistance,
   entityExtrapolateMaxSeconds,
@@ -55,11 +66,17 @@ const {
   serverFixedDt,
 } = clientRuntimeConfig;
 
+const flowerFaceTypes = new Set([playerFlowerType, normalFlowerType, mechaFlowerType, dummyType, titanType]);
+
 export function updateRenderPositions(dt) {
   const owner = state.entities.get(state.ownerEntityId);
+  const ownerDead = !!(owner?.snapshot?.flags & flagDead);
+  state.deathViewFactor = stepDeathViewFactor(state.deathViewFactor, state.authenticated && ownerDead, dt);
   if (owner && !owner.dying) {
-    updateEntityMotion(owner, dt);
-    stepOwnerPrediction(owner, dt);
+    if (ownerDead) {
+      if (!owner.deathMotion) beginDeathMotion(owner, performance.now() / 1000, { resting: true });
+      stepDeathMotion(owner, dt);
+    } else stepOwnerPrediction(owner, dt);
     if (owner.renderPos) {
       state.camera.x = owner.renderPos.x;
       state.camera.y = owner.renderPos.y;
@@ -67,20 +84,39 @@ export function updateRenderPositions(dt) {
   }
 
   const dead = [];
+  const now = performance.now() / 1000;
   for (const [id, entity] of state.entities) {
+    const deadFlower = flowerFaceTypes.has(entity.snapshot?.entityType) && !!(entity.snapshot.flags & flagDead);
+    if (deadFlower && id !== state.ownerEntityId && !entity.dying) {
+      if (!entity.deathMotion) beginDeathMotion(entity, now, { resting: true });
+      stepDeathMotion(entity, dt);
+    }
+    if (flowerFaceTypes.has(entity.snapshot?.entityType)) {
+      const snap = entity.snapshot;
+      let lookX = Math.cos(entity.renderAngle ?? snap.angle ?? -Math.PI / 2);
+      let lookY = Math.sin(entity.renderAngle ?? snap.angle ?? -Math.PI / 2);
+      if (id === state.ownerEntityId && state.mouse?.seen && !state.mouse.inUi) {
+        const center = worldToScreen(entity.renderPos || snap.pos);
+        const dx = state.mouse.x - center.x, dy = state.mouse.y - center.y;
+        const distance = Math.max(80, Math.hypot(dx, dy));
+        lookX = dx / distance; lookY = dy / distance;
+      }
+      entity.flowerFace = stepFlowerFace(entity.flowerFace, {
+        dead: !!(snap.flags & flagDead), attacking: !!(snap.flags & flagAttacking),
+        deadTilt: getDeathTilt(entity),
+        defending: !!(snap.flags & flagDefending), lookX, lookY,
+      }, dt);
+    }
     if (entity.hurtFlashAge < hurtFlashDuration)
       entity.hurtFlashAge = Math.min(
         hurtFlashDuration,
         entity.hurtFlashAge + dt,
       );
 
-    if (entity.dying) {
-      entity.deathAge = (entity.deathAge || 0) + dt;
-      if (entity.deathAge >= deathFadeDuration) dead.push(id);
-      continue;
-    }
-    updateEntityMotion(entity, dt);
-    if (id === state.ownerEntityId) continue;
+    if (stepEntityAppearance(entity, dt)) dead.push(id);
+    if (entity.dying) continue;
+    stepEntityGait(entity, dt, now, state.ownerPredictionTiming?.snapshotInterval || serverFixedDt);
+    if (id === state.ownerEntityId || deadFlower) continue;
     stepEntityRenderToSnapshot(entity, dt, false);
   }
 
@@ -89,16 +125,8 @@ export function updateRenderPositions(dt) {
   for (const id of dead) {
     state.entities.delete(id);
     clearLadybugPattern(id);
+    clearSpriteMotion(id);
   }
-}
-
-function updateEntityMotion(entity, dt) {
-  const rawMove = entity.snapshotMove || 0;
-  const target = rawMove < 0.16 ? 0 : clamp((rawMove - 0.16) / 1.25, 0, 1);
-  const current = entity.motionBlend || 0;
-  const rate = target > current ? 18 : 14;
-  entity.motionBlend = current + (target - current) * smoothFactor(rate, dt);
-  if (entity.motionBlend < 0.04) entity.motionBlend = 0;
 }
 
 function lockTrapperRenderPositionsToMounts() {
@@ -174,13 +202,13 @@ function trapperMountScore(trapper, mount) {
 
   if (
     mountSnap.entityType === playerFlowerType &&
-    playerSnapHasPetal(mountSnap, petalTrapperType)
+    hasPlayerSnapPetal(mountSnap, petalTrapperType)
   )
     score *= 0.5;
   return score;
 }
 
-export function playerSnapHasPetal(snap, petalType) {
+export function hasPlayerSnapPetal(snap, petalType) {
   return (snap.primarySlots || []).some(
     (slot) => slotHasItem(slot) && slot.petalType === petalType,
   );
@@ -361,9 +389,10 @@ function stepOwnerPrediction(entity, dt) {
   );
   const moveLength = Math.hypot(move.x, move.y);
   if (moveLength > 0.0001 && maxVelocity > 0 && acceleration > 0) {
+    const requestedSpeed = maxVelocity * Math.min(1, moveLength);
     const desired = {
-      x: (move.x / moveLength) * maxVelocity,
-      y: (move.y / moveLength) * maxVelocity,
+      x: (move.x / moveLength) * requestedSpeed,
+      y: (move.y / moveLength) * requestedSpeed,
     };
     const diff = { x: desired.x - vel.x, y: desired.y - vel.y };
     const diffLength = Math.hypot(diff.x, diff.y);
@@ -565,11 +594,47 @@ function ownerCollidesWithWalls() {
 }
 
 function resolveOwnerPredictedMotion(start, end, radius) {
-  if (!ownerCollidesWithWalls()) {
-    return { pos: { x: end.x, y: end.y }, normals: [] };
+  const walls = ownerCollidesWithWalls();
+  const result = walls
+    ? ui.mapRenderer.resolvePredictedCircleMotion(start, end, radius)
+    : { pos: { x: end.x, y: end.y }, normals: [] };
+  const owner = state.entities.get(state.ownerEntityId);
+  const snap = owner?.snapshot;
+  // State-dependent phasing can be configured server-side. Without that
+  // configuration, defer to authoritative snapshots instead of blocking it.
+  if (!snap || entityHasState(snap, stateNullification) || entityHasState(snap, stateDigging)) return result;
+  if (contactSnapshot !== state.snapshotId || contactEntities !== state.entities || contactOwner !== owner) {
+    contactSnapshot = state.snapshotId;
+    contactEntities = state.entities;
+    contactOwner = owner;
+    stationaryContacts = [];
+    for (const entity of state.entities.values()) {
+      if (entity.snapshot?.entityType === dummyType) stationaryContacts.push(entity);
+    }
   }
-  return ui.mapRenderer.resolvePredictedCircleMotion(start, end, radius);
+  let circleCorrected = false;
+  for (const entity of stationaryContacts) {
+    const other = entity.snapshot;
+    if (entity.dying || (other.flags & flagDead) || entityHasState(other, stateNullification) || entityHasState(other, stateDigging)) continue;
+    const contact = resolveStaticCircleMotion(start, result.pos, other.pos, radius + Math.max(0, other.radius));
+    if (!contact) continue;
+    result.pos = contact.pos;
+    result.normals.push(contact.normal);
+    circleCorrected = true;
+  }
+  if (walls && circleCorrected) {
+    // Circle correction must not put the player into an adjacent map wall.
+    const bounded = ui.mapRenderer.resolvePredictedCircleMotion(start, result.pos, radius);
+    result.pos = bounded.pos;
+    result.normals.push(...bounded.normals);
+  }
+  return result;
 }
+
+let contactSnapshot = -1;
+let contactEntities = null;
+let contactOwner = null;
+let stationaryContacts = [];
 
 function transformHallucinationVector(vector, parameters) {
   const vx = Number(vector?.x) || 0;

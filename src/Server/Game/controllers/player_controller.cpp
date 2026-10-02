@@ -27,14 +27,13 @@ void CPlayerController::OnTick(CMobBase* mob, float dt)
         if (has_chores) ExecuteOperate(chores, mob);
     }
 
-    if (m_move_dir.x != 0.f || m_move_dir.y != 0.f)
-    {
-        florrbt::Vector2f target = mob->Pos() + m_move_dir * game_config::player_move_target_distance;
-        mob->MoveTowards(target, dt);
-    } else
-    {
-        mob->MoveTowards(mob->Pos(), dt);
-    }
+    // Input axes already encode an analog vector. Do not normalize it back
+    // to full speed or aim at an arbitrarily distant point.
+    const float input_length = Length(m_move_dir);
+    const florrbt::Vector2f intent = input_length > 1.f ? m_move_dir / input_length : m_move_dir;
+    const float full_speed_distance = std::max(1.f, game_config::player_move_target_distance);
+    const florrbt::Vector2f target = mob->Pos() + intent * full_speed_distance;
+    mob->MoveTowards(target, dt, -1.f, full_speed_distance);
 
     if (auto* attackable = dynamic_cast<IAttackableMob*>(mob); attackable && attackable->IsDefending())
     {
@@ -171,6 +170,10 @@ void CPlayerController::ExecuteOperate(const ClientOperate& op, CMobBase* mob)
         {
             if (op.is_attacking.has_value()) attackable->SetAttacking(*op.is_attacking);
             if (op.is_defending.has_value()) attackable->SetDefending(*op.is_defending);
+            // Attack and defend are mutually exclusive action modes. If a
+            // client holds both keys, attack wins instead of making every
+            // attack-or-defend petal attempt both paths in the same tick.
+            if (attackable->IsAttacking()) attackable->SetDefending(false);
         }
         if (op.is_digging.value_or(false) || op.is_defending.value_or(false))
         {

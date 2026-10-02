@@ -9,6 +9,49 @@
   --red: #dc5555;
   --green: #308f5f;
   --gold: #e8c452;
+
+  /* Florr uses muted, slightly greyed surfaces and reserves strong
+     saturation for petals, rarity cards, and action buttons. */
+  --florr-blue-edge: #54738f;
+  --florr-blue-surface: #6e8cae;
+  --florr-blue-well: #627f9d;
+  --florr-orange-edge: #ae7844;
+  --florr-orange-surface: #d39a5b;
+  --florr-orange-well: #c1874e;
+  --florr-red-edge: #a9474b;
+  --florr-red-surface: #d2575b;
+  --florr-red-well: #bd4c50;
+  --florr-yellow-edge: #a99f3d;
+  --florr-yellow-surface: #d4cf4d;
+  --florr-yellow-well: #c3be43;
+  --florr-grey-edge: #555d63;
+  --florr-grey-surface: #747b81;
+  --florr-grey-well: #686f75;
+  --florr-text-shadow: #405568;
+
+  /* Motion rhythm, measured frame-by-frame off florr's own UI: entrances are
+     slow and confident (a decelerating slide, fully opaque the whole way),
+     exits are short and light (shrink away in place).  Symmetric open/close
+     timings are exactly what made our panels feel sticky, so every animated
+     surface pulls its durations from this one pair of tokens. */
+  --m-enter-dur: 260ms;
+  --m-enter-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --m-exit-dur: 110ms;
+  --m-exit-ease: cubic-bezier(0.4, 0, 1, 1);
+  --m-exit-scale: 0.62;
+
+  /* ui_motion.js rewrites this pair per phase on the element it is animating,
+     so a component can declare one transition and still get the slow entrance
+     and the fast exit without duplicating rules. */
+  --ui-motion-duration: var(--m-enter-dur);
+  --ui-motion-ease: var(--m-enter-ease);
+
+  /* Bottom loadout bar. florr's main row is ~1.5x the secondary row (about
+     72/48 at 1080p); ours used to be 58/46, which made the two rows read as
+     near-equals.  The slot buttons, their petal stacks and the mobile scale
+     rules all derive from this pair. */
+  --slot-primary-size: 64px;
+  --slot-secondary-size: 44px;
 }
 
 @font-face {
@@ -247,6 +290,29 @@ button:active {
   user-select: none;
 }
 
+/* Reversible visibility motion.  The helper in ui_motion.js keeps the
+   existing .hidden contract (display:none after an exit), while these rules
+   animate only opacity by default.  Individual components add their own
+   compositor-friendly transform without disturbing their positioning
+   transforms.  ui_motion.js drives --ui-motion-duration per phase so the
+   entrance and the exit run at the two different speeds above. */
+.ui-motion-target {
+  will-change: opacity;
+  transition: opacity var(--ui-motion-duration) var(--ui-motion-ease);
+}
+
+.ui-motion-target.ui-motion-entering,
+.ui-motion-target.ui-motion-exiting {
+  opacity: 0;
+  pointer-events: none;
+}
+
+
+.loading-screen.ui-motion-exiting {
+  /* Keep the loading curtain modal until the delayed .hidden cleanup. */
+  pointer-events: all;
+}
+
 .mobile-controls {
   display: none;
   inset: 0;
@@ -268,14 +334,44 @@ button:active {
   width: min(380px, calc(100vw - 32px));
   transform: translate(-50%, -50%);
   padding: 14px 18px 18px;
-  border: 5px solid #347cae;
+  border: 5px solid var(--florr-blue-edge);
   border-radius: 5px;
-  background: #5ba7de;
+  background: var(--florr-blue-surface);
   box-shadow: none;
   max-height: calc(100vh - 32px);
   overflow-y: auto;
   color: #fff;
   font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
+  transition:
+    opacity var(--ui-motion-duration) var(--ui-motion-ease),
+    transform var(--ui-motion-duration) var(--ui-motion-ease);
+}
+
+.auth-panel.ui-motion-entering {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.96);
+}
+
+.auth-panel.ui-motion-exiting {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.98);
+}
+
+.auth-panel.ui-motion-target:not(.ui-motion-entering):not(.ui-motion-exiting) {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+#authPanel.ui-motion-entering + .auth-health-notice,
+#authPanel.ui-motion-exiting + .auth-health-notice {
+  opacity: 0;
+  transform: translateY(6px) scale(0.98);
+}
+
+#authPanel.ui-motion-target:not(.ui-motion-entering):not(.ui-motion-exiting)
+  + .auth-health-notice {
+  opacity: 1;
+  transform: none;
 }
 
 .auth-panel h1 {
@@ -286,10 +382,10 @@ button:active {
   text-align: center;
   color: #fff;
   text-shadow:
-    -2px -2px 0 rgba(48, 75, 96, 0.76),
-    2px -2px 0 rgba(48, 75, 96, 0.76),
-    -2px 2px 0 rgba(48, 75, 96, 0.76),
-    2px 2px 0 rgba(48, 75, 96, 0.76),
+    -2px -2px 0 var(--florr-text-shadow),
+    2px -2px 0 var(--florr-text-shadow),
+    -2px 2px 0 var(--florr-text-shadow),
+    2px 2px 0 var(--florr-text-shadow),
     0 2px 0 rgba(0, 0, 0, 0.28);
 }
 
@@ -301,10 +397,10 @@ button:active {
   text-align: center;
   color: #fff;
   text-shadow:
-    -2px -2px 0 rgba(48, 75, 96, 0.76),
-    2px -2px 0 rgba(48, 75, 96, 0.76),
-    -2px 2px 0 rgba(48, 75, 96, 0.76),
-    2px 2px 0 rgba(48, 75, 96, 0.76);
+    -2px -2px 0 var(--florr-text-shadow),
+    2px -2px 0 var(--florr-text-shadow),
+    -2px 2px 0 var(--florr-text-shadow),
+    2px 2px 0 var(--florr-text-shadow);
 }
 
 .auth-panel .auth-version {
@@ -315,10 +411,10 @@ button:active {
   letter-spacing: 0;
   vertical-align: middle;
   text-shadow:
-    -1px -1px 0 #347cae,
-    1px -1px 0 #347cae,
-    -1px 1px 0 #347cae,
-    1px 1px 0 #347cae;
+    -1px -1px 0 var(--florr-blue-edge),
+    1px -1px 0 var(--florr-blue-edge),
+    -1px 1px 0 var(--florr-blue-edge),
+    1px 1px 0 var(--florr-blue-edge);
 }
 
 .auth-panel label {
@@ -329,10 +425,10 @@ button:active {
   font-size: 13px;
   font-weight: 800;
   text-shadow:
-    -1px -1px 0 #347cae,
-    1px -1px 0 #347cae,
-    -1px 1px 0 #347cae,
-    1px 1px 0 #347cae;
+    -1px -1px 0 var(--florr-blue-edge),
+    1px -1px 0 var(--florr-blue-edge),
+    -1px 1px 0 var(--florr-blue-edge),
+    1px 1px 0 var(--florr-blue-edge);
 }
 
 /* White rounded inputs with a chunky border, like the inventory search. */
@@ -366,6 +462,12 @@ button:active {
   z-index: 60;
   width: min(440px, 30vw, calc(100vw - 24px));
   height: auto;
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--ui-motion-duration) var(--ui-motion-ease),
+    transform var(--ui-motion-duration) var(--ui-motion-ease);
+  will-change: opacity, transform;
   pointer-events: none;
   user-select: none;
 }
@@ -463,6 +565,11 @@ button:active {
 
 .auth-panel:not(.hidden) ~ .slots-panel {
   visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--ui-motion-duration) var(--ui-motion-ease),
+    visibility 0s linear var(--ui-motion-duration);
 }
 
 .checkbox-row {
@@ -495,10 +602,10 @@ button:active {
   font-weight: 800;
   text-align: center;
   text-shadow:
-    -1px -1px 0 #347cae,
-    1px -1px 0 #347cae,
-    -1px 1px 0 #347cae,
-    1px 1px 0 #347cae;
+    -1px -1px 0 var(--florr-blue-edge),
+    1px -1px 0 var(--florr-blue-edge),
+    -1px 1px 0 var(--florr-blue-edge),
+    1px 1px 0 var(--florr-blue-edge);
 }
 
 .hud {
@@ -510,34 +617,56 @@ button:active {
   z-index: 7;
   display: grid;
   place-items: center;
-  background: rgba(47, 53, 61, 0.42);
-  transition: background 180ms linear;
+  background: radial-gradient(ellipse at center, transparent 30%, rgba(0, 0, 0, 0.64) 100%);
+  pointer-events: none;
+  transition:
+    opacity var(--ui-motion-duration) var(--ui-motion-ease),
+    background var(--ui-motion-duration) var(--ui-motion-ease);
+}
+
+.death-overlay.ui-motion-entering .death-card {
+  opacity: 0;
+  transform: translateY(calc(-50vh - 100px));
+}
+
+.death-overlay.ui-motion-exiting .death-card {
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+}
+
+.death-overlay.ui-motion-target:not(.ui-motion-entering):not(.ui-motion-exiting)
+  .death-card {
+  opacity: 1;
+  transform: none;
 }
 
 .death-overlay.closed {
-  background: transparent;
+  background: radial-gradient(ellipse at center, transparent 30%, rgba(0, 0, 0, 0.64) 100%);
   pointer-events: none;
 }
 
 .death-card {
   position: relative;
-  width: min(570px, calc(100vw - 28px));
-  min-height: 340px;
+  width: min(360px, calc(100vw - 28px));
+  min-height: 0;
   display: grid;
-  grid-template-rows: auto auto auto minmax(72px, auto) auto auto;
-  gap: 8px;
+  grid-template-rows: auto auto auto auto;
+  gap: 5px;
   justify-items: center;
-  padding: 22px 26px 20px;
-  border: 5px solid #536472;
+  padding: 10px 16px;
+  border: 0;
   border-radius: 5px;
-  background: rgba(112, 127, 139, 0.94);
+  background: transparent;
+  pointer-events: auto;
   color: #fff;
   font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
   text-align: center;
   transition:
-    transform 320ms ease,
-    opacity 180ms linear;
+    transform 420ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 160ms linear;
 }
+
+.death-portrait { display: block; width: 176px; height: 176px; pointer-events: none; }
 
 .death-title,
 .death-source,
@@ -552,33 +681,43 @@ button:active {
 }
 
 .death-title {
-  font-size: 26px;
+  font-size: 16px;
   line-height: 1.05;
 }
 
 .death-source {
   max-width: 100%;
   overflow: hidden;
-  color: #ffdd78;
-  font-size: 32px;
+  color: #fff;
+  font-size: 23px;
   line-height: 1.08;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .death-loot-title {
-  margin-top: 8px;
-  font-size: 18px;
+  margin: 0 0 7px;
+  font-size: 15px;
+  color: white;
+  text-align: center;
+}
+
+.death-loot-panel {
+  position: absolute; right: 14px; top: 12px;
+  width: 266px; max-height: calc(100vh - 160px);
+  padding: 12px; border-radius: 5px; background: rgba(8, 9, 11, 0.55);
+  pointer-events: auto;
 }
 
 .death-loot {
   width: 100%;
   min-height: 72px;
   display: grid;
-  grid-template-columns: repeat(8, 58px);
-  gap: 3px;
+  grid-template-columns: repeat(4, 46px);
+  gap: 9px;
   justify-content: center;
-  overflow: hidden;
+  overflow: auto;
+  max-height: calc(100vh - 295px);
   padding: 4px 0;
 }
 
@@ -588,13 +727,13 @@ button:active {
 
 .death-loot-item {
   position: relative;
-  width: 58px;
-  height: 58px;
+  width: 46px;
+  height: 46px;
 }
 
 .death-loot-item .petal-stack {
-  width: 58px;
-  height: 58px;
+  width: 46px;
+  height: 46px;
 }
 
 .death-revive-note {
@@ -603,21 +742,22 @@ button:active {
 
 .death-actions {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 8px;
   margin-top: 3px;
 }
 
 .revive-button {
-  width: 168px;
-  height: 52px;
+  width: 138px;
+  height: 44px;
   border: 5px solid #36863b;
   border-radius: 7px;
   background: #5fc85a;
   color: #fff;
   font-family: inherit;
-  font-size: 25px;
+  font-size: 22px;
   font-weight: 900;
   letter-spacing: 0;
   text-shadow:
@@ -631,16 +771,17 @@ button:active {
 .revive-button:active {
   transform: none;
 }
+.revive-button:disabled { opacity: 0.65; cursor: wait; }
 
 .death-close-button {
-  width: 112px;
-  height: 42px;
-  border: 4px solid #656f78;
+  width: 72px;
+  height: 28px;
+  border: 3px solid #656f78;
   border-radius: 7px;
   background: #9a9da3;
   color: #f6f6f6;
   font-family: inherit;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 900;
   letter-spacing: 0;
   text-shadow:
@@ -670,8 +811,7 @@ button:active {
   :is(
     .death-title,
     .death-source,
-    .death-loot-title,
-    .death-loot,
+    .death-portrait,
     .death-revive-note
   ) {
   display: none;
@@ -680,6 +820,7 @@ button:active {
 .death-overlay.closed .death-close-button {
   display: none;
 }
+.death-overlay.closed.ui-motion-target .death-card { transform: translateX(-50%); }
 
 .quick-actions {
   left: 6px;
@@ -687,6 +828,23 @@ button:active {
   z-index: 5;
   display: grid;
   gap: 6px;
+  transition:
+    opacity var(--ui-motion-duration) var(--ui-motion-ease),
+    transform var(--ui-motion-duration) var(--ui-motion-ease);
+}
+
+.quick-actions.ui-motion-entering,
+.quick-actions.ui-motion-exiting,
+.top-left-actions.ui-motion-entering,
+.top-left-actions.ui-motion-exiting {
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+}
+
+.quick-actions.ui-motion-target:not(.ui-motion-entering):not(.ui-motion-exiting),
+.top-left-actions.ui-motion-target:not(.ui-motion-entering):not(.ui-motion-exiting) {
+  opacity: 1;
+  transform: none;
 }
 
 .top-left-actions {
@@ -731,10 +889,12 @@ button:active {
 }
 
 .top-action-settings {
+  border-color: #464a4f;
   background-color: #8a8f94;
 }
 
 .top-action-settings.active {
+  border-color: #363b40;
   background-color: #8a8f94;
 }
 
@@ -759,6 +919,12 @@ button:active {
 }
 
 .game-panel.codex-panel {
+  /* Reference gallery: a flat lemon surface, olive frame/empty cells. */
+  --game-panel-border: var(--florr-yellow-edge);
+  --game-panel-background: var(--florr-yellow-surface);
+  --game-panel-well: var(--game-panel-background);
+  --card-bg: transparent;
+  --card-bg-empty: rgba(0, 0, 0, 0.2);
   left: 12px;
   top: 52px;
   bottom: auto;
@@ -766,22 +932,43 @@ button:active {
   min-width: 220px;
   max-width: min(900px, calc(100vw - 24px));
   --game-panel-max-height: min(640px, calc(100vh - 64px));
-  background-color: #f4d03f;
-  border-color: rgba(120, 95, 15, 0.7);
+  background-color: var(--game-panel-background);
+  border-color: var(--game-panel-border);
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 2px 6px 6px;
+  gap: 4px;
+  padding: 4px 6px 6px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
 .game-panel.codex-panel .panel-title {
+  flex-shrink: 0;
+  min-height: 44px;
+  padding: 0 30px;
   color: #ffffff;
+  font-size: 22px;
   text-shadow: none;
 }
 
+.game-panel.codex-panel .panel-title > span {
+  -webkit-text-stroke: 2px #202020;
+  paint-order: stroke fill;
+}
+
 .game-panel.codex-panel .panel-close {
+  top: 4px;
+  right: 1px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 3px solid #984545;
+  background: #bb5555;
   color: #ffffff;
+  font: 700 22px/1 Arial, sans-serif;
+  text-shadow: none;
 }
 
 /* Shared floating-card base: every card-like element (backpack slots,
@@ -820,60 +1007,119 @@ button:active {
 }
 
 .codex-grid {
+  --codex-gap: 6px;
+  /* Keep every real FBT rarity column. Fit them on smaller desktops rather
+     than forcing the reference account's eight-column data onto this one. */
+  --codex-card-size: clamp(40px,
+    calc((100vw - 72px - (var(--codex-columns, 11) - 1) * var(--codex-gap)) / var(--codex-columns, 11)), 64px);
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: var(--florr-yellow-edge);
+  --scrollbar-thumb-hover: #918a31;
+  position: relative;
+  min-width: 0;
   min-height: 0;
+  flex: 1;
   display: grid;
-  gap: 3px;
+  grid-template-columns: repeat(var(--codex-columns, 11), var(--codex-card-size));
+  gap: var(--codex-gap);
   align-content: start;
   overflow: auto;
-  padding-right: 2px;
+  border-radius: 0;
+  background: var(--game-panel-well);
+  /* Rotated counts extend above/right of the cards, including the first
+     row and last column. Reserve space before the scroll clipping edge. */
+  padding: 10px 16px 6px 4px;
 }
 
 .codex-cell {
-  width: 56px;
-  height: 56px;
+  --card-bg: transparent;
+  --card-bg-empty: rgba(0, 0, 0, 0.2);
+  --card-shadow: none;
+  width: var(--codex-card-size);
+  height: var(--codex-card-size);
   padding: 0;
   border: 0;
+  overflow: visible;
   background-color: var(--card-bg);
-  image-rendering: pixelated;
+  image-rendering: auto;
 }
 
 .codex-cell.empty {
+  border-radius: 2px;
   background-color: var(--card-bg-empty);
   pointer-events: none;
 }
 
-.codex-cell-base {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
+.codex-cell > .card-bg-layer {
+  /* Card SVGs draw only x/y=5..105 inside a 110-unit viewBox. Remove that
+     transparent margin so occupied and empty slots have the same outline. */
+  inset: -5%;
+  width: 110%;
+  height: 110%;
+  clip-path: inset(4.54545% round 4px);
 }
 
-.codex-cell-mob {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
+.codex-cell > .card-icon-layer {
+  inset: 4%;
+  width: 92%;
+  height: 92%;
+  object-fit: contain;
   image-rendering: auto;
 }
 
-/* Shared floating card base for tooltips (bestiary + petal info). */
+.codex-cell > .petal-count {
+  top: 2px;
+  right: 1px;
+  font-size: clamp(10px, calc(var(--codex-card-size) * 0.2), 13px);
+}
+
+.codex-grid > .custom-scrollbar {
+  right: 1px;
+  width: 7px;
+}
+
+.codex-grid .custom-scrollbar-thumb {
+  left: 0;
+  right: 0;
+  box-shadow: none;
+}
+/* Shared floating card base for tooltips (bestiary + petal info): the same
+   translucent dark panel as the chat log/messages. */
 :is(.codex-detail, .petal-info-tooltip) {
   position: fixed;
   z-index: 70;
   width: max-content;
   max-width: 460px;
   padding: 10px 12px;
-  border: 2px solid rgba(46, 110, 148, 0.85);
-  border-radius: 6px;
-  background: #87ceeb;
-  color: #12303f;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(8, 9, 11, 0.55);
+  color: #fff;
   font-size: 12px;
+  font-weight: 800;
   line-height: 1.4;
   pointer-events: none;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+  box-shadow: none;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+:is(.codex-detail, .petal-info-tooltip).ui-motion-entering {
+  opacity: 0;
+  transform: translateY(4px) scale(0.98);
+}
+
+:is(.codex-detail, .petal-info-tooltip).ui-motion-exiting {
+  opacity: 0;
+  transform: translateY(2px) scale(0.99);
+}
+
+:is(.codex-detail, .petal-info-tooltip).ui-motion-target:not(
+    .ui-motion-entering
+  ):not(.ui-motion-exiting) {
+  opacity: 1;
+  transform: none;
 }
 
 :is(.codex-detail-title, .petal-info-title) {
@@ -881,7 +1127,7 @@ button:active {
   font-size: 19px;
   line-height: 1.2;
   margin-bottom: 2px;
-  color: #0d2430;
+  color: #fff;
   text-shadow: none;
 }
 
@@ -898,7 +1144,7 @@ button:active {
 }
 
 .codex-detail-desc {
-  color: #12303f;
+  color: rgba(255, 255, 255, 0.94);
   font-size: 12px;
   margin-bottom: 8px;
   white-space: pre-wrap;
@@ -938,7 +1184,7 @@ button:active {
   text-align: center;
   font-size: 11px;
   font-weight: 700;
-  color: #0d3a4f;
+  color: rgba(255, 255, 255, 0.88);
   margin-bottom: 6px;
 }
 
@@ -1042,6 +1288,35 @@ button:active {
   display: grid;
   gap: 5px;
   pointer-events: none;
+  transition:
+    opacity 180ms ease,
+    transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.chat-command-hint {
+  color: #fff18f;
+  background: rgba(8, 9, 11, 0.55);
+  padding: 3px 5px;
+  border-radius: 3px;
+  font: 800 12px/1.3 "Florr UI", "Sarasa SC", sans-serif;
+  text-shadow: 1px 1px #333;
+  overflow-wrap: anywhere;
+}
+
+.chat-panel.chat-panel-entering {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.chat-panel.chat-panel-exiting {
+  opacity: 0;
+  transform: translateY(5px);
+}
+
+.chat-panel.ui-motion-target:not(.ui-motion-entering):not(.ui-motion-exiting),
+.chat-panel:not(.chat-panel-entering):not(.chat-panel-exiting) {
+  opacity: 1;
+  transform: none;
 }
 
 .chat-panel.open {
@@ -1423,19 +1698,19 @@ button:active {
 }
 
 .petal-info-label {
-  color: rgba(18, 48, 63, 0.8);
+  color: rgba(255, 255, 255, 0.72);
 }
 
 .petal-info-value {
   justify-self: end;
-  color: #0d3a4f;
+  color: #fff;
   font-weight: 800;
   text-align: right;
   text-shadow: none;
 }
 
 .petal-info-empty {
-  color: rgba(18, 48, 63, 0.8);
+  color: rgba(255, 255, 255, 0.72);
   font-size: 12px;
   font-weight: 800;
 }
@@ -1526,6 +1801,24 @@ button:active {
   border-radius: 5px;
   background: #f8fbfd;
   color: var(--ink);
+  transition:
+    opacity 160ms ease,
+    transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.slider-panel.ui-motion-entering {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+}
+
+.slider-panel.ui-motion-exiting {
+  opacity: 0;
+  transform: translateY(-3px) scale(0.99);
+}
+
+.slider-panel.ui-motion-target:not(.ui-motion-entering):not(.ui-motion-exiting) {
+  opacity: 1;
+  transform: none;
 }
 
 .slider-panel-header {
@@ -1575,9 +1868,11 @@ button:active {
   width: fit-content;
   max-width: calc(100vw - 24px);
   transform: translateX(-50%);
+  opacity: 1;
   padding: 0;
   border: 0;
   background: transparent;
+  transition: opacity var(--ui-motion-duration) var(--ui-motion-ease);
 }
 
 .game-panel {
@@ -1585,8 +1880,14 @@ button:active {
   --game-panel-max-height: min(620px, calc(100vh - 132px));
   --game-panel-gap: 9px;
   --game-panel-padding: 10px 12px 12px;
-  --game-panel-border: #347cae;
-  --game-panel-background: #5ba7de;
+  /* florr never outlines a panel. Depth comes from stacking same-hue shades:
+     frame -> surface -> well -> card, each step only slightly darker. Our old
+     border was ~40% darker than the fill, which read as a drawn outline and
+     made everything look like a web control. These steps are ~12%/~10%. */
+  --game-panel-border: var(--florr-blue-edge);
+  --game-panel-background: var(--florr-blue-surface);
+  --game-panel-well: var(--florr-blue-well);
+  --game-panel-closed-transform: translateX(calc(-100% - 36px));
   left: 12px;
   bottom: 12px;
   z-index: 60;
@@ -1600,25 +1901,59 @@ button:active {
   gap: var(--game-panel-gap);
   padding: var(--game-panel-padding);
   border: 5px solid var(--game-panel-border);
-  border-radius: 5px;
+  /* Radii step down as you nest: panel 8 -> well 6 -> card 4. Ours used to be
+     panel 5 / card 4, so the outer shell looked sharper than its contents. */
+  border-radius: 8px;
   background: var(--game-panel-background);
   box-shadow: none;
   /* Slide with transform (compositor-only) instead of animating `left`,
      which reflowed the whole panel subtree — hundreds of petal cards —
-     every frame. Closed panels also go visibility-hidden (after the slide)
-     so they cost no paint/hit-testing and can't be focused. */
+     every frame. Closed panels also go visibility-hidden so they cost no
+     paint/hit-testing and can't be focused; ui_panel.js owns the timing of
+     that flip, so the resting state below carries no transition at all. */
   visibility: hidden;
-  transform: translateX(calc(-100% - 36px));
-  transition:
-    transform 160ms ease,
-    visibility 0s linear 160ms;
+  opacity: 0;
+  transform: var(--game-panel-closed-transform);
   font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
 }
 
+/* Entrance: slide in from the screen edge, decelerating, and *opaque the
+   whole way*.  Fading a panel in while it travels is what made ours look
+   washed out mid-flight — florr's never drops below full opacity. */
 .game-panel.open {
   visibility: visible;
+  opacity: 1;
   transform: none;
-  transition: transform 160ms ease;
+  transition: transform var(--m-enter-dur) var(--m-enter-ease);
+}
+
+.game-panel.ui-panel-entering {
+  will-change: transform;
+  visibility: visible;
+  opacity: 1;
+  transform: var(--game-panel-closed-transform);
+  pointer-events: none;
+  /* Snap to the start pose instead of animating into it. Without this, a panel
+     re-opened mid-dismissal would first travel from its half-shrunk state out
+     to the edge, then slide back in. */
+  transition: none;
+}
+
+/* Exit: do not reverse the entrance.  florr shrinks the panel away in place
+   in roughly 110ms, which reads as "dismissed" instead of "retracting". */
+.game-panel.ui-panel-exiting {
+  will-change: transform, opacity;
+  /* setOpen(false) removes .open immediately. Keep the panel painted for
+     the exit phase; otherwise the base visibility:hidden rule makes the
+     shrink unobservable. */
+  visibility: visible;
+  opacity: 0;
+  transform: scale(var(--m-exit-scale));
+  transform-origin: center;
+  pointer-events: none;
+  transition:
+    transform var(--m-exit-dur) var(--m-exit-ease),
+    opacity var(--m-exit-dur) var(--m-exit-ease);
 }
 
 .backpack-panel {
@@ -1628,27 +1963,34 @@ button:active {
 
 .craft-panel {
   --game-panel-width: 600px;
-  --game-panel-max-height: min(640px, calc(100vh - 72px));
+  --game-panel-max-height: min(700px, calc(100vh - 96px));
   --game-panel-gap: 7px;
   --game-panel-padding: 10px 14px 14px;
-  --game-panel-border: #a06e38;
-  --game-panel-background: #dfa25a;
+  --game-panel-border: var(--florr-orange-edge);
+  --game-panel-background: var(--florr-orange-surface);
+  --game-panel-well: var(--florr-orange-well);
   grid-template-rows: auto auto auto 1fr;
 }
 
+@media (min-width: 721px) {
+  .craft-panel, .talent-panel { left: clamp(78px, 5vw, 100px); }
+}
+
 .craft-panel.forge-mode {
-  border-color: #34393e;
+  --game-panel-well: #50565b;
+  border-color: #4b5156;
   background: #5a6065;
 }
 
 .talent-panel {
-  --game-panel-width: 720px;
-  --game-panel-max-height: min(720px, calc(100vh - 72px));
-  --game-panel-gap: 10px;
-  --game-panel-padding: 12px 16px 14px;
-  --game-panel-border: #4b617d;
-  --game-panel-background: #6f8caf;
-  grid-template-rows: auto auto 1fr;
+  --game-panel-width: 650px;
+  --game-panel-max-height: min(650px, calc(100vh - 96px));
+  --game-panel-gap: 0;
+  --game-panel-padding: 10px 10px 6px;
+  --game-panel-border: var(--florr-red-edge);
+  --game-panel-background: var(--florr-red-surface);
+  --game-panel-well: var(--florr-red-well);
+  grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
 .settings-panel {
@@ -1656,8 +1998,9 @@ button:active {
   --game-panel-max-height: min(580px, calc(100vh - 72px));
   --game-panel-gap: 12px;
   --game-panel-padding: 12px 16px 16px;
-  --game-panel-border: #2a2c30;
-  --game-panel-background: #7a7f84;
+  --game-panel-border: var(--florr-grey-edge);
+  --game-panel-background: var(--florr-grey-surface);
+  --game-panel-well: var(--florr-grey-well);
   --settings-divider: rgba(34, 36, 39, 0.55);
   --settings-control-bg: #5c6167;
   --settings-control-border: #464a4f;
@@ -1665,12 +2008,12 @@ button:active {
   --settings-control-fill-off-border: #464a4f;
   --settings-control-fill-on: #5fc85a;
   --settings-control-fill-on-border: #4a9c46;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   /* Pop down from the top-left instead of sliding from the left edge. */
   left: 12px;
   bottom: auto;
   top: 56px;
-  transform: translateY(calc(-100% - 92px));
+  --game-panel-closed-transform: translateY(calc(-100% - 92px));
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     inset 0 -2px 0 rgba(0, 0, 0, 0.18);
@@ -1690,6 +2033,15 @@ button:active {
   display: grid;
   align-content: start;
 }
+
+.settings-tabs { display: flex; gap: 6px; }
+.settings-tabs button {
+  flex: 1; min-width: 0; padding: 6px 8px; color: white;
+  border: 3px solid #60656b; border-radius: 6px; background: #85898e;
+  font: 900 14px "Florr UI", "Sarasa SC", sans-serif; text-shadow: 1px 1px #333;
+}
+.settings-tabs button.active { background: #a6aaaf; border-color: #555a60; }
+.settings-panel:not([data-settings-category="game"]) #emailSettingsRow { display: none; }
 
 .settings-row {
   min-height: 58px;
@@ -1888,8 +2240,12 @@ button:active {
 }
 
 .talent-points {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  z-index: 3;
   color: #fff;
-  font-size: 16px;
+  font-size: 23px;
   font-weight: 900;
   text-align: center;
   text-shadow:
@@ -1901,174 +2257,124 @@ button:active {
 
 .talent-tree {
   min-height: 0;
-  overflow: auto;
-  padding: 4px 4px 8px;
-  display: grid;
-  gap: 12px;
-}
-
-.talent-group {
-  min-width: max-content;
-}
-
-.talent-group-title {
-  margin: 0 0 6px;
-  color: #fff;
-  font-size: 17px;
-  font-weight: 900;
-  text-shadow:
-    -1px -1px 0 #253241,
-    1px -1px 0 #253241,
-    -1px 1px 0 #253241,
-    1px 1px 0 #253241;
-}
-
-.talent-root-list {
-  display: grid;
-  gap: 12px;
-  min-width: max-content;
-}
-
-.talent-branch {
-  --talent-link-color: #4b617d;
-  display: flex;
-  align-items: center;
-  min-width: max-content;
-}
-
-.talent-node-wrap {
+  overflow: hidden;
   position: relative;
-  z-index: 1;
-  flex: 0 0 138px;
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+  outline: 0;
+  contain: layout paint;
 }
 
-.talent-node-wrap > .talent-node {
-  width: 100%;
-}
-
-.talent-children {
-  position: relative;
-  display: grid;
-  gap: 10px;
-  min-width: max-content;
-  margin-left: 12px;
-  padding-left: 28px;
-}
-
-.talent-children::before {
-  content: "";
+.talent-tree.panning { cursor: grabbing; }
+.talent-graph {
   position: absolute;
   left: 0;
-  top: 50%;
-  width: 28px;
-  border-top: 3px solid var(--talent-link-color);
-  transform: translateY(-1.5px);
+  top: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
 }
-
-.talent-children:not(.single)::after {
-  content: "";
+.talent-links {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+.talent-links line {
+  stroke: #b33f43;
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-dasharray: 9 9;
+  transition: stroke 180ms ease;
+}
+.talent-links line.owned { stroke: #a03c40; stroke-dasharray: none; }
+.talent-root {
   position: absolute;
   left: 0;
-  top: 27px;
-  bottom: 27px;
-  border-left: 3px solid var(--talent-link-color);
-}
-
-.talent-child {
-  position: relative;
-}
-
-.talent-child::before {
-  content: "";
-  position: absolute;
-  left: -28px;
-  top: 50%;
-  width: 28px;
-  border-top: 3px solid var(--talent-link-color);
-  transform: translateY(-1.5px);
+  top: 0;
+  width: 86px;
+  height: 86px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  translate: -50% -50%;
+  transform: scale(1);
 }
 
 .talent-node {
-  position: relative;
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
-  grid-template-areas:
-    "rarity name"
-    "rarity cost";
-  align-items: center;
-  min-height: 54px;
-  padding: 6px 8px;
-  overflow: hidden;
-  border: 3px solid #8293a4;
-  border-radius: 5px;
-  background: #d9e0e5;
-  color: #263241;
-  text-align: left;
-  box-shadow: none;
-  outline: 3px solid var(--talent-color);
-  outline-offset: -6px;
-}
-
-.talent-node.owned {
-  border-color: #669b72;
-  background: #9ec7a4;
-}
-
-.talent-node.blocked {
-  opacity: 0.58;
-  filter: grayscale(0.3);
-}
-
-.talent-node.holding::after {
-  content: "";
   position: absolute;
-  left: 0;
-  bottom: 0;
-  height: 5px;
-  width: 100%;
-  background: var(--talent-color);
-  transform-origin: left center;
-  animation: talent-hold-fill 520ms linear forwards;
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  overflow: visible;
+  border: 5px solid rgba(0, 0, 0, 0.2);
+  border-radius: 50%;
+  background: #7c7c7c;
+  background-clip: padding-box;
+  color: #fff;
+  /* Position and interaction transforms must be independent: the shared
+     button:active reset must never remove the node's centring offset. */
+  translate: -50% -50%;
+  transform: scale(1);
+  box-shadow: none;
+  touch-action: none;
+  transition: background-color 180ms ease, filter 100ms ease, transform 140ms ease;
 }
-
-.talent-rarity {
-  grid-area: rarity;
-  color: var(--talent-color);
-  font-size: 15px;
-  font-weight: 950;
-  text-align: center;
-  text-shadow:
-    -1px -1px 0 #1b2430,
-    1px -1px 0 #1b2430,
-    -1px 1px 0 #1b2430,
-    1px 1px 0 #1b2430;
-}
-
-.talent-name {
-  grid-area: name;
-  min-width: 0;
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.talent-node.owned, .talent-node.available { background-color: var(--talent-color); }
+.talent-node.available { background-image: linear-gradient(#7775, #7775); }
+.talent-node:hover, .talent-node:focus-visible { filter: brightness(1.1); transform: scale(1.06); }
+.talent-node:active, .talent-node.holding { transform: scale(0.97); }
+.talent-root:active { transform: scale(0.97); }
+.talent-node:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+.talent-node.pending { opacity: 0.75; }
+.talent-icon { width: 34px; height: 34px; pointer-events: none; }
+.talent-icon svg, .talent-root svg { width: 100%; height: 100%; }
 
 .talent-cost {
-  grid-area: cost;
-  color: #53606f;
-  font-size: 12px;
-  font-weight: 850;
+  position: absolute;
+  top: -9px;
+  right: -8px;
+  color: #ff7f81;
+  font: 900 18px/1 "Florr UI", "Sarasa SC", sans-serif;
+  -webkit-text-stroke: 3px #45292a;
+  paint-order: stroke fill;
+  transform: rotate(12deg);
+  pointer-events: none;
 }
-
-@keyframes talent-hold-fill {
-  from {
-    transform: scaleX(0);
-  }
-  to {
-    transform: scaleX(1);
-  }
+.talent-node.available .talent-cost { color: #fff; }
+.talent-hold-ring { position: absolute; inset: -7px; width: 68px; height: 68px; transform: rotate(-90deg); pointer-events: none; }
+.talent-hold-ring circle { fill: none; stroke: white; stroke-width: 3; stroke-dasharray: 1; stroke-dashoffset: 1; }
+.talent-node.holding .talent-hold-ring circle { animation: talent-hold-ring var(--talent-hold-duration) linear forwards; }
+@keyframes talent-hold-ring { to { stroke-dashoffset: 0; } }
+.talent-footer { display: flex; gap: 7px; align-items: center; z-index: 2; height: 42px; min-height: 42px; }
+.talent-help { flex: 1; color: white; font-size: 11px; line-height: 1.3; text-shadow: 1px 1px #75282c; }
+.talent-footer button { padding: 5px 12px; border: 3px solid #a23b3d; border-radius: 5px; color: white; background: #c3484b; font: 900 13px "Florr UI", "Sarasa SC", sans-serif; text-shadow: 1px 1px #66262b; }
+.talent-footer .talent-reset { background: #e22b32; }
+.talent-footer button:hover:not(:disabled) { filter: brightness(1.12); }
+.talent-footer button:disabled { opacity: 0.55; }
+.talent-tooltip {
+  position: fixed;
+  z-index: 140;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(8, 9, 11, 0.55);
+  color: white;
+  font: 800 13px/1.35 "Florr UI", "Sarasa SC", sans-serif;
+  text-shadow: 1px 1px #222;
+  pointer-events: none;
+  transition: opacity 100ms ease, transform 100ms ease;
 }
+.talent-tooltip strong { display: block; font-size: 21px; }
+.talent-tooltip p { margin: 12px 0 0; }
+.talent-tooltip-action { font-size: 12px; color: #e8dfcd; }
+.talent-tooltip.ui-motion-entering, .talent-tooltip.ui-motion-exiting { opacity: 0; transform: translateY(4px); }
 
 .panel-title {
   position: relative;
@@ -2105,10 +2411,10 @@ button:active {
 
 .talent-panel .panel-title {
   text-shadow:
-    -2px -2px 0 #465b74,
-    2px -2px 0 #465b74,
-    -2px 2px 0 #465b74,
-    2px 2px 0 #465b74;
+    -2px -2px 0 #793134,
+    2px -2px 0 #793134,
+    -2px 2px 0 #793134,
+    2px 2px 0 #793134;
 }
 
 .panel-close {
@@ -2155,10 +2461,10 @@ button:active {
   color: #fff;
   font-size: 14px;
   text-shadow:
-    -1px -1px 0 #347cae,
-    1px -1px 0 #347cae,
-    -1px 1px 0 #347cae,
-    1px 1px 0 #347cae;
+    -1px -1px 0 var(--florr-blue-edge),
+    1px -1px 0 var(--florr-blue-edge),
+    -1px 1px 0 var(--florr-blue-edge),
+    1px 1px 0 var(--florr-blue-edge);
   cursor: pointer;
 }
 
@@ -2188,10 +2494,20 @@ button:active {
   border-color: #c0cad2;
 }
 
+.craft-workbench {
+  /* The ring backing and a normal petal card share one exact footprint. */
+  --craft-card-size: 54px;
+  --craft-orbit-radius: 88px;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(116px, 1fr);
+  align-items: center;
+  min-width: 0;
+}
+
 .craft-stage {
   position: relative;
   width: 100%;
-  height: 210px;
+  height: 270px;
   margin: 0 auto;
 }
 
@@ -2200,17 +2516,41 @@ button:active {
   position: absolute;
   left: calc(50% + var(--slot-x, 0px));
   top: calc(50% + var(--slot-y, 0px));
-  width: 50px;
-  height: 50px;
+  width: var(--craft-card-size);
+  height: var(--craft-card-size);
   min-width: 0;
   padding: 0;
-  border: 3px solid #765333;
+  border: 0;
   border-radius: 5px;
-  background: #a8794d;
+  background: rgba(0, 0, 0, 0.28);
   transform: translate(-50%, -50%);
   transition:
+    opacity var(--ui-motion-duration, 260ms) ease,
     filter 120ms ease,
-    transform 120ms ease;
+    transform var(--ui-motion-duration, 260ms)
+      cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.craft-stage-slot.ui-motion-exiting,
+.craft-result-slot.ui-motion-entering,
+.craft-result-slot.ui-motion-exiting {
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0.78);
+}
+
+/* Ring slots re-enter with a settling rotation (they "return to position"
+   after the crafted card is dismissed). */
+.craft-stage-slot.ui-motion-entering {
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0.72) rotate(-115deg);
+}
+
+.craft-stage-slot.ui-motion-target:not(.ui-motion-entering):not(.ui-motion-exiting),
+.craft-result-slot.ui-motion-target:not(.ui-motion-entering):not(.ui-motion-exiting) {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
 }
 
 .craft-stage-slot.filled {
@@ -2218,92 +2558,126 @@ button:active {
   border-color: transparent;
 }
 
-.craft-panel.forge-mode .craft-stage-slot:not(.filled) {
-  border-color: #373c41;
-  background: #747a7f;
+.craft-stage-slot:not(.filled),
+.craft-stage-slot.empty,
+.craft-stage-slot.craft-card-fading,
+.craft-panel.forge-mode .craft-stage-slot:not(.filled),
+.craft-matrix-cell.empty {
+  border: 0;
+  background: rgba(0, 0, 0, 0.28);
+  box-shadow: none;
+}
+
+/* A successful result is the focus. Keep the ring geometry mounted for a
+   seamless transition, but do not leave five dark selection wells behind it. */
+.craft-stage.success .craft-stage-slot.empty,
+.craft-stage.success .craft-stage-slot.craft-card-fading {
+  background: transparent;
 }
 
 .craft-stage-slot .petal-stack {
-  width: 44px;
-  height: 44px;
+  width: 100%;
+  height: 100%;
 }
 
 .craft-stage-slot.slot-0 {
   --slot-x: 0px;
-  --slot-y: -64px;
-  --slot-in-x: 0px;
-  --slot-in-y: -22px;
+  --slot-y: calc(-1 * var(--craft-orbit-radius));
 }
 .craft-stage-slot.slot-1 {
-  --slot-x: 67px;
-  --slot-y: -16px;
-  --slot-in-x: 23px;
-  --slot-in-y: -5px;
+  --slot-x: calc(0.95106 * var(--craft-orbit-radius));
+  --slot-y: calc(-0.30902 * var(--craft-orbit-radius));
 }
 .craft-stage-slot.slot-2 {
-  --slot-x: 42px;
-  --slot-y: 61px;
-  --slot-in-x: 14px;
-  --slot-in-y: 20px;
+  --slot-x: calc(0.58779 * var(--craft-orbit-radius));
+  --slot-y: calc(0.80902 * var(--craft-orbit-radius));
 }
 .craft-stage-slot.slot-3 {
-  --slot-x: -42px;
-  --slot-y: 61px;
-  --slot-in-x: -14px;
-  --slot-in-y: 20px;
+  --slot-x: calc(-0.58779 * var(--craft-orbit-radius));
+  --slot-y: calc(0.80902 * var(--craft-orbit-radius));
 }
 .craft-stage-slot.slot-4 {
-  --slot-x: -67px;
-  --slot-y: -16px;
-  --slot-in-x: -23px;
-  --slot-in-y: -5px;
+  --slot-x: calc(-0.95106 * var(--craft-orbit-radius));
+  --slot-y: calc(-0.30902 * var(--craft-orbit-radius));
 }
 
+/* Craft gamble spin (craft_motion.js): the orbit controller drives each slot
+   button's transform per frame, so the CSS transition must not smooth it and
+   the ring position left/top must collapse to the stage center. */
 .craft-stage.spinning .craft-stage-slot {
-  left: 50%;
-  top: 50%;
-  animation: craft-orbit-in 760ms linear infinite;
   pointer-events: none;
 }
 
-.craft-stage.burst .craft-stage-slot {
-  animation: craft-burst 420ms cubic-bezier(0.22, 0.74, 0.26, 1);
+.craft-stage-slot.craft-orbiting {
+  left: 50%;
+  top: 50%;
+  transition: none;
+  z-index: 2;
+}
+
+.craft-particle-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.craft-result-slot.craft-result-pop {
+  animation: craft-result-pop 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes craft-result-pop {
+  0% {
+    transform: translate(-50%, -50%) scale(0.65) rotate(-12deg);
+  }
+  62% {
+    transform: translate(-50%, -50%) scale(1.06) rotate(2deg);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1) rotate(0deg);
+  }
 }
 
 .craft-result-slot {
   left: 50%;
   top: 50%;
-  width: 76px;
-  height: 76px;
+  width: calc(var(--craft-card-size) * 1.3);
+  height: calc(var(--craft-card-size) * 1.3);
   border: 0;
   background: transparent;
 }
 
 .craft-result-slot .petal-stack {
-  width: 72px;
-  height: 72px;
+  width: 100%;
+  height: 100%;
 }
+
+@keyframes craft-card-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.4) rotate(-35deg); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(0); }
+}
+.craft-stage-slot .craft-card-entering { animation: craft-card-in 240ms cubic-bezier(0.16, 1, 0.3, 1); }
 
 .craft-action {
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
-  grid-template-areas:
-    "button text"
-    "button chance";
-  gap: 2px 10px;
-  align-items: center;
-  width: min(470px, 100%);
-  max-width: 470px;
-  margin: -10px auto 0;
+  justify-items: center;
+  align-content: center;
+  gap: 4px;
+  padding-right: 10px;
 }
 
 .craft-action button {
-  grid-area: button;
-  width: 86px;
-  height: 38px;
-  border: 4px solid #626870;
+  min-width: 64px;
+  width: auto;
+  height: 34px;
+  padding: 2px 12px;
+  border: 4px solid rgba(0, 0, 0, 0.22);
   border-radius: 7px;
-  background: #858b91;
+  background: var(--craft-target-color, #858b91);
+  background-clip: padding-box;
+  color: #fff;
   font-weight: 850;
   text-shadow:
     -1px -1px 0 #1d2630,
@@ -2313,7 +2687,8 @@ button:active {
 }
 
 .craft-action button:disabled {
-  opacity: 0.54;
+  background: #858b91;
+  opacity: 1;
   cursor: default;
 }
 
@@ -2323,7 +2698,6 @@ button:active {
 }
 
 .craft-selection {
-  grid-area: text;
   min-width: 0;
   font-size: 13px;
   line-height: 1.15;
@@ -2331,16 +2705,22 @@ button:active {
 }
 
 .craft-chance {
-  grid-area: chance;
   min-height: 18px;
   font-size: 13px;
 }
+
+.craft-notes { color: white; text-align: center; text-shadow: 1px 1px #684927; line-height: 1.45; }
+.craft-failure-note { font-size: 12px; }
+.forge-mode .craft-failure-note { display: none; }
+.craft-chance { text-align: center; font-size: 12px; white-space: normal; }
 
 .craft-list {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 4px 2px 1px;
+  border-radius: 6px;
+  background: var(--game-panel-well);
+  padding: 5px 4px 4px;
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
@@ -2353,8 +2733,8 @@ button:active {
 
 .craft-matrix {
   display: grid;
-  /* 41px x sqrt(2) ~= 58px: petal display cards enlarged by sqrt(2). */
-  grid-template-columns: repeat(var(--craft-rarity-count, 9), 58px);
+  /* Keep the empty cells exactly the same size as their petal cards. */
+  grid-template-columns: repeat(var(--craft-rarity-count, 9), 56px);
   gap: 4px;
   align-items: center;
   width: 100%;
@@ -2363,8 +2743,8 @@ button:active {
 
 .craft-matrix-cell {
   position: relative;
-  width: 58px;
-  height: 58px;
+  width: 56px;
+  height: 56px;
   min-width: 0;
   min-height: 0;
   padding: 0;
@@ -2384,7 +2764,28 @@ button:active {
 }
 
 .craft-matrix-cell.empty {
+  border: 0;
+  background: rgba(0, 0, 0, 0.28);
+  box-shadow: none;
   pointer-events: none;
+}
+
+/* The shell arrives first, then the heading settles a fraction later.  The
+   exit has no counterpart: at 110ms a staggered title would still be flying
+   after the panel it belongs to has gone. */
+.game-panel.ui-panel-entering .panel-title {
+  opacity: 0;
+  transform: translateY(-7px) scale(0.98);
+}
+
+.game-panel .panel-title {
+  transition:
+    opacity var(--m-enter-dur) var(--m-enter-ease) 55ms,
+    transform var(--m-enter-dur) var(--m-enter-ease) 55ms;
+}
+
+.game-panel.ui-panel-exiting .panel-title {
+  transition: none;
 }
 
 .craft-matrix-cell.locked {
@@ -2397,63 +2798,18 @@ button:active {
   filter: none;
 }
 
-.craft-matrix-cell.lit:hover,
-.craft-matrix-cell.selected {
+.craft-matrix-cell.lit:hover {
   filter: brightness(1.08);
 }
 
-.craft-matrix-cell.selected {
-  outline: 4px solid #9a6936;
-  outline-offset: -2px;
-}
-
 .craft-panel.forge-mode .forge-matrix {
-  grid-template-columns: repeat(auto-fill, 58px);
+  grid-template-columns: repeat(auto-fill, 56px);
   width: 100%;
   min-width: 0;
 }
 
 .craft-panel.forge-mode .craft-matrix-cell {
   background: #484e53;
-}
-
-.craft-panel.forge-mode .craft-matrix-cell.selected {
-  outline-color: #c8cdd1;
-}
-
-.craft-panel.forge-mode .petal-count {
-  background: rgba(45, 49, 53, 0.92);
-}
-
-@keyframes craft-orbit-in {
-  0% {
-    transform: translate(-50%, -50%) rotate(0deg)
-      translate(var(--slot-x, 0px), var(--slot-y, 0px)) rotate(0deg) scale(1);
-  }
-  70% {
-    transform: translate(-50%, -50%) rotate(720deg)
-      translate(var(--slot-in-x, 0px), var(--slot-in-y, 0px)) rotate(-720deg)
-      scale(0.72);
-  }
-  100% {
-    transform: translate(-50%, -50%) rotate(1080deg) translate(0, 0)
-      rotate(-1080deg) scale(0.52);
-  }
-}
-
-@keyframes craft-burst {
-  0% {
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%) scale(0.4);
-    opacity: 0.25;
-  }
-  100% {
-    left: calc(50% + var(--slot-x, 0px));
-    top: calc(50% + var(--slot-y, 0px));
-    transform: translate(-50%, -50%) scale(1);
-    opacity: 1;
-  }
 }
 
 .backpack-panel.drag-target,
@@ -2468,7 +2824,7 @@ button:active {
 
 .slot-row {
   display: grid;
-  grid-template-columns: repeat(var(--slot-count, 5), 56px);
+  grid-template-columns: repeat(var(--slot-count, 5), var(--slot-primary-size));
   gap: 6px;
   width: max-content;
   max-width: calc(100vw - 44px);
@@ -2481,7 +2837,7 @@ button:active {
 }
 
 .slot-row.secondary {
-  grid-template-columns: repeat(var(--slot-count, 5), 44px);
+  grid-template-columns: repeat(var(--slot-count, 5), var(--slot-secondary-size));
   gap: 5px;
 }
 
@@ -2498,8 +2854,8 @@ button:active {
 
 .slot {
   position: relative;
-  width: 56px;
-  height: 56px;
+  width: var(--slot-primary-size);
+  height: var(--slot-primary-size);
   padding: 0;
   text-align: center;
 }
@@ -2515,6 +2871,17 @@ button:active {
 
 .slot:not(.empty)::before {
   opacity: 0;
+}
+
+.slot.empty {
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.slot.empty::before {
+  background: url("./assets/slot_base.svg") center / contain no-repeat;
 }
 
 .slot-durability-overlays,
@@ -2535,6 +2902,33 @@ button:active {
 .slot-durability-layer {
   background: #000000;
   transform-origin: top center;
+}
+
+/* Live data, distinct from the angled inventory xN badge. Both rows use the
+   same top-centred tab; it never consumes card/name space or pointer input. */
+.slot-value {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  top: 0;
+  transform: translate(-50%, -55%);
+  min-width: 1.2em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 0;
+  box-shadow: none;
+  background: var(--slot-rarity-color, #7eef6d);
+  color: #fff;
+  font: 900 12px/1.15 "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
+  -webkit-text-stroke: 2px #303030;
+  paint-order: stroke fill;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.secondary .slot-value {
+  font-size: 10px;
+  padding: 1px 4px;
 }
 
 .slot-ban-mark {
@@ -2711,48 +3105,130 @@ button:active {
   transform: translate(-50%, -4px);
 }
 
+/* Stack count the florr way: no pill, just outlined white text that hangs
+   off the card's top-right corner, tilted clockwise (~12deg, text runs down
+   to the right).  The card containers deliberately don't clip so the label
+   can overflow the card edge. */
 .petal-count {
   position: absolute;
-  top: 1px;
-  right: 1px;
-  z-index: 3;
-  max-width: 42px;
-  padding: 1px 4px 2px;
-  border-radius: 999px;
-  background: #000000;
-  color: #fff;
-  font-size: 10px;
-  font-weight: 800;
+  top: -3px;
+  right: -5px;
+  z-index: 5;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #ffffff;
+  font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
+  font-size: 11px;
+  font-weight: 900;
   line-height: 1;
   letter-spacing: 0;
-  text-align: center;
   white-space: nowrap;
+  pointer-events: none;
+  text-shadow:
+    -0.09em 0 0 #000,
+    0.09em 0 0 #000,
+    0 -0.09em 0 #000,
+    0 0.09em 0 #000,
+    -0.065em -0.065em 0 #000,
+    0.065em -0.065em 0 #000,
+    -0.065em 0.065em 0 #000,
+    0.065em 0.065em 0 #000;
+  transform: rotate(12deg);
+  transform-origin: 100% 100%;
 }
 
-:is(.backpack-panel, .craft-panel, .death-card, .codex-panel) .petal-count {
-  border-radius: 3px;
-  background: rgba(64, 76, 85, 0.9);
+.secondary .petal-count {
+  font-size: 9px;
+  top: -2px;
+  right: -4px;
 }
 
 .secondary .slot {
-  width: 44px;
-  height: 44px;
+  width: var(--slot-secondary-size);
+  height: var(--slot-secondary-size);
   opacity: 0.92;
 }
 
 .slot:not(.empty) .petal-stack {
-  width: 58px;
-  height: 58px;
+  width: var(--slot-primary-size);
+  height: var(--slot-primary-size);
 }
 
 .secondary .petal-stack {
-  width: 42px;
-  height: 42px;
+  width: calc(var(--slot-secondary-size) - 4px);
+  height: calc(var(--slot-secondary-size) - 4px);
 }
 
 .secondary .slot:not(.empty) .petal-stack {
-  width: 46px;
-  height: 46px;
+  width: var(--slot-secondary-size);
+  height: var(--slot-secondary-size);
+}
+
+/* Key hints, florr style: the swap key sits left of the secondary row, and
+   each secondary column gets its select key underneath.  Text is the same
+   outlined white as card names.  They read the live bindings (game.js fills
+   them), so a rebound key shows up here too. */
+.slot-key-hint {
+  color: #ffffff;
+  font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  text-shadow:
+    -0.09em 0 0 #000,
+    0.09em 0 0 #000,
+    0 -0.09em 0 #000,
+    0 0.09em 0 #000,
+    -0.065em -0.065em 0 #000,
+    0.065em -0.065em 0 #000,
+    -0.065em 0.065em 0 #000,
+    0.065em 0.065em 0 #000;
+}
+
+.slot-row-wrap.secondary-wrap {
+  position: relative;
+  width: max-content;
+  margin: 0 auto;
+}
+
+.slot-swap-hint {
+  position: absolute;
+  right: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.slot-swap-hint:empty {
+  display: none;
+}
+
+.slot-key-hints {
+  display: grid;
+  grid-template-columns: repeat(var(--slot-count, 5), var(--slot-secondary-size));
+  gap: 5px;
+  width: max-content;
+  margin: -3px auto 0;
+  justify-items: center;
+  text-align: center;
+}
+
+.slot-key-hints:empty {
+  display: none;
+}
+
+.slot-key-hint.slot-select-hint {
+  font-size: 11px;
+  min-height: 11px;
+}
+
+/* Touch devices have no keys to hint at (and the secondary row collapses). */
+body.mobile-ui .slot-swap-hint,
+body.mobile-ui .slot-key-hints {
+  display: none;
 }
 
 .mobile-joystick {
@@ -2874,7 +3350,12 @@ button:active {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 2px 1px 0;
+  /* Recessed well: the middle shade step between the panel surface and the
+     saturated cards, which is how florr separates content without a rule or
+     a border. */
+  border-radius: 6px;
+  background: var(--game-panel-well);
+  padding: 5px 4px 4px;
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
@@ -2911,12 +3392,12 @@ button:active {
   content: "";
   height: 4px;
   border-radius: 2px;
-  background: #438ab9;
+  background: var(--florr-blue-edge);
 }
 
 .craft-list .inventory-group-title::before,
 .craft-list .inventory-group-title::after {
-  background: #bd966f;
+  background: var(--florr-orange-edge);
 }
 
 .inventory-grid {
@@ -2993,6 +3474,21 @@ button:active {
   display: none !important;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .ui-motion-target,
+  .game-panel,
+  .chat-panel,
+  .death-card,
+  .death-overlay,
+  :is(.codex-detail, .petal-info-tooltip),
+  .craft-panel.forge-mode,
+  .craft-stage-slot,
+  .craft-result-slot {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}
+
 @media (pointer: coarse), (max-width: 720px) {
   .mobile-controls:not(.hidden) {
     display: block;
@@ -3047,30 +3543,33 @@ button:active {
 
   .craft-stage {
     height: 218px;
-    transform: scale(0.86);
-    transform-origin: center center;
-    margin-block: -16px;
+    transform: none;
+    margin: 0;
   }
+
+  .craft-workbench { --craft-card-size: 44px; --craft-orbit-radius: 68px; grid-template-columns: minmax(0, 2fr) minmax(78px, 1fr); }
+  .craft-action { padding-right: 0; }
+  .talent-points { font-size: 18px; }
 
   .craft-matrix {
     /* Wrap the enlarged cards instead of clipping them on narrow screens. */
-    grid-template-columns: repeat(auto-fill, 58px);
+    grid-template-columns: repeat(auto-fill, 56px);
     gap: 4px;
   }
 
   .craft-matrix-cell {
-    width: 58px;
-    height: 58px;
-  }
-
-  .craft-matrix-cell .petal-stack {
     width: 56px;
     height: 56px;
   }
 
+.craft-matrix-cell .petal-stack {
+  width: 56px;
+  height: 56px;
+}
+
   .death-card {
     width: calc(100vw - 24px);
-    min-height: 312px;
+    min-height: 0;
     padding: 18px 12px 16px;
   }
 
@@ -3083,15 +3582,18 @@ button:active {
   }
 
   .death-loot {
-    grid-template-columns: repeat(4, 52px);
+    grid-template-columns: repeat(4, 38px);
     justify-content: center;
   }
 
   .death-loot-item,
   .death-loot-item .petal-stack {
-    width: 52px;
-    height: 52px;
+    width: 38px;
+    height: 38px;
   }
+  .death-loot-panel { width: min(220px, calc(100vw - 16px)); top: 12px; right: 8px; max-height: 24vh; }
+  .death-loot-panel .death-loot { gap: 5px; }
+  .death-loot-panel .death-loot { max-height: 18vh; }
 
   .chat-panel {
     left: 12px;
@@ -3236,400 +3738,17 @@ button:active {
   box-shadow: none;
 }
 
-/* --- Mobile: everything sizes against the screen ------------------
-   Driven by body.mobile-ui, added when mobile mode is ON or the device
-   is small/touch (mobile-ui => mobileControlMode === "on" || <=720px
-   || touch). -------------------------------------------------------- */
-body.mobile-ui {
-  --mob-scale: clamp(0.566, calc(100vw / 678px), 0.848);
-}
-
-/* Fullscreen panels in mobile mode: only while open, instant appear
-   (closed panels stay parked offscreen as usual). */
-body.mobile-ui .game-panel.open {
-  left: 0;
-  bottom: 0;
-  top: 0;
-  width: 100vw;
-  height: 100vh;
-  max-height: 100vh;
-  border: 0;
-  border-radius: 0;
-  transition: none;
-}
-
-body.mobile-ui .settings-panel.open {
-  top: 0;
-  left: 0;
-}
-
-body.mobile-ui .codex-panel.open {
-  left: 0;
-  top: 0;
-  width: 100vw;
-  max-width: 100vw;
-}
-
-/* Bottom slots: left-aligned, just right of the quick-actions column. */
-body.mobile-ui .slots-panel {
-  left: calc(78px * var(--mob-scale));
-  right: auto;
-  bottom: max(calc(10px * var(--mob-scale)), env(safe-area-inset-bottom));
-  width: max-content;
-  max-width: calc(100vw - 78px * var(--mob-scale) - calc(8px * var(--mob-scale)));
-  transform: none;
-}
-
-body.mobile-ui .slot-row {
-  grid-template-columns: repeat(
-    var(--slot-count, 5),
-    calc(56px * var(--mob-scale))
-  );
-  gap: calc(6px * var(--mob-scale));
-  margin-left: 0;
-  margin-right: 0;
-  max-width: none;
-}
-
-body.mobile-ui .slot-row.secondary {
-  grid-template-columns: repeat(
-    var(--slot-count, 5),
-    calc(36px * var(--mob-scale))
-  );
-  gap: calc(5px * var(--mob-scale));
-}
-
-body.mobile-ui .slot {
-  width: calc(56px * var(--mob-scale));
-  height: calc(56px * var(--mob-scale));
-}
-
-body.mobile-ui .slot-row.secondary .slot {
-  width: calc(36px * var(--mob-scale));
-  height: calc(36px * var(--mob-scale));
-}
-
-body.mobile-ui .slot:not(.empty) .petal-stack {
-  width: calc(56px * var(--mob-scale));
-  height: calc(56px * var(--mob-scale));
-}
-
-body.mobile-ui .secondary .slot:not(.empty) .petal-stack {
-  width: calc(32px * var(--mob-scale));
-  height: calc(32px * var(--mob-scale));
-}
-
-body.mobile-ui .petal-flight {
-  width: calc(56px * var(--mob-scale));
-  height: calc(56px * var(--mob-scale));
-}
-
-body.mobile-ui .slot .petal-name {
-  font-size: calc(11px * var(--mob-scale));
-  max-width: calc(100% - 10px * var(--mob-scale));
-}
-
-body.mobile-ui .slot .rarity-name {
-  font-size: calc(9px * var(--mob-scale));
-}
-
-/* Quick action buttons (Z/X/C). */
-body.mobile-ui .quick-actions {
-  left: calc(6px * var(--mob-scale));
-  bottom: max(
-    calc(14px * var(--mob-scale)),
-    calc(env(safe-area-inset-bottom) + 10px * var(--mob-scale))
-  );
-  gap: calc(6px * var(--mob-scale));
-}
-
-body.mobile-ui .quick-action {
-  width: calc(56px * var(--mob-scale));
-  height: calc(56px * var(--mob-scale));
-  background-size: calc(44px * var(--mob-scale)) calc(44px * var(--mob-scale));
-}
-
-/* Chat: above the slots, left-aligned with them. */
-body.mobile-ui .chat-panel {
-  left: calc(78px * var(--mob-scale));
-  bottom: calc(
-    max(calc(10px * var(--mob-scale)), env(safe-area-inset-bottom)) +
-      126px * var(--mob-scale)
-  );
-  width: min(
-    calc(420px * var(--mob-scale)),
-    calc(100vw - 86px * var(--mob-scale))
-  );
-  transition: bottom 0.2s ease;
-}
-
-body.mobile-ui.slots-collapsed .chat-panel {
-  bottom: calc(
-    max(calc(10px * var(--mob-scale)), env(safe-area-inset-bottom)) +
-      62px * var(--mob-scale)
-  );
-}
-
-body.mobile-ui .chat-panel.open .chat-log {
-  max-height: min(calc(230px * var(--mob-scale)), calc(100vh - 200px));
-}
-
-/* Touch controls scale too. */
-body.mobile-ui .mobile-joystick,
-body.mobile-ui .mobile-joystick-base {
-  width: calc(124px * var(--mob-scale));
-  height: calc(124px * var(--mob-scale));
-}
-
-body.mobile-ui .mobile-joystick-knob {
-  width: calc(56px * var(--mob-scale));
-  height: calc(56px * var(--mob-scale));
-}
-
-body.mobile-ui .mobile-action-cluster {
-  right: max(
-    calc(10px * var(--mob-scale)),
-    calc(env(safe-area-inset-right) + 10px * var(--mob-scale))
-  );
-  bottom: max(
-    calc(110px * var(--mob-scale)),
-    calc(env(safe-area-inset-bottom) + 110px * var(--mob-scale))
-  );
-  grid-template-columns: calc(96px * var(--mob-scale)) calc(
-      96px * var(--mob-scale)
-    ) calc(96px * var(--mob-scale));
-  grid-template-rows: calc(96px * var(--mob-scale)) calc(
-      96px * var(--mob-scale)
-    ) calc(96px * var(--mob-scale));
-  gap: calc(8px * var(--mob-scale));
-}
-
-body.mobile-ui .mobile-attack-button,
-body.mobile-ui .mobile-defend-button {
-  width: calc(96px * var(--mob-scale));
-  height: calc(96px * var(--mob-scale));
-}
-
-body.mobile-ui .mobile-swap-button {
-  width: calc(74px * var(--mob-scale));
-  height: calc(74px * var(--mob-scale));
-  transform: translateY(calc(12px * var(--mob-scale)));
-}
-
-/* Slot collapse toggle (right of the primary row). */
-.slot-collapse-btn {
-  display: none;
-}
-
-body.mobile-ui .slot-row-wrap {
-  position: relative;
-}
-
-body.mobile-ui .slot-collapse-btn {
-  position: absolute;
-  left: calc(100% + 8px * var(--mob-scale));
-  top: 50%;
-  z-index: 6;
-  width: calc(52px * var(--mob-scale));
-  height: calc(52px * var(--mob-scale));
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 2px solid rgba(255, 255, 255, 0.18);
-  border-radius: calc(14px * var(--mob-scale));
-  background: rgba(0, 0, 0, 0.34);
-  color: #fff;
-  transform: translateY(-50%);
-  transition:
-    background-color 100ms ease,
-    border-color 100ms ease;
-}
-
-body.mobile-ui .slot-collapse-btn:hover {
-  background: rgba(0, 0, 0, 0.5);
-  border-color: rgba(255, 255, 255, 0.4);
-}
-
-body.mobile-ui .slot-collapse-btn svg {
-  width: 62%;
-  height: 62%;
-  transition: transform 0.2s ease;
-}
-
-body.mobile-ui.slots-collapsed .slot-collapse-btn svg {
-  transform: rotate(180deg);
-}
-
-body.mobile-ui .slot-row.secondary {
-  max-height: calc(44px * var(--mob-scale));
-  overflow: hidden;
-  transition:
-    max-height 0.2s ease,
-    opacity 0.2s ease,
-    margin-bottom 0.2s ease;
-}
-
-body.mobile-ui.slots-collapsed .slot-row.secondary {
-  max-height: 0;
-  opacity: 0;
-  margin-bottom: 0;
-}
-
-/* Soft-keyboard: keep the focused input inside the visual viewport by
-   lifting the whole chrome while an input is focused on touch devices. */
-body.mobile-ui.input-shift-active {
-  transform: translateY(var(--input-shift, 0px));
-  will-change: transform;
-}
-
-body.mobile-ui.input-shift-active .mobile-controls {
-  visibility: hidden;
-}
+/* Responsive touch layout is isolated in mobile.css. */
+.slot-collapse-btn { display: none; }
 
 /* Slot-swap flight: while a petal is airborne the destination slots show
    no petal card; it renders only when the swap settles. */
-.slot.slot-swap-hidden .petal-stack {
+.slot.slot-swap-hidden .petal-stack,
+.slot.slot-swap-hidden .slot-value {
   visibility: hidden;
 }
 
 .petal-flight .petal-stack {
   width: 100%;
   height: 100%;
-}
-
-/* --- Remaining mobile pieces scale with the screen ----------------- */
-body.mobile-ui .mobile-attack-button,
-body.mobile-ui .mobile-defend-button {
-  font-size: calc(28px * var(--mob-scale));
-}
-
-body.mobile-ui .mobile-swap-button {
-  font-size: calc(24px * var(--mob-scale));
-}
-
-body.mobile-ui .quick-action kbd {
-  right: calc(2px * var(--mob-scale));
-  bottom: calc(1px * var(--mob-scale));
-  font-size: calc(12px * var(--mob-scale));
-}
-
-body.mobile-ui .quick-talent-points {
-  min-width: calc(18px * var(--mob-scale));
-  height: calc(18px * var(--mob-scale));
-  font-size: calc(13px * var(--mob-scale));
-  line-height: calc(18px * var(--mob-scale));
-}
-
-body.mobile-ui .chat-hint {
-  width: calc(255px * var(--mob-scale));
-  height: calc(31px * var(--mob-scale));
-  font-size: calc(13px * var(--mob-scale));
-}
-
-body.mobile-ui .chat-line {
-  min-height: calc(18px * var(--mob-scale));
-  font-size: calc(14px * var(--mob-scale));
-}
-
-body.mobile-ui .chat-input {
-  font-size: calc(14px * var(--mob-scale));
-}
-
-body.mobile-ui .panel-title {
-  font-size: calc(17px * var(--mob-scale));
-}
-
-body.mobile-ui .panel-close {
-  width: calc(28px * var(--mob-scale));
-  height: calc(28px * var(--mob-scale));
-  font-size: calc(14px * var(--mob-scale));
-}
-
-body.mobile-ui button {
-  height: calc(36px * var(--mob-scale));
-}
-
-body.mobile-ui .settings-label {
-  font-size: calc(16px * var(--mob-scale));
-}
-
-body.mobile-ui .settings-choice {
-  min-width: 0;
-  height: calc(36px * var(--mob-scale));
-  font-size: calc(14px * var(--mob-scale));
-}
-
-body.mobile-ui .settings-action {
-  height: calc(36px * var(--mob-scale));
-  font-size: calc(14px * var(--mob-scale));
-}
-
-body.mobile-ui .settings-square-toggle {
-  width: calc(36px * var(--mob-scale));
-  height: calc(36px * var(--mob-scale));
-  min-width: calc(36px * var(--mob-scale));
-  min-height: calc(36px * var(--mob-scale));
-}
-
-body.mobile-ui .inventory-grid {
-  grid-template-columns: repeat(
-    auto-fill,
-    minmax(calc(56px * var(--mob-scale)), 1fr)
-  );
-  gap: calc(5px * var(--mob-scale));
-}
-
-body.mobile-ui .inventory-item,
-body.mobile-ui .inventory-item .petal-stack {
-  width: calc(58px * var(--mob-scale));
-  height: calc(58px * var(--mob-scale));
-}
-
-body.mobile-ui .inventory-search {
-  height: calc(30px * var(--mob-scale));
-  font-size: calc(14px * var(--mob-scale));
-}
-
-body.mobile-ui .inventory-group-title {
-  font-size: calc(13px * var(--mob-scale));
-}
-
-body.mobile-ui .craft-action button {
-  font-size: calc(14px * var(--mob-scale));
-}
-
-body.mobile-ui .craft-selection {
-  font-size: calc(13px * var(--mob-scale));
-}
-
-body.mobile-ui .craft-chance {
-  font-size: calc(15px * var(--mob-scale));
-}
-
-body.mobile-ui .talent-points {
-  font-size: calc(16px * var(--mob-scale));
-}
-
-body.mobile-ui .talent-group-title {
-  font-size: calc(14px * var(--mob-scale));
-}
-
-body.mobile-ui .talent-name {
-  font-size: calc(12px * var(--mob-scale));
-}
-
-body.mobile-ui .codex-loot-rate-row {
-  font-size: calc(12px * var(--mob-scale));
-}
-
-body.mobile-ui .slider-title {
-  font-size: calc(12px * var(--mob-scale));
-}
-
-body.mobile-ui .console-input {
-  font-size: calc(14px * var(--mob-scale));
-}
-
-body.mobile-ui .console-debug {
-  font-size: calc(11px * var(--mob-scale));
 }

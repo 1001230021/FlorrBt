@@ -1,4 +1,5 @@
 #include "network_module.h"
+#include "../DevTools/dev_debug_service.h"
 #include "../Auth/email_verification_service.h"
 #include "../Persistence/account_store.h"
 #include "../Persistence/unique_petal_registry.h"
@@ -6,6 +7,8 @@
 #include "../../Shared/drop_rate.h"
 #include "../../Shared/mob_type.h"
 #include "../../Shared/network_msg.h"
+#include "../../Shared/petal_type.h"
+#include "../../Shared/rarity.h"
 #include "../../Shared/utf8.h"
 #include "../Game/controllers/player_controller.h"
 #include "../Game/entities/flower.h"
@@ -471,6 +474,7 @@ bool HandleRconCommand(CServer& server, INetworkModule& network, CPlayer& player
     if (!ExtractRconPayload(message, payload)) return false;
 
     if (!player.IsAuthenticated()) return true;
+    network.ValidateRconAuthorization(player);
 
     if (payload.empty())
     {
@@ -488,25 +492,41 @@ bool HandleRconCommand(CServer& server, INetworkModule& network, CPlayer& player
             return true;
         }
 
-        if (payload == game_config::rcon_password)
+        std::string auth_message;
+        if (network.AuthenticateRcon(player, payload, auth_message))
         {
-            player.SetRconAuthorized(true);
             LOG_INFO("rcon", "Player " + player.GetName() + " authorized from " + player.GetRemoteAddress());
             SendPrivateServerMessage(server, network, player, "RCON authorized.");
         } else
         {
             LOG_WARN("rcon", "Failed RCON login for player " + player.GetName() + " from " + player.GetRemoteAddress());
-            SendPrivateServerMessage(server, network, player, "RCON authorization failed.");
+            SendPrivateServerMessage(server, network, player, auth_message);
         }
+        return true;
+    }
+
+    if (payload == "logout")
+    {
+        player.SetRconAuthorized(false);
+        SendPrivateServerMessage(server, network, player, "RCON logged out; debug sessions revoked.");
+        return true;
+    }
+    if (payload == "dev_debug" || payload == "debug" || payload == "dev")
+    {
+        if (!network.QueueDebugTicket(player))
+            SendPrivateServerMessage(server, network, player, "Unable to open dev debug; check RCON/session limits.");
         return true;
     }
 
     LOG_INFO("rcon", "Player " + player.GetName() + " executed: " + payload);
 
-    std::vector<std::string> captured_lines;
+    struct CapturedLogs { std::mutex mutex; std::vector<std::string> lines; };
+    auto captured = std::make_shared<CapturedLogs>();
     size_t sink_id =
-        CLogger::AddSink([&captured_lines](const std::string& sender, ELogPriority priority, const std::string& msg) {
-            captured_lines.push_back("[" + sender + "][" + LogPriorityName(priority) + "] " + msg);
+        CLogger::AddSink([captured](const std::string& sender, ELogPriority priority, const std::string& msg) {
+            std::lock_guard<std::mutex> lock(captured->mutex);
+            if (captured->lines.size() < 512)
+                captured->lines.push_back("[" + sender + "][" + LogPriorityName(priority) + "] " + msg);
         });
 
     try
@@ -514,12 +534,17 @@ bool HandleRconCommand(CServer& server, INetworkModule& network, CPlayer& player
         server.GetConsole().ExecuteLine(payload);
     } catch (const std::exception& e)
     {
-        captured_lines.push_back(std::string("[rcon][ERROR] ") + e.what());
+        std::lock_guard<std::mutex> lock(captured->mutex);
+        captured->lines.push_back(std::string("[rcon][ERROR] ") + e.what());
     } catch (...)
     {
-        captured_lines.push_back("[rcon][ERROR] Unknown exception");
+        std::lock_guard<std::mutex> lock(captured->mutex);
+        captured->lines.push_back("[rcon][ERROR] Unknown exception");
     }
     CLogger::RemoveSink(sink_id);
+
+    std::vector<std::string> captured_lines;
+    { std::lock_guard<std::mutex> lock(captured->mutex); captured_lines = captured->lines; }
 
     if (captured_lines.empty())
     {
@@ -537,9 +562,49 @@ bool HandleRconCommand(CServer& server, INetworkModule& network, CPlayer& player
 }
 } // namespace
 
-INetworkModule::INetworkModule(CServer& server, CGameWorld& lobby) : m_server(server), m_lobby_world(lobby) {}
+INetworkModule::INetworkModule(CServer& server, CGameWorld& lobby)
+    : m_server(server), m_lobby_world(lobby), m_dev_debug(std::make_unique<CDevDebugService>(server)) {}
 
 INetworkModule::~INetworkModule() = default;
+
+bool INetworkModule::QueueDebugTicket(CPlayer& player)
+{
+    if (!ValidateRconAuthorization(player)) return false;
+    ServerMessage message;
+    message.type = ServerMessage::Type::DebugTicket;
+    message.debug_ticket = m_dev_debug->IssueTicket(player);
+    return !message.debug_ticket.empty() && QueueMessage(player, message);
+}
+
+bool INetworkModule::AuthenticateRcon(CPlayer& player, const std::string& password, std::string& message)
+{
+    // This namespace cannot be a valid (<=32-byte) account name, so logging
+    // into an ordinary account can never clear a RCON brute-force lockout.
+    const std::string throttle_key(max_auth_name_size + 1, '\0');
+    if (!player.IsAuthenticated() || !player.IsConnected() || game_config::rcon_password.empty())
+    { message = "RCON is unavailable."; return false; }
+    if (IsLoginRateLimited(player, throttle_key))
+    { message = "Too many RCON attempts; try again later."; return false; }
+    if (password != game_config::rcon_password)
+    {
+        RecordLoginFailure(player, throttle_key);
+        message = "RCON authorization failed."; return false;
+    }
+    ClearLoginFailures(player, throttle_key); player.SetRconAuthorized(true);
+    m_rcon_authorizations.insert_or_assign(player.GetId(), game_config::rcon_password);
+    message = "RCON authorized."; return true;
+}
+
+bool INetworkModule::ValidateRconAuthorization(CPlayer& player)
+{
+    const auto auth = m_rcon_authorizations.find(player.GetId());
+    if (player.IsConnected() && player.IsAuthenticated() && player.IsRconAuthorized() &&
+        auth != m_rcon_authorizations.end() && !game_config::rcon_password.empty() &&
+        auth->second == game_config::rcon_password) return true;
+    player.SetRconAuthorized(false);
+    if (auth != m_rcon_authorizations.end()) m_rcon_authorizations.erase(auth);
+    return false;
+}
 
 bool INetworkModule::Init()
 {
@@ -623,10 +688,14 @@ bool INetworkModule::Init()
 
 void INetworkModule::Tick(float dt)
 {
+    for (const auto& player : m_players)
+        if (player && player->IsRconAuthorized()) ValidateRconAuthorization(*player);
     ProcessEmailDeliveryResults();
     ProcessAuthenticationResults();
     AcceptConnections();
+    ClassifyPendingConnections();
     ProcessMessages();
+    m_dev_debug->Tick(dt);
     DispatchAuthenticationRequests();
     BroadcastEnvironmentIfChanged();
     m_player_lifecycle_service.RespawnDeadControlledEntities(m_players, m_lobby_world, *this);
@@ -786,6 +855,21 @@ void INetworkModule::SendSnapshots()
         {
             RecordQueuedSnapshot(snapshot.message, full_snapshot_size, actual_snapshot_size);
             RecordSentSnapshot(*player, std::move(history_entry));
+            // Feedback is queued on the game thread after all snapshot
+            // workers join. No socket I/O or shared mutation in workers.
+            if (CEntity* owner = player->GetEntity(); owner && owner->GameWorld())
+            {
+                ServerMessage feedback;
+                feedback.type = ServerMessage::Type::CombatFeedback;
+                const float range = snapshot.message.view_radius.value_or(0.f);
+                for (const auto& hit : owner->GameWorld()->GetCombatFeedback())
+                {
+                    if (feedback.combat_hits.size() >= ServerMessage::combat_hit_limit) break;
+                    if (DistanceSq(owner->Pos(), hit.pos) <= (range + hit.radius) * (range + hit.radius))
+                        feedback.combat_hits.push_back(hit);
+                }
+                if (!feedback.combat_hits.empty()) QueueMessage(*player, feedback);
+            }
         }
         if (!FlushSendBuffer(*player))
         {
@@ -794,10 +878,14 @@ void INetworkModule::SendSnapshots()
         }
     }
     m_snapshot_id++;
+    for (const auto& world : m_server.GetWorlds()) if (world) world->ClearCombatFeedback();
 }
 
 void INetworkModule::ShutDown()
 {
+    m_rcon_authorizations.clear();
+    m_dev_debug->Reset();
+    m_pending_connections.clear();
     m_snapshot_workers.reset();
     m_listener_v6.close();
     m_listener_v4.close();
@@ -832,7 +920,7 @@ void INetworkModule::AcceptConnections()
             new_socket.disconnect();
             return;
         }
-        if (m_auth_deadlines.size() >= unauthenticated_connection_limit)
+        if (m_auth_deadlines.size() + m_pending_connections.size() >= unauthenticated_connection_limit)
         {
             LOG_WARN("network", "Rejected connection: unauthenticated connection limit reached");
             new_socket.disconnect();
@@ -841,19 +929,77 @@ void INetworkModule::AcceptConnections()
 
         new_socket.setBlocking(false);
 
-        int id = GetNewPlayerId();
-        auto player = std::make_unique<CPlayer>(std::move(new_socket), id, "Pending" + std::to_string(id));
-        player->SetRemoteAddress(remote_address);
-        if (IsLoopbackAddress(remote_address)) m_proxy_header_pending.insert(static_cast<std::uint32_t>(id));
-        m_auth_deadlines.insert_or_assign(
-            static_cast<std::uint32_t>(id),
-            std::chrono::steady_clock::now() + std::chrono::seconds(initial_auth_timeout_seconds));
-        m_players.push_back(std::move(player));
-        LOG_INFO("network", "New connection accepted, pending auth ID: " + std::to_string(id));
+        auto pending = std::make_unique<SPendingConnection>();
+        pending->socket = std::move(new_socket);
+        pending->remote = remote_address;
+        pending->proxy_pending = IsLoopbackAddress(remote_address);
+        pending->deadline = std::chrono::steady_clock::now() + std::chrono::seconds(initial_auth_timeout_seconds);
+        m_pending_connections.push_back(std::move(pending));
     };
 
     if (m_listening_v4) accept_from(m_listener_v4);
     if (m_listening_v6) accept_from(m_listener_v6);
+}
+
+void INetworkModule::ClassifyPendingConnections()
+{
+    std::array<std::uint8_t, 4096> chunk{};
+    for (std::size_t index = 0; index < m_pending_connections.size();)
+    {
+        auto& pending = *m_pending_connections[index];
+        bool reject = std::chrono::steady_clock::now() > pending.deadline;
+        std::size_t received = 0;
+        const auto status = pending.socket.receive(chunk.data(), chunk.size(), received);
+        reject = reject || status == sf::Socket::Status::Disconnected || status == sf::Socket::Status::Error;
+        if (received) pending.received.insert(pending.received.end(), chunk.begin(), chunk.begin() + received);
+        reject = reject || pending.received.size() > dev_debug::request_limit + proxy_v1_max_header_size;
+        auto& bytes = pending.received;
+        if (!reject && pending.proxy_pending && !bytes.empty())
+        {
+            const auto compared = std::min(bytes.size(), proxy_v1_prefix.size());
+            if (!std::equal(bytes.begin(), bytes.begin() + compared, proxy_v1_prefix.begin())) pending.proxy_pending = false;
+            else if (bytes.size() >= proxy_v1_prefix.size())
+            {
+                static constexpr std::array<std::uint8_t, 2> terminator{ '\r', '\n' };
+                const auto end = std::search(bytes.begin(), bytes.end(), terminator.begin(), terminator.end());
+                if (end == bytes.end()) reject = bytes.size() > proxy_v1_max_header_size;
+                else
+                {
+                    const auto size = static_cast<std::size_t>(end - bytes.begin()) + 2;
+                    std::string source;
+                    reject = size > proxy_v1_max_header_size ||
+                        !ParseProxyV1Header(std::string_view(reinterpret_cast<const char*>(bytes.data()), size - 2), source) ||
+                        IsIpBanned(source);
+                    if (!reject)
+                    {
+                        pending.remote = std::move(source); pending.proxy_pending = false;
+                        bytes.erase(bytes.begin(), bytes.begin() + size);
+                    }
+                }
+            }
+        }
+        if (!reject && (pending.proxy_pending || bytes.empty())) { ++index; continue; }
+        if (!reject && bytes.front() == dev_debug::magic)
+        {
+            std::size_t payload_size = 0;
+            const auto frame = dev_debug::ReadFrameSize(bytes.data(), bytes.size(), dev_debug::hello_limit, payload_size);
+            if (frame == dev_debug::FrameStatus::Incomplete) { ++index; continue; }
+            if (frame == dev_debug::FrameStatus::Ready)
+                m_dev_debug->Accept(std::move(pending.socket), std::move(pending.remote), std::move(bytes));
+        }
+        else if (!reject && bytes.size() <= game_config::network_max_receive_buffer_size)
+        {
+            // Only this branch allocates a player ID. Its existing version,
+            // account login, reconnect and player-input parser stay intact.
+            const int id = GetNewPlayerId();
+            auto player = std::make_unique<CPlayer>(std::move(pending.socket), id, "Pending" + std::to_string(id));
+            player->SetRemoteAddress(pending.remote); player->m_receive_buffer = std::move(bytes);
+            m_auth_deadlines.insert_or_assign(static_cast<std::uint32_t>(id), pending.deadline);
+            m_players.push_back(std::move(player));
+            LOG_INFO("network", "Game connection pending auth ID: " + std::to_string(id));
+        }
+        m_pending_connections.erase(m_pending_connections.begin() + index);
+    }
 }
 
 void INetworkModule::ProcessMessages()
@@ -886,7 +1032,8 @@ void INetworkModule::ProcessMessages()
         size_t received = 0;
         auto status = player->GetSocket().receive(buffer.data(), buffer.size(), received);
 
-        if (status == sf::Socket::Status::Done && received > 0)
+        if ((status == sf::Socket::Status::Done && received > 0) ||
+            (status == sf::Socket::Status::NotReady && !player->m_receive_buffer.empty()))
         {
             player->m_receive_buffer.insert(player->m_receive_buffer.end(), buffer.begin(), buffer.begin() + received);
             if (player->m_receive_buffer.size() > game_config::network_max_receive_buffer_size)
@@ -1613,6 +1760,7 @@ void INetworkModule::SendTerrainDelta(CPlayer& player, uint8_t layer, uint16_t r
 
 void INetworkModule::BroadcastTerrainDelta(CGameWorld& world, uint8_t layer, uint16_t row, uint16_t col, uint32_t gid)
 {
+    m_dev_debug->BroadcastTerrain(world, layer, row, col, gid);
     for (const auto& player : m_players)
     {
         if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
@@ -1633,6 +1781,7 @@ void INetworkModule::SendTerrainWallRemove(CPlayer& player, florrbt::Vector2f mi
 
 void INetworkModule::BroadcastTerrainWallRemove(CGameWorld& world, florrbt::Vector2f min_pos, florrbt::Vector2f max_pos)
 {
+    m_dev_debug->BroadcastWallRemoval(world, min_pos.x, min_pos.y, max_pos.x, max_pos.y);
     for (const auto& player : m_players)
     {
         if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
@@ -1698,21 +1847,17 @@ bool INetworkModule::QueueOwnerState(CPlayer& player)
     auto* flower = dynamic_cast<CFlower*>(player.GetEntity());
     if (flower)
     {
-        auto& slots = flower->GetSlots();
-        msg.owner_slots.reserve(slots.size());
-        for (const CPetalSlot& slot : slots)
-        {
-            SOwnerPetalSlot owner_slot;
-            if (slot.m_p_proto)
-            {
-                owner_slot.petal_type = static_cast<uint8_t>(slot.m_p_proto->m_type);
-                owner_slot.rarity = static_cast<uint8_t>(slot.m_stored_rarity);
-            }
-            msg.owner_slots.push_back(owner_slot);
-        }
+        msg.owner_slots = CSnapshotService::BuildPrimarySlots(*flower);
+        const IGameController* controller = flower->GameWorld() ? flower->GameWorld()->GetController() : nullptr;
+        if (controller && controller->LocksPetalLoadout()) msg.flags = owner_state_loadout_locked;
     }
 
-    std::vector<SInventoryItem> secondary_slots = CAccountDataStore::GetSecondarySlots(player.GetAccountName());
+    // Suppress the account's saved side slots only on the wire; never erase
+    // them or return temporary controller cards to persistent inventory.
+    const bool locked = (msg.flags.value_or(0) & owner_state_loadout_locked) != 0;
+    std::vector<SInventoryItem> secondary_slots = locked ? std::vector<SInventoryItem>{}
+        : CAccountDataStore::GetSecondarySlots(player.GetAccountName());
+    if (locked) msg.secondary_slots.resize(msg.owner_slots.size());
     msg.secondary_slots.reserve(secondary_slots.size());
     for (const SInventoryItem& item : secondary_slots)
     {
@@ -2181,6 +2326,14 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
 
 void INetworkModule::HandleChatRequest(CPlayer& player, const ClientChatRequest& request)
 {
+    if (Trim(request.message) == "/dev_debug")
+    {
+        if (!ValidateRconAuthorization(player))
+            SendPrivateServerMessage(m_server, *this, player, "Use /rcon <password> before dev_debug.");
+        else if (!QueueDebugTicket(player))
+            SendPrivateServerMessage(m_server, *this, player, "Unable to issue a debug ticket; close another observer and retry.");
+        return;
+    }
     if (HandleRconCommand(m_server, *this, player, request.message)) return;
 
     CEntity* entity = player.GetEntity();
@@ -2217,11 +2370,35 @@ void INetworkModule::HandleSecondarySlotRequest(CPlayer& player, const ClientSec
 {
     if (request.slot_index >= game_config::default_flower_petal_num_max) return;
 
+    CEntity* entity = player.GetEntity();
+    CGameWorld* world = entity ? entity->GameWorld() : nullptr;
+    IGameController* controller = world ? world->GetController() : nullptr;
+    if (controller && controller->LocksPetalLoadout()) return;
+
+    const std::vector<SInventoryItem> current_slots =
+        CAccountDataStore::GetSecondarySlots(player.GetAccountName());
+    if (request.slot_index < current_slots.size())
+    {
+        const SInventoryItem& old_item = current_slots[request.slot_index];
+        if (old_item.petal_type != 0 && old_item.rarity != 0 && controller &&
+            !controller->CanUnequipPetalType(static_cast<EPetalType>(old_item.petal_type)))
+            return;
+    }
+
     if (request.petal_type == 0 || request.rarity == 0)
+    {
         CAccountDataStore::ClearSecondarySlot(player.GetAccountName(), request.slot_index);
-    else
-        CAccountDataStore::SetSecondarySlot(player.GetAccountName(), request.slot_index, request.petal_type,
-                                            request.rarity);
+        return;
+    }
+
+    const EPetalType requested_type = static_cast<EPetalType>(request.petal_type);
+    if (!IsKnownPetalTypeId(request.petal_type) || !IsKnownRarity(static_cast<ERarity>(request.rarity))) return;
+    const CPetalPrototype* proto = FindPetalPrototype(requested_type);
+    if (!proto || !proto->m_p_behavior) return;
+    if (controller && !controller->CanEquipPetalType(requested_type)) return;
+
+    CAccountDataStore::SetSecondarySlot(player.GetAccountName(), request.slot_index, request.petal_type,
+                                        request.rarity);
 }
 
 void INetworkModule::HandleCraftRequest(CPlayer& player, const ClientCraftRequest& request)
@@ -2575,6 +2752,9 @@ CPlayer* INetworkModule::FindPlayerById(uint32_t player_id) const
 
 void INetworkModule::ClearPlayersForRestore()
 {
+    m_rcon_authorizations.clear();
+    m_dev_debug->Reset();
+    m_pending_connections.clear();
     for (const auto& player : m_players)
         if (player) ClearPendingEmailAuthentication(player->GetId());
     m_pending_auth_requests.clear();
@@ -2764,6 +2944,7 @@ void INetworkModule::DropPlayer(size_t index, const std::string& reason)
     if (index >= m_players.size() || !m_players[index]) return;
 
     CPlayer& player = *m_players[index];
+    m_rcon_authorizations.erase(player.GetId());
     LOG_INFO("network", "Player " + std::to_string(player.GetId()) + " dropped: " + reason);
     CancelAuthenticationRequest(player.GetId());
     ClearPendingEmailAuthentication(player.GetId());

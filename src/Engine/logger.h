@@ -5,6 +5,8 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <mutex>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -23,14 +25,23 @@ class CLogger
   public:
     using Sink = std::function<void(const std::string&, ELogPriority, const std::string&)>;
 
+    struct sink_state
+    {
+        explicit sink_state(Sink sink) : callback(std::move(sink)) {}
+        std::recursive_mutex mutex;
+        Sink callback;
+    };
+
     struct sink_entry
     {
         size_t id = 0;
-        Sink callback;
+        std::shared_ptr<sink_state> state;
 
         void operator()(const std::string& sender, ELogPriority priority, const std::string& msg) const
         {
-            callback(sender, priority, msg);
+            std::lock_guard<std::recursive_mutex> lock(state->mutex);
+            const auto callback = state->callback;
+            if (callback) callback(sender, priority, msg);
         }
     };
 
@@ -39,7 +50,14 @@ class CLogger
     void Log(ELogPriority priority, const std::string& msg)
     {
         std::cout << FormatLine(m_sender, priority, msg) << std::endl;
-        for (const auto& sink : Sinks())
+        // Workers log concurrently with console/RCON subscription changes.
+        // Copy callbacks under the lock, invoke outside it (callbacks may log).
+        std::vector<sink_entry> sinks;
+        {
+            std::lock_guard<std::mutex> lock(SinkMutex());
+            sinks = Sinks();
+        }
+        for (const auto& sink : sinks)
         {
             sink(m_sender, priority, msg);
         }
@@ -52,16 +70,28 @@ class CLogger
 
     static size_t AddSink(Sink sink)
     {
-        Sinks().push_back({ ++s_next_sink_id, std::move(sink) });
+        std::lock_guard<std::mutex> lock(SinkMutex());
+        Sinks().push_back({ ++s_next_sink_id, std::make_shared<sink_state>(std::move(sink)) });
         return s_next_sink_id;
     }
 
     static void RemoveSink(size_t id)
     {
-        auto& sinks = Sinks();
-        sinks.erase(
-            std::remove_if(sinks.begin(), sinks.end(), [id](const sink_entry& entry) { return entry.id == id; }),
-            sinks.end());
+        std::shared_ptr<sink_state> removed;
+        {
+            std::lock_guard<std::mutex> lock(SinkMutex());
+            auto& sinks = Sinks();
+            const auto it = std::find_if(sinks.begin(), sinks.end(), [id](const sink_entry& entry) { return entry.id == id; });
+            if (it != sinks.end()) { removed = it->state; sinks.erase(it); }
+        }
+        // Also wait for an in-flight invocation. Existing GUI subscribers
+        // capture `this` and can safely destroy themselves after removal;
+        // callbacks in an older copied list see an empty callback and skip.
+        if (removed)
+        {
+            std::lock_guard<std::recursive_mutex> lock(removed->mutex);
+            removed->callback = {};
+        }
     }
 
     void Debug(const std::string& msg)
@@ -101,6 +131,11 @@ class CLogger
     int m_fatal_msg = 0;
 
   private:
+    static std::mutex& SinkMutex()
+    {
+        static std::mutex mutex;
+        return mutex;
+    }
     static std::vector<sink_entry>& Sinks()
     {
         static std::vector<sink_entry> g_sinks;
@@ -130,10 +165,15 @@ class CLogger
         auto now = std::chrono::system_clock::now();
         auto time = std::chrono::system_clock::to_time_t(now);
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
-        std::tm* local_time = std::localtime(&time);
+        std::tm local_time{};
+#ifdef _WIN32
+        localtime_s(&local_time, &time);
+#else
+        localtime_r(&time, &local_time);
+#endif
 
         std::ostringstream oss;
-        oss << std::put_time(local_time, "%Y-%m-%d %H:%M:%S") << '.' << std::setw(3) << std::setfill('0') << ms.count();
+        oss << std::put_time(&local_time, "%Y-%m-%d %H:%M:%S") << '.' << std::setw(3) << std::setfill('0') << ms.count();
         return oss.str();
     }
 

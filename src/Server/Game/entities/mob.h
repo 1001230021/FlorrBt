@@ -1,5 +1,6 @@
 #pragma once
 #include "../../../Shared/game_config.h"
+#include "../../../Shared/math_types.h"
 #include "../../../Shared/shared.h"
 #include "../controller.h"
 #include "../entity.h"
@@ -50,7 +51,12 @@ class CMobBase : public CEntity
     // close in until they actually overlap the target (contact damage range)
     // instead of braking one target-radius early.
     virtual void MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius = -1.f);
-    void ApplyDamageDirect(float dmg, CEntity* attacker);
+    // Analog intent: distance / full_speed_distance selects the requested
+    // speed (0..1). A negative target_radius denotes a point, with no body
+    // radius dead zone. AI callers keep the existing three-argument contract.
+    virtual void MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius,
+                             float full_speed_distance);
+    void ApplyDamageDirect(float dmg, CEntity* attacker, EDamageType damage_type = EDamageType::Normal);
 
     virtual const SMobStats* GetBaseStats() const = 0;
     virtual const SMobStats* GetFinalStats() const = 0;
@@ -205,7 +211,7 @@ template <typename TStats = SMobStats> class CMob : public CMobBase
         if (dmg <= 0.f) return;
         if (TrySharePsionicDamage(this, dmg, attacker, dmg_type)) return;
 
-        ApplyDamageDirect(dmg, attacker);
+        ApplyDamageDirect(dmg, attacker, dmg_type);
     }
 
     TStats m_base_stats;
@@ -366,7 +372,7 @@ inline CMobRegistry& MutableRegistry()
 }
 } // namespace mob_registry_detail
 
-inline const CMobRegistry& MobRegistry() { return mob_registry_detail::MutableRegistry(); }
+inline const CMobRegistry& GetMobRegistry() { return mob_registry_detail::MutableRegistry(); }
 
 template <EMobType Type, typename TMob> bool RegisterMobPrototype(CMobPrototype prototype)
 {

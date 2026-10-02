@@ -47,6 +47,59 @@ if(FLORRBT_WITH_MYSQL)
         target_include_directories(${PROJECT_NAME}_Server PRIVATE ${FLORRBT_MYSQL_INCLUDE_DIR})
         target_link_libraries(${PROJECT_NAME}_Server PRIVATE ${FLORRBT_MYSQL_LIBRARY})
         message(STATUS "MySQL account backend: enabled (${FLORRBT_MYSQL_LIBRARY})")
+
+        # The Windows MySQL ZIP ships libmysql.dll separately from its
+        # OpenSSL runtime DLLs.  Linking succeeds without these files, but
+        # the server cannot start because libmysql.dll loads both SSL and
+        # crypto at process startup.  Copy the complete runtime set next to
+        # the executable whenever the files are available.
+        if(WIN32)
+            set(FLORRBT_MYSQL_RUNTIME_DIR "" CACHE PATH
+                "Directory containing the MySQL/MariaDB runtime DLLs")
+            get_filename_component(_florrbt_mysql_lib_dir
+                "${FLORRBT_MYSQL_LIBRARY}" DIRECTORY)
+            get_filename_component(_florrbt_mysql_root_dir
+                "${_florrbt_mysql_lib_dir}" DIRECTORY)
+
+            set(_florrbt_mysql_runtime_search_paths
+                "${FLORRBT_MYSQL_RUNTIME_DIR}"
+                "${_florrbt_mysql_lib_dir}"
+                "${_florrbt_mysql_root_dir}/bin"
+                "${_florrbt_mysql_root_dir}"
+            )
+            list(FILTER _florrbt_mysql_runtime_search_paths EXCLUDE REGEX "^$")
+
+            find_file(_florrbt_mysql_runtime_dll
+                NAMES libmysql.dll libmariadb.dll mariadb.dll
+                PATHS ${_florrbt_mysql_runtime_search_paths}
+                NO_DEFAULT_PATH)
+            find_file(_florrbt_mysql_ssl_dll
+                NAMES libssl-3-x64.dll libssl-3.dll libssl-1_1-x64.dll libssl.dll
+                PATHS ${_florrbt_mysql_runtime_search_paths}
+                NO_DEFAULT_PATH)
+            find_file(_florrbt_mysql_crypto_dll
+                NAMES libcrypto-3-x64.dll libcrypto-3.dll libcrypto-1_1-x64.dll libcrypto.dll
+                PATHS ${_florrbt_mysql_runtime_search_paths}
+                NO_DEFAULT_PATH)
+
+            foreach(_florrbt_mysql_runtime_file IN ITEMS
+                    "${_florrbt_mysql_runtime_dll}"
+                    "${_florrbt_mysql_ssl_dll}"
+                    "${_florrbt_mysql_crypto_dll}")
+                if(_florrbt_mysql_runtime_file AND EXISTS "${_florrbt_mysql_runtime_file}")
+                    add_custom_command(TARGET ${PROJECT_NAME}_Server POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "${_florrbt_mysql_runtime_file}"
+                            "$<TARGET_FILE_DIR:${PROJECT_NAME}_Server>"
+                        VERBATIM)
+                else()
+                    message(WARNING
+                        "MySQL runtime DLL was not found; the Windows server may not start. "
+                        "Set FLORRBT_MYSQL_RUNTIME_DIR to the directory containing "
+                        "libmysql.dll, libssl*.dll and libcrypto*.dll.")
+                endif()
+            endforeach()
+        endif()
     else()
         message(STATUS "MySQL client library not found - building without the MySQL account backend")
     endif()

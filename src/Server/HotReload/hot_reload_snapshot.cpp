@@ -1382,7 +1382,7 @@ bool RestorePlayers(CServer& server, const json_t* data, std::uint32_t version, 
             sf::TcpSocket socket;
             auto player = std::make_unique<CPlayer>(std::move(socket), player_id, reader.String("name", account_name));
             player->Authenticate(account_name);
-            player->ApplySavedTalents();
+            player->LoadSavedTalents();
 
             CGameWorld* world = server.FindWorldById(reader.UInt32("world_id"));
             CEntity* entity = world && reader.Int("entity_id", -1) >= 0

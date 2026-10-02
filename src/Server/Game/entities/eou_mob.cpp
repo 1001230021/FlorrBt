@@ -33,6 +33,8 @@ bool LineClear(int r0, int c0, int r1, int c1, const std::function<bool(int, int
     for (;;)
     {
         if (r == r1 && c == c1) break;
+        const int old_r = r;
+        const int old_c = c;
         const int e2 = err;
         if (e2 > -dc)
         {
@@ -44,6 +46,7 @@ bool LineClear(int r0, int c0, int r1, int c1, const std::function<bool(int, int
             err += dr;
             c += sc;
         }
+        if (r != old_r && c != old_c && (!walkable(r, old_c) || !walkable(old_r, c))) return false;
         if (r == r1 && c == c1) break;
         if (!walkable(r, c)) return false;
     }
@@ -65,7 +68,32 @@ bool eou_has_line_of_sight(const CTileBoard& board, florrbt::Vector2f from, flor
     const auto walkable = [&board](int row, int col) {
         return board.InBounds(row, col) ? !board.TileSolid(row, col) : false;
     };
-    return LineClear(r0, c0, r1, c1, walkable);
+    // Traverse the actual world-space segment (not just the line between
+    // cell centres). Crossing a corner requires both neighbouring cells.
+    const float dx = to.x - from.x;
+    const float dy = to.y - from.y;
+    const int sx = dx > 0.f ? 1 : -1;
+    const int sy = dy > 0.f ? 1 : -1;
+    const float inf = std::numeric_limits<float>::infinity();
+    const float step_x = dx != 0.f ? tile_size / std::abs(dx) : inf;
+    const float step_y = dy != 0.f ? tile_size / std::abs(dy) : inf;
+    float tx = dx != 0.f ? ((c0 + (sx > 0 ? 1 : 0)) * tile_size - from.x) / dx : inf;
+    float ty = dy != 0.f ? ((r0 + (sy > 0 ? 1 : 0)) * tile_size - from.y) / dy : inf;
+    int row = r0, col = c0;
+    const int limit = std::abs(r1 - r0) + std::abs(c1 - c0) + 1;
+    for (int i = 0; i < limit && (row != r1 || col != c1); ++i)
+    {
+        if (std::abs(tx - ty) < 0.000001f)
+        {
+            if (!walkable(row + sy, col) || !walkable(row, col + sx)) return false;
+            row += sy; col += sx; tx += step_x; ty += step_y;
+        }
+        else if (tx < ty) { col += sx; tx += step_x; }
+        else { row += sy; ty += step_y; }
+        if (row == r1 && col == c1) return true;
+        if (!walkable(row, col)) return false;
+    }
+    return row == r1 && col == c1;
 }
 
 std::optional<florrbt::Vector2f> CEouWorkerAnt::FindBestMarkedWall()
@@ -108,6 +136,9 @@ std::vector<florrbt::Vector2f> eou_find_path(const CTileBoard& board, florrbt::V
     const int goal_col = static_cast<int>(std::floor(goal.x / tile_size));
     const int goal_row = static_cast<int>(std::floor(goal.y / tile_size));
     if (!board.InBounds(start_row, start_col) || !board.InBounds(goal_row, goal_col)) return {};
+    // Most foraging routes stay within a cleared chamber. Avoid allocating
+    // board-sized BFS buffers for these routine trips.
+    if (eou_has_line_of_sight(board, start, goal)) return { start, goal };
 
     // The start and goal cells are always walkable even when marked solid
     // (e.g. digging a wall tile).
@@ -195,6 +226,9 @@ std::vector<florrbt::Vector2f> eou_find_path(const CTileBoard& board, florrbt::V
         points.emplace_back((static_cast<float>(col) + 0.5f) * tile_size,
                             (static_cast<float>(row) + 0.5f) * tile_size);
     }
+    // Keep the last cell centre as a safe waypoint but finish at the actual
+    // food/home coordinate, which need not be in the centre of its tile.
+    points.push_back(goal);
     return points;
 }
 
@@ -212,42 +246,132 @@ CEOUMob<SMobStats>::SFoodTarget CEOUMob<SMobStats>::FindEouFoodTarget(CGameWorld
     const float vision = std::max(0.f, this->GetFinalStats()->horizon);
     const float max_range = std::max(vision, kEouFoodSearchMaxRange);
 
-    CEntity* best = nullptr;
-    float best_dist = std::numeric_limits<float>::max();
+    std::vector<std::pair<float, const CEouFoodMob*>> candidates;
 
     world->GetSpatialGrid().ForEachInRange(this->Pos(), max_range, [&](const CEntity* entity) {
         const auto* food = dynamic_cast<const CEouFoodMob*>(entity);
         if (!food || food->IsMarkedForDes() || food->IsDead() || food->RemainingFood() <= 0.f) return;
         const float dist = EouDistance(this->Pos(), food->Pos());
         if (dist > max_range) return;
-        if (dist < best_dist)
-        {
-            best_dist = dist;
-            best = const_cast<CEntity*>(entity);
-        }
+        candidates.emplace_back(dist, food);
     });
-
-    if (!best)
+    std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    // Bound failed path searches. A corpse behind a sealed wall must not
+    // monopolise the worker or trigger a pathfind every frame.
+    const size_t attempts = std::min<size_t>(candidates.size(), 4);
+    for (size_t i = 0; i < attempts; ++i)
     {
-        // Nothing in search range: no target this scan (the food may appear
-        // later, e.g. another duel leaves a corpse nearby).
-        return result;
+        const auto* food = candidates[i].second;
+        if (!m_board || eou_find_path(*m_board, this->Pos(), food->Pos()).empty()) continue;
+        result.world = world;
+        result.id = food->Id();
+        result.generation = food->Generation();
+        result.pos = food->Pos();
+        break;
     }
-
-    result.world = world;
-    result.id = best->Id();
-    result.generation = best->Generation();
-    result.pos = best->Pos();
     return result;
 }
 
-void CEouWorkerAnt::DepositFood(float amount)
+void CEouSoldierAnt::Tick(float dt)
 {
-    if (amount <= 0.f) return;
+    m_combat_scan_timer -= dt;
+    CEntity* target = ResolveCombatTarget();
+    if (m_combat_scan_timer <= 0.f)
+    {
+        m_combat_scan_timer = std::max(0.05f, game_config::eou_soldier_scan_interval);
+        if (!target)
+        {
+            ScanForEnemy();
+            target = ResolveCombatTarget();
+        }
+        // Blocked view: path through the tunnels on the scan cadence (the
+        // direct chase below takes over as soon as the line of sight clears).
+        if (target && m_board && !eou_has_line_of_sight(*m_board, Pos(), target->Pos()))
+            SetTarget(target->Pos());
+    }
+
+    if (target)
+    {
+        m_engaged = true;
+        m_target_pos = target->Pos();
+        if (!m_board || eou_has_line_of_sight(*m_board, Pos(), m_target_pos))
+        {
+            // Direct chase: bypass the waypoint walk; contact damage comes
+            // from the normal collision rules once the bodies touch.
+            ClearEouWaypoints();
+            CMob<SMobStats>::Tick(dt);
+            MoveTowards(m_target_pos, dt);
+            return;
+        }
+        // Path-following chase (waypoints refreshed on the scan cadence).
+        CEOUMob<SMobStats>::Tick(dt);
+        return;
+    }
+
+    m_engaged = false;
+    CEOUMob<SMobStats>::Tick(dt);
+}
+
+CEntity* CEouSoldierAnt::ResolveCombatTarget()
+{
+    if (m_target_id < 0) return nullptr;
+    CGameWorld* world = this->GameWorld();
+    if (!world)
+    {
+        m_target_id = -1;
+        m_target_generation = 0;
+        return nullptr;
+    }
+    CEntity* entity = world->GetEntity(m_target_id, m_target_generation);
+    auto* mob = dynamic_cast<CMobBase*>(entity);
+    const float leash =
+        std::max(game_config::eou_soldier_leash_range, game_config::eou_soldier_aggro_range);
+    if (!mob || mob->IsMarkedForDes() || mob->IsDead() || EouDistance(Pos(), mob->Pos()) > leash)
+    {
+        m_target_id = -1;
+        m_target_generation = 0;
+        return nullptr;
+    }
+    return entity;
+}
+
+void CEouSoldierAnt::ScanForEnemy()
+{
     CGameWorld* world = this->GameWorld();
     if (!world) return;
+    const int my_team = Team();
+    if (my_team <= 0) return;
+    const float aggro = std::max(0.f, game_config::eou_soldier_aggro_range);
+    if (aggro <= 0.f) return;
+
+    CEntity* best = nullptr;
+    float best_dist = std::numeric_limits<float>::max();
+    world->GetSpatialGrid().ForEachInRange(Pos(), aggro, [&](const CEntity* entity) {
+        if (entity == this) return;
+        // Enemy bodies only: mobs and flowers share CMobBase; petals and
+        // projectiles do not. Team 0 is neutral (food, wild props).
+        const auto* mob = dynamic_cast<const CMobBase*>(entity);
+        if (!mob || mob->IsMarkedForDes() || mob->IsDead()) return;
+        const int team = mob->Team();
+        if (team <= 0 || team == my_team) return;
+        const float dist = EouDistance(Pos(), mob->Pos());
+        if (dist > aggro || dist >= best_dist) return;
+        best_dist = dist;
+        best = const_cast<CEntity*>(entity);
+    });
+
+    if (!best) return;
+    m_target_id = best->Id();
+    m_target_generation = best->Generation();
+}
+
+float CEouWorkerAnt::DepositFood(float amount)
+{
+    if (amount <= 0.f) return 0.f;
+    CGameWorld* world = this->GameWorld();
+    if (!world) return 0.f;
     auto* controller = dynamic_cast<CAntKingdomController*>(world->GetController());
-    if (controller) controller->DepositWorkerFood(*world, Team(), Pos(), amount);
+    return controller ? controller->DepositWorkerFood(*world, Team(), Pos(), amount) : 0.f;
 }
 
 void CEouWorkerAnt::TickDig(float dt)

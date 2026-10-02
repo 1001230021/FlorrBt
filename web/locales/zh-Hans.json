@@ -5,6 +5,11 @@
     "name": "简体中文"
   },
   "ui": {
+    "slotCounter": {
+      "live": "实时数值：{value}",
+      "inactive": "副槽花瓣未激活，没有实时蓄能",
+      "pending": "等待服务端数值"
+    },
     "loading": "加载中...",
     "canvas": {
       "ariaLabel": "FlorrBt 游戏"
@@ -34,7 +39,9 @@
       "collected": "本轮收集",
       "collectedAriaLabel": "收集到的花瓣",
       "reviveNote": "等待复活。",
-      "revive": "复活",
+      "revive": "继续",
+      "returning": "返回中…",
+      "portrait": "阵亡时的花朵和花瓣配装",
       "close": "关闭"
     },
     "quick": {
@@ -82,7 +89,9 @@
       "helpPrefix": "帮助：{text}",
       "usage": "用法：{name} {params}",
       "help": {
+        "devDebug": "RCON 授权后打开独立的世界调试工作台",
         "version": "显示客户端版本",
+        "clear": "清空 F1 控制台记录",
         "language": "查看或切换显示语言",
         "say": "在指定频道发送聊天消息",
         "g": "发送全局聊天消息",
@@ -103,12 +112,18 @@
         "unbind": "移除某个按键或鼠标按钮的绑定",
         "unbindall": "移除某个设备的全部绑定",
         "render_scale": "查看或设置渲染分辨率倍率",
+        "view_zoom": "查看或设置游戏视野缩放百分比",
         "bench": "在登录界面运行渲染基准测试",
         "freeze_log": "列出最近的冻结检测记录（客户端卡顿/服务端断流）",
         "reset": "重置客户端配置、按键绑定或设置"
       }
     },
     "settings": {
+      "tabs": { "game": "游戏", "graphics": "画面", "controls": "操作" },
+      "damageNumbers": "显示伤害数字",
+      "screenShake": "屏幕震动",
+      "liveIcons": "动态槽位图标",
+      "movementArrow": "鼠标移动指引",
       "title": "设置",
       "close": "关闭设置",
       "language": "语言",
@@ -125,6 +140,8 @@
       "emailNotBound": "未绑定",
       "fullscreen": "全屏",
       "renderScale": "渲染分辨率",
+      "viewZoom": "视野缩放",
+      "autoRegister": "自动免密登录（空密码）",
       "renderScaleModes": {
         "auto": "自动",
         "native": "原生"
@@ -142,6 +159,7 @@
       "slotsAriaLabel": "合成槽",
       "once": "合成",
       "instruction": "放入 5 个相同花瓣以合成更高稀有度",
+      "failureHint": "失败会消耗部分已放入的花瓣",
       "slot": "合成槽",
       "successChance": "{chance} 成功率",
       "working": "合成中...",
@@ -162,7 +180,16 @@
     "talents": {
       "title": "天赋",
       "close": "关闭天赋",
-      "points": "天赋点数：{count}",
+      "points": "{count} TP",
+      "center": "回到中心",
+      "panHint": "拖动查看 · 滚轮缩放 · 长按节点",
+      "reset": "重置",
+      "resetConfirm": "确认重置",
+      "pending": "等待服务端确认…",
+      "requestFailed": "未收到确认，请检查连接后重试。",
+      "insufficient": "天赋点不足，无法学习这条升级路径。",
+      "learnCost": "长按学习此路径（{count} 个升级，共 {cost} TP）。",
+      "removeRefund": "长按移除此天赋及依赖它的后续升级，返还 {cost} TP。",
       "holdRemove": "长按移除 {name}",
       "holdLearn": "长按学习 {names}（{cost} TP）",
       "cost": "{cost} TP",
@@ -240,7 +267,7 @@
     },
     "mobile": {
       "ariaLabel": "移动端控制",
-      "bagLabel": "包",
+      "bagLabel": "背包",
       "inventory": "背包",
       "talentLabel": "赋",
       "talents": "天赋",
@@ -253,7 +280,25 @@
       "defendLabel": "B",
       "defend": "防御",
       "swapLabel": "X",
-      "swap": "快速换位"
+      "swap": "交换整排主槽与副槽花瓣",
+      "menu": "菜单",
+      "bestiary": "图鉴",
+      "map": "地图",
+      "console": "控制台",
+      "fullscreen": "全屏",
+      "moveHint": "左侧拖动移动",
+      "toggleReserve": "展开或收起副槽花瓣",
+      "changeChannel": "切换聊天频道",
+      "send": "发送",
+      "slotActions": "花瓣槽操作",
+      "slotSwap": "主副槽换位",
+      "zoomIn": "放大天赋树",
+      "zoomOut": "缩小天赋树",
+      "close": "关闭",
+      "viewMore": "视野 ＋",
+      "viewLess": "视野 －",
+      "unequip": "卸下花瓣",
+      "cancel": "取消"
     },
     "codex": {
       "title": "生物图鉴",
@@ -361,6 +406,11 @@
     "renderScale": {
       "current": "渲染倍率：{mode}（实际 {dpr}x）",
       "changed": "渲染倍率已设为 {mode}（实际 {dpr}x）"
+    },
+    "viewZoom": {
+      "current": "视野缩放：{percent}%（滚轮上滑缩小视野、放大花朵）",
+      "changed": "视野缩放已设为 {percent}%",
+      "invalid": "无效的视野缩放百分比：{value}"
     },
     "bench": {
       "alreadyRunning": "基准测试已在运行",
@@ -517,6 +567,25 @@
     }
   },
   "talents": {
+    "effects": {
+      "health": "提高花朵的最大生命值。",
+      "movement": "提高花朵的移动速度。",
+      "sharp_edges": "提高本体接触伤害。",
+      "body_toxicity": "本体接触时附加中毒伤害。",
+      "petal_health": "提高花瓣耐久。",
+      "reload": "缩短花瓣装填时间及换槽的最低冷却时间。",
+      "rotation": "提高花瓣的环绕旋转速度。",
+      "loadout": "解锁更多花瓣槽位。",
+      "antennae": "当天赋提供的视野超过现有加成时，扩大视野。",
+      "reach": "扩大花瓣攻击距离。",
+      "duplicator": "为符合条件的花瓣增加副本，高阶天赋也会作用于最左槽。",
+      "magnetism": "扩大掉落物拾取范围。",
+      "medic": "提高花瓣的治疗效果。",
+      "summoner": "提高召唤物生命值。",
+      "second_chance": "在冷却允许时，提供抵抗致命伤害的第二次机会。",
+      "poison": "提高中毒伤害。",
+      "concentrated_poison": "把中毒集中为更短时间内的更高伤害。"
+    },
     "groups": {
       "flower": "花朵",
       "petals": "花瓣",
@@ -599,5 +668,14 @@
       "titan": "泰坦，最强的存在之一。",
       "firefly": "萤火虫，受到攻击时会用连锁闪电反击。"
     }
+  },
+  "maps": {
+    "garden": "花园",
+    "ant_hel": "蚁狱",
+    "eou_small": "地下蚁国",
+    "training_grounds": "训练场",
+    "waiting_room": "等待室",
+    "garden_walltest": "花园（墙体测试）",
+    "test": "测试"
   }
 }

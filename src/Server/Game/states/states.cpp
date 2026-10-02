@@ -373,7 +373,7 @@ CUndeadState::~CUndeadState()
 
 CDiggingState::~CDiggingState()
 {
-    if (auto* flower = dynamic_cast<CFlower*>(m_p_owner)) flower->ReloadAllPetals();
+    if (auto* flower = dynamic_cast<CFlower*>(m_p_owner)) flower->ReloadPetals();
 }
 
 CCorruptionState::CCorruptionState(CMobBase* owner, float timer, ERarity rarity)

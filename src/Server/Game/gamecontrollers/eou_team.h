@@ -1,6 +1,6 @@
 ﻿#pragma once
 #include "../entities/eou_mob.h"
-#include <SFML/System/Vector2.hpp>
+#include "../../../Shared/math_types.h"
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -51,11 +51,11 @@ class CCellGroupSet
     // new cell's group id (0 when the cell does not belong).
     int AddCell(CGameWorld& world, SEouEntityHandle handle, int cell_type);
     // Deregisters a cell (it was destroyed) and rebuilds the groups.
-    void RemoveCell(SEouEntityHandle handle);
+    void RemoveCell(CGameWorld& world, SEouEntityHandle handle);
     // Finds the immediate neighbours of this cell (same type, 4-dir grid).
     std::vector<SEouEntityHandle> NeighboursOf(CGameWorld& world, SEouEntityHandle handle, int cell_type) const;
     // All cells of all groups.
-    std::vector<SEouEntityHandle> AllCells() const;
+    const std::vector<SEouEntityHandle>& AllCells() const { return m_cells; }
 
     const std::vector<CCellGroup>& Groups() const { return m_groups; }
 
@@ -130,7 +130,10 @@ class CEouPheromoneGroup
 class CTeam
 {
   public:
-    explicit CTeam(int team_id, const CTileBoard& board) : m_team_id(team_id), m_board(board) {}
+    explicit CTeam(int team_id, const CTileBoard& board) : m_team_id(team_id), m_board(board)
+    {
+        m_cells.SetTileSize(board.TileSize());
+    }
 
     int TeamId() const { return m_team_id; }
     // Home: the point workers ferry gathered food back to (the queen's
@@ -145,7 +148,14 @@ class CTeam
     // Stash: the queen's own food pile. Receives worker deposits that no
     // storage cell could take; TryConsumeFood drains it first.
     float StashFood() const { return m_food_stash; }
-    void DepositFood(float amount) { m_food_stash += std::max(0.f, amount); }
+    float DepositFood(float amount)
+    {
+        const float accepted = std::min(std::max(0.f, amount), std::max(0.f, game_config::eou_stash_capacity - m_food_stash));
+        m_food_stash += accepted;
+        return accepted;
+    }
+    void RefundFood(CGameWorld& world, float amount);
+    float FoodCapacity(CGameWorld& world) const;
 
     // The team's queen ({id, generation} handle). Her death loses the match;
     // the controller detects it by matching defeated mobs against this.
@@ -159,8 +169,7 @@ class CTeam
     // Keys a cell into the connectivity set (unifies same-type neighbours).
     void AddCell(CGameWorld& world, CEouCellMob& cell);
     void RemoveCell(CGameWorld& world, CEouCellMob& cell);
-    // Food pool across every storage cell: consumption/pooled queries used by
-    // the eggs and the worker deposit. DepositFood stays a receiver stub.
+    // Failed consumption is side-effect-free; only completed actions pay.
     float StorageFoodTotal(CGameWorld& world) const;
     bool TryConsumeFood(CGameWorld& world, float amount);
     float DepositToNearestStorage(CGameWorld& world, florrbt::Vector2f pos, float amount);

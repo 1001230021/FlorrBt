@@ -12,6 +12,12 @@ export class SettingsPanel extends UiPanel {
     if (!list) throw new Error("Settings panel requires a list element");
 
     this.list = list;
+    this.list.setAttribute("role", "tabpanel");
+    this.list.addEventListener("keydown", event => {
+      // Keep control activation/arrows from also becoming gameplay holds.
+      // Key releases still bubble to the shared input cleanup.
+      if (event.key !== "Escape" && event.key !== "F1") event.stopPropagation();
+    });
     this.translate = translate;
     this.onError = onError;
     this.definitions = [];
@@ -23,6 +29,20 @@ export class SettingsPanel extends UiPanel {
       this.createToggleControl(definition),
     );
     for (const definition of definitions) this.registerSetting(definition);
+    this.category = "game";
+    this.tabs = document.createElement("div");
+    this.tabs.className = "settings-tabs";
+    this.tabs.setAttribute("role", "tablist");
+    for (const category of ["game", "graphics", "controls"]) {
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.dataset.category = category;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", this.list.id);
+      tab.addEventListener("click", () => { this.category = category; this.render(); });
+      this.tabs.appendChild(tab);
+    }
+    this.list.parentElement.insertBefore(this.tabs, this.list);
   }
 
   registerControlType(type, factory) {
@@ -52,8 +72,20 @@ export class SettingsPanel extends UiPanel {
   }
 
   render() {
+    this.root.dataset.settingsCategory = this.category;
+    for (const tab of this.tabs.children) {
+      const selected = tab.dataset.category === this.category;
+      tab.textContent = this.translate(`ui.settings.tabs.${tab.dataset.category}`);
+      tab.classList.toggle("active", selected);
+      tab.setAttribute("aria-selected", String(selected));
+    }
+    const groups = {
+      movement: "controls", "hold-attack": "controls", "hold-defense": "controls", movement_arrow: "controls",
+      "render-scale": "graphics", fullscreen: "graphics", damage_numbers: "graphics", screen_shake: "graphics", live_icons: "graphics",
+    };
     const fragment = document.createDocumentFragment();
     for (const definition of this.definitions) {
+      if ((definition.group || groups[definition.id] || "game") !== this.category) continue;
       const factory = this.controlFactories.get(definition.type);
       if (!factory) continue;
 

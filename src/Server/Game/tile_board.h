@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -43,7 +43,7 @@ class CTileBoard
 // Tile-board template base that owns one mob per cell via unique_ptr.
 // Concrete boards (dig targets, carried objects...) derive from this with
 // their mob type; each cell may hold at most one mob, and the board is the
-// sole owner. MobAt gives a non-owning view, ReleaseMob moves ownership out.
+// sole owner. GetMobAt gives a non-owning view, ReleaseMob moves ownership out.
 // The remaining CTileBoard pure virtuals stay open for the concrete board.
 //
 // Bindings are runtime state only: mobs cannot survive a hot reload, so
@@ -52,14 +52,14 @@ template <typename TMob>
 class CBoundTileBoard : public CTileBoard
 {
   public:
-    TMob* MobAt(int row, int col) const
+    TMob* GetMobAt(int row, int col) const
     {
         if (!InBounds(row, col)) return nullptr;
         const auto it = m_mobs.find(static_cast<std::uint32_t>(row * Width() + col));
         return it == m_mobs.end() ? nullptr : it->second.get();
     }
 
-    bool IsCellBound(int row, int col) const { return MobAt(row, col) != nullptr; }
+    bool IsCellBound(int row, int col) const { return GetMobAt(row, col) != nullptr; }
 
     // Moves ownership in on success; on failure (out of bounds, cell taken)
     // the caller keeps the mob.
@@ -85,7 +85,7 @@ class CBoundTileBoard : public CTileBoard
 
     void ClearMobs() { m_mobs.clear(); }
 
-    size_t MobCount() const { return m_mobs.size(); }
+    size_t GetMobCount() const { return m_mobs.size(); }
 
   private:
     std::unordered_map<std::uint32_t, std::unique_ptr<TMob>> m_mobs; // cell -> owned mob

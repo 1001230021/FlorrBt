@@ -1,5 +1,6 @@
 #pragma once
 #include "../entity.h"
+#include "../../../Shared/math_types.h"
 #include <string>
 #include <utility>
 

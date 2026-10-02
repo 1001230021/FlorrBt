@@ -1,11 +1,12 @@
 import { drawSpriteImage } from "./sprite_raster_cache.js";
+import { getSpritePhase, getLimbMotionAmount } from "./sprite_motion.js";
+import { loadVisualImage, prepareSvgImage, whenVisualReady } from "./visual_assets.js";
 const SOLDIER_ANT_VIEWBOX_SIZE = 110;
 const SOLDIER_ANT_BODY_RADIUS = 19;
 const SOLDIER_ANT_BASE_FACE_ANGLE = -Math.PI * 0.75;
 const SOLDIER_ANT_WING_ALPHA = 0.498;
 const SOLDIER_ANT_FORELIMB_WIDTH = 5.833;
 const SOLDIER_ANT_FORELIMB_COLOR = "#292929";
-const SOLDIER_ANT_MOTION_DEADZONE = 0.12;
 const SUMMONED_BODY_FILL = "#f4dc59";
 const SUMMONED_BODY_DARK_FILL = "#d7bd3c";
 const SUMMONED_BODY_STROKE = "#c8ad35";
@@ -84,9 +85,8 @@ export function drawSoldierAnt(
 }
 
 function antAnimation(entityId, motion, time) {
-  const activeMotion = motion < SOLDIER_ANT_MOTION_DEADZONE ? 0 : motion;
-  if (activeMotion <= 0) return { swing: 0 };
-  const phase = time * (5.2 + activeMotion * 19.5) + entityId * 0.73;
+  const activeMotion = getLimbMotionAmount(motion);
+  const phase = getSpritePhase(entityId, "soldier-ant", time, 5.2 + activeMotion * 19.5, entityId * 0.73);
   return {
     swing: Math.sin(phase) * activeMotion * 0.22,
   };
@@ -187,39 +187,24 @@ function getForelimbPaths() {
 }
 
 function makeImage(src) {
-  const image = new Image();
-  image.decoding = "async";
-  image.src = src;
-  return image;
+  return loadVisualImage(src);
 }
 
 function summonedBodyImage(src) {
   let entry = SUMMONED_BODY_CACHE.get(src);
   if (entry) return entry.image;
 
-  const image = new Image();
-  image.decoding = "async";
-  entry = { image, url: "" };
+  const image = prepareSvgImage(src, "soldier-summoned", recolorSummonedBodySvg);
+  entry = { image };
   SUMMONED_BODY_CACHE.set(src, entry);
 
-  fetch(src)
-    .then((response) => {
-      if (!response.ok) throw new Error(`Soldier ant SVG failed: ${src}`);
-      return response.text();
-    })
-    .then((svgText) => {
-      const blob = new Blob([recolorSummonedBodySvg(svgText)], {
-        type: "image/svg+xml",
-      });
-      const url = URL.createObjectURL(blob);
-      entry.url = url;
-      image.src = url;
-    })
-    .catch(() => {
-      image.failed = true;
-    });
-
   return image;
+}
+
+export function prepareSoldierAntSprites() {
+  getForelimbPaths(); getWingPaths();
+  return Promise.all([abdomenImage, headImage, summonedBodyImage(abdomenSrc),
+    summonedBodyImage(headSrc)].map(whenVisualReady));
 }
 
 function recolorSummonedBodySvg(svgText) {

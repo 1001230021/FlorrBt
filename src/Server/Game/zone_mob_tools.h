@@ -2,7 +2,7 @@
 #include "../../Engine/map_tools.h"
 #include "../../Shared/mob_type.h"
 #include "entities/mob.h"
-#include <SFML/System/Vector2.hpp>
+#include "../../Shared/math_types.h"
 #include <algorithm>
 #include <cctype>
 #include <random>
@@ -30,7 +30,7 @@ inline std::string ZoneMobToLower(std::string_view text)
 inline bool TryParseZoneMobType(std::string_view text, EMobType& type)
 {
     std::string lowered = ZoneMobToLower(text);
-    for (const auto& [mob_type, proto] : MobRegistry())
+    for (const auto& [mob_type, proto] : GetMobRegistry())
     {
         if (mob_type == EMobType::None || mob_type == EMobType::PlayerFlower) continue;
         if (MatchMobTypeAlias(lowered, mob_type) || ZoneMobToLower(GetMobTypeName(mob_type)) == lowered ||

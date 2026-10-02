@@ -41,7 +41,11 @@
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
-  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Label="UserMacros">
+    <!-- Override with /p:FLORRBT_MYSQL_ROOT=... when MySQL is installed elsewhere. -->
+    <MySqlRoot Condition="'$(FLORRBT_MYSQL_ROOT)' != ''">$(FLORRBT_MYSQL_ROOT)</MySqlRoot>
+    <MySqlRoot Condition="'$(MySqlRoot)' == ''">D:\库\mysql-8.4.6-winx64</MySqlRoot>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -50,17 +54,17 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>_DEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;FLORRBT_WITH_MYSQL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;D:\库\mysql-8.4.6-winx64\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;$(MySqlRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>D:\库\SFML-3.1.0\lib;D:\库\mysql-8.4.6-winx64\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>D:\库\SFML-3.1.0\lib;$(MySqlRoot)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>libmysql.lib;sfml-main-d.lib;sfml-graphics-d.lib;sfml-window-d.lib;sfml-network-d.lib;sfml-system-d.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /y /d "D:\库\mysql-8.4.6-winx64\lib\libmysql.dll" "$(OutDir)"</Command>
-      <Message>Copy libmysql.dll next to the server executable</Message>
+      <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)tools\copy_mysql_runtime.ps1" -MySqlRoot "$(MySqlRoot)" -OutputDir "$(OutDir)."</Command>
+      <Message>Copy MySQL, OpenSSL and crypto runtime DLLs next to the server executable</Message>
     </PostBuildEvent>
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>
@@ -75,18 +79,18 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>NDEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;FLORRBT_WITH_MYSQL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;D:\库\mysql-8.4.6-winx64\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;$(MySqlRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
-      <AdditionalLibraryDirectories>D:\库\SFML-3.1.0\lib;D:\库\mysql-8.4.6-winx64\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>D:\库\SFML-3.1.0\lib;$(MySqlRoot)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>libmysql.lib;sfml-main.lib;sfml-graphics.lib;sfml-window.lib;sfml-network.lib;sfml-system.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /y /d "D:\库\mysql-8.4.6-winx64\lib\libmysql.dll" "$(OutDir)"</Command>
-      <Message>Copy libmysql.dll next to the server executable</Message>
+      <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)tools\copy_mysql_runtime.ps1" -MySqlRoot "$(MySqlRoot)" -OutputDir "$(OutDir)."</Command>
+      <Message>Copy MySQL, OpenSSL and crypto runtime DLLs next to the server executable</Message>
     </PostBuildEvent>
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>
@@ -141,6 +145,8 @@
     <ClInclude Include="src\Server\Module\console_module.h" />
     <ClInclude Include="src\Server\Module\module.h" />
     <ClInclude Include="src\Server\Module\network_module.h" />
+    <ClInclude Include="src\Server\DevTools\dev_debug_service.h" />
+    <ClInclude Include="src\Shared\dev_debug_protocol.h" />
     <ClInclude Include="src\Server\Module\server_gui_module.h" />
     <ClInclude Include="src\Server\Module\world_module.h" />
     <ClInclude Include="src\Server\Persistence\account_store.h" />
@@ -199,6 +205,7 @@
     <ClCompile Include="src\Server\main.cpp" />
     <ClCompile Include="src\Server\Module\console_module.cpp" />
     <ClCompile Include="src\Server\Module\network_module.cpp" />
+    <ClCompile Include="src\Server\DevTools\dev_debug_service.cpp" />
     <ClCompile Include="src\Server\Module\server_gui_module.cpp" />
     <ClCompile Include="src\Server\Module\world_module.cpp" />
     <ClCompile Include="src\Server\Persistence\account_store.cpp" />

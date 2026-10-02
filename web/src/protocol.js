@@ -51,6 +51,8 @@ export const ServerType = Object.freeze({
   LightningChain: 0x18,
   TerrainDelta: 0x19,
   TerrainWallRemove: 0x1a,
+  CombatFeedback: 0x1b,
+  DebugTicket: 0x1c,
 });
 
 export const PetalSlotCopyState = Object.freeze({
@@ -62,6 +64,7 @@ export const PetalSlotVisualType = Object.freeze({
   None: 0,
   Angle: 1,
   Size: 2,
+  Counter: 3,
 });
 
 export const AuthMode = Object.freeze({
@@ -339,7 +342,8 @@ function parseEntity(reader, origin = null) {
     if (
       slot.visualType !== PetalSlotVisualType.None &&
       slot.visualType !== PetalSlotVisualType.Angle &&
-      slot.visualType !== PetalSlotVisualType.Size
+      slot.visualType !== PetalSlotVisualType.Size &&
+      slot.visualType !== PetalSlotVisualType.Counter
     )
       throw new Error("unknown petal slot visual type");
     const copyCount = reader.u8();
@@ -353,6 +357,8 @@ function parseEntity(reader, origin = null) {
         copySnap.visual = reader.i16() / NET_ANGLE_SCALE;
       else if (slot.visualType === PetalSlotVisualType.Size)
         copySnap.visual = reader.u16() / NET_SLOT_SIZE_SCALE;
+      else if (slot.visualType === PetalSlotVisualType.Counter)
+        copySnap.visual = reader.u16();
       slot.copies.push(copySnap);
     }
     entity.primarySlots.push(slot);
@@ -384,6 +390,26 @@ export function parseServerMessage(payload) {
     const reader = new Reader(payload);
     const type = reader.u8();
     const msg = { type };
+
+    if (type === ServerType.DebugTicket) {
+      if (payload.length !== 65) throw new Error("Invalid debug ticket length");
+      msg.ticket = reader.string(64);
+      if (!/^[a-f0-9]{64}$/.test(msg.ticket)) throw new Error("Invalid debug ticket");
+      return msg;
+    }
+
+    if (type === ServerType.CombatFeedback) {
+      const count = reader.u8();
+      if (count > 64 || !reader.has(count * 19)) throw new Error("invalid combat feedback length");
+      msg.hits = [];
+      for (let i = 0; i < count; i++) {
+        const hit = { targetId: reader.u16(), pos: { x: reader.i32() / NET_COORD_SCALE, y: reader.i32() / NET_COORD_SCALE },
+          radius: reader.u16() / NET_RADIUS_SCALE, amount: reader.f32(), kind: reader.u8(), sourceType: reader.u8(), sourceRarity: reader.u8() };
+        if (!Number.isFinite(hit.amount) || hit.amount < 0 || hit.kind > 3) throw new Error("invalid combat damage");
+        msg.hits.push(hit);
+      }
+      return msg;
+    }
 
     if (type === ServerType.Welcome) {
       msg.playerId = reader.u16();

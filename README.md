@@ -24,6 +24,24 @@ Open:
 http://127.0.0.1:8080
 ```
 
+The Windows deployment package includes MySQL startup/status scripts and the
+JSON account migration wrapper. It expects the MySQL server distribution to be
+installed separately:
+
+```powershell
+.\deploy\windows\start_mysql.cmd -MySqlRoot "C:\path\to\mysql-8.4.6-winx64"
+.\deploy\windows\migrate_accounts_to_mysql.cmd
+```
+
+`START_ALL.cmd` in a generated package starts MySQL before FlorrBt and creates
+the configured application database/user. The MySQL data directory is created
+under the package's `mysql\data` directory and is never initialized when that
+directory is non-empty.
+
+If the MySQL installation has no `my.ini`, the launcher creates a marked
+temporary configuration for this package and removes it after a clean shutdown;
+an existing MySQL configuration is never overwritten.
+
 ## Configuration & secrets
 
 - `data/server.cfg` is committed as a template. Secret values (SMTP password,

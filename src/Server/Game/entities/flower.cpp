@@ -61,7 +61,7 @@ SFlowerStats BuildPlayerFlowerLevelStats(SFlowerStats stats, int level)
     return stats;
 }
 
-std::int64_t PlayerFlowerExpRequired(int level)
+std::int64_t GetRequiredPlayerExperience(int level)
 {
     const int safe_level = std::max(1, level);
     const long double base_exp = std::max(1.0L, static_cast<long double>(game_config::player_level_exp_base));
@@ -84,7 +84,7 @@ std::int64_t PlayerFlowerExpRequired(int level)
     return std::max<std::int64_t>(1, static_cast<std::int64_t>(std::llround(required)));
 }
 
-int TalentPointGainForLevel(int level)
+int CalculateTalentPointsForLevel(int level)
 {
     if (level <= 1) return 0;
 
@@ -167,8 +167,8 @@ void CTitanFlower::ReplaceForgedUniquePetal(EPetalType type)
     if (!registry) return;
 
     std::vector<const CPetalPrototype*> candidates;
-    candidates.reserve(PetalRegistry().size());
-    for (const auto& [candidate_type, prototype] : PetalRegistry())
+    candidates.reserve(GetPetalRegistry().size());
+    for (const auto& [candidate_type, prototype] : GetPetalRegistry())
     {
         if (candidate_type == EPetalType::None || !prototype || !prototype->m_p_behavior ||
             registry->FindOwner(candidate_type) || HasUniquePetal(candidate_type))
@@ -198,8 +198,8 @@ void CTitanFlower::RefreshUniqueLoadout()
     if (!registry) return;
 
     std::vector<const CPetalPrototype*> candidates;
-    candidates.reserve(PetalRegistry().size());
-    for (const auto& [type, prototype] : PetalRegistry())
+    candidates.reserve(GetPetalRegistry().size());
+    for (const auto& [type, prototype] : GetPetalRegistry())
     {
         if (type == EPetalType::None || !prototype || !prototype->m_p_behavior || registry->FindOwner(type)) continue;
         candidates.push_back(prototype);
@@ -375,19 +375,30 @@ void CFlower::DestroyPetalEntities()
     m_total_copies = 0;
 }
 
-void CFlower::ReloadAllPetals()
+void CFlower::ReloadPetals()
 {
     for (auto& slot : m_slots)
     {
         if (!slot.m_p_proto || !slot.m_p_proto->m_p_behavior) continue;
 
-        SPetalStats stats = slot.m_p_proto->m_p_behavior->GetPetalStatsForSlot(slot.m_stored_rarity, &slot, this);
+        SPetalStats stats = slot.m_p_proto->m_p_behavior->GetSlotPetalStats(slot.m_stored_rarity, &slot, this);
         const float reload = std::max(0.f, slot.m_p_proto->m_type == EPetalType::Shovel ? stats.preload : stats.reload);
         for (size_t i = 0; i < slot.m_p_petals.size(); ++i)
         {
             if (slot.m_p_petals[i])
             {
-                slot.m_p_petals[i]->MarkForDestroy(EEntityRemovalReason::Replaced);
+                CPetal* petal = slot.m_p_petals[i];
+                // Reloading a slot bypasses CPetalSlot::ClearPetal(). Make
+                // sure behavior-owned attachments (notably Egg summons) are
+                // cleared before the petal is replaced. Without this callback
+                // the egg's OnPetalDestroyed() sees an already spawned summon
+                // and deliberately keeps it alive.
+                const CPetalPrototype* active_proto = FindPetalPrototype(petal->GetPetalType());
+                CPetalBehavior* behavior =
+                    active_proto && active_proto->m_p_behavior ? active_proto->m_p_behavior.get()
+                                                                : slot.m_p_proto->m_p_behavior.get();
+                if (behavior) behavior->OnPetalCleared(petal, slot.m_stored_rarity, this);
+                petal->MarkForDestroy(EEntityRemovalReason::Replaced);
                 slot.m_p_petals[i] = nullptr;
             }
             if (i < slot.m_bonus_active.size()) slot.m_bonus_active[i] = false;
@@ -485,17 +496,18 @@ void CFlower::RebuildFinalStats()
     FinishFinalStatsRebuild();
 }
 
-void CFlower::EquipPetal(int slot_index, const CPetalPrototype* proto, ERarity rarity)
+bool CFlower::EquipPetal(int slot_index, const CPetalPrototype* proto, ERarity rarity)
 {
-    if (slot_index < 0 || slot_index >= static_cast<int>(m_slots.size())) return;
-    if (!m_slots[slot_index].m_available) return;
-    if (m_slots[slot_index].m_banned) return;
-    if (!proto || !proto->m_p_behavior) return;
+    if (slot_index < 0 || slot_index >= static_cast<int>(m_slots.size())) return false;
+    if (!m_slots[slot_index].m_available) return false;
+    if (m_slots[slot_index].m_banned) return false;
+    if (!proto || !proto->m_p_behavior) return false;
 
     m_slots[slot_index].SetPetal(proto, slot_index, rarity);
 
     if (!proto->m_p_behavior->GetPetalStats(rarity).stack) ApplyExclusivity(proto->m_type);
     MarkFinalStatsDirty();
+    return true;
 }
 
 void CFlower::LoadPetalSlot(int slot_index, const CPetalPrototype* proto, ERarity rarity)
@@ -511,12 +523,13 @@ void CFlower::LoadPetalSlot(int slot_index, const CPetalPrototype* proto, ERarit
     MarkFinalStatsDirty();
 }
 
-void CFlower::UnequipPetal(int slot_index)
+bool CFlower::UnequipPetal(int slot_index)
 {
-    if (slot_index < 0 || slot_index >= static_cast<int>(m_slots.size())) return;
-    if (!CanUnequipPetal(slot_index)) return;
+    if (slot_index < 0 || slot_index >= static_cast<int>(m_slots.size())) return false;
+    if (!CanUnequipPetal(slot_index)) return false;
 
     ForceUnequipPetal(slot_index);
+    return true;
 }
 
 void CFlower::ForceUnequipPetal(int slot_index)
@@ -901,11 +914,15 @@ void CPlayerFlower::RebuildFinalStats()
 
 void CPlayerFlower::RefreshTalentSlotCount()
 {
+    const IGameController* controller = GameWorld() ? GameWorld()->GetController() : nullptr;
+    // Room-owned cards and slot counts are never account inventory. In
+    // particular, shrinking them must not persist pheromones as removed loot.
+    if (controller && controller->LocksPetalLoadout()) return;
     int slot_count = std::clamp(game_config::mob_player_flower_initial_petal_slots, 0,
                                 std::max(0, game_config::mob_player_flower_max_petal_slots));
     CGameContext* context = GameContext();
     CPlayer* player = context ? context->FindPlayerFromEntity(this) : nullptr;
-    if (player) slot_count = player->CalculateTalentSlotCount();
+    if (player) slot_count = player->CountTalentSlots();
 
     auto& slots = GetSlots();
     int old_count = static_cast<int>(slots.size());
@@ -950,11 +967,11 @@ void CPlayerFlower::TakeExp(std::int64_t exp)
     const int max_level = std::max(1, game_config::player_level_max);
     while (m_level < max_level)
     {
-        std::int64_t required = PlayerFlowerExpRequired(m_level);
+        std::int64_t required = GetRequiredPlayerExperience(m_level);
         if (required <= 0 || m_exp < required) break;
         m_exp -= required;
         ++m_level;
-        gained_talent_points += TalentPointGainForLevel(m_level);
+        gained_talent_points += CalculateTalentPointsForLevel(m_level);
         leveled = true;
     }
     if (m_level >= max_level) m_exp = 0;
@@ -967,7 +984,7 @@ void CPlayerFlower::TakeExp(std::int64_t exp)
     if (player && player->IsAuthenticated()) CAccountDataStore::SetProgress(player->GetAccountName(), m_level, m_exp);
 }
 
-std::int64_t CPlayerFlower::ExpRequired() const { return PlayerFlowerExpRequired(m_level); }
+std::int64_t CPlayerFlower::ExpRequired() const { return GetRequiredPlayerExperience(m_level); }
 
 void CPlayerFlower::Tick(float dt)
 {

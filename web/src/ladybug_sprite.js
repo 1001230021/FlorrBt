@@ -1,4 +1,5 @@
 import { drawSpriteImage } from "./sprite_raster_cache.js";
+import { loadVisualImage, whenVisualReady } from "./visual_assets.js";
 const LADYBUG_VIEWBOX_SIZE = 110;
 const LADYBUG_BODY_RADIUS = 27.5;
 const LADYBUG_BASE_FACE_ANGLE = -Math.PI * 0.75;
@@ -54,10 +55,12 @@ export function drawNormalLadybug(ctx, pos, radius, entityId, angle) {
 }
 
 function makeImage(src) {
-  const image = new Image();
-  image.decoding = "async";
-  image.src = src;
-  return image;
+  return loadVisualImage(src);
+}
+
+export function prepareLadybugSprites() {
+  getBodyPath();
+  return Promise.all([baseImage, outlineImage].map(whenVisualReady));
 }
 
 function isImageReady(image) {

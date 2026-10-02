@@ -42,6 +42,9 @@
     <ClInclude Include="src\Engine\spatial_hash_grid.h">
       <Filter>src\Engine</Filter>
     </ClInclude>
+    <ClInclude Include="src\Shared\circle_contact.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
     <ClInclude Include="src\Shared\damage_type.h">
       <Filter>src\Shared</Filter>
     </ClInclude>

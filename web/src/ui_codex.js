@@ -52,7 +52,6 @@ import { t } from "./i18n.js";
 import {
   assetImage,
   formatShortCount,
-  imageReady,
   makePetalStack,
   petalBaseImage,
 } from "./petal_info.js";
@@ -63,8 +62,11 @@ import {
   toggleTalent,
   updateQuickActionButtons,
 } from "./ui_settings.js";
+import { runMotionPhase, setAnimatedVisibility } from "./ui_motion.js";
 
 const { codexBtn, codexDetail, codexGrid, codexPanel } = dom;
+let detailContentKey = "";
+let detailLoot = null;
 
 export const codexMobOrder = [
   beetleType, bandageBeetleType, normalLadybugType, mechaFlowerType, normalFlowerType,
@@ -86,7 +88,7 @@ export const codexRarityOrder = rarityDisplayOrder.filter(
 
 export function codexKillCount(mobType, rarity) {
   const count = state.codex.get(codexKey(mobType, rarity)) || 0;
-  if (rarity === rarityExotic || rarity === rarityDisplayOrder[0])
+  if (rarity === rarityDisplayOrder[0])
     return count + (state.codex.get(codexKey(mobType, rarityExotic)) || 0);
   return count;
 }
@@ -106,8 +108,15 @@ export function codexKey(mobType, rarity) {
 
 export function toggleCodex(force) {
   if (!state.authenticated && force !== false) return false;
-  state.codexOpen = force !== undefined ? !!force : !state.codexOpen;
+  const next = force !== undefined ? !!force : !state.codexOpen;
+  if (next === state.codexOpen) return next;
+  state.codexOpen = next;
   codexPanel.classList.toggle("open", state.codexOpen);
+  codexPanel.setAttribute("aria-hidden", String(!state.codexOpen));
+  runMotionPhase(codexPanel, state.codexOpen ? "entering" : "exiting", {
+    classPrefix: "ui-panel",
+    duration: state.codexOpen ? 260 : 110,
+  });
   codexBtn?.setAttribute("aria-pressed", String(state.codexOpen));
   if (state.codexOpen) {
     toggleBackpack(false);
@@ -116,7 +125,7 @@ export function toggleCodex(force) {
     toggleSettings(false);
     renderCodexPanel();
     hideCodexDetail();
-  }
+  } else hideCodexDetail();
   updateQuickActionButtons();
   return state.codexOpen;
 }
@@ -129,18 +138,24 @@ export function codexKilledMobTypes() {
 
 export function renderCodexPanel() {
   if (!state.codexOpen || !codexGrid) return;
-  codexGrid.replaceChildren();
+  // The scrollbar is managed by custom_scrollbar.js and also lives in this
+  // element. Only reconcile codex cells; removing the scrollbar leaves its
+  // registered observer attached to a detached, permanently invisible node.
+  const previous = new Map(Array.from(codexGrid.children)
+    .filter(cell => cell.classList.contains("codex-cell"))
+    .map(cell => [cell.dataset.codexKey, cell]));
+  codexGrid.style.setProperty("--codex-columns", String(codexRarityOrder.length));
+  const ordered = [];
   const mobTypes = codexKilledMobTypes().sort((a, b) =>
     mobTypeName(a).localeCompare(mobTypeName(b)),
   );
   if (mobTypes.length === 0) {
-    codexGrid.style.gridTemplateColumns = "repeat(auto-fill, 56px)";
+    for (const cell of previous.values()) cell.remove();
     return;
   }
   // x = rarity (exotic shares the common column; 11 columns total),
   // y = mob type (alphabetical, top to bottom). Skip rows whose mob has no
   // kills at all.
-  codexGrid.style.gridTemplateColumns = `repeat(${codexRarityOrder.length}, 56px)`;
   for (const mobType of mobTypes) {
     let anyKill = false;
     for (const rarity of codexRarityOrder) {
@@ -152,7 +167,17 @@ export function renderCodexPanel() {
     if (!anyKill) continue;
     for (const rarity of codexRarityOrder) {
       const count = codexKillCount(mobType, rarity);
-      const cell = document.createElement("button");
+      const key = `${mobType}:${rarity}`;
+      let cell = previous.get(key);
+      previous.delete(key);
+      if (!cell) cell = document.createElement("button");
+      cell.dataset.codexKey = key;
+      ordered.push(cell);
+      if (cell.dataset.killCount === String(count)) continue;
+      cell.dataset.killCount = String(count);
+      // Images stay mounted on kill updates so loading/hovering does not
+      // flash the gold placeholder through the rarity-coloured background.
+      if (count <= 0) cell.replaceChildren();
       cell.className = `codex-cell card-base${count > 0 ? "" : " empty"}`;
       cell.type = "button";
       cell.dataset.mobType = String(mobType);
@@ -160,31 +185,41 @@ export function renderCodexPanel() {
       if (count > 0) {
         // Rarity backdrop + mob svg on top, like a petal card.
         const base = petalBaseImage(rarity);
-        if (base) {
+        if (base && !cell.querySelector(".card-bg-layer")) {
           const baseLayer = document.createElement("img");
           baseLayer.src = base.src;
           baseLayer.className = "card-bg-layer";
+          baseLayer.alt = "";
+          baseLayer.draggable = false;
           cell.appendChild(baseLayer);
         }
         const iconName = codexMobIcons[mobType];
-        if (iconName) {
+        if (iconName && !cell.querySelector(".card-icon-layer")) {
           const image = assetImage(`./assets/${iconName}`);
-          if (image && imageReady(image)) {
+          if (image) {
             const iconLayer = document.createElement("img");
             iconLayer.src = image.src;
             iconLayer.className = "card-icon-layer";
+            iconLayer.alt = "";
+            iconLayer.decoding = "async";
+            iconLayer.draggable = false;
             cell.appendChild(iconLayer);
           }
         }
         if (count > 1) {
-          const badge = document.createElement("span");
+          const badge = cell.querySelector(".petal-count") || document.createElement("span");
           badge.className = "petal-count";
           badge.textContent = `x${formatShortCount(count)}`;
           cell.appendChild(badge);
-        }
+        } else cell.querySelector(".petal-count")?.remove();
       }
-      codexGrid.appendChild(cell);
     }
+  }
+  for (const cell of previous.values()) cell.remove();
+  let cursor = codexGrid.firstElementChild;
+  for (const cell of ordered) {
+    if (cell === cursor) cursor = cursor.nextElementSibling;
+    else codexGrid.insertBefore(cell, cursor);
   }
 }
 
@@ -239,66 +274,75 @@ export function moveCodexDetail(event) {
   }
   const mobType = Number(cell.dataset.mobType);
   const rarity = Number(cell.dataset.rarity);
-  const count = state.codex.get(codexKey(mobType, rarity)) || 0;
+  const count = codexKillCount(mobType, rarity);
   if (count <= 0) {
     hideCodexDetail();
     return;
   }
 
-  codexDetail.replaceChildren();
-  const title = document.createElement("div");
-  title.className = "codex-detail-title";
-  title.textContent = mobTypeName(mobType);
-  codexDetail.appendChild(title);
+  const loot = state.codexLoot.get(codexKey(mobType, rarity)) || null;
+  const name = mobTypeName(mobType);
+  const description = codexMobDescription(mobType);
+  const contentKey = `${mobType}:${rarity}:${count}:${name}:${rarityName(rarity)}:${description}`;
+  // Moving the pointer over the same card only repositions the tooltip. The
+  // old handler rebuilt all drop cards on every pointermove (up to 120Hz).
+  if (contentKey !== detailContentKey || loot !== detailLoot) {
+    detailContentKey = contentKey;
+    detailLoot = loot;
+    codexDetail.replaceChildren();
+    const title = document.createElement("div");
+    title.className = "codex-detail-title";
+    title.textContent = name;
+    codexDetail.appendChild(title);
 
-  const rarityLine = document.createElement("div");
-  rarityLine.className = "codex-detail-rarity";
-  rarityLine.textContent = rarityName(rarity);
-  rarityLine.style.color = rarityColor(rarity, 1);
-  codexDetail.appendChild(rarityLine);
+    const rarityLine = document.createElement("div");
+    rarityLine.className = "codex-detail-rarity";
+    rarityLine.textContent = rarityName(rarity);
+    rarityLine.style.color = rarityColor(rarity, 1);
+    codexDetail.appendChild(rarityLine);
 
-  const desc = document.createElement("div");
-  desc.className = "codex-detail-desc";
-  desc.textContent = codexMobDescription(mobType);
-  codexDetail.appendChild(desc);
+    const desc = document.createElement("div");
+    desc.className = "codex-detail-desc";
+    desc.textContent = description;
+    codexDetail.appendChild(desc);
 
-  const loot = state.codexLoot.get(codexKey(mobType, rarity)) || [];
-  if (loot.length > 0) {
-    // Group drops by petal type; one card row + one aligned rate row each.
-    const byPetal = new Map();
-    for (const entry of loot) {
-      if (!byPetal.has(entry.petalType)) byPetal.set(entry.petalType, []);
-      byPetal.get(entry.petalType).push(entry);
-    }
-    const lootSection = document.createElement("div");
-    lootSection.className = "codex-loot";
-    for (const entries of byPetal.values()) {
-      entries.sort((a, b) => a.dropRarity - b.dropRarity);
-      const columns = entries.length;
-      const cardRow = document.createElement("div");
-      cardRow.className = "codex-loot-row";
-      cardRow.style.gridTemplateColumns = `repeat(${columns}, 39px)`;
-      for (const entry of entries) {
-        cardRow.appendChild(
-          makePetalStack(entry.petalType, entry.dropRarity, 0),
-        );
+    if (loot?.length > 0) {
+      // Group drops by petal type; one card row + one aligned rate row each.
+      const byPetal = new Map();
+      for (const entry of loot) {
+        if (!byPetal.has(entry.petalType)) byPetal.set(entry.petalType, []);
+        byPetal.get(entry.petalType).push(entry);
       }
-      lootSection.appendChild(cardRow);
+      const lootSection = document.createElement("div");
+      lootSection.className = "codex-loot";
+      for (const entries of byPetal.values()) {
+        entries.sort((a, b) => a.dropRarity - b.dropRarity);
+        const columns = entries.length;
+        const cardRow = document.createElement("div");
+        cardRow.className = "codex-loot-row";
+        cardRow.style.gridTemplateColumns = `repeat(${columns}, 39px)`;
+        for (const entry of entries) {
+          cardRow.appendChild(
+            makePetalStack(entry.petalType, entry.dropRarity, 0),
+          );
+        }
+        lootSection.appendChild(cardRow);
 
-      const rateRow = document.createElement("div");
-      rateRow.className = "codex-loot-rate-row";
-      rateRow.style.gridTemplateColumns = `repeat(${columns}, 39px)`;
-      for (const entry of entries) {
-        const rate = document.createElement("span");
-        rate.textContent = `${(entry.dropRate * 100).toFixed(1)}%`;
-        rateRow.appendChild(rate);
+        const rateRow = document.createElement("div");
+        rateRow.className = "codex-loot-rate-row";
+        rateRow.style.gridTemplateColumns = `repeat(${columns}, 39px)`;
+        for (const entry of entries) {
+          const rate = document.createElement("span");
+          rate.textContent = `${(entry.dropRate * 100).toFixed(1)}%`;
+          rateRow.appendChild(rate);
+        }
+        lootSection.appendChild(rateRow);
       }
-      lootSection.appendChild(rateRow);
+      codexDetail.appendChild(lootSection);
     }
-    codexDetail.appendChild(lootSection);
   }
 
-  codexDetail.classList.remove("hidden");
+  setAnimatedVisibility(codexDetail, true, { duration: 140 });
   const rect = cell.getBoundingClientRect();
   const detailWidth = Math.min(420, codexDetail.offsetWidth || 420);
   let x = rect.right + 8;
@@ -311,6 +355,6 @@ export function moveCodexDetail(event) {
 }
 
 export function hideCodexDetail() {
-  if (codexDetail) codexDetail.classList.add("hidden");
+  setAnimatedVisibility(codexDetail, false, { duration: 120 });
 }
 

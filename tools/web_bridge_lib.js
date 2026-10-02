@@ -20,11 +20,14 @@ const MAX_WS_FRAME_SIZE = Number(
 // announces a huge length cannot balloon memory before the frame cap trips.
 const MAX_WS_BUFFER_SIZE = MAX_WS_FRAME_SIZE + 64 * 1024;
 
-// The server-to-client framing uses a 2-byte length prefix, so server payloads
+// Gameplay framing uses a 2-byte length prefix, so gameplay payloads
 // cannot exceed 64 KiB. This matches the server's UINT16_MAX packet limit.
 const MAX_SERVER_PAYLOAD_SIZE = 0xffff;
 
 const serverSnapshotType = 0x01;
+const debugProtocolMagic = 0xd0;
+const maxDebugClientFrameSize = 32768 + 6;
+const maxDebugBridgeBacklog = 4 * 1024 * 1024;
 
 function normalizeIpAddress(value) {
   let address = String(value || "").trim();
@@ -85,7 +88,7 @@ const MAX_REQUEST_URL_LENGTH = 8192;
 // be inside the intended root (path.relative check, which also kills the
 // "prefix sibling directory" class of traversal).
 function createFileSender(webRoot, dataRoot) {
-  return function sendFile(res, requestPath) {
+  return function sendFile(res, requestPath, requestHeaders = {}) {
     if (!requestPath || requestPath.length > MAX_REQUEST_URL_LENGTH) {
       res.writeHead(414);
       res.end("Request line too long");
@@ -123,12 +126,24 @@ function createFileSender(webRoot, dataRoot) {
         res.end("Not found");
         return;
       }
-      res.writeHead(200, {
+      const extension = path.extname(filePath).toLowerCase();
+      const reusableAsset = /\.(svg|png|jpe?g|webp|ttf|woff2?|ogg|mp3)$/.test(extension) &&
+        (cleanPath.startsWith("/assets/") || cleanPath.startsWith("/data/tiles/"));
+      const headers = {
         "Content-Type":
-          mimeTypes[path.extname(filePath).toLowerCase()] ||
+          mimeTypes[extension] ||
           "application/octet-stream",
         "Cache-Control": "no-store, max-age=0",
-      });
+      };
+      if (reusableAsset) {
+        headers["Cache-Control"] = "public, max-age=0, must-revalidate";
+        headers.ETag = `"${crypto.createHash("sha256").update(data).digest("base64")}"`;
+        const supplied = String(requestHeaders["if-none-match"] || "").split(",").map(tag => tag.trim().replace(/^W\//, ""));
+        if (supplied.includes(headers.ETag) || supplied.includes("*")) {
+          res.writeHead(304, headers); res.end(); return;
+        }
+      }
+      res.writeHead(200, headers);
       res.end(data);
     });
   };
@@ -184,6 +199,16 @@ function createServerPacketForwarder(wsSocket, options) {
   let buffer = Buffer.alloc(0);
   let pendingSnapshot = null;
   let snapshotTimer = null;
+  let protocolSelected = false;
+  let debugProtocol = false;
+  let closed = false;
+
+  const rejectDebugTraffic = () => {
+    closed = true;
+    if (options?.onOverflow) options.onOverflow();
+    else wsSocket.destroy?.();
+    return false;
+  };
 
   const flushSnapshot = () => {
     snapshotTimer = null;
@@ -224,7 +249,28 @@ function createServerPacketForwarder(wsSocket, options) {
   };
 
   return {
+    // Client hello chooses once, before it is forwarded to TCP. Debug frames
+    // have their own six-byte header and must NOT enter the gameplay length
+    // decoder or lossy snapshot coalescer below.
+    selectProtocol(payload, tcpBacklog = 0) {
+      if (closed) return false;
+      if (!protocolSelected && payload?.length) {
+        protocolSelected = true;
+        debugProtocol = payload[0] === debugProtocolMagic;
+      }
+      if (debugProtocol && (payload.length > maxDebugClientFrameSize || tcpBacklog + payload.length > maxDebugBridgeBacklog))
+        return rejectDebugTraffic();
+      return true;
+    },
     push(chunk) {
+      if (closed || wsSocket.destroyed) return;
+      if (debugProtocol) {
+        if ((wsSocket.writableLength || 0) + chunk.length + 10 > maxDebugBridgeBacklog) {
+          rejectDebugTraffic(); return;
+        }
+        writeWsFrame(wsSocket, chunk, 0x2);
+        return;
+      }
       buffer = Buffer.concat([buffer, chunk]);
       for (;;) {
         if (buffer.length < 2) return;
@@ -240,6 +286,7 @@ function createServerPacketForwarder(wsSocket, options) {
       }
     },
     close() {
+      closed = true;
       pendingSnapshot = null;
       buffer = Buffer.alloc(0);
       if (snapshotTimer) clearTimeout(snapshotTimer);
@@ -334,6 +381,9 @@ function createFrameParser(onData, onClose, onPing) {
 }
 
 module.exports = {
+  debugProtocolMagic,
+  maxDebugClientFrameSize,
+  maxDebugBridgeBacklog,
   MAX_WS_FRAME_SIZE,
   MAX_WS_BUFFER_SIZE,
   MAX_SERVER_PAYLOAD_SIZE,

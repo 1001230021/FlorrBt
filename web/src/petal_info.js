@@ -1,4 +1,5 @@
-﻿import { ASSET_MANIFEST } from "./asset_manifest.js";
+import { ASSET_MANIFEST } from "./asset_manifest.js";
+import { loadVisualImage, prepareSvgImage, whenVisualReady, readSvgSource, assignVisualImage } from "./visual_assets.js";
 import { PETAL_ICON_IDS } from "./generated_ids.js";
 import { state } from "./app_context.js";
 import {
@@ -97,6 +98,7 @@ import {
   rarityName,
 } from "./protocol.js";
 import { TalentId } from "./talent_data.js";
+import { setAnimatedVisibility } from "./ui_motion.js";
 
 export const PetalNameToType = new Map(
   PetalNames.map((name, index) => [normalizePetalName(name), index]),
@@ -105,9 +107,6 @@ export const assetImages = new Map();
 export const livePetalImages = new Map();
 export const bandageOverlayImages = new Map();
 export const transformedPetalImages = new Map();
-export const strippedPetalIconUrls = new Map();
-export const petalLabelIconUrls = new Map();
-export const mimicLabelIconUrls = new Map();
 
 // Display-name map: multi-word petal names resolve to their most
 // representative word. Entries here win over the automatic last-word rule;
@@ -140,7 +139,7 @@ function lastCamelWord(fullName) {
   return words.length > 1 ? words[words.length - 1] : fullName;
 }
 
-export function petalDisplayName(petalType) {
+export function getPetalDisplayName(petalType) {
   const full = petalTypeName(petalType);
   const en = PETAL_DISPLAY_EN[full] || lastCamelWord(full);
   if (state.locale === "en") return en;
@@ -150,7 +149,7 @@ export function petalDisplayName(petalType) {
   return en;
 }
 
-export function petalBaseCopy(petalType, rarity) {
+export function getPetalBaseCopy(petalType, rarity) {
   const level = rarityLevel(rarity);
   switch (petalType) {
     case petalAntEggType:
@@ -189,7 +188,7 @@ export function petalBaseCopy(petalType, rarity) {
   }
 }
 
-export function petalHasMultiCopyVisual(petalType, rarity) {
+export function hasPetalMultiCopyVisual(petalType, rarity) {
   return effectivePetalCardCopy(petalType, rarity) > 1;
 }
 
@@ -234,7 +233,7 @@ export function livePetalCopyCount(petalType, rarity) {
   return livePetalCopyCounts.get(`${petalType}:${rarity}`)?.count || 0;
 }
 
-export function ownerLiveSlotCopyCount(slotIndex, petalType, rarity) {
+export function getOwnerSlotCopyCount(slotIndex, petalType, rarity) {
   const runtime = (state.ownerSlotRuntime || [])[slotIndex];
   if (!runtime || runtime.petalType !== petalType || runtime.rarity !== rarity)
     return 0;
@@ -243,14 +242,14 @@ export function ownerLiveSlotCopyCount(slotIndex, petalType, rarity) {
 
 export function effectivePetalCardCopy(petalType, rarity, options = {}) {
   if (options.kind === "primary" && Number.isFinite(options.slotIndex)) {
-    const live = ownerLiveSlotCopyCount(options.slotIndex, petalType, rarity);
+    const live = getOwnerSlotCopyCount(options.slotIndex, petalType, rarity);
     if (live > 0) return live;
   }
   const observed = livePetalCopyCount(petalType, rarity);
   if (observed > 0) return observed;
 
   // Never seen live this session: predict with the legacy rules.
-  let copy = petalBaseCopy(petalType, rarity);
+  let copy = getPetalBaseCopy(petalType, rarity);
   if (!canDuplicatorAffect(petalType, copy)) return copy;
 
   if (copy >= 2 && talentOwned(TalentId.PetalSplit, 5)) copy += 1;
@@ -281,6 +280,7 @@ export function attachPetalInfoTooltip(element, petalType, rarity) {
   element.addEventListener("pointermove", movePetalInfoTooltip);
   element.addEventListener("pointerleave", hidePetalInfoTooltip);
   element.addEventListener("pointercancel", hidePetalInfoTooltip);
+  element.addEventListener("pointerup", event => { if (event.pointerType === "touch") hidePetalInfoTooltip(); });
   element.addEventListener("blur", hidePetalInfoTooltip);
 }
 
@@ -308,7 +308,7 @@ export function showPetalInfoTooltip(petalType, rarity, event) {
   }
 
   renderPetalInfoTooltip(info);
-  petalInfoTooltip.classList.remove("hidden");
+  setAnimatedVisibility(petalInfoTooltip, true, { duration: 120 });
   petalInfoTooltip.setAttribute("aria-hidden", "false");
   movePetalInfoTooltip(event);
 }
@@ -316,7 +316,7 @@ export function showPetalInfoTooltip(petalType, rarity, event) {
 export function hidePetalInfoTooltip() {
   if (!petalInfoTooltip) return;
   state.petalInfoHoverElement = null;
-  petalInfoTooltip.classList.add("hidden");
+  setAnimatedVisibility(petalInfoTooltip, false, { duration: 100 });
   petalInfoTooltip.setAttribute("aria-hidden", "true");
 }
 
@@ -662,14 +662,14 @@ export function buildPetalInfo(petalType, rarity) {
       addNumber("Heal", (1.2 * roseMedicineScale(rarity)) / 3);
       break;
     case petalDandelionType: {
-      const copy = petalBaseCopy(petalType, rarity);
+      const copy = getPetalBaseCopy(petalType, rarity);
       addCombat(8 * scale, 8 * scale, 1, { copy });
       addSeconds("Anti-heal", 30);
       addRow("Healing", "x0.8 per hit");
       break;
     }
     case petalStingerType: {
-      const copy = petalBaseCopy(petalType, rarity);
+      const copy = getPetalBaseCopy(petalType, rarity);
       addCombat(100 * scale, 1, 10, { copy });
       break;
     }
@@ -781,7 +781,7 @@ export function buildPetalInfo(petalType, rarity) {
       break;
     case petalFragmentType: {
       const value = fragmentValue(rarity);
-      const copy = petalBaseCopy(petalType, rarity);
+      const copy = getPetalBaseCopy(petalType, rarity);
       addCombat(value, value, rarity === 10 ? 8 : 10, { copy });
       break;
     }
@@ -1103,9 +1103,7 @@ export async function ensurePetalCopyDistanceData() {
     for (const iconId of PETAL_ICON_IDS) {
       if (!iconId) continue;
       const url = `./assets/petals/${iconId}.svg`;
-      const response = await fetch(url);
-      if (!response.ok) continue;
-      const text = await response.text();
+      const text = await readSvgSource(url).catch(() => "");
       const match = text.match(/data-copy-distance\s*=\s*"?([\d.]+)/);
       if (!match) continue;
       const value = Number(match[1]);
@@ -1117,7 +1115,7 @@ export async function ensurePetalCopyDistanceData() {
   }
 }
 
-export function petalCopyLayout(copy, petalType = 0) {
+export function getPetalCopyLayout(copy, petalType = 0) {
   const visualCopies = Math.max(1, Math.min(8, Math.floor(copy || 1)));
   if (visualCopies === 1) return [{ x: 0, y: 0, angle: 0, scale: 1 }];
 
@@ -1177,10 +1175,10 @@ export function makePetalStack(
   base.className = "petal-bg";
   base.alt = "";
   base.draggable = false;
-  base.src = petalBasePath(rarity);
+  assignVisualImage(base, assetImage(getPetalBasePath(rarity)));
   stack.appendChild(base);
 
-  const layout = petalCopyLayout(copy, iconPetalType);
+  const layout = getPetalCopyLayout(copy, iconPetalType);
   for (let copyIndex = 0; copyIndex < layout.length; copyIndex += 1) {
     const part = layout[copyIndex];
     const icon = makePetalIcon(iconPetalType, rarity, {
@@ -1202,7 +1200,9 @@ export function makePetalStack(
     stack.appendChild(icon);
   }
   stack.appendChild(makePetalDisplayName(iconPetalType));
-  if (count > 1) {
+  // Interface cards always expose their quantity, including a single card.
+  // A zero count is reserved for live/world visuals and remains hidden.
+  if (count > 0 || options.showCount === true) {
     const badge = document.createElement("span");
     badge.className = "petal-count";
     badge.textContent = `x${formatShortCount(count)}`;
@@ -1217,7 +1217,7 @@ export function makePetalStack(
 function makePetalDisplayName(petalType) {
   const span = document.createElement("span");
   span.className = "petal-card-name";
-  span.textContent = petalDisplayName(petalType);
+  span.textContent = getPetalDisplayName(petalType);
   // Synchronous font sizing (canvas measured): no post-layout flicker when
   // cards are rebuilt.
   span.style.fontSize = `${labelFontSizePx(span.textContent)}px`;
@@ -1249,7 +1249,7 @@ function labelFontSizePx(text) {
 }
 
 export function makePetalLabelIcon(petalType, rarity = 0) {
-  const src = petalIconPath(petalType, rarity);
+  const src = getPetalIconPath(petalType, rarity);
   if (!src) return null;
   const image = document.createElement("img");
   image.className = "petal-card-label";
@@ -1261,36 +1261,7 @@ export function makePetalLabelIcon(petalType, rarity = 0) {
 }
 
 export function setPetalLabelIconSource(image, src) {
-  let entry = petalLabelIconUrls.get(src);
-  if (entry && entry.url) {
-    image.src = entry.url;
-    return;
-  }
-
-  if (!entry) {
-    entry = { url: "", waiters: [] };
-    petalLabelIconUrls.set(src, entry);
-    fetch(src)
-      .then((response) => {
-        if (!response.ok) throw new Error(`Petal SVG failed: ${src}`);
-        return response.text();
-      })
-      .then((svgText) => {
-        const blob = new Blob([extractPetalLabelSvg(svgText)], {
-          type: "image/svg+xml",
-        });
-        entry.url = URL.createObjectURL(blob);
-        for (const waiter of entry.waiters) waiter.src = entry.url;
-        entry.waiters = [];
-      })
-      .catch(() => {
-        entry.url = "";
-        for (const waiter of entry.waiters) waiter.remove();
-        entry.waiters = [];
-      });
-  }
-
-  entry.waiters.push(image);
+  assignVisualImage(image, prepareSvgImage(src, "card-label", extractPetalLabelSvg));
 }
 
 export function formatShortCount(value) {
@@ -1312,53 +1283,24 @@ export function formatCompact(value) {
 }
 
 export function makePetalIcon(petalType, rarity = 0, options = {}) {
-  const src = petalIconPath(petalType, rarity);
+  const src = getPetalIconPath(petalType, rarity);
   if (!src) return null;
   const image = document.createElement("img");
   image.className = "petal-icon";
   image.alt = "";
   image.draggable = false;
   if (options.stripped) setStrippedPetalIconSource(image, src);
-  else image.src = src;
+  else assignVisualImage(image, assetImage(src));
   image.addEventListener("error", () => image.remove(), { once: true });
   return image;
 }
 
 export function setStrippedPetalIconSource(image, src) {
-  let entry = strippedPetalIconUrls.get(src);
-  if (entry && entry.url) {
-    image.src = entry.url;
-    return;
-  }
-
-  if (!entry) {
-    entry = { url: "", waiters: [] };
-    strippedPetalIconUrls.set(src, entry);
-    fetch(src)
-      .then((response) => {
-        if (!response.ok) throw new Error(`Petal SVG failed: ${src}`);
-        return response.text();
-      })
-      .then((svgText) => {
-        const blob = new Blob([stripLivePetalLabel(svgText)], {
-          type: "image/svg+xml",
-        });
-        entry.url = URL.createObjectURL(blob);
-        for (const waiter of entry.waiters) waiter.src = entry.url;
-        entry.waiters = [];
-      })
-      .catch(() => {
-        entry.url = src;
-        for (const waiter of entry.waiters) waiter.src = src;
-        entry.waiters = [];
-      });
-  }
-
-  entry.waiters.push(image);
+  assignVisualImage(image, prepareSvgImage(src, "card-stripped", stripLivePetalLabel));
 }
 
 export function makeMimicLabelIcon() {
-  const src = petalIconPath(petalMimicType);
+  const src = getPetalIconPath(petalMimicType);
   if (!src) return null;
   const image = document.createElement("img");
   image.className = "petal-mimic-label";
@@ -1370,47 +1312,18 @@ export function makeMimicLabelIcon() {
 }
 
 export function setMimicLabelIconSource(image, src) {
-  let entry = mimicLabelIconUrls.get(src);
-  if (entry && entry.url) {
-    image.src = entry.url;
-    return;
-  }
-
-  if (!entry) {
-    entry = { url: "", waiters: [] };
-    mimicLabelIconUrls.set(src, entry);
-    fetch(src)
-      .then((response) => {
-        if (!response.ok) throw new Error(`Petal SVG failed: ${src}`);
-        return response.text();
-      })
-      .then((svgText) => {
-        const blob = new Blob([extractMimicLabelSvg(svgText)], {
-          type: "image/svg+xml",
-        });
-        entry.url = URL.createObjectURL(blob);
-        for (const waiter of entry.waiters) waiter.src = entry.url;
-        entry.waiters = [];
-      })
-      .catch(() => {
-        entry.url = "";
-        for (const waiter of entry.waiters) waiter.remove();
-        entry.waiters = [];
-      });
-  }
-
-  entry.waiters.push(image);
+  assignVisualImage(image, prepareSvgImage(src, "mimic-label", extractMimicLabelSvg));
 }
 
 export function rarityBaseIndex(rarity) {
   return clamp((rarity || 1) - 1, 0, 10);
 }
 
-export function petalBasePath(rarity) {
+export function getPetalBasePath(rarity) {
   return `./assets/petals/0_${rarityBaseIndex(rarity)}.svg`;
 }
 
-export function petalIconPath(petalType, rarity = 0, options = {}) {
+export function getPetalIconPath(petalType, rarity = 0, options = {}) {
   // The brush and eraser have no art of their own; cards use the basic look.
   if (petalType === petalBrushType || petalType === petalEraserType)
     petalType = petalBasicType;
@@ -1446,27 +1359,14 @@ export function petalTypeFromSnap(snap) {
 }
 
 export function petalBaseImage(rarity) {
-  return assetImage(petalBasePath(rarity));
+  return assetImage(getPetalBasePath(rarity));
 }
 
 export function assetImage(src) {
   if (!src) return null;
   let image = assetImages.get(src);
   if (!image) {
-    image = new Image();
-    image.decoding = "async";
-    image.addEventListener("load", () => requestRedraw(), {
-      once: true,
-    });
-    image.addEventListener(
-      "error",
-      () => {
-        image.failed = true;
-        requestRedraw();
-      },
-      { once: true },
-    );
-    image.src = src;
+    image = loadVisualImage(src);
     assetImages.set(src, image);
   }
   return image;
@@ -1479,28 +1379,9 @@ export function imageReady(image) {
 // Kicks off loading every texture asset from the manifest; resolves when all
 // have finished (failures resolve too so the game can never hang forever).
 export function preloadAssets() {
-  const pending = [];
-  let failed = 0;
-  for (const src of ASSET_MANIFEST) {
-    const image = assetImage(src);
-    if (!image || imageReady(image)) continue;
-    pending.push(
-      new Promise((resolve) => {
-        image.addEventListener("load", resolve, { once: true });
-        image.addEventListener(
-          "error",
-          () => {
-            failed += 1;
-            resolve();
-          },
-          { once: true },
-        );
-      }),
-    );
-  }
-  return Promise.all(pending).then(() => {
+  return Promise.all(ASSET_MANIFEST.map(src => whenVisualReady(assetImage(src)))).then(results => {
+    const failed = results.filter(ok => !ok).length;
     if (failed > 0)
       console.warn(`preloadAssets: ${failed} asset(s) failed to load`);
   });
 }
-

@@ -3,7 +3,7 @@
 #include "../../Shared/talent_type.h"
 #include "../Persistence/account_store.h"
 #include <SFML/Network/TcpSocket.hpp>
-#include <SFML/System/Vector2.hpp>
+#include "../../Shared/math_types.h"
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -47,10 +47,14 @@ class CPlayer
     void RegisterInvalidReport();
     bool TickDropPickup();
     void ResetControlledMob();
-    void UnequipAllPetals();
+    void UnequipAllEquippedPetals();
     void ApplySavedProgress();
-    void ApplySavedTalents();
-    void ApplySavedSlots();
+    void LoadSavedTalents();
+    void LoadSavedSlots();
+    // Rebuild the runtime loadout from the account after a controller has
+    // temporarily replaced or stripped the player's slots (for example, a
+    // PVP/EOU room). Account slots remain the source of truth.
+    void RestoreSavedLoadout();
     bool TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rarity);
     bool TryUnequipPetal(uint8_t slot_index);
     bool TryCraftPetal(uint8_t petal_type, uint8_t rarity, uint32_t count, SCraftResult* result = nullptr);
@@ -62,7 +66,7 @@ class CPlayer
     const std::vector<ITalent*>& GetTalents() const { return m_talents; }
     bool HasTalent(const ITalent* talent) const;
     void ApplyTalents(ETalentEvent event, STalentContext& ctx) const;
-    int CalculateTalentSlotCount() const;
+    int CountTalentSlots() const;
     void RefreshTalentEffects(bool reload_petals = false);
     float GetSecondChanceCooldown() const { return m_second_chance_cooldown; }
     void SetSecondChanceCooldown(float cooldown);

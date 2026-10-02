@@ -1,7 +1,5 @@
 import { dom, state } from "./app_context.js";
 
-const { ctx } = dom;
-
 // Outlined-text raster cache. strokeText/fillText shape and rasterize glyphs
 // on every call — with a name and a level label above every mob that was the
 // single largest per-entity draw cost. Text/style combos repeat heavily, so
@@ -110,6 +108,7 @@ export function drawOutlinedText(
     align = "center",
     baseline = "middle",
   } = {},
+  ctx = dom.ctx,
 ) {
   const label = String(text ?? "");
   if (!label) return;

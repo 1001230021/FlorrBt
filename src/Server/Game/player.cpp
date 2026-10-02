@@ -21,7 +21,7 @@ bool SameTalent(const ITalent* lhs, const ITalent* rhs)
     return lhs && rhs && lhs->m_id == rhs->m_id && lhs->m_rarity == rhs->m_rarity && lhs->m_rank == rhs->m_rank;
 }
 
-CPlayerController* PlayerControllerFor(CPlayer& player)
+CPlayerController* GetPlayerController(CPlayer& player)
 {
     CEntity* entity = player.GetEntity();
     if (!entity || entity->IsMarkedForDes()) return nullptr;
@@ -53,19 +53,20 @@ void CPlayer::HandleOperate(const ClientOperate& op)
         return;
     }
 
-    if (auto* controller = PlayerControllerFor(*this)) controller->PushOperate(op);
+    if (auto* controller = GetPlayerController(*this)) controller->PushOperate(op);
 }
 
 bool CPlayer::HandleScheduledOperate(const ClientOperate& op, std::uint32_t delay_ticks, std::uint32_t sequence)
 {
     if (!m_authenticated) return false;
-    auto* controller = PlayerControllerFor(*this);
+    auto* controller = GetPlayerController(*this);
     return controller && controller->PushOperate(op, delay_ticks, sequence);
 }
 
 void CPlayer::AttachSocket(sf::TcpSocket&& socket)
 {
-    if (auto* controller = PlayerControllerFor(*this)) controller->ResetOperate();
+    m_rcon_authorized = false;
+    if (auto* controller = GetPlayerController(*this)) controller->ResetOperate();
     m_socket = std::move(socket);
     m_socket.setBlocking(false);
     m_send_buffer.clear();
@@ -84,6 +85,7 @@ void CPlayer::DetachSocket()
     m_send_offset = 0;
     m_receive_buffer.clear();
     m_connected = false;
+    m_rcon_authorized = false;
     m_timeout_left = game_config::timeout_protection_seconds;
     ResetControlledMob();
 }
@@ -163,7 +165,7 @@ void CPlayer::ResetControlledMob()
     }
 }
 
-void CPlayer::UnequipAllPetals()
+void CPlayer::UnequipAllEquippedPetals()
 {
     if (!m_authenticated) return;
 
@@ -179,7 +181,7 @@ void CPlayer::UnequipAllPetals()
 
         uint8_t old_type = static_cast<uint8_t>(slot.m_p_proto->m_type);
         uint8_t old_rarity = static_cast<uint8_t>(slot.m_stored_rarity);
-        flower->UnequipPetal(static_cast<int>(i));
+        if (!flower->UnequipPetal(static_cast<int>(i))) continue;
         CAccountDataStore::AddItem(m_account_name, old_type, old_rarity, 1);
         CAccountDataStore::ClearSlot(m_account_name, static_cast<uint8_t>(i));
     }
@@ -202,7 +204,7 @@ void CPlayer::ApplySavedProgress()
     if (const SFlowerStats* stats = flower->GetFinalStats()) flower->Health() = stats->max_health;
 }
 
-void CPlayer::ApplySavedSlots()
+void CPlayer::LoadSavedSlots()
 {
     if (!m_authenticated) return;
 
@@ -223,7 +225,36 @@ void CPlayer::ApplySavedSlots()
     flower->RebuildFinalStats();
 }
 
-void CPlayer::ApplySavedTalents()
+void CPlayer::RestoreSavedLoadout()
+{
+    if (!m_authenticated) return;
+
+    auto* flower = dynamic_cast<CPlayerFlower*>(GetEntity());
+    if (!flower) return;
+
+    // Controller-owned petals (and any stale runtime petals) must be removed
+    // without touching the account. The account's primary slots are restored
+    // below, after the flower has returned to the normal player slot shape.
+    auto& slots = flower->GetSlots();
+    for (size_t i = 0; i < slots.size(); ++i)
+    {
+        if (slots[i].m_p_proto) flower->ForceUnequipPetal(static_cast<int>(i));
+        flower->SetBanned(false, static_cast<int>(i));
+    }
+    // Also clear any controller-created copies belonging to an empty slot
+    // before a controller-specific slot count is removed.
+    flower->DestroyPetalEntities();
+
+    flower->SetPetalSlotCapacity(game_config::mob_player_flower_max_petal_slots);
+    // Do not call RefreshTalentSlotCount() here: that routine persists
+    // petals removed from slots beyond the talent count. Those slots may hold
+    // controller-owned petals (EOU pheromones), which must never be written
+    // into the player's account while restoring a normal loadout.
+    flower->SetPetalSlotCount(CountTalentSlots());
+    LoadSavedSlots();
+}
+
+void CPlayer::LoadSavedTalents()
 {
     if (!m_authenticated) return;
 
@@ -262,24 +293,40 @@ bool CPlayer::TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rari
     if (slot_index >= slots.size()) return false;
 
     CPetalSlot& slot = slots[slot_index];
-    if (!slot.m_available) return false;
+    // A banned slot is still allowed to contain its saved petal, but it is
+    // not an operable loadout slot. EquipPetal() intentionally rejects it;
+    // reject it here as well so inventory is never mutated before that
+    // rejection is reached.
+    if (!slot.m_available || slot.m_banned) return false;
 
     const CPetalPrototype* proto = FindPetalPrototype(static_cast<EPetalType>(petal_type));
     if (!proto || !proto->m_p_behavior) return false;
+
+    const bool replacing = slot.m_p_proto != nullptr;
+    const uint8_t old_type = replacing ? static_cast<uint8_t>(slot.m_p_proto->m_type) : 0;
+    const uint8_t old_rarity = replacing ? static_cast<uint8_t>(slot.m_stored_rarity) : 0;
     if (slot.m_p_proto)
     {
         if (controller && !controller->CanUnequipPetalType(slot.m_p_proto->m_type)) return false;
         if (!flower->CanUnequipPetal(slot_index)) return false;
     }
+
+    // Keep the inventory and the runtime slot mutation in one save batch. In
+    // particular, EquipPetal() used to be void and could silently reject a
+    // banned slot after this TakeItem(), permanently eating the new petal.
+    CAccountDataStore::CSaveBatch save_batch;
     if (!CAccountDataStore::TakeItem(m_account_name, petal_type, rarity, 1)) return false;
 
-    if (slot.m_p_proto)
+    if (!flower->EquipPetal(slot_index, proto, static_cast<ERarity>(rarity)))
     {
-        CAccountDataStore::AddItem(m_account_name, static_cast<uint8_t>(slot.m_p_proto->m_type),
-                                   static_cast<uint8_t>(slot.m_stored_rarity), 1);
+        // This is a defensive rollback for any future validation added to
+        // CFlower::EquipPetal(). The preflight above handles the known failure
+        // paths, but a failed operation must never consume inventory.
+        CAccountDataStore::AddItem(m_account_name, petal_type, rarity, 1);
+        return false;
     }
 
-    flower->EquipPetal(slot_index, proto, static_cast<ERarity>(rarity));
+    if (replacing) CAccountDataStore::AddItem(m_account_name, old_type, old_rarity, 1);
     CAccountDataStore::SetSlot(m_account_name, slot_index, petal_type, rarity);
     return true;
 }
@@ -304,7 +351,8 @@ bool CPlayer::TryUnequipPetal(uint8_t slot_index)
 
     uint8_t old_type = static_cast<uint8_t>(slot.m_p_proto->m_type);
     uint8_t old_rarity = static_cast<uint8_t>(slot.m_stored_rarity);
-    flower->UnequipPetal(slot_index);
+    CAccountDataStore::CSaveBatch save_batch;
+    if (!flower->UnequipPetal(slot_index)) return false;
     CAccountDataStore::AddItem(m_account_name, old_type, old_rarity, 1);
     CAccountDataStore::ClearSlot(m_account_name, slot_index);
     return true;
@@ -348,7 +396,7 @@ bool CPlayer::ObtainPetalCard(uint8_t petal_type, uint8_t rarity, uint32_t count
     if (add_to_inventory) CAccountDataStore::AddItem(m_account_name, petal_type, rarity, count);
 
     auto* flower = dynamic_cast<CPlayerFlower*>(GetEntity());
-    std::int64_t per_card_exp = PetalCardExpForRarity(card_rarity);
+    std::int64_t per_card_exp = GetPetalCardExpForRarity(card_rarity);
     if (flower && per_card_exp > 0)
     {
         const std::uint64_t max_exp = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
@@ -449,7 +497,7 @@ void CPlayer::ApplyTalents(ETalentEvent event, STalentContext& ctx) const
     }
 }
 
-int CPlayer::CalculateTalentSlotCount() const
+int CPlayer::CountTalentSlots() const
 {
     int slot_count = std::clamp(game_config::mob_player_flower_initial_petal_slots, 0,
                                 std::max(0, game_config::mob_player_flower_max_petal_slots));
@@ -477,7 +525,7 @@ void CPlayer::RefreshTalentEffects(bool reload_petals)
 
     player_flower->RefreshTalentSlotCount();
     player_flower->RebuildFinalStats();
-    if (reload_petals) player_flower->ReloadAllPetals();
+    if (reload_petals) player_flower->ReloadPetals();
 }
 
 void CPlayer::SetSecondChanceCooldown(float cooldown) { m_second_chance_cooldown = std::max(0.f, cooldown); }

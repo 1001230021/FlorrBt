@@ -1,5 +1,6 @@
 #pragma once
 #include "../../../../Shared/game_config.h"
+#include "../../../../Shared/math_types.h"
 #include "../../../../Shared/shared.h"
 #include "../../prototype_registry.h"
 #include "../flower.h"
@@ -53,15 +54,15 @@ class CPetalBehavior
     {
         return GetStats(rarity);
     }
-    virtual SPetalStats GetPetalStatsForSlot(ERarity rarity, const CPetalSlot*, const CFlower*) const
+    virtual SPetalStats GetSlotPetalStats(ERarity rarity, const CPetalSlot*, const CFlower*) const
     {
         return GetPetalStats(rarity);
     }
-    virtual const CPetalPrototype* GetRuntimePrototypeForSlot(ERarity, const CPetalSlot*, const CFlower*) const
+    virtual const CPetalPrototype* GetRuntimeSlotPrototype(ERarity, const CPetalSlot*, const CFlower*) const
     {
         return nullptr;
     }
-    virtual EPetalBonusMode GetBonusModeForSlot(ERarity rarity, const CPetalSlot* slot, const CFlower* flower) const
+    virtual EPetalBonusMode GetSlotBonusMode(ERarity rarity, const CPetalSlot* slot, const CFlower* flower) const
     {
         (void)rarity;
         (void)slot;
@@ -225,6 +226,7 @@ class CEouPheromonePetal final : public CThrownPetal
 
     int m_team_id = 0;
     int m_group_id = 0;
+    bool m_input_latched = false;
 };
 
 class CTrapperPetal final : public CPetal
@@ -338,7 +340,7 @@ inline CPetalRegistry& MutableRegistry()
 }
 } // namespace petal_registry_detail
 
-inline const CPetalRegistry& PetalRegistry() { return petal_registry_detail::MutableRegistry(); }
+inline const CPetalRegistry& GetPetalRegistry() { return petal_registry_detail::MutableRegistry(); }
 
 template <typename TPetal> bool RegisterPetalPrototype(EPetalType type, CPetalPrototype prototype)
 {

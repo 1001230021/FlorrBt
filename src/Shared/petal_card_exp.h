@@ -2,7 +2,7 @@
 #include "rarity.h"
 #include <cstdint>
 
-inline std::int64_t PetalCardExpForRarity(ERarity rarity)
+inline std::int64_t GetPetalCardExpForRarity(ERarity rarity)
 {
     switch (rarity)
     {

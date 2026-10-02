@@ -1,5 +1,7 @@
 import { state, ui } from "./app_context.js";
+import { normalizeViewZoomPercent } from "./client_config.js";
 import { clamp } from "./protocol.js";
+import { stepRenderZoom } from "./render_timing.js";
 
 // Pure camera/world-space math: view scaling, world<->screen transforms and
 // small easing helpers. No game imports — entity simulation lives in
@@ -48,8 +50,30 @@ export function scaleForViewRadius(viewRadius) {
   return screenViewRadius() / viewRadius;
 }
 
+export function viewZoomPercent() {
+  return normalizeViewZoomPercent(state.viewZoomPercent);
+}
+
+export function updateViewZoom(dt) {
+  state.renderViewZoomPercent = stepRenderZoom(state.renderViewZoomPercent, viewZoomPercent(), dt);
+}
+
+// The server radius describes the complete snapshot the client is allowed to
+// see. A lower client percentage shrinks the camera field of view, making the
+// same world units occupy more screen pixels. The authoritative server radius
+// remains untouched for networking, audio and missing-entity grace handling.
+export function effectiveViewRadius() {
+  const serverRadius = Number(state.viewRadius);
+  if (!Number.isFinite(serverRadius) || serverRadius <= 0) return 0;
+  // 100% is the normal view. Lower percentages show a smaller world radius,
+  // so flowers and other entities appear proportionally larger.
+  const deathFocus = clamp(Number(state.deathViewFactor) || 1, 0.45, 1);
+  const zoom = Number.isFinite(state.renderViewZoomPercent) ? state.renderViewZoomPercent : viewZoomPercent();
+  return serverRadius * (zoom / 100) * deathFocus;
+}
+
 export function worldScale() {
-  return scaleForViewRadius(state.viewRadius);
+  return scaleForViewRadius(effectiveViewRadius());
 }
 
 export function worldLengthToScreen(value) {
@@ -86,6 +110,6 @@ export function debugNumber(value, digits = 1) {
   return Number.isFinite(value) ? value.toFixed(digits) : "-";
 }
 
-export function drawGrid() {
-  ui.mapRenderer.drawGrid();
+export function drawGrid(now) {
+  ui.mapRenderer.drawGrid(now);
 }

@@ -1,4 +1,6 @@
 import { drawSpriteImage } from "./sprite_raster_cache.js";
+import { getSpritePhase } from "./sprite_motion.js";
+import { prepareSvgImage, whenVisualReady } from "./visual_assets.js";
 const BEE_VIEWBOX_SIZE = 110;
 const BEE_EFFECTIVE_BOX = 91.667;
 const BEE_BASE_FACE_ANGLE = -Math.PI * 0.75;
@@ -173,9 +175,10 @@ function drawInsect(ctx, pos, radius, entityId, angle, motion, time, options) {
 
 function beeAntennaJitter(entityId, motion, time) {
   const move = clamp01(motion);
-  const period = (4.4 + (entityId % 7) * 0.28) / (1 + move * 1.85);
-  const phase = (time + entityId * 0.31) % period;
-  const duration = 0.52 / (1 + move * 1.85);
+  const period = 4.4 + (entityId % 7) * 0.28;
+  const phase = getSpritePhase(entityId, "bee-antennae", time,
+    Math.PI * 2 * (1 + move * 1.85) / period, entityId * 0.31) / (Math.PI * 2) * period;
+  const duration = 0.52;
   if (phase > duration) return 0;
 
   const t = phase / duration;
@@ -218,27 +221,9 @@ function insectBaseImage(src, strip) {
   let entry = BEE_BASE_CACHE.get(key);
   if (entry) return entry.image;
 
-  const image = new Image();
-  image.decoding = "async";
-  entry = { image, url: "" };
+  const image = prepareSvgImage(src, `insect-${strip}`, text => stripAntennae(text, strip));
+  entry = { image };
   BEE_BASE_CACHE.set(key, entry);
-
-  fetch(src)
-    .then((response) => {
-      if (!response.ok) throw new Error(`Bee SVG failed: ${src}`);
-      return response.text();
-    })
-    .then((svgText) => {
-      const blob = new Blob([stripAntennae(svgText, strip)], {
-        type: "image/svg+xml",
-      });
-      const url = URL.createObjectURL(blob);
-      entry.url = url;
-      image.src = url;
-    })
-    .catch(() => {
-      image.failed = true;
-    });
 
   return image;
 }
@@ -247,31 +232,18 @@ function pollenImage() {
   if (POLLEN_CACHE.failed) return null;
   if (POLLEN_CACHE.image) return POLLEN_CACHE.image;
 
-  const image = new Image();
-  image.decoding = "async";
-  image.addEventListener(
-    "error",
-    () => {
-      POLLEN_CACHE.failed = true;
-    },
-    { once: true },
-  );
+  const image = prepareSvgImage(POLLEN_ASSET, "pollen-grain", extractPollenGrain);
   POLLEN_CACHE.image = image;
-  fetch(POLLEN_ASSET)
-    .then((response) => {
-      if (!response.ok) throw new Error(`Pollen SVG failed: ${POLLEN_ASSET}`);
-      return response.text();
-    })
-    .then((svgText) => {
-      const blob = new Blob([extractPollenGrain(svgText)], {
-        type: "image/svg+xml",
-      });
-      image.src = URL.createObjectURL(blob);
-    })
-    .catch(() => {
-      POLLEN_CACHE.failed = true;
-    });
   return image;
+}
+
+export function prepareBeeSprites() {
+  getAntennaPaths(); getHornetAntennaPaths(); getHornetMissilePaths();
+  return Promise.all([
+    insectBaseImage("./assets/bee.svg", "bee"),
+    insectBaseImage("./assets/bumblebee.svg", "bee"),
+    insectBaseImage("./assets/hornet.svg", "hornet"), pollenImage(),
+  ].map(whenVisualReady));
 }
 
 function extractPollenGrain(svgText) {
