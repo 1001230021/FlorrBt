@@ -175,7 +175,10 @@ export function updatePlayUiVisibility() {
   const visible = state.authenticated;
   setAnimatedVisibility(quickActions, visible, { duration: 220 });
   const topLeftActions = document.getElementById("topLeftActions");
-  setAnimatedVisibility(topLeftActions, visible, { duration: 220 });
+  // Settings remain reachable on the login screen, like the reference;
+  // the account's gallery is only shown after authentication.
+  setAnimatedVisibility(topLeftActions, true, { duration: 220 });
+  codexBtn?.classList.toggle("hidden", !visible);
   ui.chatUi.setVisible(visible);
   ui.mobileControls?.setMode(state.mobileControlMode);
   ui.mobileControls?.setEnabled(visible);

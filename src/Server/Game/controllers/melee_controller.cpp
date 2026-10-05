@@ -1,4 +1,5 @@
 #include "melee_controller.h"
+#include "../../../Shared/circle_contact.h"
 #include "../../../Shared/game_config.h"
 #include "../../HotReload/snapshot_archive.h"
 #include "../entities/mob.h"
@@ -94,6 +95,20 @@ float ComputeHornetSkill2OrbitRadius(const CMobBase& mob)
 {
     return std::max(mob.Radius() * game_config::mob_hornet_skill2_orbit_radius_multiplier,
                     game_config::entity_collision_epsilon);
+}
+
+float JellyfishLightningDamage(ERarity rarity)
+{
+    const int level = std::max(1, static_cast<int>(GetRaritySortRank(rarity)));
+    return std::max(0.f, game_config::mob_jellyfish_lightning_damage) *
+           std::pow(std::max(0.f, game_config::mob_jellyfish_lightning_damage_scale),
+                    static_cast<float>(level - 1));
+}
+
+int JellyfishLightningBounces(ERarity rarity)
+{
+    return std::max(0, game_config::mob_jellyfish_lightning_bounces) +
+           std::max(0, static_cast<int>(GetRaritySortRank(rarity)) - 1);
 }
 
 float HornetSkill2AngularSpeed(float speed, float orbit_radius)
@@ -1556,6 +1571,237 @@ void CSpiderController::OnTick(CMobBase* mob, float dt)
     mob->GameWorld()->InsertEntity(std::move(web));
 }
 
+// ============ Crab ============
+
+float CCrabController::OrbitDistance(const CEntity* target) const
+{
+    if (!target) return std::max(0.f, game_config::mob_crab_orbit_distance);
+
+    float reach = std::max(0.f, game_config::mob_crab_orbit_distance);
+    if (const auto* flower = dynamic_cast<const CFlower*>(target))
+    {
+        const SFlowerStats* stats = flower->GetFinalStats();
+        if (stats) reach = std::max(reach, std::max(0.f, stats->reach));
+    }
+
+    return target->Radius() + game_config::default_petal_neutral_reach + reach;
+}
+
+void CCrabController::BeginStrafe(CMobBase* mob, const CEntity* target)
+{
+    if (!mob || !target) return;
+
+    const florrbt::Vector2f radial = NormalizeOrZero(mob->Pos() - target->Pos());
+    m_orbit_angle = LengthSq(radial) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon
+                        ? std::atan2(radial.y, radial.x)
+                        : (mob->HasFacing() ? mob->FacingAngle() : GetLimitedRng(-game_config::pi, game_config::pi));
+    m_orbit_direction = CheckChance(0.5f) ? -1.f : 1.f;
+    m_orbit_distance = OrbitDistance(target);
+    const float duration = std::max(game_config::server_fixed_dt, game_config::mob_crab_strafe_time);
+    const float duration_variance = std::max(0.f, game_config::mob_crab_strafe_time_variance);
+    m_strafe_duration = std::max(game_config::server_fixed_dt,
+                                 duration + GetLimitedRng(-duration_variance, duration_variance));
+
+    const float speed_variance = std::clamp(game_config::mob_crab_orbit_speed_variance, 0.f, 0.95f);
+    const float radius_variance = std::clamp(game_config::mob_crab_orbit_distance_variance, 0.f, 0.45f);
+    m_orbit_speed_scale = GetLimitedRng(1.f - speed_variance, 1.f + speed_variance);
+    m_orbit_radius_scale = GetLimitedRng(1.f - radius_variance, 1.f + radius_variance);
+    m_orbit_wobble_phase = GetLimitedRng(-game_config::pi, game_config::pi);
+    m_orbit_wobble_rate = GetLimitedRng(0.72f, 1.38f);
+    m_state = EState::Strafe;
+    m_state_timer = 0.f;
+    m_low_health_dash_used = false;
+}
+
+void CCrabController::BeginDash(CMobBase* mob, const CEntity* target)
+{
+    if (!mob || !target) return;
+
+    m_dash_direction = NormalizeOrZero(target->Pos() - mob->Pos());
+    if (LengthSq(m_dash_direction) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+        m_dash_direction = mob->HasFacing() ? florrbt::Vector2f{ std::cos(mob->FacingAngle()), std::sin(mob->FacingAngle()) }
+                                            : florrbt::Vector2f{ 1.f, 0.f };
+
+    // These values intentionally do not come from rarity-scaled stats: every
+    // Crab tier covers the same dash distance at the same dash speed.
+    m_dash_remaining = std::max(0.f, game_config::mob_crab_dash_distance);
+    m_dash_cooldown = std::max(0.f, game_config::mob_crab_dash_cooldown);
+    m_state = EState::Dash;
+    m_state_timer = 0.f;
+    m_low_health_dash_used = true;
+    mob->FacingAngle() = std::atan2(m_dash_direction.y, m_dash_direction.x);
+    mob->HasFacing() = true;
+}
+
+bool CCrabController::TryAcquireCrabTarget(CMobBase* mob, float search_range)
+{
+    if (!mob) return false;
+    CEntity* target = ResolveTarget(mob);
+    if (target) return true;
+
+    if (!TryAcquireWanderTarget(mob, search_range)) return false;
+    return ResolveTarget(mob) != nullptr;
+}
+
+void CCrabController::OnTick(CMobBase* mob, float dt)
+{
+    if (!mob || !mob->GameWorld()) return;
+    const SMobStats* stats = mob->GetFinalStats();
+    if (!stats) return;
+
+    dt = std::max(0.f, dt);
+    m_change_target_count += dt;
+    m_dash_cooldown = std::max(0.f, m_dash_cooldown - dt);
+
+    if (m_state == EState::Dash)
+    {
+        // Dash keeps its rarity-independent base distance/speed, while status
+        // effects (Web/Pincer/Digging/Pulse) alter how quickly it covers that
+        // distance just like ordinary movement.
+        const float speed = std::max(0.f, game_config::mob_crab_dash_speed) *
+                            GetMobMovementSpeedMultiplier(mob);
+        const float step = std::min(m_dash_remaining, speed * dt);
+        if (dt > 0.f && step > 0.f)
+        {
+            mob->m_vel = m_dash_direction * (step / dt);
+            mob->FacingAngle() = std::atan2(m_dash_direction.y, m_dash_direction.x);
+            mob->HasFacing() = true;
+            m_dash_remaining -= step;
+        } else
+        {
+            mob->m_vel = { 0.f, 0.f };
+        }
+
+        if (m_dash_remaining <= game_config::entity_collision_epsilon)
+        {
+            m_dash_remaining = 0.f;
+            m_state = EState::Recovery;
+            m_state_timer = std::max(0.f, game_config::mob_crab_dash_recovery);
+        }
+        return;
+    }
+
+    if (m_state == EState::Recovery)
+    {
+        mob->m_vel = florrbt::StepVelocityTowards(mob->m_vel, {}, stats->acceleration, dt);
+        m_state_timer = std::max(0.f, m_state_timer - dt);
+        if (m_state_timer > 0.f) return;
+        m_state = EState::Search;
+    }
+
+    CEntity* target = ResolveTarget(mob);
+    if (target && IsTargetUnavailable(mob, target, stats->horizon, dt, m_target_los_check_timer))
+    {
+        LoseTarget(mob);
+        target = nullptr;
+        m_state = EState::Search;
+    }
+
+    if (!target && TryAcquireCrabTarget(mob, stats->horizon)) target = ResolveTarget(mob);
+
+    if (!target)
+    {
+        const bool reached = ReachedOrStalledRandomTarget(mob, dt);
+        if (!m_has_random_target_pos || reached || ShouldSwitchRandomWanderTarget(dt))
+        {
+            m_change_target_count = 0.f;
+            PickRandomTargetPos(mob, *stats);
+        }
+        mob->MoveTowards(m_target_pos, dt, m_target_radius);
+        return;
+    }
+
+    if (m_state == EState::Search) BeginStrafe(mob, target);
+    m_target_pos = target->Pos();
+    m_target_radius = target->Radius();
+
+    m_state_timer += dt;
+    const float health_fraction = stats->max_health > game_config::entity_collision_epsilon
+                                      ? mob->Health() / stats->max_health
+                                      : 1.f;
+    const bool low_health = health_fraction <= std::clamp(game_config::mob_crab_dash_low_health_fraction, 0.f, 1.f);
+    if (m_state == EState::Strafe && m_dash_cooldown <= 0.f &&
+        (m_state_timer >= m_strafe_duration || (low_health && !m_low_health_dash_used)))
+    {
+        BeginDash(mob, target);
+        return;
+    }
+
+    m_orbit_distance = OrbitDistance(target);
+    const float orbit_speed = std::max(0.f, game_config::mob_crab_orbit_speed) * m_orbit_speed_scale;
+    m_orbit_angle += m_orbit_direction * orbit_speed / std::max(m_orbit_distance, mob->Radius()) * dt;
+    const float wobble_time = m_state_timer * m_orbit_wobble_rate;
+    const float primary_wobble = std::sin(wobble_time * 2.35f + m_orbit_wobble_phase) *
+                                 std::min(game_config::WorldUnits(40.f), m_orbit_distance * 0.11f);
+    const float secondary_wobble = std::sin(wobble_time * 0.91f - m_orbit_wobble_phase * 1.7f) *
+                                   std::min(game_config::WorldUnits(24.f), m_orbit_distance * 0.06f);
+    const float orbit_radius = std::max(mob->Radius() + target->Radius(),
+                                        m_orbit_distance * m_orbit_radius_scale + primary_wobble + secondary_wobble);
+    const florrbt::Vector2f orbit_target =
+        target->Pos() + florrbt::Vector2f{ std::cos(m_orbit_angle), std::sin(m_orbit_angle) } * orbit_radius;
+    mob->MoveTowards(orbit_target, dt, -1.f);
+
+    // Strafing changes the velocity target, not the Crab's attention. Keep
+    // the body aimed at the locked player while its legs carry it sideways.
+    const florrbt::Vector2f look = target->Pos() - mob->Pos();
+    if (LengthSq(look) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+    {
+        mob->FacingAngle() = std::atan2(look.y, look.x);
+        mob->HasFacing() = true;
+    }
+}
+
+void CCrabController::CaptureSnapshot(CSnapshotWriter& writer) const
+{
+    CMeleeController::CaptureSnapshot(writer);
+    writer.Field("state", static_cast<int>(m_state));
+    writer.Field("state_timer", m_state_timer);
+    writer.Field("dash_cooldown", m_dash_cooldown);
+    writer.Field("orbit_angle", m_orbit_angle);
+    writer.Field("orbit_direction", m_orbit_direction);
+    writer.Field("orbit_distance", m_orbit_distance);
+    writer.Field("strafe_duration", m_strafe_duration);
+    writer.Field("orbit_speed_scale", m_orbit_speed_scale);
+    writer.Field("orbit_radius_scale", m_orbit_radius_scale);
+    writer.Field("orbit_wobble_phase", m_orbit_wobble_phase);
+    writer.Field("orbit_wobble_rate", m_orbit_wobble_rate);
+    writer.Field("dash_remaining", m_dash_remaining);
+    writer.Field("dash_direction", m_dash_direction);
+    writer.Field("low_health_dash_used", m_low_health_dash_used);
+}
+
+bool CCrabController::RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error)
+{
+    if (!CMeleeController::RestoreSnapshot(reader, version, error)) return false;
+    const int state = reader.Int("state", static_cast<int>(EState::Search));
+    m_state = state >= static_cast<int>(EState::Search) && state <= static_cast<int>(EState::Recovery)
+                  ? static_cast<EState>(state)
+                  : EState::Search;
+    m_state_timer = reader.Float("state_timer");
+    m_dash_cooldown = reader.Float("dash_cooldown");
+    m_orbit_angle = reader.Float("orbit_angle");
+    m_orbit_direction = reader.Float("orbit_direction", 1.f) < 0.f ? -1.f : 1.f;
+    m_orbit_distance = reader.Float("orbit_distance");
+    m_strafe_duration = reader.Float("strafe_duration", std::max(game_config::server_fixed_dt,
+                                                                  game_config::mob_crab_strafe_time));
+    m_orbit_speed_scale = reader.Float("orbit_speed_scale", 1.f);
+    m_orbit_radius_scale = reader.Float("orbit_radius_scale", 1.f);
+    m_orbit_wobble_phase = reader.Float("orbit_wobble_phase");
+    m_orbit_wobble_rate = reader.Float("orbit_wobble_rate", 1.f);
+    if (!std::isfinite(m_strafe_duration) || m_strafe_duration < game_config::server_fixed_dt)
+        m_strafe_duration = std::max(game_config::server_fixed_dt, game_config::mob_crab_strafe_time);
+    if (!std::isfinite(m_orbit_speed_scale) || m_orbit_speed_scale <= 0.f) m_orbit_speed_scale = 1.f;
+    if (!std::isfinite(m_orbit_radius_scale) || m_orbit_radius_scale <= 0.f) m_orbit_radius_scale = 1.f;
+    if (!std::isfinite(m_orbit_wobble_phase)) m_orbit_wobble_phase = 0.f;
+    if (!std::isfinite(m_orbit_wobble_rate) || m_orbit_wobble_rate <= 0.f) m_orbit_wobble_rate = 1.f;
+    m_dash_remaining = reader.Float("dash_remaining");
+    m_dash_direction = NormalizeOrZero(reader.Vector2("dash_direction", { 1.f, 0.f }));
+    if (LengthSq(m_dash_direction) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+        m_dash_direction = { 1.f, 0.f };
+    m_low_health_dash_used = reader.Bool("low_health_dash_used");
+    return true;
+}
+
 // ============ Hornet Ranged ============
 
 void CHornetRangedController::OnTick(CMobBase* mob, float dt)
@@ -1624,6 +1870,41 @@ void CHornetRangedController::OnTick(CMobBase* mob, float dt)
     {
         if (auto* skill_caster = dynamic_cast<ISkillCasterMob*>(mob)) skill_caster->TryCastSkill(0, target);
     }
+}
+
+// ============ Jellyfish ============
+
+void CJellyfishController::OnTick(CMobBase* mob, float dt)
+{
+    // Keep Hornet's target acquisition and slow ranged movement. Jellyfish do
+    // not fire a missile: their attack is an independent passive pulse.
+    CHornetRangedController::OnTick(mob, dt);
+    if (!mob || !mob->GameWorld() || mob->IsDead() || mob->IsMarkedForDes()) return;
+
+    m_lightning_timer = std::max(0.f, m_lightning_timer - std::max(0.f, dt));
+    if (m_lightning_timer > 0.f) return;
+    m_lightning_timer = std::max(game_config::server_fixed_dt, game_config::mob_jellyfish_lightning_interval);
+
+    // The passive effect is deliberately independent of the Hornet target:
+    // every player in the lightning chain's range is eligible, including a
+    // player who is outside the Jellyfish's current aggro/vision target.
+    mob->GameWorld()->ChainLightning(
+        *mob, JellyfishLightningDamage(mob->GetRarity()), JellyfishLightningBounces(mob->GetRarity()), mob,
+        [](const CMobBase& candidate) { return dynamic_cast<const CPlayerFlower*>(&candidate) != nullptr; });
+}
+
+void CJellyfishController::CaptureSnapshot(CSnapshotWriter& writer) const
+{
+    CMeleeController::CaptureSnapshot(writer);
+    writer.Field("lightning_timer", m_lightning_timer);
+}
+
+bool CJellyfishController::RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version,
+                                           std::string& error)
+{
+    if (!CMeleeController::RestoreSnapshot(reader, version, error)) return false;
+    m_lightning_timer = reader.Float("lightning_timer");
+    return true;
 }
 
 // ============ Mecha Flower Ranged ============
@@ -1836,6 +2117,7 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
             float speed =
                 stats ? stats->max_velocity * game_config::mob_hornet_skill2_move_speed_multiplier
                       : game_config::mob_hornet_max_velocity * game_config::mob_hornet_skill2_move_speed_multiplier;
+            speed *= GetMobMovementSpeedMultiplier(mob);
             float base_angle = mob->HasFacing() ? mob->FacingAngle() : 0.f;
             florrbt::Vector2f forward = { std::cos(base_angle), std::sin(base_angle) };
             if (LengthSq(forward) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
@@ -1869,6 +2151,7 @@ void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
         float speed = stats
                           ? stats->max_velocity * game_config::mob_hornet_skill2_move_speed_multiplier
                           : game_config::mob_hornet_max_velocity * game_config::mob_hornet_skill2_move_speed_multiplier;
+        speed *= GetMobMovementSpeedMultiplier(mob);
         float angular_speed = HornetSkill2AngularSpeed(speed, m_skill2_orbit_radius);
         float step = std::min(m_skill2_remaining_angle, angular_speed * dt);
         florrbt::Vector2f current_radial = { std::cos(m_skill2_orbit_angle), std::sin(m_skill2_orbit_angle) };
@@ -2537,11 +2820,14 @@ void CFireflyController::OnTick(CMobBase* mob, float dt)
 {
     CNeutralMeleeController::OnTick(mob, dt);
 
+    if (m_summoning_disabled) return;
     const ERarity rarity = mob->GetRarity();
     if (rarity != ERarity::Eternal && rarity != ERarity::Unique && rarity != ERarity::Primordial) return;
     m_skill_timer -= std::max(0.f, dt);
     if (m_skill_timer > 0.f) return;
-m_skill_timer = rarity == ERarity::Primordial ? 15.f : 30.f;
+    const float interval = std::max(game_config::server_fixed_dt,
+                                    game_config::mob_firefly_summon_interval_seconds);
+    m_skill_timer = rarity == ERarity::Primordial ? interval * 0.5f : interval;
     TrySummonSkill(mob);
 }
 
@@ -2549,12 +2835,18 @@ void CFireflyController::CaptureSnapshot(CSnapshotWriter& writer) const
 {
     CMeleeController::CaptureSnapshot(writer);
     writer.Field("skill_timer", m_skill_timer);
+    writer.Field("summoning_disabled", m_summoning_disabled);
+    writer.Field("summon_type", static_cast<int>(m_summon_type));
 }
 
 bool CFireflyController::RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error)
 {
     if (!CMeleeController::RestoreSnapshot(reader, version, error)) return false;
     m_skill_timer = reader.Float("skill_timer", m_skill_timer);
+    m_summoning_disabled = reader.Bool("summoning_disabled", m_summoning_disabled);
+    const int summon_type = reader.Int("summon_type", static_cast<int>(m_summon_type));
+    if (summon_type >= 0 && summon_type <= static_cast<int>(UINT8_MAX))
+        m_summon_type = static_cast<EMobType>(summon_type);
     return true;
 }
 
@@ -2565,32 +2857,73 @@ void CFireflyController::TrySummonSkill(CMobBase* mob)
     CGameWorld* world = mob->GameWorld();
     if (!world) return;
 
-    ERarity minion_rarity = static_cast<ERarity>(static_cast<int>(mob->GetRarity()) - 1);
-    if (minion_rarity == ERarity::Unique) minion_rarity = ERarity::Eternal;
+    const ERarity minion_rarity = mob->GetRarity();
     const int limit = mob->GetRarity() == ERarity::Primordial ? game_config::mob_firefly_summon_limit_primordial
                                                               : game_config::mob_firefly_summon_limit_eternal;
-    if (CountNearbyFireflies(mob, minion_rarity) >= limit) return;
+    if (CountNearbySummons(mob, minion_rarity) >= limit) return;
 
-    const float range = std::min(game_config::simulation_active_view_radius_cap, game_config::WorldUnits(400.f));
-    const float angle = GetLimitedRng(0.f, 2.f * game_config::pi);
-    const float dist = GetLimitedRng(mob->Radius() * 2.f, range);
-    const florrbt::Vector2f spawn_pos = mob->Pos() + florrbt::Vector2f(std::cos(angle), std::sin(angle)) * dist;
+    EMobType summoned_type = m_summon_type;
+    if (summoned_type == EMobType::None)
+        if (IGameController* controller = world->GetController())
+            summoned_type = controller->PickHabitatMobType(*world, mob->Pos());
+    if (summoned_type == EMobType::None || summoned_type == EMobType::PlayerFlower)
+        summoned_type = EMobType::Firefly;
 
-    auto created = CreateMob(EMobType::Firefly, world, spawn_pos, minion_rarity);
+    // Skill summons preserve the caster's exact rarity and are not natural
+    // spawns, so special-rarity resolution and server-wide ET/Unique
+    // occupancy rules do not alter them.
+    auto created = CreateMob(summoned_type, world, mob->Pos(), minion_rarity, false, false);
     if (!created) return;
+
+    // Build first so the separation uses the selected mob's real, rarity-
+    // scaled radius. Eternal+ Fireflies can be wider than the old fixed
+    // spawn range; passing min > max into a random distribution was invalid.
+    const float separation = std::max(
+        0.f, mob->Radius() + created->Radius() + game_config::entity_collision_epsilon);
+    const float preferred_range =
+        std::min(game_config::simulation_active_view_radius_cap, game_config::WorldUnits(400.f));
+    const float outer_range = std::max(separation, preferred_range);
+    florrbt::Vector2f spawn_pos = mob->Pos();
+    bool found_spawn = false;
+    constexpr int spawn_attempts = 8;
+    for (int attempt = 0; attempt < spawn_attempts; ++attempt)
+    {
+        const float angle = GetLimitedRng(0.f, 2.f * game_config::pi);
+        const float dist = outer_range > separation + game_config::entity_collision_epsilon
+                               ? GetLimitedRng(separation, outer_range)
+                               : separation;
+        const florrbt::Vector2f candidate =
+            mob->Pos() + florrbt::Vector2f(std::cos(angle), std::sin(angle)) * dist;
+        if (world->CircleBlockedByWall(candidate, created->WallCollisionRadius())) continue;
+        spawn_pos = candidate;
+        found_spawn = true;
+        break;
+    }
+    if (!found_spawn) return;
+    created->Pos() = spawn_pos;
+    created->PrevPos() = spawn_pos;
+
     CMobBase* raw_mob = dynamic_cast<CMobBase*>(world->InsertEntity(std::move(created)));
     if (!raw_mob) return;
+    raw_mob->Team() = mob->Team();
     raw_mob->AddTag(EEntityTag::NoDefeatRewards);
+    raw_mob->AddTag(EEntityTag::FireflySkillSummon);
 
     if (auto* controller = dynamic_cast<CFireflyController*>(raw_mob->GetController()))
+    {
+        // A Firefly fallback may fight normally, but cannot recursively create
+        // another generation of habitat summons.
+        controller->SetSummoningDisabled(true);
         controller->SetTarget(target);
+    }
 
     if (CServer::MeetsPetalReportRarity(raw_mob->GetRarity(), game_config::min_mob_spawn_report_rarity) &&
         CServer::GetInstance())
-        CServer::GetInstance()->BroadcastMobReport("has been summoned", raw_mob->GetRarity(), "Firefly");
+        CServer::GetInstance()->BroadcastMobReport("has been summoned", raw_mob->GetRarity(),
+                                                   GetMobTypeName(raw_mob->GetMobType()));
 }
 
-int CFireflyController::CountNearbyFireflies(const CMobBase* mob, ERarity rarity) const
+int CFireflyController::CountNearbySummons(const CMobBase* mob, ERarity rarity) const
 {
     CGameWorld* world = mob->GameWorld();
     if (!world) return 0;
@@ -2598,7 +2931,8 @@ int CFireflyController::CountNearbyFireflies(const CMobBase* mob, ERarity rarity
     const float range = game_config::simulation_active_view_radius_cap;
     world->GetSpatialGrid().ForEachInRange(mob->Pos(), range, [&](const CEntity* entity) {
         const auto* candidate = dynamic_cast<const CMobBase*>(entity);
-        if (candidate && candidate->GetMobType() == EMobType::Firefly && candidate->GetRarity() == rarity &&
+        if (candidate && candidate->GetRarity() == rarity && candidate->Team() == mob->Team() &&
+            candidate->HasTag(EEntityTag::FireflySkillSummon) && !candidate->IsDead() &&
             !candidate->IsMarkedForDes())
             ++count;
     });

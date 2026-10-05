@@ -4,7 +4,7 @@ import {
   ChatFlag,
   EmailPolicy,
   FULL_SNAPSHOT_BASE_ID,
-  NETWORK_DROP_TYPE_OFFSET,
+  NETWORK_DROP_ENTITY_TYPE,
   NETWORK_PETAL_TYPE_OFFSET,
   PetalNames,
   MobNames,
@@ -42,8 +42,12 @@ import { clearLadybugPattern, drawNormalLadybug, prepareLadybugSprites } from ".
 import { prepareSvgImage, whenVisualReady, getPreparedVisualImages } from "./visual_assets.js";
 import { getRenderFrameTiming, takeRenderPreparationCost } from "./render_timing.js";
 import { sceneRasterBudget } from "./raster_budget.js";
+import { calculateUiLayout, getHudPortraitLayout, writeUiLayoutVariables } from "./ui_layout.js";
+import { createSlotSwapMotion } from "./slot_swap_motion.js";
+import { createCraftMatrix } from "./craft_matrix.js";
 import { getPointerMoveIntent, quantizeMoveIntent } from "./movement_input.js";
 import { getSlotCounter, getSlotCounterColor } from "./slot_counter.js";
+import { drawMoonSurface, moonSvgGeometry, prepareMoonSurface } from "./moon_renderer.js";
 import { drawBeetle, prepareBeetleSprites } from "./beetle_sprite.js";
 import { drawSoldierAnt, prepareSoldierAntSprites } from "./soldier_ant_sprite.js";
 import {
@@ -79,6 +83,8 @@ import {
   prepareGardenSprites,
 } from "./garden_mob_sprite.js";
 import { drawSpider, drawSpiderWeb, prepareSpiderSprites } from "./spider_sprite.js";
+import { drawCrab, prepareCrabSprites } from "./crab_sprite.js";
+import { drawJellyfish, prepareJellyfishSprites } from "./jellyfish_sprite.js";
 import {
   drawSpriteImage,
   setSpriteHitTint,
@@ -125,6 +131,7 @@ import { createMapRenderer } from "./map_renderer.js";
 import { createMobileControls, mobileActionBindings } from "./mobile_controls.js";
 import { bindMobileViewport } from "./mobile_viewport.js";
 import { bindTouchLongPress } from "./touch_gestures.js";
+import { bindPinchGesture } from "./pinch_gestures.js";
 import { initCustomScrollbars } from "./custom_scrollbar.js";
 import { setAnimatedVisibility } from "./ui_motion.js";
 import {
@@ -167,12 +174,12 @@ import {
   bloodSacrificeEffectType,
   bossRarity,
   bumbleBeeType,
-  compassUltraIconMinRarity,
   dandelionMissileType,
   dandelionType,
   dummyType,
   fireAntEggType,
   fireflyType,
+  magicFireflyType,
   fireQueenAntType,
   hallucinogenicMushroomLiveVisualScale,
   flagAntennae,
@@ -238,6 +245,8 @@ import {
   petalLentilType,
   petalLightType,
   petalLightningType,
+  petalLinkerType,
+  petalMagicEyeType,
   petalMimicType,
   petalMissileType,
   petalMoonType,
@@ -278,6 +287,9 @@ import {
   rarityUnique,
   rockType,
   bubbleType,
+  crabType,
+  chainEntityType,
+  jellyfishType,
   sandstormType,
   skillWindupIdFromFlags,
   soldierAntType,
@@ -295,8 +307,8 @@ import {
   statePoison,
   stateAntiHeal,
   statePsionicConnection,
+  statePulse,
   stateUndead,
-  stingerSplitIconMinRarity,
   titanType,
   trapProjectileType,
   summonedBeetleType,
@@ -312,13 +324,14 @@ import {
   worldDropSizeScale,
   worldPetalSizeScale,
 } from "./game_ids.js";
-import { PETAL_ICON_IDS } from "./generated_ids.js";
-import { collectSceneRenderPasses } from "./scene_passes.js";
+import { collectSceneRenderPasses, createSceneRenderPasses } from "./scene_passes.js";
+import { drawChain, parseChainSnapshot } from "./chain_renderer.js";
 import { TalentId } from "./talent_data.js";
 import { createTalentTree } from "./ui_talents.js";
 import { placeCraftReturns } from "./craft_slots.js";
-import { drawFlowerDisc, drawFlowerFace, drawFlowerBandage, drawFlowerAntennae, getFlowerPalette, stepFlowerFace,
-  flowerAttachmentLayout, getFlowerFrameLayout } from "./flower_renderer.js";
+import { drawFlowerDisc, drawFlowerFace, drawFlowerBandage, drawFlowerAntennae, drawTitanBody,
+  getFlowerPalette, getTitanCoreRadius, stepFlowerFace, flowerAttachmentLayout,
+  getFlowerFrameLayout } from "./flower_renderer.js";
 import { createCombatFeedback, stepHealthTrail } from "./combat_feedback.js";
 import { drawMovementGuide } from "./movement_guide.js";
 import { beginEntityAppearance, beginEntityExit, resumeEntityAppearance, getEntityAppearance, getDropCardTilt } from "./entity_motion.js";
@@ -392,6 +405,7 @@ import {
   imageReady,
   livePetalImages,
   makePetalStack,
+  refreshPetalCardLabels,
   normalizePetalName,
   getPetalBaseCopy,
   getPetalBasePath,
@@ -527,11 +541,39 @@ const {
 } = dom;
 
 let ctx = dom.ctx;
+let currentUiLayout = null;
+let uiLayoutKey = "";
+const slotSwapMotion = createSlotSwapMotion({ onSettled: () => renderInventoryPanel() });
+let craftMatrixUi = null;
+const gameRenderPasses = createSceneRenderPasses();
+const debugRenderPasses = createSceneRenderPasses();
 let devDebugUi = null;
 let devDebugRequestAt = -Infinity;
 
 function drawOutlinedText(text, x, y, options) {
   return drawSharedOutlinedText(text, x, y, options, ctx);
+}
+
+function syncUiLayout() {
+  const primaryCount = primarySlots.children.length || state.ownerSlots?.length || 5;
+  const secondaryCount = secondarySlots.children.length || state.secondarySlots?.length || 5;
+  const mobile = document.body.classList.contains("mobile-ui");
+  const key = `${window.innerWidth}:${window.innerHeight}:${mobile}:${primaryCount}:${secondaryCount}:${state.slotPanelCollapsed}`;
+  if (currentUiLayout && uiLayoutKey === key) return currentUiLayout;
+  const styles = getComputedStyle(document.documentElement);
+  const insets = Object.fromEntries(["top", "right", "bottom", "left"].map(side =>
+    [side, Number.parseFloat(styles.getPropertyValue(`--layout-safe-${side}`)) || 0]));
+  currentUiLayout = calculateUiLayout({ width: window.innerWidth, height: window.innerHeight,
+    mobile, primaryCount, secondaryCount,
+    collapsed: state.slotPanelCollapsed, insets });
+  uiLayoutKey = key;
+  writeUiLayoutVariables(document.documentElement, currentUiLayout);
+  document.body.classList.toggle("loadout-overflow", currentUiLayout.loadout.scroll);
+  return currentUiLayout;
+}
+
+function getGameUiLayout() {
+  return currentUiLayout || syncUiLayout();
 }
 
 function requestDevDebug() {
@@ -557,6 +599,7 @@ async function openDevDebug(ticket) {
     },
     onClose: () => { state.devDebugOpen = false; releaseInputHolds(); canvas.focus(); requestRedraw(); },
     releaseVisual: id => { clearSpriteMotion(id); clearLadybugPattern(id); },
+    getCullScale: getFlowerMobCullScale,
     getTypeIcon: entry => entry.kind === "petal" ? getPetalIconPath(entry.id)
       : codexMobIcons[entry.visualType] ? `./assets/${codexMobIcons[entry.visualType]}` : "",
     getTypeName: entry => entry.kind === "petal" ? (PetalNames[entry.id] ? petalTypeName(entry.id) : entry.name)
@@ -573,7 +616,9 @@ async function openDevDebug(ticket) {
       try {
         ctx = target; currentRenderTimeSeconds = now / 1000;
         withDebugRenderState(state, patch, () => {
-          const passes = collectSceneRenderPasses({ scale: scene.scale, isEntityInRenderView: () => true, isBoss: () => false });
+          const passes = collectSceneRenderPasses({ scale: scene.scale, isEntityInRenderView, isBoss: () => false,
+            passes: debugRenderPasses });
+          prepareFrameRenderCaches(passes);
           for (const pass of [passes.ground, passes.underlay, passes.world, passes.petals, passes.overlays])
             for (const entity of pass) drawEntity(entity, { visualOnly: true });
         });
@@ -804,14 +849,16 @@ ui.mapRenderer = createMapRenderer({
   defaultMapName,
   addConsoleLine: (text, kind = "") => addConsoleLine(text, kind),
   requestDraw: requestRedraw,
-  // The loading screen only hides once both the map and every texture asset
-  // have finished loading.
+  // Map changes only wait for the small critical startup set. The complete
+  // texture/card cache warms in the background after the client is usable.
   setLoadingVisible: (visible) => {
     if (visible) {
       setLoadingScreenVisible(true);
       return;
     }
-    (assetsPreloadPromise || Promise.resolve()).then(() => {
+    (criticalAssetsPromise || Promise.resolve()).catch((error) => {
+      console.warn("Critical visual preparation failed", error);
+    }).then(() => {
       // An earlier map may finish while a newer one is still preparing.
       if (!state.mapLoadPromise) setLoadingScreenVisible(false);
     });
@@ -933,10 +980,6 @@ const {
   loginMapDefaultY,
   loginMapDefaultHorizon,
   titanForgeRange,
-  minimapMarginPx,
-  minimapLocalMaxPx,
-  minimapFullMaxPx,
-  minimapHudGapPx,
   minimapTileSubdivisions,
   minimapBackgroundColor,
   minimapMaterialColors,
@@ -1252,9 +1295,9 @@ async function startConnection(automatic) {
     saveSettings();
     closeSocket(false);
     const generation = ++connectionGeneration;
-    setStatus(t("status.preparingMap"));
-    await loadLoginMap();
-    if (generation !== connectionGeneration || pageUnloading) return;
+    // The login backdrop is cosmetic. Waiting for its 1.8 MB map before even
+    // opening the WebSocket made remote authentication inherit map latency.
+    void loadLoginMap();
     return openConnection(wsUrl, false, generation);
   } else if (!reconnectArmed || pageUnloading) {
     return;
@@ -1651,7 +1694,7 @@ registerMessageHandler(ServerType.CodexLoot, (msg) => {
 
 registerMessageHandler(ServerType.LightningChain, (msg) => {
   if (Array.isArray(msg.lightningPoints) && msg.lightningPoints.length > 1) {
-    pushLightningChain(msg.lightningPoints);
+    pushLightningChain(msg.lightningPoints, msg.lightningStyle || 0);
   }
   return;
 });
@@ -1801,6 +1844,7 @@ registerMessageHandler(ServerType.Chat, (msg) => {
 });
 
 function resetNetworkScene({ resetRunCollection = true } = {}) {
+  slotSwapMotion.cancelAll();
   pendingSnapshot = null;
   snapshotHistory.clear();
   snapshotResetRequested = false;
@@ -2328,8 +2372,8 @@ function flushPendingTerrainDeltas() {
   }
 }
 
-async function loadMap(mapName) {
-  const map = await ui.mapRenderer.loadMap(mapName);
+async function loadMap(mapName, options) {
+  const map = await ui.mapRenderer.loadMap(mapName, options);
   flushPendingTerrainDeltas();
   return map;
 }
@@ -2337,7 +2381,7 @@ async function loadMap(mapName) {
 function loadLoginMap() {
   if (state.authenticated) return Promise.resolve(null);
   applyLoginMapView();
-  return loadMap(state.loginMapName || defaultMapName);
+  return loadMap(state.loginMapName || defaultMapName, { showLoading: false });
 }
 
 function applyLoginMapView() {
@@ -2356,7 +2400,7 @@ function setViewRadiusImmediate(viewRadius) {
   state.viewRadiusTransition = null;
 }
 
-function setViewZoomPercent(value) {
+function setViewZoomPercent(value, persist = true) {
   const next = normalizeViewZoomPercent(value);
   const previous = normalizeViewZoomPercent(state.viewZoomPercent);
   if (!Number.isFinite(state.renderViewZoomPercent)) state.renderViewZoomPercent = previous;
@@ -2365,7 +2409,7 @@ function setViewZoomPercent(value) {
     return false;
   }
   state.viewZoomPercent = next;
-  saveSettings();
+  if (persist) saveSettings();
   requestRedraw();
   return true;
 }
@@ -2927,10 +2971,9 @@ function flushInput(dt) {
     !!ui.mobileControls?.isDefending();
   const digging = false;
   const effectiveAttacking = !state.devDebugOpen && attacking;
-  // Attack and defend are action modes, not additive holds. Avoid sending
-  // both flags together: many petals fire when either mode is active, so a
-  // simultaneous Shift+Space hold can create an unnecessary throw storm.
-  const effectiveDefending = !state.devDebugOpen && defending && !attacking;
+  // Preserve independent holds: Bubble defense also works during attack.
+  // Repeats are already deduplicated by the input hold sets/packet interval.
+  const effectiveDefending = !state.devDebugOpen && defending;
   const choresChanged =
     effectiveAttacking !== state.lastInput.attacking ||
     effectiveDefending !== state.lastInput.defending ||
@@ -3149,6 +3192,8 @@ export function renderInventoryPanel(options = {}) {
   const forceInventory = !!options.forceInventory;
   hidePetalInfoTooltip();
   const display = makeDisplaySlotState();
+  if (state.ownerLoadoutLocked || primarySlots.children.length !== display.ownerSlots.length ||
+      secondarySlots.children.length !== display.secondarySlots.length) slotSwapMotion.cancelAll();
   renderSlotRow(
     primarySlots,
     display.ownerSlots,
@@ -3162,6 +3207,7 @@ export function renderInventoryPanel(options = {}) {
     display.ownerSlots,
   );
   refreshSlotKeyHints(display.ownerSlots.length);
+  syncUiLayout();
 
   if (state.backpackOpen || forceInventory) {
     renderInventoryGroups(
@@ -3212,6 +3258,11 @@ function keyboardKeyForCommand(command) {
 }
 
 function refreshSlotKeyHints(slotCount) {
+  for (const [button, command] of [[quickBackpackBtn, "inventory"], [quickTalentBtn, "talent"], [quickCraftBtn, "craft"]]) {
+    const label = button?.querySelector("kbd");
+    const key = keyboardKeyForCommand(command);
+    if (label) label.textContent = key ? `[${formatKeyHint(key)}]` : "";
+  }
   if (!slotKeyHints || !slotSwapHint) return;
   const count = Math.max(0, slotCount | 0);
   const swapKey = keyboardKeyForCommand("swap");
@@ -3281,8 +3332,14 @@ function renderSlotRow(container, slots, kind, primaryForVisual) {
 
   for (let index = 0; index < rowSlots.length; index += 1) {
     const slot = rowSlots[index];
-    const key = slotButtonRenderKey(slot, index, kind, primaryForVisual);
     let button = container.children[index];
+    // Network/optimistic inventory updates must not reveal destination cards
+    // underneath ghosts, or replace the source node used by an active flight.
+    if (button && slotSwapMotion.has(index)) {
+      button.classList.add("slot-swap-hidden");
+      continue;
+    }
+    const key = slotButtonRenderKey(slot, index, kind, primaryForVisual);
     if (!button || button.dataset.renderKey !== key) {
       const nextButton = makeSlotButton(slot, index, kind, primaryForVisual);
       nextButton.dataset.renderKey = key;
@@ -3305,6 +3362,7 @@ function renderSlotRow(container, slots, kind, primaryForVisual) {
 function updateOwnerSlotRuntimeOverlays() {
   const slots = displayOwnerSlots();
   for (let index = 0; index < primarySlots.children.length; index += 1) {
+    if (slotSwapMotion.has(index)) continue;
     updateSlotDurabilityOverlay(
       primarySlots.children[index],
       slots[index],
@@ -3620,144 +3678,56 @@ function makeInventoryGroupSection(group, key) {
 }
 
 function renderCraftMatrix() {
+  if (!craftMatrixUi) craftMatrixUi = createCraftMatrix({
+    root: craftList, isOpen: () => state.craftOpen,
+    createStack: item => item.forge ? makeForgePetalStack(item.petalType, item.count)
+      : makePetalStack(item.petalType, item.rarity, item.count, item.petalType, { showCount: true }),
+    visualKey: item => `${item.forge}:${item.name}:${effectivePetalCardCopy(item.petalType, item.rarity)}`,
+    describe: item => formatPetalItem(item.petalType, item.rarity, item.count),
+    formatCount: item => item.forge ? `${formatShortCount(item.count)}/5` : `x${formatShortCount(item.count)}`,
+    attachTooltip: attachPetalInfoTooltip, clearTooltip: clearPetalInfoTooltip,
+    vanish: animatePetalCardVanish, select: selectCraftPetal,
+    onLongPress: item => selectCraftPetal(item.petalType, item.rarity, { all: true }),
+  });
   if (state.forgeMode) {
-    craftList.replaceChildren();
     renderForgeMatrix();
     return;
   }
 
-  const rows = buildCraftRows();
-  craftList.classList.toggle("hidden", rows.length === 0);
-  const previousMatrix = craftList.querySelector(".craft-matrix");
-  if (rows.length === 0) {
-    previousMatrix?.remove();
-    return;
+  const items = [];
+  const held = new Map();
+  if (state.craftPhase === "staged" || state.craftPhase === "spinning") {
+    for (const slot of state.craftSlots) if (slotHasItem(slot)) {
+      const key = `${slot.petalType}:${slot.rarity}`;
+      held.set(key, (held.get(key) || 0) + Math.max(1, slot.count || 1));
+    }
   }
-
-  const matrix = previousMatrix || document.createElement("div");
-  matrix.className = "craft-matrix";
-  matrix.style.setProperty(
-    "--craft-rarity-count",
-    String(craftRarityDisplayOrder.length),
-  );
-
-  const existing = new Map(
-    Array.from(matrix.children).map((cell) => [cell.dataset.craftKey, cell]),
-  );
-  const ordered = [];
-
-  for (const row of rows) {
+  // buildCraftRows reads the optimistic inventory once, rather than copying
+  // and searching the entire inventory for every rarity cell.
+  for (const row of buildCraftRows()) {
+    const name = getPetalDisplayName(row.petalType);
     for (const rarity of craftRarityDisplayOrder) {
       const key = `${row.petalType}:${rarity}`;
       const baseCount = row.counts.get(rarity) || 0;
-      const heldCount = getCraftHeldCount(row.petalType, rarity);
-      const displayCount = Math.max(0, baseCount - heldCount);
-      const lit = canLightCraftItem(row.petalType, rarity);
-      const emptyDisplay = baseCount <= 0 || displayCount <= 0;
-
-      let cell = existing.get(key);
-      if (cell) existing.delete(key);
-      else cell = document.createElement(baseCount > 0 ? "button" : "div");
-      cell.dataset.craftKey = key;
-      cell.className = `craft-matrix-cell${emptyDisplay ? " empty" : ""}${lit ? " lit" : " locked"}`;
-      if (baseCount > 0) {
-        cell.type = "button";
-        cell.title = formatPetalItem(
-          row.petalType,
-          rarity,
-          displayCount,
-        );
-        if (displayCount > 0) {
-          delete cell.dataset.craftVanishing;
-          cell.replaceChildren(
-            makePetalStack(row.petalType, rarity, displayCount, row.petalType, {
-              showCount: true,
-            }),
-          );
-          attachPetalInfoTooltip(cell, row.petalType, rarity);
-        } else if (
-          cell.querySelector(".petal-stack") &&
-          cell.dataset.craftVanishing !== "true"
-        ) {
-          const stack = cell.querySelector(".petal-stack");
-          cell.dataset.craftVanishing = "true";
-          animatePetalCardVanish(stack, {
-            durationMs: 280,
-            onFinish: () => {
-              if (cell.dataset.craftKey !== key) return;
-              stack.remove();
-              delete cell.dataset.craftVanishing;
-            },
-          });
-        }
-        cell.onpointerdown = (event) => {
-          if (event.button !== undefined && event.button !== 0) return;
-          event.preventDefault();
-          event.stopPropagation();
-          if (lit)
-            selectCraftPetal(row.petalType, rarity, { all: event.shiftKey });
-        };
-      } else {
-        cell.replaceChildren();
-        cell.onpointerdown = null;
-      }
-      ordered.push(cell);
+      items.push({ key, petalType: row.petalType, rarity, baseCount, name, forge: false,
+        count: Math.max(0, baseCount - (held.get(key) || 0)),
+        lit: state.craftPhase !== "spinning" && canCraftRarity(rarity) && baseCount >= 5 });
     }
   }
-
-  for (const leftover of existing.values()) leftover.remove();
-  for (const cell of ordered) matrix.appendChild(cell);
-  if (!matrix.parentElement) craftList.appendChild(matrix);
+  craftMatrixUi.render(items, { columns: craftRarityDisplayOrder.length });
 }
 
 function renderForgeMatrix() {
   const counts = new Map();
   for (const item of displayInventory()) {
-    if (!slotHasItem(item) || item.rarity !== raritySuper || item.count <= 0)
-      continue;
-    counts.set(
-      item.petalType,
-      (counts.get(item.petalType) || 0) + Math.max(0, item.count || 0),
-    );
+    if (!slotHasItem(item) || item.rarity !== raritySuper || item.count <= 0) continue;
+    counts.set(item.petalType, (counts.get(item.petalType) || 0) + Math.max(0, item.count || 0));
   }
   const items = Array.from(counts, ([petalType, count]) => ({
-    petalType,
-    count,
-  })).sort(
-    (a, b) =>
-      compareLocalized(
-        petalTypeName(a.petalType),
-        petalTypeName(b.petalType),
-      ) || a.petalType - b.petalType,
-  );
-
-  craftList.classList.toggle("hidden", items.length === 0);
-  if (items.length === 0) return;
-
-  const matrix = document.createElement("div");
-  matrix.className = "craft-matrix forge-matrix";
-  for (const item of items) {
-    const displayCount = item.count;
-    const lit = state.craftPhase !== "spinning" && displayCount >= 5;
-    const cell = document.createElement("button");
-    cell.type = "button";
-    cell.className = `craft-matrix-cell${lit ? " lit" : " locked"}`;
-    cell.title = formatPetalItem(
-      item.petalType,
-      raritySuper,
-      displayCount,
-    );
-    cell.appendChild(makeForgePetalStack(item.petalType, displayCount));
-    attachPetalInfoTooltip(cell, item.petalType, raritySuper);
-    cell.addEventListener("pointerdown", (event) => {
-      if (event.button !== undefined && event.button !== 0) return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (lit) selectCraftPetal(item.petalType, raritySuper);
-    });
-    matrix.appendChild(cell);
-  }
-  craftList.appendChild(matrix);
+    key: `forge:${petalType}`, petalType, rarity: raritySuper, baseCount: count, count, forge: true,
+    name: getPetalDisplayName(petalType), lit: state.craftPhase !== "spinning" && count >= 5,
+  })).sort((a, b) => compareLocalized(petalTypeName(a.petalType), petalTypeName(b.petalType)) || a.petalType - b.petalType);
+  craftMatrixUi.render(items, { forge: true });
 }
 
 function makeForgePetalStack(petalType, count) {
@@ -3769,6 +3739,7 @@ function makeForgePetalStack(petalType, count) {
     stack.appendChild(badge);
   }
   badge.textContent = `${formatShortCount(count)}/5`;
+  badge.hidden = count <= 1;
   return stack;
 }
 
@@ -3903,24 +3874,6 @@ function getActiveCraftStagedCount(petalType, rarity) {
   if (state.craftPhase !== "staged" && state.craftPhase !== "spinning")
     return 0;
   return getCraftSlotCount(petalType, rarity);
-}
-
-function getCraftHeldCount(petalType, rarity) {
-  // Only cards currently selected on the ring are held back from the matrix.
-  // Returned cards and the successful result are already in the actual
-  // inventory again, so they must not be subtracted from the display count.
-  return state.craftPhase === "staged" || state.craftPhase === "spinning"
-    ? getCraftSlotCount(petalType, rarity)
-    : 0;
-}
-
-function canLightCraftItem(petalType, rarity) {
-  if (state.craftPhase === "spinning") return false;
-  if (!canCraftRarity(rarity)) return false;
-  // Lit purely from the ACTUAL inventory count: staging cards onto the ring
-  // must not darken the cell. Only the DISPLAYED count shows the subtraction
-  // (see renderCraftMatrix's displayCount).
-  return getInventoryCount(petalType, rarity) >= 5;
 }
 
 function canCraftRarity(rarity) {
@@ -4379,7 +4332,9 @@ function slotVisualPetalType(
   return slot.petalType;
 }
 
+let criticalAssetsPromise = null;
 let assetsPreloadPromise = null;
+let backgroundAssetsScheduled = false;
 
 function slotsHavePetal(slots, petalType, rarity = null) {
   return (slots || []).some(
@@ -4519,102 +4474,12 @@ function clearSecondarySlot(index) {
 
 let lastSlotSwapAt = 0;
 
-function launchPetalFlight(fromButton, toButton, slot, done, options = {}) {
-  if (!fromButton || !toButton || !slotHasItem(slot)) {
-    done?.();
-    return;
-  }
-  const fromRect = fromButton.getBoundingClientRect();
-  const toRect = toButton.getBoundingClientRect();
-  if (!fromRect.width || !toRect.width) {
-    done?.();
-    return;
-  }
-
-  const ghost = document.createElement("div");
-  ghost.className = "petal-flight";
-  ghost.appendChild(
-    makePetalStack(slot.petalType, slot.rarity, 0, undefined, {}),
-  );
-  document.body.appendChild(ghost);
-
-  const startSize = Math.max(1, fromRect.width);
-  const endSize = options.endSize || toRect.width;
-  const spinTurns = options.spinTurns || 0;
-  const durationMs = options.durationMs || 260;
-  const startX = fromRect.left + fromRect.width / 2 - startSize / 2;
-  const startY = fromRect.top + fromRect.height / 2 - startSize / 2;
-  const endX = toRect.left + toRect.width / 2 - endSize / 2;
-  const endY = toRect.top + toRect.height / 2 - endSize / 2;
-  ghost.style.left = `${startX}px`;
-  ghost.style.top = `${startY}px`;
-  ghost.style.width = `${startSize}px`;
-  ghost.style.height = `${startSize}px`;
-  ghost.style.transformOrigin = "top left";
-  ghost.style.willChange = "transform";
-
-  const startTime = performance.now();
-  const tick = (now) => {
-    const t = Math.min(1, (now - startTime) / durationMs);
-    const k = 1 - Math.pow(1 - t, 3);
-    const size = startSize + (endSize - startSize) * k;
-    ghost.style.transform = `translate(${(endX - startX) * k}px, ${(endY - startY) * k}px) scale(${size / startSize})${spinTurns ? ` rotate(${k * spinTurns * Math.PI * 2}rad)` : ""}`;
-    if (t < 1) requestAnimationFrame(tick);
-    else {
-      ghost.remove();
-      done?.();
-    }
-  };
-  requestAnimationFrame(tick);
+function animateSlotSwapFlight(index) {
+  return slotSwapMotion.swap(index, primarySlots.children[index], secondarySlots.children[index]);
 }
 
-function animateSlotSwapFlight(index, done) {
-  const primaryButton = primarySlots.children[index];
-  const secondaryButton = secondarySlots.children[index];
-  const sourcePrimary = displayOwnerSlots()[index];
-  const sourceSecondary = displaySecondarySlots()[index];
-  const hasPrimary = slotHasItem(sourcePrimary);
-  const hasSecondary = slotHasItem(sourceSecondary);
-  if (!hasPrimary && !hasSecondary) {
-    done?.();
-    return;
-  }
-
-  // While the flight is in the air the destination slots show no petal
-  // cards; they only render once the swap settles.
-  primaryButton?.classList.add("slot-swap-hidden");
-  secondaryButton?.classList.add("slot-swap-hidden");
-
-  let pending = (hasPrimary ? 1 : 0) + (hasSecondary ? 1 : 0);
-  const landed = () => {
-    pending -= 1;
-    if (pending > 0) return;
-    primaryButton?.classList.remove("slot-swap-hidden");
-    secondaryButton?.classList.remove("slot-swap-hidden");
-    done?.();
-  };
-  if (hasPrimary)
-    launchPetalFlight(primaryButton, secondaryButton, sourcePrimary, landed, {
-      spinTurns: 0,
-    });
-  if (hasSecondary)
-    launchPetalFlight(secondaryButton, primaryButton, sourceSecondary, landed, {
-      spinTurns: 0,
-    });
-}
-
-function animateAllSlotSwapFlight(slotCount, done) {
-  let pending = slotCount;
-  if (pending <= 0) {
-    done?.();
-    return;
-  }
-  const landed = () => {
-    pending -= 1;
-    if (pending <= 0) done?.();
-  };
-  for (let index = 0; index < slotCount; index += 1)
-    animateSlotSwapFlight(index, landed);
+function animateAllSlotSwapFlight(slotCount) {
+  for (let index = 0; index < slotCount; index += 1) animateSlotSwapFlight(index);
 }
 
 function quickSwapSlot(index) {
@@ -4630,7 +4495,8 @@ function quickSwapSlot(index) {
   if (index < 0 || index >= ownerSlots.length) return;
   if (!state.authenticated) return;
 
-  animateSlotSwapFlight(index, () => renderInventoryPanel());
+  animateSlotSwapFlight(index);
+  scheduleInventoryUiRender();
 
   const oldPrimary = copySlot(ownerSlots[index]);
   const oldSecondary = copySlot(secondarySlots[index]);
@@ -4697,7 +4563,8 @@ function quickSwapAllSlots() {
   // Keep the existing slot DOM in place while every card flies to its
   // corresponding slot. The optimistic state is committed immediately, but
   // the visual re-render waits until all flights have landed.
-  animateAllSlotSwapFlight(slotCount, () => renderInventoryPanel());
+  animateAllSlotSwapFlight(slotCount);
+  scheduleInventoryUiRender();
 
   const packets = [];
   for (let index = 0; index < slotCount; index += 1) {
@@ -4719,7 +4586,10 @@ function quickSwapAllSlots() {
       packets.push(packSecondarySlot(index, slot.petalType, slot.rarity));
   }
 
-  if (!sendPacketBatch(...packets)) return;
+  if (!sendPacketBatch(...packets)) {
+    slotSwapMotion.cancelAll({ notify: true });
+    return;
+  }
 
   enqueueSlotTransaction(
     desiredOwnerSlots,
@@ -4985,9 +4855,11 @@ function moveSecondaryToSecondary(fromIndex, toIndex) {
 }
 
 function beginDrag(event, element, source, index, item) {
-  // Native touch scrolling and tap-to-equip/swap have priority over desktop
-  // dragging. A second finger must never move or finish another pointer's drag.
-  if (event.pointerType === "touch" || state.drag) return;
+  // Touch starts as a pending drag. A short tap remains click-to-equip, a
+  // moving finger remains native inventory scrolling, and only a held card
+  // becomes a draggable ghost. Desktop dragging remains immediate.
+  if (event.pointerType === "touch" && source !== "inventory") return;
+  if (state.drag) return;
   if (state.ownerLoadoutLocked) return;
   if (event.button !== 0 || !slotHasItem(item)) return;
   if (!state.authenticated && source !== "inventory") return;
@@ -5008,7 +4880,27 @@ function beginDrag(event, element, source, index, item) {
     targetElement: null,
     ghost: null,
     backpackWasOpen: state.backpackOpen,
+    touchPending: event.pointerType === "touch" && source === "inventory",
+    touchTimer: 0,
   };
+  if (state.drag.touchPending) {
+    const drag = state.drag;
+    drag.touchTimer = window.setTimeout(() => {
+      if (state.drag === drag && !drag.active) activateDrag(drag);
+    }, 180);
+  }
+}
+
+function activateDrag(drag) {
+  if (!drag || drag.active) return;
+  drag.active = true;
+  drag.element.classList.add("dragging");
+  drag.ghost = makeDragGhost(drag.item);
+  document.body.appendChild(drag.ghost);
+  drag.element.setPointerCapture?.(drag.pointerId);
+  // Fold the backpack only once a real drag starts, so the destination slots
+  // are visible. It is restored by finishDrag even for an invalid drop.
+  if (drag.backpackWasOpen && state.backpackOpen) toggleBackpack(false);
 }
 
 function updateDrag(event) {
@@ -5018,14 +4910,14 @@ function updateDrag(event) {
   drag.x = event.clientX;
   drag.y = event.clientY;
   const moved = Math.hypot(drag.x - drag.startX, drag.y - drag.startY);
+  if (drag.touchPending && !drag.active) {
+    // Let the inventory's `touch-action: pan-y` behavior win over a moving
+    // finger. The long-press timer is cancelled by clearDrag below.
+    if (moved >= 10) clearDrag();
+    return;
+  }
   if (!drag.active && moved >= 5) {
-    drag.active = true;
-    drag.element.classList.add("dragging");
-    drag.ghost = makeDragGhost(drag.item);
-    document.body.appendChild(drag.ghost);
-    // Fold the backpack away only once a real drag starts, so the drop slots
-    // are visible; it is re-raised at drag end (any outcome).
-    if (drag.backpackWasOpen && state.backpackOpen) toggleBackpack(false);
+    activateDrag(drag);
   }
 
   if (!drag.active) return;
@@ -5061,6 +4953,8 @@ function finishDrag(event) {
 function clearDrag() {
   const drag = state.drag;
   if (!drag) return;
+  if (drag.touchTimer) window.clearTimeout(drag.touchTimer);
+  drag.touchTimer = 0;
   drag.element.classList.remove("dragging");
   if (drag.ghost) drag.ghost.remove();
   highlightDropTarget(null);
@@ -5748,6 +5642,7 @@ function drawBloodSacrificeEffect(
   progress,
   angle = 0,
   entity = null,
+  visualOnly = false,
 ) {
   const phase = bloodSacrificePhase(progress);
   if (phase.alpha <= 0) return;
@@ -5772,6 +5667,7 @@ function drawBloodSacrificeEffect(
   const latestPoint = traceBloodSacrificeStar(innerPath, phase.drawProgress);
   ctx.restore();
 
+  if (visualOnly) return;
   emitBloodSacrificeSweep(entity, innerPath, phase.drawProgress, phase.alpha);
 
   if (
@@ -5837,8 +5733,10 @@ function frameEntityAppearance(entity) {
 function getFlowerMobVisualScale(entityType) {
   if (entityType === titanType)
     return getClientConfigValue(state.clientConfig, "titan_sprite_scale");
-  if (entityType === dummyType)
-    return getClientConfigValue(state.clientConfig, "dummy_sprite_scale");
+  // Dummy is itself the collision silhouette. Never apply a cosmetic scale:
+  // persisted values from the former dummy_sprite_scale setting otherwise
+  // make the visible edge disagree with the authoritative snapshot radius.
+  if (entityType === dummyType) return 1;
   return 1;
 }
 
@@ -5992,6 +5890,22 @@ function drawEntityVisual(entity, options = {}) {
     : 1;
   ctx.globalAlpha *= deathAlpha * renderAlpha;
 
+  if (snap.entityType === chainEntityType) {
+    const chain = parseChainSnapshot(snap.name);
+    const first = chain ? state.entities.get(chain.aId) : null;
+    const second = chain ? state.entities.get(chain.bId) : null;
+    if (chain && first?.snapshot && second?.snapshot) {
+      drawChain(
+        ctx,
+        { pos: worldToScreen(first.renderPos || first.snapshot.pos) },
+        { pos: worldToScreen(second.renderPos || second.snapshot.pos) },
+        chain.tension,
+      );
+    }
+    ctx.restore();
+    return;
+  }
+
   const visibleRadius = radius * spriteScale * deathScale;
   const nativeFlower = snap.entityType === playerFlowerType || snap.entityType === titanType || snap.entityType === dummyType;
   if (!options.visualOnly && hurtFlash > 0 && !nativeFlower) {
@@ -6014,6 +5928,7 @@ function drawEntityVisual(entity, options = {}) {
       snap.hpPercent,
       entity.bloodSacrificeAngle ?? Math.random() * Math.PI * 2,
       entity,
+      options.visualOnly === true,
     );
     ctx.restore();
     return;
@@ -6273,6 +6188,34 @@ function drawEntityVisual(entity, options = {}) {
     return;
   }
 
+  if (!isPetal && snap.entityType === crabType) {
+    drawCrab(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      animationTime,
+    );
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === jellyfishType) {
+    drawJellyfish(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      animationTime,
+    );
+    if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
   if (!isPetal && snap.entityType === sandstormType) {
     drawSandstorm(
       ctx,
@@ -6286,7 +6229,10 @@ function drawEntityVisual(entity, options = {}) {
     return;
   }
 
-  if (!isPetal && snap.entityType === fireflyType) {
+  if (
+    !isPetal &&
+    (snap.entityType === fireflyType || snap.entityType === magicFireflyType)
+  ) {
     drawFirefly(
       ctx,
       pos,
@@ -6295,6 +6241,7 @@ function drawEntityVisual(entity, options = {}) {
       entity.renderAngle ?? snap.angle,
       entity.motionBlend || 0,
       animationTime,
+      snap.entityType === magicFireflyType,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
     ctx.restore();
@@ -6558,7 +6505,7 @@ function drawEntityVisual(entity, options = {}) {
 
   if (!isPetal && snap.entityType === titanType) {
     const visualRadius = radius * spriteScale;
-    drawPlayerFlower(
+    drawTitanFlower(
       snap,
       pos,
       visualRadius * deathScale,
@@ -6641,21 +6588,12 @@ function drawEntityVisual(entity, options = {}) {
 //   no longer flicker and the shape stays stable).
 // - All chains are batched into at most LIGHTNING_ALPHA_BUCKETS strokes per
 //   frame (grouped by quantized fade alpha) instead of one stroke per chain.
-// - Segment identity keys are built once at insert time; the per-frame
-//   duplicate map is reused and only cleared between frames.
-// - Identical segments (same two positions) are drawn at most
-//   LIGHTNING_SEGMENT_RENDER_LIMIT times per frame, each chain renders at
-//   most LIGHTNING_MAX_SEGMENTS segments, the global per-frame segment
-//   budget LIGHTNING_SEGMENT_FRAME_BUDGET caps the total, and chains whose
-//   bounding box is off-screen are skipped entirely.
+// - There is deliberately no active-chain, per-chain segment, duplicate, or
+//   frame-segment limit: every server-provided lightning segment is rendered.
+//   The short lifetime and off-screen bounding-box cull keep the work bounded
+//   to recently received, potentially visible effects.
 const LIGHTNING_LIFETIME_MS = 100;
-const LIGHTNING_MAX_ACTIVE_CHAINS = 64;
-const LIGHTNING_MAX_SEGMENTS = 3;
-const LIGHTNING_SEGMENT_RENDER_LIMIT = 3;
-const LIGHTNING_SEGMENT_FRAME_BUDGET = 128;
 const LIGHTNING_ALPHA_BUCKETS = 6;
-
-const lightningSegmentCounts = new Map();
 
 function lightningHash(value) {
   const hashed = Math.sin(value * 127.1 + 311.7) * 43758.5453;
@@ -6685,16 +6623,13 @@ function lightningBoltGeometry(a, b) {
   return midpoints;
 }
 
-function pushLightningChain(points) {
-  if (state.lightningChains.length >= LIGHTNING_MAX_ACTIVE_CHAINS)
-    state.lightningChains.shift();
-
+function pushLightningChain(points, style = 0) {
   const segments = [];
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-  for (let n = 0; n + 1 < points.length && n < LIGHTNING_MAX_SEGMENTS; n += 1) {
+  for (let n = 0; n + 1 < points.length; n += 1) {
     const a = points[n];
     const b = points[n + 1];
     segments.push({
@@ -6702,7 +6637,6 @@ function pushLightningChain(points) {
       ay: a.y,
       bx: b.x,
       by: b.y,
-      key: `${a.x | 0},${a.y | 0}|${b.x | 0},${b.y | 0}`,
       midpoints: lightningBoltGeometry(a, b),
     });
     if (a.x < minX) minX = a.x;
@@ -6722,6 +6656,7 @@ function pushLightningChain(points) {
     minY,
     maxX,
     maxY,
+    style: style === 1 ? 1 : 0,
     age: 0,
     spawnedAt: performance.now(),
   });
@@ -6748,24 +6683,13 @@ function drawLightningChains(now = performance.now()) {
   ctx.globalCompositeOperation = "lighter";
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.strokeStyle = "#ffffff";
   ctx.lineWidth = 2.4;
-
-  lightningSegmentCounts.clear();
-  for (const chain of chains) {
-    for (const segment of chain.segments) {
-      lightningSegmentCounts.set(
-        segment.key,
-        (lightningSegmentCounts.get(segment.key) || 0) + 1,
-      );
-    }
-  }
 
   const canvasW = state.canvasWidth;
   const canvasH = state.canvasHeight;
   const marginPx = 60;
-  let drawnSegments = 0;
   let currentBucket = -1;
+  let currentStyle = -1;
   let pathOpen = false;
 
   const flushPath = () => {
@@ -6774,14 +6698,15 @@ function drawLightningChains(now = performance.now()) {
       pathOpen = false;
     }
   };
-  const beginBucket = (bucket) => {
+  const beginBucket = (bucket, style) => {
     flushPath();
     ctx.globalAlpha = (bucket + 0.5) / LIGHTNING_ALPHA_BUCKETS;
+    ctx.strokeStyle = style === 1 ? "#63cfff" : "#ffffff";
     ctx.beginPath();
     pathOpen = true;
   };
 
-  // Newest chains first so the segment budget drops the oldest ones.
+  // Draw newest chains first while preserving every visible segment.
   for (let i = chains.length - 1; i >= 0; i -= 1) {
     const chain = chains[i];
     const cornerA = worldToScreen({ x: chain.minX, y: chain.minY });
@@ -6799,15 +6724,10 @@ function drawLightningChains(now = performance.now()) {
       Math.floor((1 - chain.age) * LIGHTNING_ALPHA_BUCKETS),
     );
     for (const segment of chain.segments) {
-      if (drawnSegments >= LIGHTNING_SEGMENT_FRAME_BUDGET) break;
-      if (
-        (lightningSegmentCounts.get(segment.key) || 0) >
-        LIGHTNING_SEGMENT_RENDER_LIMIT
-      )
-        continue;
-      if (bucket !== currentBucket) {
-        beginBucket(bucket);
+      if (bucket !== currentBucket || chain.style !== currentStyle) {
+        beginBucket(bucket, chain.style);
         currentBucket = bucket;
+        currentStyle = chain.style;
       }
       const a = worldToScreen({ x: segment.ax, y: segment.ay });
       const b = worldToScreen({ x: segment.bx, y: segment.by });
@@ -6817,7 +6737,6 @@ function drawLightningChains(now = performance.now()) {
         ctx.lineTo(m.x, m.y);
       }
       ctx.lineTo(b.x, b.y);
-      drawnSegments += 1;
     }
   }
   flushPath();
@@ -6831,6 +6750,10 @@ function drawPlayerFlower(snap, pos, radius, angle, isOwner, portrait = false) {
 
 function drawMechaFlower(snap, pos, radius, angle) {
   drawFlower(snap, pos, radius, angle, false, "mecha");
+}
+
+function drawTitanFlower(snap, pos, radius, angle) {
+  drawFlower(snap, pos, radius, angle, false, "titan");
 }
 
 function drawFlower(snap, pos, radius, angle, isOwner, bodyKind, portrait = false) {
@@ -6858,9 +6781,15 @@ function drawFlower(snap, pos, radius, angle, isOwner, bodyKind, portrait = fals
   const hasThirdEye =
     hasPlayerSnapPetal(snap, petalThirdEyeType) ||
     (isOwner && hasOwnerPetal(petalThirdEyeType));
+  const hasMagicEye =
+    hasPlayerSnapPetal(snap, petalMagicEyeType) ||
+    (isOwner && hasOwnerPetal(petalMagicEyeType));
   const hasBandage =
     hasPlayerSnapPetal(snap, petalBandageType) ||
     (isOwner && hasOwnerPetal(petalBandageType));
+  const hasDisc =
+    hasPlayerSnapPetal(snap, petalDiscType) ||
+    (isOwner && hasOwnerPetal(petalDiscType));
   const nullified = entityHasState(snap, stateNullification);
   const dead = (flags & flagDead) !== 0;
   const entity = state.entities.get(snap.entityId);
@@ -6872,19 +6801,24 @@ function drawFlower(snap, pos, radius, angle, isOwner, bodyKind, portrait = fals
     poisoned: entityHasState(snap, statePoison), undead: entityHasState(snap, stateUndead),
     corrupted: entityHasState(snap, stateCorruption), psionic: entityHasState(snap, statePsionicConnection),
     antiHeal: entityHasState(snap, stateAntiHeal), dummy: snap.entityType === dummyType,
-    portrait, hit: entity ? hurtFlashAmount(entity) : 0,
+    titan: bodyKind === "titan", portrait, hit: entity ? hurtFlashAmount(entity) : 0,
   });
+  const featureRadius = bodyKind === "titan" ? getTitanCoreRadius(radius) : radius;
   ctx.save();
   ctx.translate(pos.x, pos.y);
   if (face.tilt) ctx.rotate(face.tilt);
   if (nullified) ctx.globalAlpha *= 0.58;
   if (bodyKind === "mecha") drawFlowerBody(bodyKind, radius, snap);
-  else drawFlowerDisc(ctx, radius, palette, hasPlayerSnapPetal(snap, petalDiscType) || (isOwner && hasOwnerPetal(petalDiscType)));
-  if (hasBandage) drawFlowerBandage(ctx, radius, bandageOverlayImage(), drawSpriteImage);
-  drawFlowerFace(ctx, radius, face, palette, { dummy: snap.entityType === dummyType });
-  if (hasAntennae) drawFlowerAntennae(ctx, radius, antennaeOverlayImage(), drawSpriteImage);
-  if (hasThirdEye) drawThirdEyeOverlay(radius, face.dead);
-  if (hasDouli) drawDouliOverlay(radius);
+  else if (bodyKind === "titan") drawTitanBody(ctx, radius, palette, hasDisc);
+  else drawFlowerDisc(ctx, radius, palette, hasDisc);
+  if (hasBandage) drawFlowerBandage(ctx, featureRadius, bandageOverlayImage(), drawSpriteImage);
+  drawFlowerFace(ctx, featureRadius, face, palette, {
+    dummy: snap.entityType === dummyType,
+    magicEye: hasMagicEye,
+  });
+  if (hasAntennae) drawFlowerAntennae(ctx, featureRadius, antennaeOverlayImage(), drawSpriteImage);
+  if (hasThirdEye) drawThirdEyeOverlay(featureRadius, face.dead);
+  if (hasDouli) drawDouliOverlay(featureRadius);
   ctx.restore();
 }
 
@@ -7268,91 +7202,13 @@ function livePetalRenderAngle(petalType, angle) {
 }
 
 function drawProceduralMoonPetal(size, rarity, entityId) {
-  const radius = size * 0.16;
-  const borderWidth = 5.2;
-  const innerRadius = Math.max(1, radius - borderWidth);
-  const seed = moonPatternSeed(entityId, rarity);
-  const rand = seededRandom(seed);
-
-  ctx.fillStyle = moonTone("border");
-  ctx.beginPath();
-  ctx.arc(0, 0, radius, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(0, 0, innerRadius, 0, Math.PI * 2);
-  ctx.clip();
-  ctx.fillStyle = moonTone("base");
-  ctx.fillRect(-innerRadius, -innerRadius, innerRadius * 2, innerRadius * 2);
-
-  const craterCount = 5 + Math.floor(rand() * 5);
-  for (let i = 0; i < craterCount; i += 1) {
-    const angle = rand() * Math.PI * 2;
-    const dist = Math.sqrt(rand()) * innerRadius * 0.9;
-    const x = Math.cos(angle) * dist;
-    const y = Math.sin(angle) * dist;
-    const craterRadius = innerRadius * (0.08 + rand() * 0.13);
-    const strokeWidth = Math.max(1.8, borderWidth * 0.45);
-
-    ctx.lineWidth = strokeWidth;
-    ctx.strokeStyle = moonTone("craterBorder");
-    ctx.fillStyle = moonTone(rand() > 0.36 ? "crater" : "craterLight");
-    ctx.beginPath();
-    ctx.arc(x, y, craterRadius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  }
-
-  ctx.restore();
-
-  ctx.lineWidth = Math.max(1.5, borderWidth * 0.34);
-  ctx.strokeStyle = moonTone("outerEdge");
-  ctx.beginPath();
-  ctx.arc(0, 0, Math.max(0, radius - ctx.lineWidth * 0.5), 0, Math.PI * 2);
-  ctx.stroke();
-}
-
-function moonPatternSeed(entityId, rarity) {
-  let seed = ((entityId || 0) * 1103515245 + (rarity || 0) * 2654435761) >>> 0;
-  seed ^= seed >>> 16;
-  seed = Math.imul(seed, 2246822507) >>> 0;
-  seed ^= seed >>> 13;
-  seed = Math.imul(seed, 3266489909) >>> 0;
-  return seed >>> 0;
-}
-
-function seededRandom(seed) {
-  let stateValue = seed || 0x6d2b79f5;
-  return () => {
-    stateValue = (stateValue + 0x6d2b79f5) >>> 0;
-    let t = stateValue;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function moonTone(part) {
-  switch (part) {
-    case "border":
-      return "#6b6b6b";
-    case "outerEdge":
-      return "#676767";
-    case "craterBorder":
-      return "#838383";
-    case "craterLight":
-      return "#a0a0a0";
-    case "crater":
-      return "#8a8a8a";
-    case "base":
-    default:
-      return "#939393";
-  }
+  drawMoonSurface(ctx, size * moonSvgGeometry.liveRadiusFactor, rarityLevel(rarity));
 }
 
 function drawDustParticlePetal(size, rarity) {
-  const drawSize = size * 0.52;
+  // Dust's SVG art occupies only a small portion of its 110-unit frame;
+  // keep the procedural live version at the same visual scale.
+  const drawSize = size * 0.42;
   const dustPoints = [
     [65.073, 47.857],
     [60.089, 56.514],
@@ -7473,12 +7329,14 @@ function drawPetalCardName(petalType, size) {
 
 function drawPetalCardCopies(icon, size, rarity, copy, petalType = 0) {
   const layout = getPetalCopyLayout(copy, petalType);
+  const cardAngle = petalType === petalLinkerType ? Math.PI * 0.25 : 0;
   for (const part of layout) {
     ctx.save();
     if (layout.length > 1) {
       ctx.translate((size * part.x) / 100, (size * part.y) / 100);
       ctx.rotate(part.angle);
     }
+    if (cardAngle) ctx.rotate(cardAngle);
     const scale = petalCardIconScale * (layout.length > 1 ? part.scale : 1);
     if (imageReady(icon)) {
       drawCenteredImage(icon, size, scale);
@@ -7949,25 +7807,55 @@ function drawFlowerFrame(snap, pos, radius) {
   const isOwner = snap.entityId === state.ownerEntityId || (snap.flags & flagOwner) !== 0;
   const hp = clamp(snap.hpPercent || 0, 0, 1);
   const shield = clamp(snap.shieldPercent || 0, 0, 1);
+  const maxMana = Math.max(0, Number(snap.maxMana) || 0);
+  const hasMana = maxMana > 0;
+  const mana = hasMana
+    ? clamp((Number(snap.mana) || 0) / maxMana, 0, 1)
+    : 0;
+  const dead = (snap.flags & flagDead) !== 0;
   // The local player's name/level already live in the HUD. In the world,
-  // show only a useful health/shield bar, like the reference's own flower.
-  if (isOwner && ((snap.flags & flagDead) !== 0 || (hp >= 0.999 && shield <= 0))) return;
+  // show only useful resource bars, like the reference's own flower.
+  if (isOwner && dead) return;
+  if (isOwner && hp >= 0.999 && shield <= 0 && !hasMana) return;
   const frame = getFlowerFrameLayout(radius, mobileUiScale(), isOwner);
+  const frameScale = mobileUiScale();
+  const manaHeight = hasMana
+    ? Math.max(2.25 * frameScale, frame.barHeight * 0.58)
+    : 0;
+  const manaGap = hasMana ? Math.max(1, 1.25 * frameScale) : 0;
   const x = pos.x - frame.width / 2;
   const y = pos.y + frame.barY;
   if (!isOwner && snap.name) {
     let nameSize = frame.nameSize;
     ctx.font = `800 ${nameSize}px Florr UI, Sarasa SC, Segoe UI, sans-serif`;
-    // Long account names must remain centred and contained, not overflow to
-    // one side merely because their anchor was the left edge of a short bar.
+    const labelGap = Math.max(1, frameScale * 2.5);
+    // Use the same left edge as every other mob frame. The old centered
+    // player label made Flower names visually detach from their health bar.
     const maxWidth = Math.max(frame.width, frame.nameSize * 7);
     const measured = ctx.measureText(snap.name).width;
     if (measured > maxWidth) nameSize *= maxWidth / measured;
-    drawOutlinedText(snap.name, pos.x, pos.y + frame.nameBaseline, {
+    drawOutlinedText(snap.name, x, y - manaHeight - manaGap - labelGap, {
       font: `800 ${nameSize}px Florr UI, Sarasa SC, Segoe UI, sans-serif`,
       fill: playerNameColor(snap, "#f7f7f7"), lineWidth: Math.max(1, nameSize * 0.25),
-      align: "center", baseline: "bottom",
+      align: "left", baseline: "bottom",
     });
+  }
+  if (hasMana) {
+    const manaMotion = smoothHudStats(
+      `flower-frame:${snap.entityId}`,
+      { mana },
+      state.entities.get(snap.entityId) || snap,
+      currentRenderTimeSeconds * 1000,
+    );
+    drawCapsuleBar(
+      x,
+      y - manaHeight - manaGap,
+      frame.width,
+      manaHeight,
+      manaMotion.mana,
+      "#55d9ee",
+      Math.max(0.65, manaHeight * 0.22),
+    );
   }
   drawTrackedHealthBar(snap, x, y, frame.width, frame.barHeight, hp, healthBarColor(snap),
     Math.max(0.8, frame.barHeight * 0.26));
@@ -7979,8 +7867,57 @@ function drawFlowerFrame(snap, pos, radius) {
   });
 }
 
+function drawPulseArcs(snap, pos, radius) {
+  const pulse = entityState(snap, statePulse);
+  if (!pulse || !(radius > 0)) return;
+
+  // Stable event windows avoid per-frame random flicker and allocations. Each
+  // entity gets a short arc burst every few windows, with deterministic shape.
+  const shiftedTime = currentRenderTimeSeconds + (snap.entityId % 97) * 0.013;
+  const windowDuration = 0.68;
+  const window = Math.floor(shiftedTime / windowDuration);
+  const localTime = shiftedTime - window * windowDuration;
+  const eventSeed = snap.entityId * 131 + window * 17;
+  if (localTime > 0.2 || lightningHash(eventSeed) > 0.48) return;
+
+  const fade = Math.sin((localTime / 0.2) * Math.PI);
+  const arcCount = lightningHash(eventSeed + 3) > 0.58 ? 2 : 1;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha *= 0.35 + fade * 0.65;
+  ctx.strokeStyle = "#ffe14a";
+  ctx.lineWidth = Math.max(1.1, Math.min(3.2, radius * 0.055));
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  for (let arc = 0; arc < arcCount; arc += 1) {
+    const seed = eventSeed + arc * 29;
+    const angle = lightningHash(seed + 5) * Math.PI * 2;
+    const tangentX = -Math.sin(angle);
+    const tangentY = Math.cos(angle);
+    const radialX = Math.cos(angle);
+    const radialY = Math.sin(angle);
+    const span = radius * (0.52 + lightningHash(seed + 7) * 0.28);
+    const baseRadius = radius * (0.62 + lightningHash(seed + 11) * 0.25);
+    ctx.beginPath();
+    for (let point = 0; point < 5; point += 1) {
+      const t = point / 4 - 0.5;
+      const jag = point === 0 || point === 4
+        ? 0
+        : (lightningHash(seed + point * 13) - 0.5) * radius * 0.26;
+      const x = pos.x + radialX * (baseRadius + jag) + tangentX * span * t;
+      const y = pos.y + radialY * (baseRadius + jag) + tangentY * span * t;
+      if (point === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawMobFrame(snap, pos, radius) {
   if (entityVisualOnlyRenderDepth > 0) return;
+  drawPulseArcs(snap, pos, radius);
   if (radius < entityNameMinScreenRadius) return;
   if (shouldSkipMobFrame(snap, radius)) return;
 
@@ -8431,6 +8368,7 @@ function smoothHudStats(key, target, identity, now) {
     health: clamp(Number(target?.health) || 0, 0, 1),
     shield: clamp(Number(target?.shield) || 0, 0, 1),
     experience: clamp(Number(target?.experience) || 0, 0, 1),
+    mana: clamp(Number(target?.mana) || 0, 0, 1),
   };
   let motion = hudValueMotions.get(key);
   if (!motion || motion.identity !== identity) {
@@ -8452,6 +8390,7 @@ function smoothHudStats(key, target, identity, now) {
     normalized.experience,
     factor,
   );
+  motion.mana = approachMotion(motion.mana, normalized.mana, factor);
   return motion;
 }
 
@@ -8477,22 +8416,14 @@ function drawSelfHud(now = performance.now()) {
   const name = owner.snapshot?.name || "Player";
   const level = Math.max(1, state.ownerLevel || owner?.snapshot?.rarity || 1);
   const levelColor = rarityColor(getPlayerLevelRarity(owner.snapshot), 1);
-  const scale = Math.min(1, Math.max(0.7, state.canvasWidth / 320));
-  // Slight downward offset so the portrait/health block clears the top-left
-  // action buttons.
-  const hudShiftY = 43 * scale;
-  const flowerPos = { x: 55 * scale, y: 60 * scale + hudShiftY };
-  const flowerRadius = 32 * scale;
-  const healthX = 94 * scale;
-  const healthY = 43 * scale + hudShiftY;
-  const healthW = 220 * scale;
-  const healthH = 36 * scale;
-  const healthBackX = 57 * scale;
+  const hud = getHudPortraitLayout(getGameUiLayout());
+  const scale = hud.scale;
+  const flowerPos = hud.flower;
+  const flowerRadius = hud.radius;
+  const { x: healthX, y: healthY, width: healthW, height: healthH } = hud.health;
+  const healthBackX = hud.backX;
   const healthBackW = healthX + healthW - healthBackX;
-  const expX = 112 * scale;
-  const expY = 85 * scale + hudShiftY;
-  const expW = 184 * scale;
-  const expH = 20 * scale;
+  const { x: expX, y: expY, width: expW, height: expH } = hud.experience;
 
   ctx.save();
   drawCapsuleBar(
@@ -8532,14 +8463,17 @@ function drawSelfHud(now = performance.now()) {
     true,
     true,
   );
+  let nameSize = 22 * scale;
+  ctx.font = `900 ${nameSize}px Florr UI, Sarasa SC, Segoe UI, sans-serif`;
+  nameSize *= Math.min(1, (healthW - 16 * scale) / Math.max(1, ctx.measureText(name).width));
   drawOutlinedText(name, healthX + healthW * 0.5, healthY + healthH * 0.5, {
-    font: `900 ${26 * scale}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
+    font: `900 ${nameSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
     fill: "#f7f7f7",
     lineWidth: 5 * scale,
   });
 
   drawOutlinedText(`Lvl ${level}`, expX + expW * 0.5, expY + expH * 0.5, {
-    font: `900 ${15.5 * scale}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
+    font: `900 ${13 * scale}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
     fill: levelColor,
     lineWidth: 3.8 * scale,
   });
@@ -8550,23 +8484,20 @@ function drawSquadHud(now = performance.now()) {
   const members = currentSquadMemberEntities().slice(0, 3);
   if (!members.length) return;
 
-  const scale = Math.min(1, Math.max(0.7, state.canvasWidth / 320));
+  const layout = getGameUiLayout();
+  const scale = layout.scale;
   const memberHudScale = 0.78;
-  const flowerX = 55 * scale;
-  const flowerRadius = 32 * memberHudScale * scale;
-  const healthX = 88 * scale;
-  const healthW = 168 * scale;
-  const healthH = 28 * scale;
-  const healthBackX = 55 * scale;
-  const healthBackW = healthX + healthW - healthBackX;
   const healthBorder = 6 * memberHudScale * scale;
-  const firstCenterY = 204 * scale;
-  const rowGap = 62 * scale;
 
   for (let index = 0; index < members.length; index += 1) {
     const entity = members[index];
     const snap = entity.snapshot;
-    const centerY = firstCenterY + index * rowGap;
+    const hud = getHudPortraitLayout(layout, index);
+    const { x: flowerX, y: centerY } = hud.flower;
+    const flowerRadius = hud.radius;
+    const { x: healthX, width: healthW, height: healthH } = hud.health;
+    const healthBackX = hud.backX;
+    const healthBackW = healthX + healthW - healthBackX;
     const memberDead = (snap.flags & flagDead) !== 0;
     const hudStats = smoothHudStats(
       `squad:${snap.entityId}`,
@@ -8578,7 +8509,7 @@ function drawSquadHud(now = performance.now()) {
     const level = Math.max(1, snap.rarity || 1);
     const levelText = `Lvl ${level}`;
     const levelFont = `900 ${11.5 * scale}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`;
-    const levelX = healthX + healthW - 5 * scale;
+    const levelX = healthX + 3 * scale;
 
     drawCapsuleBar(
       healthBackX,
@@ -8630,28 +8561,24 @@ function drawSquadHud(now = performance.now()) {
     }
 
     ctx.font = levelFont;
-    const levelWidth = ctx.measureText(levelText).width;
-    const maxNameWidth = Math.max(
-      15 * scale,
-      healthW - levelWidth - 16 * scale,
-    );
-    let nameSize = 14 * scale;
+    const maxNameWidth = Math.max(15 * scale, healthW - 12 * scale);
+    let nameSize = 18 * scale;
     ctx.font = `900 ${nameSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`;
     const measuredNameWidth = ctx.measureText(snap.name || "Player").width;
     if (measuredNameWidth > maxNameWidth)
       nameSize = Math.max(9 * scale, nameSize * (maxNameWidth / measuredNameWidth));
 
-    drawOutlinedText(snap.name || "Player", healthX + 6 * scale, centerY, {
+    drawOutlinedText(snap.name || "Player", healthX + healthW / 2, centerY, {
       font: `900 ${nameSize}px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif`,
       fill: "#f7f7f7",
       lineWidth: 3 * scale,
-      align: "left",
+      align: "center",
     });
-    drawOutlinedText(levelText, levelX, centerY, {
+    drawOutlinedText(levelText, levelX, hud.levelY, {
       font: levelFont,
       fill: rarityColor(getPlayerLevelRarity(snap), 1),
       lineWidth: 2.8 * scale,
-      align: "right",
+      align: "left", baseline: "top",
     });
   }
 }
@@ -8664,33 +8591,8 @@ function mobileUiScale() {
 }
 
 function minimapLayout(mode = state.minimapMode) {
-  const s = mobileUiScale();
-  const insets = ui.mobileControls?.isMobileMode() ? ui.mobileControls.getSafeInsets() : null;
-  const y = Math.max(minimapMarginPx * s, insets?.top || 0);
-  const maxByScreen = Math.max(
-    96,
-    Math.min(
-      state.canvasWidth - minimapMarginPx * 2,
-      state.canvasHeight - y - minimapMarginPx,
-    ),
-  );
-  const localSize = clamp(
-    Math.min(state.canvasWidth * 0.28, minimapLocalMaxPx * s, maxByScreen),
-    104,
-    minimapLocalMaxPx * s,
-  );
-  const fullSize = clamp(
-    Math.min(
-      state.canvasWidth * 0.38,
-      state.canvasHeight * 0.42,
-      minimapFullMaxPx * s,
-      maxByScreen,
-    ),
-    132,
-    minimapFullMaxPx * s,
-  );
-  const size = mode === "full" ? fullSize : localSize;
-  return { x: state.canvasWidth - Math.max(minimapMarginPx * s, insets?.right || 0) - size, y, size };
+  const layout = getGameUiLayout();
+  return mode === "full" ? layout.fullMinimap : layout.minimap;
 }
 
 // florr frames its minimap as a small rounded card with the current area's
@@ -8813,7 +8715,7 @@ function drawMinimapLayer(map, mode, alpha) {
   const layout = minimapLayout(mode);
   const bounds = minimapWorldBounds(map, mode);
   const scale = layout.size / Math.max(bounds.width, bounds.height, 1);
-  const s = mobileUiScale();
+  const s = getGameUiLayout().scale;
   const cache = getMinimapCache(map);
 
   ctx.save();
@@ -9320,7 +9222,7 @@ function isEntityInRenderView(entity, scale) {
 
   const radius =
     Math.max(0, snap.radius || 0) *
-    getFlowerMobCullScale(snap.entityType) *
+    Math.max(3, getFlowerMobCullScale(snap.entityType)) *
     Math.max(1, frameEntityAppearance(entity).scale);
   const padding = renderCullPaddingPx / scale;
   const halfW = (state.canvasWidth * 0.5) / scale + radius + padding;
@@ -9592,13 +9494,7 @@ function duskFilterStrength(timeOfDay) {
 }
 
 function isLightFlower(entity) {
-  const type = entity?.snapshot?.entityType;
-  return (
-    type === playerFlowerType ||
-    type === normalFlowerType ||
-    type === mechaFlowerType ||
-    type === titanType
-  );
+  return entity?.snapshot?.entityType === playerFlowerType;
 }
 
 function ensureDiurnalMask() {
@@ -9644,7 +9540,6 @@ function drawMobLightMask(lightContext, darknessAlpha, now) {
   // - Player flower (radius 18) clears one tile 鈥?the current look.
   // - Common firefly (radius 12) clears exactly half of the player's ring,
   //   and higher-rarity fireflies scale up proportionally.
-  const flowerBaseRadius = 18;
   const fireflyBaseRadius = 12;
   const flowerInnerRatio = 8 / 9;
   const flowerEraseAlpha = 0.125;
@@ -9667,7 +9562,9 @@ function drawMobLightMask(lightContext, darknessAlpha, now) {
     if (!worldPos) continue;
     const isFlower = isLightFlower(entity);
     const isFirefly =
-      !isFlower && entity.snapshot?.entityType === fireflyType;
+      !isFlower &&
+      (entity.snapshot?.entityType === fireflyType ||
+        entity.snapshot?.entityType === magicFireflyType);
     const isBulb =
       !isFlower &&
       !isFirefly &&
@@ -9689,9 +9586,9 @@ function drawMobLightMask(lightContext, darknessAlpha, now) {
       // from; flowers and fireflies keep their tile-based scaling.
       targetRadius: isBulb
         ? bulbDetectRaw
-        : tileWorld *
-          (worldRadius / (isFlower ? flowerBaseRadius : fireflyBaseRadius)) *
-          (isFlower ? 1 : 0.5),
+        : isFlower
+          ? tileWorld
+          : tileWorld * (worldRadius / fireflyBaseRadius) * 0.5,
       innerRatio: isBulb ? flowerInnerRatio : isFlower ? flowerInnerRatio : fireflyInnerRatio,
       eraseAlpha: isBulb ? flowerEraseAlpha : isFlower ? flowerEraseAlpha : fireflyEraseAlpha,
     });
@@ -9941,6 +9838,7 @@ export function drawScene(now = performance.now()) {
     scale,
     isEntityInRenderView,
     isBoss: (snap) => raritySortRank(snap.rarity) >= raritySortRank(bossRarity),
+    passes: gameRenderPasses,
   });
   currentVisibleEntityCount = countScenePassEntities(passes);
   currentRenderLoad = renderLoadForVisibleCount(currentVisibleEntityCount);
@@ -10035,6 +9933,7 @@ const benchMobTypes = [
   sandstormType,
   dandelionType,
   fireflyType,
+  magicFireflyType,
   dummyType,
 ];
 
@@ -10096,9 +9995,11 @@ function makeBenchEntity(rng, entityId, center, spread) {
       benchPetalTypes[Math.floor(rng() * benchPetalTypes.length)];
     snap.radius = 6 + rng() * 6;
   } else {
-    snap.entityType =
-      NETWORK_DROP_TYPE_OFFSET +
+    const petalType =
       benchPetalTypes[Math.floor(rng() * benchPetalTypes.length)];
+    snap.entityType = NETWORK_DROP_ENTITY_TYPE;
+    snap.team = petalType;
+    snap.dropPetalType = petalType;
     snap.radius = 10 + rng() * 5;
   }
 
@@ -10318,9 +10219,9 @@ function tick(now) {
   flushInput(dt);
   updateParticles(dt);
   burrowParticles.step(dt);
-  // Catch up a short hitch in bounded substeps, instead of throwing away
-  // elapsed time and snapping back to the server on the next snapshot.
-  for (let i = 0; i < timing.steps; i++) updateRenderPositions(timing.step);
+  // Substep only local prediction. Remote smoothing advances once with the
+  // full elapsed time, avoiding up to eight full-world passes after a hitch.
+  updateRenderPositions(dt, timing.steps);
   ui.mysteryAudio.updateProximity({
     enabled: state.authenticated,
     owner: state.entities.get(state.ownerEntityId),
@@ -10400,7 +10301,13 @@ function setupEvents() {
   window.addEventListener("keydown", () => ui.mysteryAudio.unlock(), {
     capture: true,
   });
-  window.addEventListener("resize", resizeCanvas);
+  window.addEventListener("resize", () => {
+    resizeCanvas(); slotSwapMotion.cancelAll({ notify: true }); syncUiLayout();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) slotSwapMotion.cancelAll({ notify: true });
+  });
+  window.addEventListener("scroll", () => slotSwapMotion.cancelAll({ notify: true }), { capture: true, passive: true });
   document.addEventListener("fullscreenchange", () => {
     state.fullscreen = !!document.fullscreenElement;
     saveSettings();
@@ -10421,6 +10328,7 @@ function setupEvents() {
       "aria-pressed",
       state.slotPanelCollapsed ? "true" : "false",
     );
+    syncUiLayout();
   });
   connectBtn.addEventListener("click", connectAndAuth);
   sendCodeBtn.addEventListener("click", requestVerificationCode);
@@ -10476,6 +10384,7 @@ function setupEvents() {
   );
 
   ui.mobileControls = createMobileControls({
+    onLayoutChange: () => { slotSwapMotion.cancelAll({ notify: true }); syncUiLayout(); },
     isUiTarget,
     movementSurface: canvas,
     onAction: (action, phase) => executeBinding(mobileActionBindings, "touch", action, phase, {
@@ -10488,6 +10397,28 @@ function setupEvents() {
   });
   ui.mobileControls.setMode(state.mobileControlMode);
   ui.mobileControls.setEnabled(state.authenticated);
+
+  // A second touch owns pinch zoom instead of creating another joystick or a
+  // gameplay tap. Spreading fingers divides the camera percentage, making the
+  // world larger; pinching inward increases it back toward the 100% limit.
+  bindPinchGesture(canvas, {
+    onStart: () => {
+      ui.mobileControls?.reset();
+      state.suppressClickUntil = performance.now() + 500;
+    },
+    onChange: ({ deltaScale }) => {
+      if (!(deltaScale > 0) || !Number.isFinite(deltaScale)) return;
+      setViewZoomPercent(
+        normalizeViewZoomPercent(state.viewZoomPercent) / deltaScale,
+        false,
+      );
+      state.suppressClickUntil = performance.now() + 300;
+    },
+    onEnd: () => {
+      saveSettings();
+      state.suppressClickUntil = performance.now() + 300;
+    },
+  });
 
   sliderInput?.addEventListener("input", () =>
     applySliderValue(sliderInput.value),
@@ -10542,6 +10473,10 @@ function setupEvents() {
       // Keep the page from scrolling/menu-jacking on keys with browser defaults.
       if (
         key === "space" ||
+        key === "arrowup" ||
+        key === "arrowdown" ||
+        key === "arrowleft" ||
+        key === "arrowright" ||
         key === "shift" ||
         key === "alt" ||
         key === "/" ||
@@ -10660,13 +10595,13 @@ function warmPetalImage(image) {
   return whenVisualReady(image);
 }
 
-// Pre-heats every petal card visual while the loading screen is still up:
-// rarity backgrounds, original icons and the unlabeled/stripped transforms
-// used by drops, slots and live visuals. Cards then never refetch or decode
-// during gameplay. Petals without dedicated art (brush/eraser map onto basic;
-// eou_pheromone is proxy-only) are skipped.
+// Pre-heats only the shared/specialized petal visuals in the background.
+// Ordinary card and world variants remain demand-driven.
 function warmPetalCardImages() {
   const jobs = [];
+  // Moon world rendering uses the exact same source as the DOM/card icon;
+  // decode it before gameplay so the live sphere never falls back mid-frame.
+  jobs.push(warmPetalImage(assetImage(moonSvgGeometry.source)), prepareMoonSurface());
   for (const src of [getFlowerBodyTexturePath("mecha"), getFlowerBodyTexturePath("normal"), "./assets/trap.svg?v=2"])
     jobs.push(warmPetalImage(assetImage(src)));
   // Start the shared equipment transforms during loading too, so equipping
@@ -10682,49 +10617,54 @@ function warmPetalCardImages() {
     [petalTrapperType, extractTrapperLiveSvg, "trapper-petal-centered"],
     [petalHallucinogenicMushroomType, extractHallucinogenicMushroomLiveSvg, "hallucinogenic-mushroom-centered"],
   ]) jobs.push(warmPetalImage(livePetalIconImage(type, 0, crop, key)));
-  // Rarity-specific art uses a different URL/cache entry from its common form.
-  for (const [type, rarity] of [[petalStingerType, stingerSplitIconMinRarity], [petalCompassType, compassUltraIconMinRarity]]) {
-    jobs.push(warmPetalImage(livePetalIconImage(type, rarity)));
-    jobs.push(warmPetalImage(petalCardIconImage(type, rarity, { stripped: true })));
-  }
-  for (let rarity = 0; rarity <= 18; rarity += 1) {
-    const base = petalBaseImage(rarity);
-    if (base) jobs.push(warmPetalImage(base));
-  }
-  for (let petalType = 0; petalType < PETAL_ICON_IDS.length; petalType += 1) {
-    const iconId = PETAL_ICON_IDS[petalType];
-    if (
-      !iconId ||
-      iconId === "brush" ||
-      iconId === "eraser" ||
-      iconId === "eou_pheromone"
-    )
-      continue;
-    const src = getPetalIconPath(petalType);
-    if (!src) continue;
-    // Original icon (inventory / slot DOM cards).
-    jobs.push(warmPetalImage(assetImage(src)));
-    // Stripped transform (drops, split-label cards) and its label extract.
-    jobs.push(warmPetalImage(transformedPetalImage(src, stripLivePetalLabel, "card-stripped")));
-    jobs.push(warmPetalImage(transformedPetalImage(src, extractPetalLabelSvg, "card-label")));
-    // Live slot visual (world/slot rendering cache).
-    jobs.push(warmPetalImage(livePetalIconImage(petalType)));
-  }
+  // Ordinary icons and card-specific SVG transforms remain lazy. The generic
+  // manifest warms source files in the background; eagerly creating every
+  // stripped/label/live variant added hundreds of decode jobs to startup.
   return Promise.allSettled(jobs);
 }
 
 loadSettings();
-// Kick the game fonts now so canvas text (and its raster cache) can use them
-// from the first frames instead of falling back to system fonts.
-const fontPreparation = document.fonts?.load ? Promise.allSettled([
-  document.fonts.load('900 16px "Florr UI"', "FlorrBt"),
-  document.fonts.load('700 16px "Sarasa SC"', "花瓣"),
-  document.fonts.load('400 16px "Sarasa SC"', "花瓣"),
-]) : Promise.resolve();
-assetsPreloadPromise = Promise.all([
-  fontPreparation, preloadAssets(), warmPetalCardImages(), prepareBeeSprites(), prepareBeetleSprites(),
-  prepareSoldierAntSprites(), prepareSpiderSprites(), prepareGardenSprites(), prepareLadybugSprites(),
-]).then(() => primeSpriteRasters(getPreparedVisualImages()));
+// Only the compact UI font participates in the critical path. The large CJK
+// fonts are optional; CSS falls back to installed/system CJK fonts.
+const fontPreparation = document.fonts?.load
+  ? Promise.allSettled([
+      document.fonts.load('900 16px "Florr UI"', "FlorrBt"),
+    ])
+  : Promise.resolve();
+criticalAssetsPromise = Promise.race([
+  fontPreparation,
+  new Promise((resolve) => window.setTimeout(resolve, 1500)),
+]);
+
+function scheduleBackgroundAssetWarmup() {
+  if (backgroundAssetsScheduled) return assetsPreloadPromise;
+  backgroundAssetsScheduled = true;
+  assetsPreloadPromise = new Promise((resolve) => {
+    const start = () => {
+      Promise.allSettled([
+        preloadAssets({ concurrency: 8 }),
+        warmPetalCardImages(),
+        prepareBeeSprites(),
+        prepareBeetleSprites(),
+        prepareSoldierAntSprites(),
+        prepareSpiderSprites(),
+        prepareCrabSprites(),
+        prepareJellyfishSprites(),
+        prepareGardenSprites(),
+        prepareLadybugSprites(),
+      ])
+        .then(() => primeSpriteRasters(getPreparedVisualImages()))
+        .catch((error) => {
+          console.warn("Background visual preparation failed", error);
+        })
+        .finally(resolve);
+    };
+    if (typeof requestIdleCallback === "function")
+      requestIdleCallback(start, { timeout: 1800 });
+    else window.setTimeout(start, 900);
+  });
+  return assetsPreloadPromise;
+}
 void ensurePetalCopyDistanceData();
 await initI18n(state.locale);
 state.locale = getLocale();
@@ -10732,6 +10672,7 @@ applyDocumentTranslations();
 setAuthUiMode(AuthUiMode.Login);
 setupEvents();
 updateQuickActionButtons();
+updatePlayUiVisibility();
 resizeCanvas();
 renderInventoryPanel();
 initCustomScrollbars();
@@ -10774,6 +10715,8 @@ initClientCommands({
   setViewZoomPercent,
   clearConsole: () => ui.consoleUi?.clear(),
   onClientConfigChanged: (name) => {
+    if (name === "all" || name === "petal_label_max_font_px" || name === "petal_label_max_width_px")
+      refreshPetalCardLabels();
     if (name === "auto_register" || name === "all")
       autoRegisterAttempted = false;
   },
@@ -10788,7 +10731,13 @@ initFreezeWatchdog({
     ws: state.ws ? state.ws.readyState : -1,
   }),
 });
-loadLoginMap();
+const loginMapPreparation = loadLoginMap();
+criticalAssetsPromise.catch((error) => {
+  console.warn("Critical startup preparation failed", error);
+}).then(() => setLoadingScreenVisible(false));
+Promise.allSettled([criticalAssetsPromise, loginMapPreparation]).then(() => {
+  scheduleBackgroundAssetWarmup();
+});
 
 // Automation hook: `?bench=240&benchFrames=600` (optional `&benchScale=2`)
 // runs the render benchmark once the login map and assets are ready and
@@ -10808,7 +10757,7 @@ if (startupParams.has("bench")) {
       window.setTimeout(waitForBenchReady, 200);
       return;
     }
-    (assetsPreloadPromise || Promise.resolve()).then(() =>
+    scheduleBackgroundAssetWarmup().then(() =>
       window.setTimeout(
         () =>
           startRenderBenchmark({

@@ -68,7 +68,7 @@ const {
 
 const flowerFaceTypes = new Set([playerFlowerType, normalFlowerType, mechaFlowerType, dummyType, titanType]);
 
-export function updateRenderPositions(dt) {
+export function updateRenderPositions(dt, ownerSteps = 1) {
   const owner = state.entities.get(state.ownerEntityId);
   const ownerDead = !!(owner?.snapshot?.flags & flagDead);
   state.deathViewFactor = stepDeathViewFactor(state.deathViewFactor, state.authenticated && ownerDead, dt);
@@ -76,7 +76,13 @@ export function updateRenderPositions(dt) {
     if (ownerDead) {
       if (!owner.deathMotion) beginDeathMotion(owner, performance.now() / 1000, { resting: true });
       stepDeathMotion(owner, dt);
-    } else stepOwnerPrediction(owner, dt);
+    } else {
+      // Only the locally predicted body needs physics-sized substeps. Remote
+      // interpolation/gait/fades are analytic; repeating the entire world on
+      // a slow frame multiplies the hitch instead of catching up efficiently.
+      const steps = Math.max(1, Math.min(8, Math.floor(ownerSteps) || 1));
+      for (let i = 0; i < steps; i++) stepOwnerPrediction(owner, dt / steps);
+    }
     if (owner.renderPos) {
       state.camera.x = owner.renderPos.x;
       state.camera.y = owner.renderPos.y;
@@ -117,7 +123,7 @@ export function updateRenderPositions(dt) {
     if (entity.dying) continue;
     stepEntityGait(entity, dt, now, state.ownerPredictionTiming?.snapshotInterval || serverFixedDt);
     if (id === state.ownerEntityId || deadFlower) continue;
-    stepEntityRenderToSnapshot(entity, dt, false);
+    stepEntityRenderToSnapshot(entity, dt, false, now);
   }
 
   lockTrapperRenderPositionsToMounts();
@@ -494,7 +500,7 @@ function stepOwnerPrediction(entity, dt) {
   prediction.snapped = false;
 }
 
-function stepEntityRenderToSnapshot(entity, dt, isOwner = false) {
+function stepEntityRenderToSnapshot(entity, dt, isOwner = false, now = performance.now() / 1000) {
   const snap = entity?.snapshot;
   if (!snap?.pos) return;
 
@@ -510,7 +516,7 @@ function stepEntityRenderToSnapshot(entity, dt, isOwner = false) {
   const petalType = isPetalEntity(snap.entityType)
     ? petalTypeFromEntity(snap.entityType)
     : 0;
-  const target = entityInterpolationTarget(entity, snap, isOwner, petalType);
+  const target = entityInterpolationTarget(entity, snap, isOwner, petalType, now);
   const dx = target.x - entity.renderPos.x;
   const dy = target.y - entity.renderPos.y;
   const dist = Math.hypot(dx, dy);
@@ -550,11 +556,11 @@ function stepEntityRenderToSnapshot(entity, dt, isOwner = false) {
   }
 }
 
-function entityInterpolationTarget(entity, snap, isOwner, petalType = 0) {
+function entityInterpolationTarget(entity, snap, isOwner, petalType = 0, now = performance.now() / 1000) {
   if (isOwner || !entity?.snapshotVelocity || !snap?.pos)
     return snap?.pos || { x: 0, y: 0 };
 
-  const age = Math.max(0, performance.now() / 1000 - (entity.snapshotAt || 0));
+  const age = Math.max(0, now - (entity.snapshotAt || 0));
   if (petalType === petalYinYangType) return snap.pos;
   const maxLead =
     petalType > 0 ? petalExtrapolateMaxSeconds : entityExtrapolateMaxSeconds;

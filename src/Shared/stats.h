@@ -50,8 +50,13 @@ struct SMobStats : public SEntityStats
 struct SFlowerStats : public SMobStats
 {
     float max_health_multiplier = 1.f;
+    float max_mana = 0.f;
+    float mana_regen = 0.f;
     float health_regen = 0.f;
     float defense_health_regen = 0.f;
+    // Multiplies every recovery path supplied by the flower: health regen,
+    // defensive health regen, mana regen and petal medicine.
+    float recovery_multiplier = 1.f;
     float tridmgbonus = 0.f;
     float reach = 0.0f;
     float petal_attraction_range = game_config::stats_default_flower_petal_attraction_range;
@@ -82,8 +87,11 @@ struct SFlowerStats : public SMobStats
 
         max_health *= other.max_health_multiplier;
         max_health_multiplier *= other.max_health_multiplier;
+        max_mana += other.max_mana;
+        mana_regen += other.mana_regen;
         health_regen += other.health_regen;
         defense_health_regen += other.defense_health_regen;
+        recovery_multiplier *= other.recovery_multiplier;
         tridmgbonus += other.tridmgbonus;
         reach += other.reach;
         petal_attraction_range += other.petal_attraction_range;
@@ -155,7 +163,7 @@ struct SPetalStats : public SEntityStats
         health *= other.petal_health_multiplier;
         damage = static_cast<float>(static_cast<double>(damage + damage_bonus) * other.petal_dmg_multiplier *
                                     compressed_damage_multiplier);
-        medicine *= other.petal_medicine_multiplier;
+        medicine *= other.petal_medicine_multiplier * other.recovery_multiplier;
         reload *= other.petal_reload_multiplier;
         preload *= other.petal_reload_multiplier;
     }

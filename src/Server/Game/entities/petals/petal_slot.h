@@ -33,6 +33,7 @@ class CPetalSlot
     std::vector<float> m_reload_timers;
     std::vector<float> m_reload_durations;
     std::vector<uint8_t> m_reload_ignore_multiplier;
+    std::vector<uint8_t> m_spawn_cost_paid;
 
     ERarity m_stored_rarity = ERarity::Null;
     int m_slot_index = -1;

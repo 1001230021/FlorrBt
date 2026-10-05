@@ -1,5 +1,6 @@
 import { ASSET_MANIFEST } from "./asset_manifest.js";
 import { loadVisualImage, prepareSvgImage, whenVisualReady, readSvgSource, assignVisualImage } from "./visual_assets.js";
+import { getPetalLabelFontSize, getPetalLabelContainerSize } from "./petal_card_layout.js";
 import { PETAL_ICON_IDS } from "./generated_ids.js";
 import { state } from "./app_context.js";
 import {
@@ -48,12 +49,21 @@ import {
   petalLentilType,
   petalLightType,
   petalLightningType,
+  petalLinkerType,
+  petalMagicBubbleType,
+  petalMagicCactusType,
+  petalMagicEyeType,
+  petalMagicLeafType,
+  petalMagicLightningType,
+  petalMagicMissileType,
+  petalMagicStingerType,
   petalMagnetType,
   petalMimicType,
   petalMissileType,
   petalMoonType,
   petalNullificationType,
   petalOrangeType,
+  petalOrbType,
   petalPincerType,
   petalPlankType,
   petalPollenType,
@@ -107,6 +117,16 @@ export const assetImages = new Map();
 export const livePetalImages = new Map();
 export const bandageOverlayImages = new Map();
 export const transformedPetalImages = new Map();
+const magicPetalIconIds = Object.freeze({
+  [petalOrbType]: "orb",
+  [petalMagicLeafType]: "leaf_cyan",
+  [petalMagicStingerType]: "stinger_cyan",
+  [petalMagicMissileType]: "missile_cyan",
+  [petalMagicEyeType]: "magic_eye",
+  [petalMagicBubbleType]: "bubble_cyan",
+  [petalMagicLightningType]: "lightning_cyan",
+  [petalMagicCactusType]: "cactus_cyan",
+});
 
 // Display-name map: multi-word petal names resolve to their most
 // representative word. Entries here win over the automatic last-word rule;
@@ -144,7 +164,7 @@ export function getPetalDisplayName(petalType) {
   const en = PETAL_DISPLAY_EN[full] || lastCamelWord(full);
   if (state.locale === "en") return en;
   const slug = displayNameSlug(petalType);
-  const localized = t(`petals.${slug}`, {}, { defaultValue: "" });
+  const localized = t(`entities.petals.${slug}`, {}, { defaultValue: "" });
   if (localized && localized !== full) return localized;
   return en;
 }
@@ -414,6 +434,7 @@ const petalInfoStatKeys = Object.freeze({
   "Compression power": "compressionPower",
   "Petal HP healing/s": "petalHpHealingPerSecond",
   "Throw CD": "throwCooldown",
+  "Trigger CD": "triggerCooldown",
   "Web time": "webTime",
   "Web radius": "webRadius",
   "Flower HP": "flowerHp",
@@ -449,6 +470,13 @@ const petalInfoStatKeys = Object.freeze({
   Charges: "charges",
   Radius: "radius",
   "Absorb range": "absorbRange",
+  Mana: "mana",
+  "Mana regen": "manaRegen",
+  "Max mana": "maxMana",
+  "Mana cost": "manaCost",
+  "Damage / mana": "damagePerMana",
+  "Boost chains": "boostChains",
+  "Attack chains": "attackChains",
 });
 
 const petalInfoValueKeys = Object.freeze({
@@ -457,6 +485,9 @@ const petalInfoValueKeys = Object.freeze({
   "left petal": "leftPetal",
   "x0.8 per hit": "healingPerHit",
   "Cosmetic only": "cosmeticOnly",
+  "Link two mobs": "linkTwoMobs",
+  "50% current mana": "halfCurrentMana",
+  "Forward speed boost": "forwardSpeedBoost",
 });
 
 export function localizePetalInfoLabel(label) {
@@ -623,6 +654,54 @@ export function buildPetalInfo(petalType, rarity) {
       addNumber("Chain", 2 + level - 1);
       addNumber("Charges", 3);
       addSeconds("Reload", 2.5);
+      break;
+    case petalLinkerType:
+      addNumber("Durability", 5000 * scale);
+      addNumber("Charges", 2);
+      addRow("Effect", "Link two mobs");
+      break;
+    case petalOrbType:
+      addCombat(5 * scale, 25 * scale, 1.5, { preload: 2.5 });
+      addNumber("Mana", 4.1 * scale);
+      addNumber("Max mana", magicManaCost(57.8, rarity));
+      break;
+    case petalMagicLeafType:
+      addCombat(16 * scale, 12 * scale, 1.8);
+      addNumber("Mana regen", 2.5 * scale, "/s");
+      addNumber("Max mana", magicManaCost(57.8, rarity));
+      break;
+    case petalMagicStingerType:
+      addCombat(100 * scale, 1, 0.1);
+      addNumber("Mana cost", magicManaCost(10, rarity));
+      break;
+    case petalMagicMissileType:
+      addCombat(35 * scale, 2 * scale, 0.1);
+      addNumber("Mana cost", magicManaCost(5.4, rarity));
+      addSeconds("Lifetime", 5);
+      break;
+    case petalMagicEyeType:
+      addSeconds("Trigger CD", 1);
+      addRow("Mana cost", "50% current mana");
+      addNumber("Damage / mana", magicEyeDamagePerMana(rarity));
+      addNumber("Chain", 7);
+      break;
+    case petalMagicBubbleType:
+      addNumber("Durability", scale);
+      addSeconds("Reload", bubbleReload(rarity));
+      addNumber("Mana cost", magicManaCost(5, rarity));
+      addRow("Effect", "Forward speed boost");
+      break;
+    case petalMagicLightningType:
+      addNumber("Durability", 20 * scale);
+      addSeconds("Reload", 0.1);
+      addNumber("Damage", 15 * scale);
+      addNumber("Mana cost", magicManaCost(15, rarity));
+      addNumber("Boost chains", 2 + level - 1);
+      addNumber("Attack chains", 3);
+      break;
+    case petalMagicCactusType:
+      addCombat(7 * scale, 15 * scale, 1);
+      addNumber("Max mana", magicManaCost(115.5, rarity));
       break;
     case petalBulbType:
       addNumber("Damage", 5 * scale);
@@ -823,6 +902,20 @@ export function raritySortRank(rarity) {
 
 export function petalRarityScale(rarity) {
   return 3 ** (rarityLevel(rarity) - 1);
+}
+
+export function magicManaCost(commonCost, rarity) {
+  return commonCost * 2 ** (rarityLevel(rarity) - 1);
+}
+
+export function magicEyeDamagePerMana(rarity) {
+  const values = [
+    0, 3.3, 4.9, 7.4, 11.1, 16.7, 25.1, 37.6, 56.4, 84.6, 84.6,
+    127.3,
+  ];
+  const value = Number(rarity);
+  if (value === rarityExotic) return values[1];
+  return values[value] || values[1];
 }
 
 export function lightCopy(rarity) {
@@ -1100,15 +1193,15 @@ export async function ensurePetalCopyDistanceData() {
   if (petalCopyDistanceLoadStarted) return;
   petalCopyDistanceLoadStarted = true;
   try {
-    for (const iconId of PETAL_ICON_IDS) {
-      if (!iconId) continue;
-      const url = `./assets/petals/${iconId}.svg`;
+    for (let petalType = 0; petalType < PETAL_ICON_IDS.length; petalType += 1) {
+      if (!PETAL_ICON_IDS[petalType]) continue;
+      const url = getPetalIconPath(petalType);
       const text = await readSvgSource(url).catch(() => "");
       const match = text.match(/data-copy-distance\s*=\s*"?([\d.]+)/);
       if (!match) continue;
       const value = Number(match[1]);
       if (Number.isFinite(value) && value > 0)
-        petalCopyDistanceByType.set(PETAL_ICON_IDS.indexOf(iconId), value);
+        petalCopyDistanceByType.set(petalType, value);
     }
   } catch {
     // Silent fallback: dynamic radius formulas keep working.
@@ -1165,9 +1258,7 @@ export function makePetalStack(
     petalType === petalMimicType && iconPetalType !== petalType;
   const copy =
     options.copy ?? effectivePetalCardCopy(iconPetalType, rarity, options);
-  const splitLabel = copy > 1;
   const liveVisual = options.liveVisual === true;
-  const separateLabel = splitLabel || liveVisual;
   if (mimicVisual) stack.classList.add("mimic-visual");
   if (copy > 1) stack.classList.add("multi-copy");
 
@@ -1182,7 +1273,8 @@ export function makePetalStack(
   for (let copyIndex = 0; copyIndex < layout.length; copyIndex += 1) {
     const part = layout[copyIndex];
     const icon = makePetalIcon(iconPetalType, rarity, {
-      stripped: mimicVisual || separateLabel,
+      // The DOM label below is the sole name layer, even for a single copy.
+      stripped: true,
     });
     if (!icon) continue;
     if (liveVisual) {
@@ -1192,56 +1284,69 @@ export function makePetalStack(
     }
     if (layout.length > 1) {
       icon.classList.add("petal-icon-copy");
-      icon.style.setProperty("--copy-x", `${part.x * 0.54}px`);
-      icon.style.setProperty("--copy-y", `${part.y * 0.54}px`);
+      icon.style.setProperty("--copy-x", `${part.x}cqw`);
+      icon.style.setProperty("--copy-y", `${part.y}cqw`);
       icon.style.setProperty("--copy-angle", `${part.angle}rad`);
       icon.style.setProperty("--copy-size", `${Math.round(part.scale * 100)}%`);
     }
     stack.appendChild(icon);
   }
   stack.appendChild(makePetalDisplayName(iconPetalType));
-  // Interface cards always expose their quantity, including a single card.
-  // A zero count is reserved for live/world visuals and remains hidden.
-  if (count > 0 || options.showCount === true) {
+  // A single card needs no quantity badge. Keep a reusable hidden node when
+  // requested by retained grids so 1 <-> multiple does not rebuild the card.
+  if (count > 1 || options.showCount === true) {
     const badge = document.createElement("span");
     badge.className = "petal-count";
     badge.textContent = `x${formatShortCount(count)}`;
+    badge.hidden = count <= 1;
     stack.appendChild(badge);
   }
   return stack;
 }
 
-// Unified card label: black-outlined white text below the petal art.
-// The font is sized so the rendered text width never exceeds 105px (that is
-// also the font-size cap); the label sits at the lower part of the card.
+// One label, measured in reference-card units, scales with the actual stack.
 function makePetalDisplayName(petalType) {
   const span = document.createElement("span");
   span.className = "petal-card-name";
   span.textContent = getPetalDisplayName(petalType);
-  // Synchronous font sizing (canvas measured): no post-layout flicker when
-  // cards are rebuilt.
-  span.style.fontSize = `${labelFontSizePx(span.textContent)}px`;
+  applyPetalLabelSize(span);
   return span;
 }
 
 let cardMeasureContext = null;
 const labelFontSizeCache = new Map();
+let labelFontListenerBound = false;
+function applyPetalLabelSize(span) {
+  const size = labelFontSizePx(span.textContent);
+  span.style.setProperty("--petal-label-font-cqw", String(getPetalLabelContainerSize(size)));
+  span.style.setProperty("--petal-label-font-fallback", `${size}px`);
+  if (!labelFontListenerBound && document.fonts?.addEventListener) {
+    labelFontListenerBound = true;
+    document.fonts.addEventListener("loadingdone", refreshPetalCardLabels);
+  }
+}
+
+export function refreshPetalCardLabels() {
+  labelFontSizeCache.clear();
+  for (const span of document.querySelectorAll(".petal-card-name")) applyPetalLabelSize(span);
+}
+
 function labelFontSizePx(text) {
   try {
     const maxFont = getClientConfigValue(state.clientConfig, "petal_label_max_font_px") ?? 14;
     const maxWidth = getClientConfigValue(state.clientConfig, "petal_label_max_width_px") ?? 45;
-    const cacheKey = `${maxFont}|${maxWidth}|${text}`;
+    const fontsReady = !document.fonts || document.fonts.status === "loaded";
+    const cacheKey = `${fontsReady}|${maxFont}|${maxWidth}|${text}`;
     const cached = labelFontSizeCache.get(cacheKey);
     if (cached) return cached;
     if (!cardMeasureContext) {
-      const canvas = new OffscreenCanvas(16, 16);
+      const canvas = typeof OffscreenCanvas === "function" ? new OffscreenCanvas(16, 16) : document.createElement("canvas");
       cardMeasureContext = canvas.getContext("2d");
     }
     cardMeasureContext.font = "900 100px 'Florr UI', 'Sarasa SC', sans-serif";
     const widthAt100 = Math.max(1, cardMeasureContext.measureText(text).width);
-    const widthCapped = maxWidth / (widthAt100 / 100);
-    const font = Math.min(maxFont, Math.max(1, widthCapped));
-    labelFontSizeCache.set(cacheKey, font);
+    const font = getPetalLabelFontSize(widthAt100, maxFont, maxWidth);
+    if (fontsReady) labelFontSizeCache.set(cacheKey, font);
     return font;
   } catch {
     return 12;
@@ -1287,6 +1392,7 @@ export function makePetalIcon(petalType, rarity = 0, options = {}) {
   if (!src) return null;
   const image = document.createElement("img");
   image.className = "petal-icon";
+  if (petalType === petalLinkerType) image.classList.add("petal-linker-card");
   image.alt = "";
   image.draggable = false;
   if (options.stripped) setStrippedPetalIconSource(image, src);
@@ -1339,7 +1445,7 @@ export function getPetalIconPath(petalType, rarity = 0, options = {}) {
   )
     return "./assets/petals/compass_ultra.svg";
 
-  const iconId = PetalIconIds[petalType] || 0;
+  const iconId = magicPetalIconIds[petalType] || PetalIconIds[petalType] || 0;
   if (!iconId) return "";
   return `./assets/petals/${iconId}.svg`;
 }
@@ -1351,7 +1457,7 @@ export function normalizePetalName(name) {
 }
 
 export function petalTypeFromSnap(snap) {
-  const fromEntity = petalTypeFromEntity(snap.entityType);
+  const fromEntity = petalTypeFromEntity(snap);
   if (fromEntity > 0 && fromEntity < PetalIconIds.length) return fromEntity;
 
   const fromName = PetalNameToType.get(normalizePetalName(snap.name));
@@ -1378,10 +1484,22 @@ export function imageReady(image) {
 
 // Kicks off loading every texture asset from the manifest; resolves when all
 // have finished (failures resolve too so the game can never hang forever).
-export function preloadAssets() {
-  return Promise.all(ASSET_MANIFEST.map(src => whenVisualReady(assetImage(src)))).then(results => {
-    const failed = results.filter(ok => !ok).length;
-    if (failed > 0)
-      console.warn(`preloadAssets: ${failed} asset(s) failed to load`);
-  });
+export async function preloadAssets({ concurrency = 8 } = {}) {
+  const workerCount = Math.max(
+    1,
+    Math.min(ASSET_MANIFEST.length, Math.floor(Number(concurrency) || 1)),
+  );
+  let nextIndex = 0;
+  let failed = 0;
+
+  async function preloadWorker() {
+    while (nextIndex < ASSET_MANIFEST.length) {
+      const src = ASSET_MANIFEST[nextIndex++];
+      if (!await whenVisualReady(assetImage(src))) failed += 1;
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, preloadWorker));
+  if (failed > 0)
+    console.warn(`preloadAssets: ${failed} asset(s) failed to load`);
 }

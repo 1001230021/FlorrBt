@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   color-scheme: light;
   --ink: #263241;
   --muted: #6c7785;
@@ -62,7 +62,7 @@
 
 @font-face {
   font-family: "Sarasa SC";
-  src: url("./assets/florr/Sarasa-SC-Regular.ttf") format("truetype");
+  src: local("Sarasa SC"), local("Sarasa Gothic SC");
   font-style: normal;
   font-weight: 100 600;
   font-display: swap;
@@ -70,7 +70,7 @@
 
 @font-face {
   font-family: "Sarasa SC";
-  src: url("./assets/florr/Sarasa-SC-Bold.ttf") format("truetype");
+  src: local("Sarasa SC Bold"), local("Sarasa Gothic SC Bold");
   font-style: normal;
   font-weight: 700 900;
   font-display: swap;
@@ -2913,23 +2913,20 @@ button:active {
   top: 0;
   transform: translate(-50%, -55%);
   min-width: 1.2em;
-  padding: 1px 5px;
-  border-radius: 4px;
+  padding: 0.08em 0.4em;
+  border-radius: 0.32em;
   border: 0;
   box-shadow: none;
   background: var(--slot-rarity-color, #7eef6d);
   color: #fff;
-  font: 900 12px/1.15 "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
-  -webkit-text-stroke: 2px #303030;
+  font: 900 18.75cqw/1.15 "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
+  -webkit-text-stroke: 0.16em #303030;
   paint-order: stroke fill;
   font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
 
-.secondary .slot-value {
-  font-size: 10px;
-  padding: 1px 4px;
-}
+.slot, .petal-flight { container-type: inline-size; }
 
 .slot-ban-mark {
   position: absolute;
@@ -3022,6 +3019,7 @@ button:active {
   width: 92%;
   height: 92%;
   transform: translate(-50%, -50%) rotate(var(--live-angle, 0rad))
+    rotate(var(--card-angle, 0rad))
     scale(var(--live-scale, 1));
   object-fit: contain;
 }
@@ -3035,7 +3033,15 @@ button:active {
      instead of spinning each copy around its own center. */
   transform: translate(-50%, -50%) rotate(var(--live-angle, 0rad))
     translate(var(--copy-x, 0px), var(--copy-y, 0px))
-    rotate(var(--copy-angle, 0rad)) scale(var(--live-scale, 1));
+    rotate(var(--copy-angle, 0rad)) rotate(var(--card-angle, 0rad))
+    scale(var(--live-scale, 1));
+}
+
+/* Linker's SVG is deliberately diagonal in cards, while its live projectile
+   keeps the authoritative facing angle from the server. */
+.petal-icon.petal-linker-card,
+.petal-icon-copy.petal-linker-card {
+  --card-angle: 0.785398rad;
 }
 
 .petal-live-visual {
@@ -3059,9 +3065,7 @@ button:active {
   transform: translate(-50%, -50%);
 }
 
-/* Unified petal card name: black-outlined white text at the lower part of
-   the card (moved up from the old bottom position). Font size is set by JS
-   so the rendered text width caps at 32px. */
+/* Names and copy offsets use the stack itself as their scale reference. */
 .petal-stack {
   container-type: inline-size;
 }
@@ -3071,9 +3075,10 @@ button:active {
   left: 50%;
   bottom: 14%;
   z-index: 4;
-  /* Width is constrained by the font sizing in labelFontSizePx (the
-     petal_label_max_width_px client config, default 100px), not by the card
-     box: long names overflow the card edges instead of getting clipped. */
+  /* Configured font/width caps apply at 56px; scale both with the card.
+     A flight scales this exact same layout as one compositor layer. */
+  font-size: var(--petal-label-font-fallback, 14px);
+  font-size: calc(var(--petal-label-font-cqw, 25) * 1cqw);
   white-space: nowrap;
   pointer-events: none;
   font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
@@ -3109,6 +3114,8 @@ button:active {
    off the card's top-right corner, tilted clockwise (~12deg, text runs down
    to the right).  The card containers deliberately don't clip so the label
    can overflow the card edge. */
+.petal-count[hidden] { display: none !important; }
+
 .petal-count {
   position: absolute;
   top: -3px;
@@ -3142,6 +3149,12 @@ button:active {
   font-size: 9px;
   top: -2px;
   right: -4px;
+}
+
+.petal-stack > .petal-count {
+  font-size: 20cqw;
+  top: -5.5cqw;
+  right: -9cqw;
 }
 
 .secondary .slot {
@@ -3418,6 +3431,8 @@ body.mobile-ui .slot-key-hints {
     filter 120ms ease,
     opacity 120ms ease,
     transform 120ms ease;
+  /* Keep vertical inventory scrolling until a held card becomes a drag. */
+  touch-action: pan-y;
 }
 
 .inventory-item .petal-stack {
@@ -3744,9 +3759,12 @@ body.mobile-ui .slot-key-hints {
 /* Slot-swap flight: while a petal is airborne the destination slots show
    no petal card; it renders only when the swap settles. */
 .slot.slot-swap-hidden .petal-stack,
-.slot.slot-swap-hidden .slot-value {
+.slot.slot-swap-hidden .slot-value,
+.slot.slot-swap-hidden .slot-durability-overlays {
   visibility: hidden;
 }
+
+.slot.slot-swap-hidden::before { opacity: 1; }
 
 .petal-flight .petal-stack {
   width: 100%;

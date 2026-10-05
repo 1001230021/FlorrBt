@@ -14,6 +14,12 @@ export function pointToDebugScreen(point, camera, size) {
   return { x: (point.x - camera.x) * camera.scale + size.width / 2,
     y: (point.y - camera.y) * camera.scale + size.height / 2 };
 }
+export function isDebugEntityInView(entity, position, camera, size, radiusScale = 3) {
+  if (!position || !(camera.scale > 0)) return false;
+  const extent = Math.max(0, entity.radius || 0) * radiusScale + 120 / camera.scale;
+  return Math.abs(position.x - camera.x) <= size.width / (2 * camera.scale) + extent &&
+    Math.abs(position.y - camera.y) <= size.height / (2 * camera.scale) + extent;
+}
 export function zoomDebugCamera(camera, point, size, factor) {
   const anchor = pointToDebugWorld(point, camera, size);
   const scale = Math.max(0.015, Math.min(8, camera.scale * factor));

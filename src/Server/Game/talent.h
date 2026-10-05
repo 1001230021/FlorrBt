@@ -186,12 +186,12 @@ class CPetalHealthTalent final : public ITalent
     float m_step_multiplier = 1.f;
 };
 
-class CMedicTalent final : public ITalent
+class CRegenTalent final : public ITalent
 {
   public:
-    CMedicTalent() = default;
-    CMedicTalent(ERarity rarity, int cost, float total_multiplier, float previous_total_multiplier)
-        : ITalent(ETalentId::Medic, rarity, cost), m_total_multiplier(total_multiplier),
+    CRegenTalent() = default;
+    CRegenTalent(ERarity rarity, int cost, float total_multiplier, float previous_total_multiplier)
+        : ITalent(ETalentId::Regen, rarity, cost), m_total_multiplier(total_multiplier),
           m_step_multiplier(previous_total_multiplier > 0.f ? total_multiplier / previous_total_multiplier
                                                             : total_multiplier)
     {
@@ -200,7 +200,7 @@ class CMedicTalent final : public ITalent
     void Apply(ETalentEvent event, STalentContext& ctx) override
     {
         if (event != ETalentEvent::RebuildFlowerStats || !ctx.flower_stats) return;
-        ctx.flower_stats->petal_medicine_multiplier *= m_step_multiplier;
+        ctx.flower_stats->recovery_multiplier *= m_step_multiplier;
     }
 
     float m_total_multiplier = 1.f;
@@ -552,14 +552,14 @@ inline std::array<CPetalHealthTalent, talent_tier_count>& PetalHealthTalents()
     return talents;
 }
 
-inline std::array<CMedicTalent, talent_tier_count>& MedicTalents()
+inline std::array<CRegenTalent, talent_tier_count>& RegenTalents()
 {
-    static std::array<CMedicTalent, talent_tier_count> talents = {
-        CMedicTalent(ERarity::Common, 2, 1.15f, 1.f),         CMedicTalent(ERarity::Unusual, 5, 1.322f, 1.15f),
-        CMedicTalent(ERarity::Rare, 8, 1.521f, 1.322f),       CMedicTalent(ERarity::Epic, 11, 1.749f, 1.521f),
-        CMedicTalent(ERarity::Legendary, 14, 2.011f, 1.749f), CMedicTalent(ERarity::Mythic, 17, 2.313f, 2.011f),
-        CMedicTalent(ERarity::Ultra, 20, 2.66f, 2.313f),      CMedicTalent(ERarity::Super, 23, 3.059f, 2.66f),
-        CMedicTalent(ERarity::Eternal, 26, 4.046f, 3.059f),
+    static std::array<CRegenTalent, talent_tier_count> talents = {
+        CRegenTalent(ERarity::Common, 2, 1.15f, 1.f),         CRegenTalent(ERarity::Unusual, 5, 1.322f, 1.15f),
+        CRegenTalent(ERarity::Rare, 8, 1.521f, 1.322f),       CRegenTalent(ERarity::Epic, 11, 1.749f, 1.521f),
+        CRegenTalent(ERarity::Legendary, 14, 2.011f, 1.749f), CRegenTalent(ERarity::Mythic, 17, 2.313f, 2.011f),
+        CRegenTalent(ERarity::Ultra, 20, 2.66f, 2.313f),      CRegenTalent(ERarity::Super, 23, 3.059f, 2.66f),
+        CRegenTalent(ERarity::Eternal, 26, 4.046f, 3.059f),
     };
     static const bool linked = LinkTalentChain(talents);
     (void)linked;
@@ -787,8 +787,8 @@ inline ITalent* FindBuiltinTalent(ETalentId id, ERarity rarity, int rank = 0)
         return FindTalentByRarity(SecondChanceTalents(), rarity);
     case ETalentId::SlotNum:
         return FindTalentByRarity(SlotNumTalents(), rarity);
-    case ETalentId::Medic:
-        return FindTalentByRarity(MedicTalents(), rarity);
+    case ETalentId::Regen:
+        return FindTalentByRarity(RegenTalents(), rarity);
     case ETalentId::Reach:
         return FindTalentByRarity(ReachTalents(), rarity);
     case ETalentId::Magnetism:
@@ -820,7 +820,7 @@ inline std::vector<ITalent*> BuiltinTalents()
         talents.push_back(&talent);
     for (auto& talent : PetalHealthTalents())
         talents.push_back(&talent);
-    for (auto& talent : MedicTalents())
+    for (auto& talent : RegenTalents())
         talents.push_back(&talent);
     for (auto& talent : SummonerTalents())
         talents.push_back(&talent);

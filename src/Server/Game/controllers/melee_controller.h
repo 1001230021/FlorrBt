@@ -57,8 +57,7 @@ class CMeleeController : public IController
 };
 
 // Firefly: neutral (only honey, retaliation and lit bulbs), plus a periodic
-// summon skill for Eternal/Unique (60s) and Primordial (30s). Summoned
-// fireflies inherit the caster's current target.
+// habitat summon skill for Eternal/Unique/Primordial.
 class CFireflyController; // defined after CNeutralMeleeController below
 
 class CLeafcutterSoldierController : public CMeleeController, public CPickupController
@@ -130,20 +129,23 @@ class CNeutralMeleeController : public CMeleeController
 };
 
 // Firefly: neutral (only honey, retaliation and lit bulbs), plus a periodic
-// summon skill for Eternal/Unique (60s) and Primordial (30s). Summoned
-// fireflies inherit the caster's current target.
+// habitat summon skill for Eternal/Unique/Primordial.
 class CFireflyController : public CNeutralMeleeController
 {
   public:
+    explicit CFireflyController(EMobType summon_type = EMobType::None) : m_summon_type(summon_type) {}
     void OnTick(CMobBase* mob, float dt) override;
     std::string_view SnapshotKey() const override { return "controller.firefly"; }
     void CaptureSnapshot(CSnapshotWriter& writer) const override;
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
+    void SetSummoningDisabled(bool disabled) { m_summoning_disabled = disabled; }
 
   private:
     void TrySummonSkill(CMobBase* mob);
-    int CountNearbyFireflies(const CMobBase* mob, ERarity rarity) const;
+    int CountNearbySummons(const CMobBase* mob, ERarity rarity) const;
     float m_skill_timer = 8.f;
+    bool m_summoning_disabled = false;
+    EMobType m_summon_type = EMobType::None;
 };
 
 class CTermiteOvermindController final : public CNeutralMeleeController
@@ -187,11 +189,61 @@ class CSpiderController : public CMeleeController
     float m_web_timer = 0.f;
 };
 
+class CCrabController final : public CMeleeController
+{
+  public:
+    void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.crab"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
+
+  private:
+    enum class EState
+    {
+        Search,
+        Strafe,
+        Dash,
+        Recovery,
+    };
+
+    void BeginStrafe(CMobBase* mob, const CEntity* target);
+    void BeginDash(CMobBase* mob, const CEntity* target);
+    float OrbitDistance(const CEntity* target) const;
+    bool TryAcquireCrabTarget(CMobBase* mob, float search_range);
+
+    EState m_state = EState::Search;
+    float m_state_timer = 0.f;
+    float m_dash_cooldown = 0.f;
+    float m_orbit_angle = 0.f;
+    float m_orbit_direction = 1.f;
+    float m_orbit_distance = 0.f;
+    float m_strafe_duration = 0.f;
+    float m_orbit_speed_scale = 1.f;
+    float m_orbit_radius_scale = 1.f;
+    float m_orbit_wobble_phase = 0.f;
+    float m_orbit_wobble_rate = 1.f;
+    float m_dash_remaining = 0.f;
+    florrbt::Vector2f m_dash_direction = { 1.f, 0.f };
+    bool m_low_health_dash_used = false;
+};
+
 class CHornetRangedController : public CMeleeController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
     std::string_view SnapshotKey() const override { return "controller.hornet_ranged"; }
+};
+
+class CJellyfishController final : public CHornetRangedController
+{
+  public:
+    void OnTick(CMobBase* mob, float dt) override;
+    std::string_view SnapshotKey() const override { return "controller.jellyfish"; }
+    void CaptureSnapshot(CSnapshotWriter& writer) const override;
+    bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
+
+  private:
+    float m_lightning_timer = 0.f;
 };
 
 class CMechaFlowerRangedController final : public CMeleeController

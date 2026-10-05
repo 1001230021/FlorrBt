@@ -1733,11 +1733,13 @@ void INetworkModule::SendCodexDelta(CPlayer& player, uint8_t mob_type, uint8_t r
     QueueMessage(player, msg);
 }
 
-void INetworkModule::BroadcastLightningChain(CGameWorld& world, const std::vector<florrbt::Vector2f>& points)
+void INetworkModule::BroadcastLightningChain(CGameWorld& world, const std::vector<florrbt::Vector2f>& points,
+                                             std::uint8_t style)
 {
     ServerMessage msg;
     msg.type = ServerMessage::Type::LightningChain;
     msg.lightning_points = points;
+    msg.lightning_style = style;
     for (const auto& player : m_players)
     {
         if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;

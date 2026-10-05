@@ -26,6 +26,62 @@ export function readSvgSource(src) {
   return sourceTexts.get(key);
 }
 
+// Resolve the first move point and final endpoint without mounting the SVG in
+// the document. This accepts compact paths such as "M55 32.5q0-2.5-6-19",
+// which are common in exported creature artwork.
+export function parseSvgPathEndpoints(pathData, fallback = { x: 0, y: 0 }) {
+  const tokens = String(pathData || "").match(/[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?|[a-z]/gi) || [];
+  const parameterCounts = { M: 2, L: 2, H: 1, V: 1, C: 6, S: 4, Q: 4, T: 2, A: 7 };
+  let index = 0, command = "", x = 0, y = 0;
+  let start = null;
+  const isCommand = token => /^[a-z]$/i.test(token);
+
+  while (index < tokens.length) {
+    if (isCommand(tokens[index])) command = tokens[index++];
+    if (!command) break;
+
+    const upper = command.toUpperCase();
+    if (upper === "Z") {
+      if (start) ({ x, y } = start);
+      command = "";
+      continue;
+    }
+
+    const count = parameterCounts[upper];
+    if (!count) {
+      command = "";
+      continue;
+    }
+    if (index + count > tokens.length || tokens.slice(index, index + count).some(isCommand)) {
+      command = "";
+      continue;
+    }
+
+    const values = tokens.slice(index, index + count).map(Number);
+    index += count;
+    const relative = command === command.toLowerCase();
+    const point = (px, py) => ({ x: relative ? x + px : px, y: relative ? y + py : py });
+
+    if (upper === "M" || upper === "L" || upper === "T") ({ x, y } = point(values[0], values[1]));
+    else if (upper === "H") x = relative ? x + values[0] : values[0];
+    else if (upper === "V") y = relative ? y + values[0] : values[0];
+    else if (upper === "C") ({ x, y } = point(values[4], values[5]));
+    else if (upper === "S" || upper === "Q") ({ x, y } = point(values[2], values[3]));
+    else if (upper === "A") ({ x, y } = point(values[5], values[6]));
+
+    if (!start) start = { x, y };
+    // Additional coordinate pairs after a move are implicit line commands.
+    if (upper === "M") command = relative ? "l" : "L";
+  }
+
+  const safeFallback = {
+    x: Number.isFinite(fallback?.x) ? fallback.x : 0,
+    y: Number.isFinite(fallback?.y) ? fallback.y : 0,
+  };
+  const end = Number.isFinite(x) && Number.isFinite(y) && start ? { x, y } : { ...safeFallback };
+  return { start: start || { ...safeFallback }, end };
+}
+
 function createVisualImage(resolveSource) {
   const image = new Image();
   image.decoding = "async";

@@ -47,8 +47,8 @@ registerClientConfig("petal_label_max_font_px", {
 
 registerClientConfig("petal_label_max_width_px", {
   prop: "petalLabelMaxWidthPx",
-  // Hard cap on the rendered petal-card name width: when a localized name
-  // would exceed this, the font shrinks until the text fits.
+  // Name width at a standard 56px card. Font and width limit scale together
+  // with primary/reserve/flight cards; longer localized names shrink to fit.
   defaultValue: 45,
   min: 16,
   max: 300,
@@ -140,14 +140,6 @@ registerClientConfig("hornet_sprite_scale", {
   aliases: ["hornet_scale"],
 });
 
-registerClientConfig("dummy_sprite_scale", {
-  prop: "dummySpriteScale",
-  defaultValue: 1.0,
-  min: 0.5,
-  max: 4,
-  aliases: ["dummy_scale"],
-});
-
 registerClientConfig("titan_sprite_scale", {
   prop: "titanSpriteScale",
   defaultValue: 1.0,
@@ -228,7 +220,9 @@ const minimapMaterialColors = Object.freeze({
 export const clientRuntimeConfig = Object.freeze({
   serverTickInterval: 0.05,
   expectedSnapshotInterval: 0.05,
-  packetInterval: 1 / 30,
+  // Match the 20 Hz server simulation. Hold state changes still send
+  // immediately; steady keyboard holds no longer enqueue 30 Hz duplicates.
+  packetInterval: 1 / 20,
   deathFadeDuration: 0.25,
   deathScaleBoost: 0.72,
   // Unified petal-card vanish (rotate 2π + fade + shrink to 0), used by the
@@ -334,10 +328,10 @@ export const clientRuntimeConfig = Object.freeze({
   bossBarTitleOutlinePx: 7,
   bossBarRarityOutlinePx: 6,
   bossBarRadiusPx: 8,
-  loginMapDefaultName: "garden.tmj",
-  // Center of Garden's `new_players` checkpoint.
-  loginMapDefaultX: 51204.928,
-  loginMapDefaultY: 65008,
+  loginMapDefaultName: "waiting_room.tmj",
+  // Center of the lightweight waiting-room login backdrop.
+  loginMapDefaultX: 2048,
+  loginMapDefaultY: 2048,
   // WorldUnits(256) * the Super Antennae horizon multiplier (4).
   loginMapDefaultHorizon: 2048,
   titanForgeRange: 2048,

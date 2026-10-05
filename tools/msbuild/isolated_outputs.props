@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- Import after Microsoft.Cpp.props and user property sheets, once OutDir
+       is known. An OutDir-only verification build must not update the normal
+       VS Release object's or linker's tracking logs. Project/config names
+       also separate referenced projects and configurations sharing OutDir. -->
+  <PropertyGroup>
+    <FlorrBtOutputRoot>$([MSBuild]::EnsureTrailingSlash('$(OutDir)'))</FlorrBtOutputRoot>
+    <IntDir>$(FlorrBtOutputRoot)obj\$(MSBuildProjectName)\$(Platform)\$(Configuration)\</IntDir>
+    <TLogLocation>$(IntDir)$(MSBuildProjectName).tlog\</TLogLocation>
+  </PropertyGroup>
+</Project>

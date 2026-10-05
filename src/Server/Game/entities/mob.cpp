@@ -1,5 +1,6 @@
 #include "mob.h"
 #include "../../../Shared/game_config.h"
+#include "../../../Shared/circle_contact.h"
 #include "../controllers/melee_controller.h"
 #include "../gamecontext.h"
 #include "../gameworld.h"
@@ -11,6 +12,19 @@
 #include <cmath>
 #include <cstddef>
 #include <unordered_set>
+
+CPlayer* CDamageData::ResolvePlayer(const CGameContext* context) const
+{
+    if (!context || m_account_name.empty()) return nullptr;
+    for (const auto& player : context->Players())
+        if (player && player->IsAuthenticated() && player->GetAccountName() == m_account_name) return player.get();
+    return nullptr;
+}
+
+void CMobBase::ClearTeamOverrideStates()
+{
+    for (auto* state : FindStates<CCorruptionState>()) RemoveState(state);
+}
 
 CMobBase::~CMobBase()
 {
@@ -138,7 +152,7 @@ bool CMobBase::TickDropPickup(CPlayer* player)
     bool picked_any = false;
     world->GetSpatialGrid().ForEachInRange(Pos(), stats->max_absorb_range, [&](CEntity* candidate) {
         auto* drop = dynamic_cast<CDrop*>(candidate);
-        if (!drop || !drop->CanBePickedUpBy(player->GetId())) return;
+        if (!drop || !drop->CanBePickedUpBy(*player)) return;
         picked_any = drop->PickUpTo(*player) || picked_any;
     });
 
@@ -157,14 +171,14 @@ void CMobBase::ApplyDamageDirect(float dmg, CEntity* attacker, EDamageType damag
 
     CGameContext* context = GameContext();
     CPlayer* player = context && !IsUndeadDamageSource(attacker) ? context->FindPlayerFromEntity(attacker) : nullptr;
-    if (player)
+    if (player && player->IsAuthenticated() && !player->GetAccountName().empty())
     {
         auto it = std::find_if(m_damage_data.begin(), m_damage_data.end(),
-                               [player](const CDamageData& data) { return data.m_player == player; });
+                               [player](const CDamageData& data) { return data.m_account_name == player->GetAccountName(); });
         if (it == m_damage_data.end())
         {
             CDamageData data;
-            data.m_player = player;
+            data.m_account_name = player->GetAccountName();
             data.m_total_dmg = dmg;
             data.ResetTimer();
             m_damage_data.push_back(data);
@@ -197,20 +211,12 @@ void CMobBase::MoveTowards(const florrbt::Vector2f& target_pos, float dt, float 
     if (!stats) return;
     const florrbt::Vector2f effective_target_pos = ApplyMovementTargetStates(target_pos);
 
-    float speed_multiplier = GetPincerSpeedMultiplier(this) * game_config::mob_velocity_multiplier;
-    if (HasState<CDiggingState>()) speed_multiplier *= game_config::mob_digging_speed_multiplier;
+    float speed_multiplier = GetMobMovementSpeedMultiplier(this);
     float max_velocity = stats->max_velocity * speed_multiplier;
-    float acceleration = stats->acceleration * speed_multiplier;
-
-    float current_speed_sq = LengthSq(m_vel);
-    float max_speed_sq = max_velocity * max_velocity;
-    if (current_speed_sq > max_speed_sq && game_config::mob_slow_to_max_velocity_time > 0.f)
-    {
-        float current_speed = std::sqrt(current_speed_sq);
-        float slow_amount = (current_speed - max_velocity) * dt / game_config::mob_slow_to_max_velocity_time;
-        float next_speed = std::max(max_velocity, current_speed - slow_amount);
-        m_vel *= next_speed / current_speed;
-    }
+    // Movement modifiers change the requested maximum speed only. The mob's
+    // own acceleration remains its base stat, so a slow does not also make it
+    // turn or brake sluggishly.
+    const float acceleration = stats->acceleration;
 
     florrbt::Vector2f delta = effective_target_pos - Pos();
     float len = Length(delta);
@@ -218,7 +224,7 @@ void CMobBase::MoveTowards(const florrbt::Vector2f& target_pos, float dt, float 
     const float stop_distance = analog && target_radius < 0.f ? 0.f : Radius() + std::max(0.f, target_radius);
     if (len <= stop_distance)
     {
-        m_vel *= game_config::mob_stop_damping;
+        m_vel = florrbt::StepVelocityTowards(m_vel, {}, acceleration, dt);
         if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = { 0.f, 0.f };
         return;
     }
@@ -246,10 +252,9 @@ void CMobBase::MoveTowards(const florrbt::Vector2f& target_pos, float dt, float 
         }
 
         florrbt::Vector2f forward(std::cos(FacingAngle()), std::sin(FacingAngle()));
-        float speed = Length(m_vel);
-        if (analog) speed += std::clamp(max_velocity - speed, -acceleration * dt, acceleration * dt);
-        else speed = std::min(max_velocity, speed + acceleration * dt);
-        m_vel = forward * speed;
+        // Facing limits the desired drive direction, not the actual velocity.
+        // Snapping m_vel to forward erased sideways/backwards crowd impulses.
+        m_vel = florrbt::StepVelocityTowards(m_vel, forward * max_velocity, acceleration, dt);
         return;
     }
 
@@ -259,18 +264,9 @@ void CMobBase::MoveTowards(const florrbt::Vector2f& target_pos, float dt, float 
         HasFacing() = true;
     }
 
-    florrbt::Vector2f desired_vel = delta / len * max_velocity;
-    florrbt::Vector2f diff = desired_vel - m_vel;
-    float diff_len = Length(diff);
-    float max_accel = acceleration * dt;
-
-    if (diff_len <= max_accel)
-    {
-        m_vel = desired_vel;
-    } else
-    {
-        m_vel += diff / diff_len * max_accel;
-    }
+    const florrbt::Vector2f forward(std::cos(FacingAngle()), std::sin(FacingAngle()));
+    florrbt::Vector2f desired_vel = forward * max_velocity;
+    m_vel = florrbt::StepVelocityTowards(m_vel, desired_vel, acceleration, dt);
 }
 
 bool CMobBase::RemoveState(CState* state)

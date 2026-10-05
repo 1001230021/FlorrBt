@@ -6,7 +6,9 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 export const NETWORK_PETAL_TYPE_OFFSET = 100;
-export const NETWORK_DROP_TYPE_OFFSET = 180;
+export const NETWORK_DROP_ENTITY_TYPE = 91;
+// Kept as an alias for modules that only need a named drop discriminator.
+export const NETWORK_DROP_TYPE_OFFSET = NETWORK_DROP_ENTITY_TYPE;
 export const NETWORK_TRAP_PROJECTILE_ENTITY_TYPE = 93;
 export const NETWORK_BLOOD_SACRIFICE_ENTITY_TYPE = 94;
 export const NETWORK_DANDELION_MISSILE_ENTITY_TYPE = 95;
@@ -14,6 +16,7 @@ export const NETWORK_POLLEN_ENTITY_TYPE = 96;
 export const NETWORK_SPIDER_WEB_ENTITY_TYPE = 97;
 export const NETWORK_MISSILE_ENTITY_TYPE = 98;
 export const NETWORK_PORTAL_ENTITY_TYPE = 99;
+export const NETWORK_CHAIN_ENTITY_TYPE = 92;
 export const MAX_CHAT_MESSAGE_SIZE = 180;
 export const NET_COORD_SCALE = 64;
 export const NET_RELATIVE_COORD_SCALE = 1;
@@ -149,18 +152,19 @@ export function rarityName(rarity) {
 export function isPetalEntity(entityType) {
   return (
     entityType >= NETWORK_PETAL_TYPE_OFFSET &&
-    entityType < NETWORK_DROP_TYPE_OFFSET
+    entityType < NETWORK_PETAL_TYPE_OFFSET + PETAL_NAMES.length
   );
 }
 
 export function isDropEntity(entityType) {
-  return entityType >= NETWORK_DROP_TYPE_OFFSET;
+  return entityType === NETWORK_DROP_ENTITY_TYPE;
 }
 
-export function petalTypeFromEntity(entityType) {
-  return entityType >= NETWORK_DROP_TYPE_OFFSET
-    ? entityType - NETWORK_DROP_TYPE_OFFSET
-    : entityType - NETWORK_PETAL_TYPE_OFFSET;
+export function petalTypeFromEntity(entityOrType) {
+  const snap = typeof entityOrType === "object" ? entityOrType : null;
+  const entityType = snap ? snap.entityType : entityOrType;
+  if (isDropEntity(entityType)) return Math.max(0, Number(snap?.dropPetalType ?? snap?.team) || 0);
+  return entityType - NETWORK_PETAL_TYPE_OFFSET;
 }
 
 export function clamp(value, low, high) {
@@ -283,6 +287,7 @@ function parseEntity(reader, origin = null) {
     entity.entityId = reader.u16();
     entity.entityType = reader.u8();
     entity.team = reader.u8();
+    entity.dropPetalType = isDropEntity(entity.entityType) ? entity.team : 0;
     entity.pos = {
       x: origin.x + reader.i16() / NET_RELATIVE_COORD_SCALE,
       y: origin.y + reader.i16() / NET_RELATIVE_COORD_SCALE,
@@ -293,6 +298,8 @@ function parseEntity(reader, origin = null) {
     entity.flags = reader.u16();
     entity.angle = reader.i16() / NET_ANGLE_SCALE;
     entity.rarity = reader.u8();
+    entity.mana = 0;
+    entity.maxMana = 0;
     entity.name = "";
     entity.primarySlots = [];
     entity.states = [];
@@ -318,6 +325,7 @@ function parseEntity(reader, origin = null) {
   entity.entityId = reader.u16();
   entity.entityType = reader.u8();
   entity.team = reader.u8();
+  entity.dropPetalType = isDropEntity(entity.entityType) ? entity.team : 0;
   entity.pos = {
     x: reader.i32() / NET_COORD_SCALE,
     y: reader.i32() / NET_COORD_SCALE,
@@ -328,6 +336,13 @@ function parseEntity(reader, origin = null) {
   entity.flags = reader.u16();
   entity.angle = reader.i16() / NET_ANGLE_SCALE;
   entity.rarity = reader.u8();
+  if ((entity.flags & (1 << 3)) !== 0) {
+    entity.mana = reader.f32();
+    entity.maxMana = reader.f32();
+  } else {
+    entity.mana = 0;
+    entity.maxMana = 0;
+  }
   const nameLength = reader.u8();
   entity.name = reader.string(nameLength);
   const primarySlotCount = reader.u8();
@@ -608,6 +623,7 @@ export function parseServerMessage(payload) {
           y: reader.i32() / NET_COORD_SCALE,
         });
       }
+      msg.lightningStyle = reader.has(1) ? reader.u8() : 0;
       return msg;
     }
 

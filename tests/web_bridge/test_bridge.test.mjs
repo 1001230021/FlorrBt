@@ -309,8 +309,9 @@ test("live bridge survives malformed URL and oversized frames", async () => {
 test("asset ETags revalidate content without caching HTML or account data", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "florrbt-assets-"));
   const dataDir = path.join(dir, "data");
-  fs.mkdirSync(path.join(dir, "assets")); fs.mkdirSync(dataDir);
+  fs.mkdirSync(path.join(dir, "assets")); fs.mkdirSync(path.join(dataDir, "maps"), { recursive: true });
   fs.writeFileSync(path.join(dir, "assets", "unit.svg"), "<svg/>");
+  fs.writeFileSync(path.join(dataDir, "maps", "unit.tmj"), "{}");
   fs.writeFileSync(path.join(dir, "index.html"), "page");
   fs.writeFileSync(path.join(dataDir, "accounts.json"), "{}");
   const sender = createFileSender(dir, dataDir);
@@ -327,6 +328,10 @@ test("asset ETags revalidate content without caching HTML or account data", asyn
     fs.writeFileSync(path.join(dir, "assets", "unit.svg"), "<svg><path/></svg>");
     const changed = await request("/assets/unit.svg", { "if-none-match": first.headers.ETag });
     assert.equal(changed.code, 200); assert.notEqual(changed.headers.ETag, first.headers.ETag);
+    const map = await request("/data/maps/unit.tmj");
+    assert.equal(map.code, 200); assert.ok(map.headers.ETag);
+    const cachedMap = await request("/data/maps/unit.tmj", { "if-none-match": map.headers.ETag });
+    assert.equal(cachedMap.code, 304); assert.equal(cachedMap.body, undefined);
     for (const url of ["/", "/data/accounts.json"]) {
       const reply = await request(url);
       assert.equal(reply.headers["Cache-Control"], "no-store, max-age=0");

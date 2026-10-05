@@ -82,6 +82,15 @@ enum class EPetalType : int
     // EouPheromone). Ids persist in accounts and hot-reload snapshots, so the
     // holes below are permanent - never allocate natives inside them.
     Magnet = 71,
+    Linker,
+    Orb,
+    MagicLeaf,
+    MagicStinger,
+    MagicMissile,
+    MagicEye,
+    MagicBubble,
+    MagicLightning,
+    MagicCactus,
 };
 
 using PetalType = EPetalType;
@@ -90,7 +99,7 @@ using PetalType = EPetalType;
 // their pinned wire id, so this is a pure value cast).
 constexpr EPetalType ToPetalType(EModPetalType type) { return static_cast<EPetalType>(type); }
 
-inline constexpr std::array<std::string_view, 72> petal_type_names = {
+inline constexpr std::array<std::string_view, 81> petal_type_names = {
     "None",           "Air",         "AntEgg",        "Antennae", "Basic",     "BeetleEgg", "Bone",       "Bubble",
     "Carrot",         "Coin",        "Compass",       "Cogwheel", "Disc",      "Dust",      "GoldenLeaf", "Iris",
     "Lentil",         "Moon",        "Nullification", "Pincer",   "Relic",     "Rose",      "YinYang",    "Missile",
@@ -99,10 +108,12 @@ inline constexpr std::array<std::string_view, 72> petal_type_names = {
     "Leaf",           "Rock",        "Web",           "Cactus",   "Pollen",    "Corn",      "Rice",       "Basil",
     "Soil",           "Honey",       "Wax",           "ThirdEye", "Dandelion", "Orange",    "Shovel",     "Yucca",
     "WhiteFungus",    "BlackFungus", "Broccoli",      "Douli",     "Trapper",   "Amulet", "Plank", "Tomato",
-    "HallucinogenicMushroom", "Lightning", "Battery", "Bulb", "None", "None", "None", "Magnet",
+    "HallucinogenicMushroom", "Lightning", "Battery", "Bulb", "None", "None", "None", "Magnet", "Linker",
+    "Orb", "MagicLeaf", "MagicStinger", "MagicMissile", "MagicEye", "MagicBubble", "MagicLightning",
+    "MagicCactus",
 };
 
-static_assert(static_cast<size_t>(EPetalType::Magnet) + 1 == petal_type_names.size(),
+static_assert(static_cast<size_t>(EPetalType::MagicCactus) + 1 == petal_type_names.size(),
               "petal type names must stay aligned with EPetalType");
 // The mod petal holes must stay holes on the native side and must be filled
 // on the mod side; native Magnet (71) must never be shadowed by a mod entry.
@@ -116,15 +127,10 @@ static_assert(!GetModPetalTypeName(static_cast<int>(EModPetalType::Brush)).empty
               "mod petal ids must be declared in the mod_petal_type.h manifest");
 static_assert(GetModPetalTypeName(static_cast<int>(EPetalType::Magnet)).empty(),
               "native Magnet id must not appear in the mod petal manifest");
-// Wire budget is validated against the full id capacity, not just the natives.
-static_assert(server_petal_entity_type_offset + kPetalIdCapacity <= server_drop_entity_type_offset,
-              "petal network IDs overlap the drop network ID range");
-static_assert(server_drop_entity_type_offset + petal_type_names.size() - 1 <= 255,
-              "native drop network IDs no longer fit in uint8_t");
-// Ground drops of mod petals ride the same u8 drop range: every currently
-// assigned mod petal id must stay droppable-safe. Ids 76..79 are slot-only.
-static_assert(server_drop_entity_type_offset + static_cast<int>(EModPetalType::EouPheromone) <= 255,
-              "assigned mod petal ids exceed the u8 drop range");
+// Live petals retain their compact `100 + id` network encoding. Drops no
+// longer share that byte range, so only the live-petal limit remains.
+static_assert(server_petal_entity_type_offset + kPetalIdCapacity - 1 <= 255,
+              "petal network IDs no longer fit in uint8_t");
 
 inline std::string_view GetPetalTypeName(EPetalType type)
 {
@@ -310,6 +316,24 @@ inline bool MatchPetalTypeAlias(std::string_view text, EPetalType type)
         return text == "battery" || text == "btr";
     case EPetalType::Bulb:
         return text == "bulb";
+    case EPetalType::Linker:
+        return text == "linker" || text == "lnk";
+    case EPetalType::Orb:
+        return text == "orb" || text == "magic_orb" || text == "magicorb";
+    case EPetalType::MagicLeaf:
+        return text == "magic_leaf" || text == "magicleaf" || text == "mleaf";
+    case EPetalType::MagicStinger:
+        return text == "magic_stinger" || text == "magicstinger" || text == "mstinger";
+    case EPetalType::MagicMissile:
+        return text == "magic_missile" || text == "magicmissile" || text == "mmissile";
+    case EPetalType::MagicEye:
+        return text == "magic_eye" || text == "magiceye" || text == "meye";
+    case EPetalType::MagicBubble:
+        return text == "magic_bubble" || text == "magicbubble" || text == "mbubble";
+    case EPetalType::MagicLightning:
+        return text == "magic_lightning" || text == "magiclightning" || text == "mlightning";
+    case EPetalType::MagicCactus:
+        return text == "magic_cactus" || text == "magiccactus" || text == "mcactus";
     default:
         return false;
     }

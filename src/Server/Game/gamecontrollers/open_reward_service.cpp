@@ -1,11 +1,14 @@
 #include "open_reward_service.h"
+#include "../../../Shared/drop_stack.h"
 #include "../../../Engine/logger.h"
 #include "../../../Shared/drop_rate.h"
 #include "../../../Shared/game_config.h"
 #include "../../Module/network_module.h"
 #include "../controllers/melee_controller.h"
 #include "../entities/drop.h"
+#include "../entities/flower.h"
 #include "../entities/mob.h"
+#include "../entities/petals/petal.h"
 #include "../gamecontext.h"
 #include "../gameworld.h"
 #include "../player.h"
@@ -77,9 +80,9 @@ std::string DamageSummary(const CMobBase& mob)
     {
         if (i > 0) output << ", ";
         const CDamageData& record = *records[i];
-        const bool active = IsActivePlayer(context, record.m_player);
-        output << (active ? record.m_player->GetName() : "<stale>") << "#"
-               << (active ? record.m_player->GetId() : 0) << "=" << record.m_total_dmg;
+        const CPlayer* player = record.ResolvePlayer(context);
+        output << (player ? player->GetName() : "<offline>") << "#"
+               << (player ? player->GetId() : 0) << "=" << record.m_total_dmg;
     }
     if (records.size() > 5) output << ", ...";
     std::string result = output.str();
@@ -112,6 +115,61 @@ std::string DropSummary(const std::vector<SDropRate>& drops)
     return result.empty() ? "<none>" : result;
 }
 
+EPetalType MagicVariantForDrop(EPetalType type)
+{
+    switch (type)
+    {
+    case EPetalType::Rose:
+        return EPetalType::Orb;
+    case EPetalType::Leaf:
+    case EPetalType::GoldenLeaf:
+        return EPetalType::MagicLeaf;
+    case EPetalType::Bubble:
+        return EPetalType::MagicBubble;
+    case EPetalType::ThirdEye:
+        return EPetalType::MagicEye;
+    case EPetalType::Missile:
+        return EPetalType::MagicMissile;
+    case EPetalType::Lightning:
+        return EPetalType::MagicLightning;
+    case EPetalType::Cactus:
+        return EPetalType::MagicCactus;
+    default:
+        return EPetalType::None;
+    }
+}
+
+ERarity HighestEquippedOrbRarity(const CPlayer& player)
+{
+    const auto* flower = dynamic_cast<const CFlower*>(player.GetEntity());
+    if (!flower) return ERarity::Null;
+
+    ERarity highest = ERarity::Null;
+    for (const CPetalSlot& slot : flower->GetSlots())
+    {
+        if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
+        if (slot.m_p_proto->m_type != EPetalType::Orb) continue;
+        if (GetRaritySortRank(slot.m_stored_rarity) > GetRaritySortRank(highest))
+            highest = slot.m_stored_rarity;
+    }
+    return highest;
+}
+
+void ConvertDropsToMagicVariants(std::vector<SDropRate>& drops, const CPlayer& player)
+{
+    const ERarity orb_rarity = HighestEquippedOrbRarity(player);
+    if (orb_rarity == ERarity::Null) return;
+
+    const float rarity_cap = GetRaritySortRank(orb_rarity);
+    for (SDropRate& drop : drops)
+    {
+        const EPetalType magic_type = MagicVariantForDrop(drop.type);
+        if (magic_type == EPetalType::None) continue;
+        drop.type = magic_type;
+        if (GetRaritySortRank(drop.rarity) > rarity_cap) drop.rarity = orb_rarity;
+    }
+}
+
 void LogSuperLootIssue(const CMobBase& mob, const std::string& reason)
 {
     const SMobStats* stats = mob.GetFinalStats();
@@ -128,8 +186,9 @@ std::vector<CPlayer*> FindDefeatCreditPlayers(COpenController& controller, CGame
     std::unordered_map<CPlayer*, float> damage_by_player;
     for (const CDamageData& damage_data : mob.GetDamageData())
     {
-        if (!IsActivePlayer(context, damage_data.m_player) || damage_data.m_total_dmg <= 0.f) continue;
-        damage_by_player[damage_data.m_player] += damage_data.m_total_dmg;
+        CPlayer* contributor = damage_data.ResolvePlayer(context);
+        if (!contributor || damage_data.m_total_dmg <= 0.f) continue;
+        damage_by_player[contributor] += damage_data.m_total_dmg;
     }
     if (damage_by_player.empty()) return {};
 
@@ -201,10 +260,11 @@ std::vector<lootable_player> FindLootablePlayers(COpenController& controller, CG
     std::vector<CPlayer*> contributors;
     for (const CDamageData& damage_data : mob.GetDamageData())
     {
-        if (!IsActivePlayer(context, damage_data.m_player) || damage_data.m_total_dmg <= 0.f) continue;
+        CPlayer* contributor = damage_data.ResolvePlayer(context);
+        if (!contributor || damage_data.m_total_dmg <= 0.f) continue;
         total_damage += damage_data.m_total_dmg;
-        if (!damage_by_player.contains(damage_data.m_player)) contributors.push_back(damage_data.m_player);
-        damage_by_player[damage_data.m_player] += damage_data.m_total_dmg;
+        if (!damage_by_player.contains(contributor)) contributors.push_back(contributor);
+        damage_by_player[contributor] += damage_data.m_total_dmg;
     }
 
     for (CPlayer* contributor : contributors)
@@ -338,6 +398,10 @@ void COpenRewardService::OnMobDefeated(COpenController& controller, CGameWorld& 
 
         std::vector<SDropRate> drops =
             unique_mob ? RollUniqueSuperRepeatDrops(mob.GetMobType()) : RollDrops(mob.GetMobType(), mob.GetRarity());
+        // Magic drops are personalized after this player's roll and before
+        // stacking/materialization. Nearby players therefore cannot lend an
+        // Orb to the recipient, and the equipped Orb is the rarity ceiling.
+        ConvertDropsToMagicVariants(drops, *lootable.player);
         if (drops.empty())
         {
             if (log_loot_issues)
@@ -364,13 +428,17 @@ void COpenRewardService::OnMobDefeated(COpenController& controller, CGameWorld& 
                 network->SendCodexDelta(*lootable.player, mob_type, mob_rarity, count_it->second);
         }
 
-        for (size_t i = 0; i < drops.size(); ++i)
+        // All repeat rolls are now complete. Stack only Unique-mob rewards,
+        // separately for each eligible player, before materializing any drop.
+        const auto stacks = florrbt::FinalizeDropStacks(drops, unique_mob);
+        for (size_t i = 0; i < stacks.size(); ++i)
         {
-            const SDropRate& drop = drops[i];
+            const auto& drop = stacks[i];
             florrbt::Vector2f velocity = mob.m_vel;
             if (!std::isfinite(velocity.x) || !std::isfinite(velocity.y)) velocity = { 0.f, 0.f };
-            auto entity = std::make_unique<CDrop>(&world, mob.Pos() + DropSpreadOffset(i, drops.size()), drop.type,
-                                                  drop.rarity, lootable.player->GetId());
+            auto entity = std::make_unique<CDrop>(&world, mob.Pos() + DropSpreadOffset(i, stacks.size()), drop.type,
+                                                  drop.rarity, lootable.player->GetId(),
+                                                  game_config::default_drop_lifetime, drop.count);
             // Inertia: the drop glides from the dead mob's position (holding
             // its velocity, decaying over 0.2s) to the final drop spot.
             entity->BeginInertiaDrop(mob.Pos(), velocity, game_config::default_drop_inertia_delay);

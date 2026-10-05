@@ -53,6 +53,11 @@ class CMysqlConnection
 
     bool Open(std::string* error)
     {
+        if (m_connection && m_reusable && mysql_ping(m_connection) == 0) return true;
+        if (m_connection) mysql_close(m_connection);
+        m_connection = nullptr;
+        m_schema_ready = false;
+        m_reusable = false;
         if (!IsSafeDatabaseIdentifier(game_config::mysql_database))
         {
             if (error) *error = "mysql_database must contain only letters, digits, '_' or '$'";
@@ -122,6 +127,7 @@ class CMysqlConnection
             if (error) *error = std::string("Failed to set utf8mb4 charset: ") + mysql_error(m_connection);
             return false;
         }
+        m_reusable = true;
         return true;
     }
 
@@ -131,9 +137,11 @@ class CMysqlConnection
     {
         if (mysql_real_query(m_connection, sql.c_str(), static_cast<unsigned long>(sql.size())) != 0)
         {
+            m_reusable = false;
             if (error)
             {
-                std::string head = sql.substr(0, 96);
+                // Statements may contain password hashes/account contents.
+                std::string head = sql.substr(0, sql.find(' '));
                 std::replace(head.begin(), head.end(), '\n', ' ');
                 *error = "MySQL query failed (" + head + (sql.size() > 96 ? "..." : "") +
                          "): " + mysql_error(m_connection);
@@ -157,8 +165,12 @@ class CMysqlConnection
     std::string Quoted(const std::string& value) const { return "'" + Escape(value) + "'"; }
 
     MYSQL* Handle() { return m_connection; }
-
+    bool SchemaReady() const { return m_schema_ready; }
+    void MarkSchemaReady() { m_schema_ready = true; }
+  private:
     MYSQL* m_connection = nullptr;
+    bool m_schema_ready = false;
+    bool m_reusable = false;
 };
 
 // RAII result set.
@@ -221,6 +233,7 @@ long long FieldInt(MYSQL_ROW row, int index, long long fallback = 0)
 
 bool EnsureSchema(CMysqlConnection& connection, std::string* error)
 {
+    if (connection.SchemaReady()) return true;
     // utf8mb4_bin keeps account-name comparisons byte-exact, matching the
     // in-memory store's case-sensitive lookups.
     static const char* kStatements[] = {
@@ -283,6 +296,7 @@ bool EnsureSchema(CMysqlConnection& connection, std::string* error)
                    std::to_string(kSchemaVersion) + "') ON DUPLICATE KEY UPDATE meta_key = meta_key",
                error))
         return false;
+    connection.MarkSchemaReady();
     return true;
 }
 
@@ -303,7 +317,8 @@ void AppendItemRows(std::ostringstream& values, CMysqlConnection& connection, co
     }
 }
 
-bool WriteAccountRows(CMysqlConnection& connection, const SPlayerAccount& account, std::string* error)
+bool WriteAccountRows(CMysqlConnection& connection, const SPlayerAccount& account, std::string* error,
+                      bool items_changed, bool talents_changed, bool codex_changed)
 {
     const std::string quoted_name = connection.Quoted(account.name);
 
@@ -319,16 +334,19 @@ bool WriteAccountRows(CMysqlConnection& connection, const SPlayerAccount& accoun
            << " exp = VALUES(exp), talent_points = VALUES(talent_points), extra_json = VALUES(extra_json)";
     if (!Query(connection, upsert.str(), error)) return false;
 
-    if (!Query(connection, "DELETE FROM account_items WHERE account_name = " + quoted_name, error)) return false;
-    if (!Query(connection, "DELETE FROM account_talents WHERE account_name = " + quoted_name, error)) return false;
-    if (!Query(connection, "DELETE FROM account_codex WHERE account_name = " + quoted_name, error)) return false;
+    if (items_changed && !Query(connection, "DELETE FROM account_items WHERE account_name = " + quoted_name, error)) return false;
+    if (talents_changed && !Query(connection, "DELETE FROM account_talents WHERE account_name = " + quoted_name, error)) return false;
+    if (codex_changed && !Query(connection, "DELETE FROM account_codex WHERE account_name = " + quoted_name, error)) return false;
 
     std::ostringstream item_values;
     bool first_item = true;
-    AppendItemRows(item_values, connection, quoted_name, kContainerInventory, account.inventory, true, first_item);
-    AppendItemRows(item_values, connection, quoted_name, kContainerSlots, account.slots, false, first_item);
-    AppendItemRows(item_values, connection, quoted_name, kContainerSecondarySlots, account.secondary_slots, false,
-                   first_item);
+    if (items_changed)
+    {
+        AppendItemRows(item_values, connection, quoted_name, kContainerInventory, account.inventory, true, first_item);
+        AppendItemRows(item_values, connection, quoted_name, kContainerSlots, account.slots, false, first_item);
+        AppendItemRows(item_values, connection, quoted_name, kContainerSecondarySlots, account.secondary_slots, false,
+                       first_item);
+    }
     if (!first_item)
     {
         if (!Query(connection,
@@ -339,7 +357,7 @@ bool WriteAccountRows(CMysqlConnection& connection, const SPlayerAccount& accoun
             return false;
     }
 
-    if (!account.talents.empty())
+    if (talents_changed && !account.talents.empty())
     {
         std::ostringstream talent_values;
         for (size_t index = 0; index < account.talents.size(); ++index)
@@ -356,7 +374,7 @@ bool WriteAccountRows(CMysqlConnection& connection, const SPlayerAccount& accoun
             return false;
     }
 
-    if (!account.codex.empty())
+    if (codex_changed && !account.codex.empty())
     {
         std::ostringstream codex_values;
         bool first_codex = true;
@@ -507,38 +525,48 @@ bool LoadAll(std::vector<SPlayerAccount>& accounts, std::uint64_t& generation, s
     return true;
 }
 
-bool PublishSnapshot(const std::vector<SPlayerAccount>& accounts, std::uint64_t generation, std::string* error)
+bool PublishSnapshot(const SAccountSnapshot& accounts, std::uint64_t generation, std::string* error)
 {
     if (error) error->clear();
 
     // Work out the change set against the last published state.
-    std::vector<const SPlayerAccount*> changed;
+    struct Change { const SPlayerAccount* account; bool items; bool talents; bool codex; };
+    std::vector<Change> changed;
     std::vector<std::string> removed;
     {
         std::lock_guard<std::mutex> lock(g_publish_state_mutex);
         std::set<std::string> current_names;
-        for (const SPlayerAccount& account : accounts)
+        for (const auto& captured : accounts)
         {
+            if (!captured) continue;
+            const SPlayerAccount& account = *captured;
             if (IsSandboxAccount(account.name) || account.name.empty()) continue;
             current_names.insert(account.name);
             const auto it = g_published_accounts.find(account.name);
             if (!g_publish_state_seeded || it == g_published_accounts.end() || it->second != account)
-                changed.push_back(&account);
+            {
+                const bool fresh = !g_publish_state_seeded || it == g_published_accounts.end();
+                changed.push_back({ &account,
+                    fresh || it->second.inventory != account.inventory || it->second.slots != account.slots ||
+                             it->second.secondary_slots != account.secondary_slots,
+                    fresh || it->second.talents != account.talents,
+                    fresh || it->second.codex != account.codex });
+            }
         }
         for (const auto& [name, unused] : g_published_accounts)
             if (!current_names.count(name)) removed.push_back(name);
     }
 
-    CMysqlConnection connection;
+    thread_local CMysqlConnection connection;
     if (!connection.Open(error)) return false;
     if (!EnsureSchema(connection, error)) return false;
     if (!Query(connection, "START TRANSACTION", error)) return false;
 
     bool ok = true;
     std::string transaction_error;
-    for (const SPlayerAccount* account : changed)
+    for (const Change& change : changed)
     {
-        if (!WriteAccountRows(connection, *account, &transaction_error))
+        if (!WriteAccountRows(connection, *change.account, &transaction_error, change.items, change.talents, change.codex))
         {
             ok = false;
             break;
@@ -575,11 +603,19 @@ bool PublishSnapshot(const std::vector<SPlayerAccount>& accounts, std::uint64_t 
     // Commit succeeded: fold the change set into the published state.
     {
         std::lock_guard<std::mutex> lock(g_publish_state_mutex);
-        for (const SPlayerAccount* account : changed) g_published_accounts[account->name] = *account;
+        for (const Change& change : changed) g_published_accounts[change.account->name] = *change.account;
         for (const std::string& name : removed) g_published_accounts.erase(name);
         g_publish_state_seeded = true;
     }
     return true;
+}
+
+bool PublishSnapshot(const std::vector<SPlayerAccount>& accounts, std::uint64_t generation, std::string* error)
+{
+    SAccountSnapshot snapshot;
+    snapshot.reserve(accounts.size());
+    for (const auto& account : accounts) snapshot.push_back(std::make_shared<const SPlayerAccount>(account));
+    return PublishSnapshot(snapshot, generation, error);
 }
 
 void ResetPublishState()
@@ -612,6 +648,7 @@ bool PublishSnapshot(const std::vector<SPlayerAccount>&, std::uint64_t, std::str
 {
     return Unavailable(error);
 }
+bool PublishSnapshot(const SAccountSnapshot&, std::uint64_t, std::string* error) { return Unavailable(error); }
 void ResetPublishState() {}
 } // namespace mysql_account_backend
 

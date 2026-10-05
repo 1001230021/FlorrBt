@@ -729,9 +729,8 @@ inline void ReplaceTermiteDropRatesWithWikiData()
 
 inline void RegisterDerivedSuperAndEternalDropRates()
 {
-    constexpr double eternal_super_drop_min_rate = 0.030108;
-    constexpr double eternal_super_drop_max_rate = 0.099892;
-    constexpr double super_ultra_drop_saturation_rate = 0.45;
+    constexpr double eternal_super_drop_min_rate = 0.05;
+    constexpr double eternal_super_drop_max_rate = 0.10;
     constexpr double eternal_ultra_drop_min_rate = 0.70;
     constexpr double eternal_ultra_drop_rate_span = 0.20;
 
@@ -776,8 +775,10 @@ inline void RegisterDerivedSuperAndEternalDropRates()
                                }),
                 super_mob_drop_entries.end());
 
-            const double super_drop_curve_factor =
-                std::clamp(super_ultra_drop_rate / super_ultra_drop_saturation_rate, 0.0, 1.0);
+            // Use the complete Super->Ultra probability range.  The former
+            // 0.45 saturation point made most Eternal entries collapse to
+            // the same ~10% Super rate.
+            const double super_drop_curve_factor = std::clamp(super_ultra_drop_rate, 0.0, 1.0);
             const double super_drop_curve_weight =
                 super_drop_curve_factor * super_drop_curve_factor * super_drop_curve_factor;
             const double eternal_super_drop_rate =
@@ -1423,6 +1424,12 @@ inline void RegisterDropRates()
                       EPetalType::WhiteFungus);
     CopyDropRateTable(EMobType::SoldierAnt, EPetalType::Glass, EMobType::LeafcutterSoldier,
                       EPetalType::BlackFungus);
+    // Magic Firefly uses the exact source-table probabilities requested for
+    // its two drops, including each source mob/drop rarity pairing.
+    CopyDropRateTable(EMobType::TermiteOvermind, EPetalType::Relic, EMobType::MagicFirefly,
+                      EPetalType::Orb);
+    CopyDropRateTable(EMobType::SoldierAnt, EPetalType::Wing, EMobType::MagicFirefly,
+                      EPetalType::MagicLightning);
     RegisterDerivedSuperAndEternalDropRates();
 }
 

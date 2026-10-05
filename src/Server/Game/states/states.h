@@ -210,6 +210,21 @@ class CHallucinogenicState final : public CState
     parameter_array m_parameters{};
 };
 
+class CPulseState final : public CState
+{
+  public:
+    CPulseState(CMobBase* owner, float timer, ERarity rarity)
+        : CState(owner, timer, rarity, EStateType::Pulse)
+    {
+    }
+
+    void Tick(float dt) override
+    {
+        if (m_timer != endless) m_timer -= dt;
+    }
+    void Refresh(float timer, ERarity rarity);
+};
+
 bool HasActivePsionicConnection(const CMobBase* mob);
 
 bool BlocksNullifiedInteraction(const CEntity* lhs, const CEntity* rhs);
@@ -220,6 +235,11 @@ int GetPreCorruptionTeam(const CEntity* entity, const CMobBase* interaction_mob)
 bool IsDiggingEntity(const CEntity* entity);
 bool ShouldSkipDiggingCollision(const CEntity* lhs, const CEntity* rhs);
 float GetPincerSpeedMultiplier(const CMobBase* mob);
+int GetPulseRarityLevel(const CMobBase* mob);
+float GetPulseMovementMultiplier(const CMobBase* mob);
+float GetPulseLightningDamageMultiplier(const CMobBase* mob);
+float GetMobMovementSpeedMultiplier(const CMobBase* mob);
+void ApplyPulseState(CMobBase* mob, float timer, ERarity rarity);
 float GetMedicMultiplier(const CMobBase* mob);
 void ApplyDandelionAntiHeal(CMobBase* mob, ERarity rarity);
 bool TrySharePsionicDamage(CMobBase* receiver, float dmg, CEntity* attacker, EDamageType dmg_type);

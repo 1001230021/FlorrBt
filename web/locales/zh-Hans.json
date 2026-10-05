@@ -221,6 +221,7 @@
         "compressionPower": "压缩强度",
         "petalHpHealingPerSecond": "每秒花瓣生命治疗",
         "throwCooldown": "投掷冷却",
+        "triggerCooldown": "触发冷却",
         "webTime": "网时间",
         "webRadius": "网半径",
         "flowerHp": "花朵生命",
@@ -255,14 +256,24 @@
         "chain": "连锁",
         "charges": "充能",
         "radius": "半径",
-        "absorbRange": "吸收范围"
+        "absorbRange": "吸收范围",
+        "mana": "回复魔力",
+        "manaRegen": "魔力回复",
+        "maxMana": "魔力上限",
+        "manaCost": "魔力消耗",
+        "damagePerMana": "每点魔力伤害",
+        "boostChains": "增伤连锁",
+        "attackChains": "索敌连锁"
       },
       "values": {
         "corrupted": "腐化",
         "nullify": "无效化",
         "leftPetal": "左侧花瓣",
         "healingPerHit": "每次命中 x0.8",
-        "cosmeticOnly": "仅外观效果"
+        "cosmeticOnly": "仅外观效果",
+        "linkTwoMobs": "连接两个生物",
+        "halfCurrentMana": "当前魔力的 50%",
+        "forwardSpeedBoost": "沿移动方向加速"
       }
     },
     "mobile": {
@@ -521,7 +532,16 @@
       "brush": "画笔",
       "eraser": "橡皮",
       "eou_pheromone": "信息素",
-      "magnet": "磁铁"
+      "magnet": "磁铁",
+      "linker": "连接器",
+      "orb": "魔法球",
+      "magic_leaf": "魔法叶子",
+      "magic_stinger": "魔法刺",
+      "magic_missile": "魔法导弹",
+      "magic_eye": "魔法之眼",
+      "magic_bubble": "魔法泡泡",
+      "magic_lightning": "魔法闪电",
+      "magic_cactus": "魔法仙人掌"
     },
     "mobs": {
       "none": "无",
@@ -563,7 +583,11 @@
       "leaf_piece": "叶片",
       "leafcutter_soldier": "切叶兵蚁",
       "titan": "泰坦",
-      "firefly": "萤火虫"
+      "firefly": "萤火虫",
+      "bubble": "泡泡",
+      "crab": "螃蟹",
+      "jellyfish": "水母",
+      "magic_firefly": "魔法萤火虫"
     }
   },
   "talents": {
@@ -580,7 +604,7 @@
       "reach": "扩大花瓣攻击距离。",
       "duplicator": "为符合条件的花瓣增加副本，高阶天赋也会作用于最左槽。",
       "magnetism": "扩大掉落物拾取范围。",
-      "medic": "提高花瓣的治疗效果。",
+      "regen": "提高生命恢复、防御恢复、魔力恢复以及花瓣治疗效果。",
       "summoner": "提高召唤物生命值。",
       "second_chance": "在冷却允许时，提供抵抗致命伤害的第二次机会。",
       "poison": "提高中毒伤害。",
@@ -606,7 +630,7 @@
       "reach": "攻击距离",
       "duplicator": "重瓣",
       "magnetism": "磁力",
-      "medic": "医疗",
+      "regen": "恢复",
       "summoner": "召唤",
       "second_chance": "第二次机会",
       "poison": "毒性",
@@ -644,6 +668,8 @@
       "bumble_bee": "胖乎乎的大黄蜂，撞击伤害高。",
       "rock": "一块石头，挡路也伤人。",
       "bubble": "漂浮的泡泡，轻巧但很难打破，高等级泡泡受击时会分裂。",
+      "crab": "快速移动的螃蟹，会在花瓣攻击距离附近绕行，然后直线冲向目标。",
+      "jellyfish": "移动缓慢的水母，会持续用连锁闪电攻击附近的玩家。",
       "baby_ant": "幼蚁，脆弱但数量多。",
       "worker_ant": "工蚁，负责搬运与建巢。",
       "queen_ant": "蚁后，蚁穴的核心与守护者。",
@@ -666,7 +692,8 @@
       "leaf_piece": "被切下的叶片，切叶蚁的搬运物。",
       "leafcutter_soldier": "切叶蚁士兵，沙漠区域的威胁。",
       "titan": "泰坦，最强的存在之一。",
-      "firefly": "萤火虫，受到攻击时会用连锁闪电反击。"
+      "firefly": "萤火虫，受到攻击时会用连锁闪电反击。",
+      "magic_firefly": "散发青色光芒的萤火虫，会召唤普通萤火虫，并能释放经过增伤的魔法闪电。"
     }
   },
   "maps": {

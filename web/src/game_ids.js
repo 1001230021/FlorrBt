@@ -4,6 +4,7 @@
   NETWORK_MISSILE_ENTITY_TYPE,
   NETWORK_POLLEN_ENTITY_TYPE,
   NETWORK_PORTAL_ENTITY_TYPE,
+  NETWORK_CHAIN_ENTITY_TYPE,
   NETWORK_SPIDER_WEB_ENTITY_TYPE,
   NETWORK_TRAP_PROJECTILE_ENTITY_TYPE,
 } from "./protocol.js";
@@ -41,6 +42,7 @@ export const stateDigging = STATE_IDS.digging;
 export const statePsionicConnection = STATE_IDS.psionic_connection;
 export const stateHallucinogenic = STATE_IDS.hallucinogenic;
 export const stateDropStack = STATE_IDS.drop_stack;
+export const statePulse = STATE_IDS.pulse;
 
 export function entityState(snap, stateType) {
   if (!Array.isArray(snap?.states)) return null;
@@ -72,6 +74,8 @@ export const hornetType = MOB_IDS.hornet;
 export const bumbleBeeType = MOB_IDS.bumble_bee;
 export const rockType = MOB_IDS.rock;
 export const bubbleType = MOB_IDS.bubble;
+export const crabType = MOB_IDS.crab;
+export const jellyfishType = MOB_IDS.jellyfish;
 export const babyAntType = MOB_IDS.baby_ant;
 export const workerAntType = MOB_IDS.worker_ant;
 export const queenAntType = MOB_IDS.queen_ant;
@@ -95,6 +99,7 @@ export const leafPieceType = MOB_IDS.leaf_piece;
 export const leafcutterSoldierType = MOB_IDS.leafcutter_soldier;
 export const titanType = MOB_IDS.titan;
 export const fireflyType = MOB_IDS.firefly;
+export const magicFireflyType = MOB_IDS.magic_firefly;
 export const trapProjectileType = NETWORK_TRAP_PROJECTILE_ENTITY_TYPE;
 export const bloodSacrificeEffectType = NETWORK_BLOOD_SACRIFICE_ENTITY_TYPE;
 export const dandelionMissileType = NETWORK_DANDELION_MISSILE_ENTITY_TYPE;
@@ -102,6 +107,7 @@ export const pollenProjectileType = NETWORK_POLLEN_ENTITY_TYPE;
 export const spiderWebZoneType = NETWORK_SPIDER_WEB_ENTITY_TYPE;
 export const hornetMissileType = NETWORK_MISSILE_ENTITY_TYPE;
 export const portalType = NETWORK_PORTAL_ENTITY_TYPE;
+export const chainEntityType = NETWORK_CHAIN_ENTITY_TYPE;
 export const playerFlowerType = MOB_IDS.player_flower;
 export const bossRarity = RARITY_IDS.super;
 export const maxBossBars = 3;
@@ -174,6 +180,15 @@ export const petalLightningType = PETAL_IDS.lightning;
 export const petalMagnetType = PETAL_IDS.magnet;
 export const petalBatteryType = PETAL_IDS.battery;
 export const petalBulbType = PETAL_IDS.bulb;
+export const petalLinkerType = PETAL_IDS.linker;
+export const petalOrbType = PETAL_IDS.orb;
+export const petalMagicLeafType = PETAL_IDS.magic_leaf;
+export const petalMagicStingerType = PETAL_IDS.magic_stinger;
+export const petalMagicMissileType = PETAL_IDS.magic_missile;
+export const petalMagicEyeType = PETAL_IDS.magic_eye;
+export const petalMagicBubbleType = PETAL_IDS.magic_bubble;
+export const petalMagicLightningType = PETAL_IDS.magic_lightning;
+export const petalMagicCactusType = PETAL_IDS.magic_cactus;
 export const petalBrushType = PETAL_IDS.brush;
 export const petalEraserType = PETAL_IDS.eraser;
 
@@ -208,6 +223,7 @@ export const nonStackPetalTypes = new Set([
   petalShovelType,
   petalDouliType,
   petalBulbType,
+  petalMagicEyeType,
 ]);
 
 export const rarityExotic = RARITY_IDS.exotic;

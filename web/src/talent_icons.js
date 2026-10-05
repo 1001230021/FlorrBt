@@ -15,7 +15,7 @@ const glyphs = {
   [TalentId.PetalReload]: '<path d="M16 17c8 4 10-8 1-10-12-3-17 16-6 21M17 17c-7 4 1 13 8 6 9-9-4-23-14-17M17 17c0-8-13-6-12 3" fill="none" stroke-width="3"/>',
   [TalentId.SecondChance]: '<path d="M16 28 5 18C-1 9 8 1 16 10 24 1 33 9 27 18Z"/><path d="m13 13 6 4-6 4" stroke="#888" fill="none" stroke-width="3"/>',
   [TalentId.SlotNum]: '<path d="m10 4 12 0-3 7 7 8c6 11-26 11-20 0l7-8Z"/><path d="M11 11h10" fill="none" stroke="#999" stroke-width="2"/>',
-  [TalentId.Medic]: '<path d="M12 3h8v9h9v8h-9v9h-8v-9H3v-8h9Z"/>',
+  [TalentId.Regen]: '<path d="M12 3h8v9h9v8h-9v9h-8v-9H3v-8h9Z"/>',
   [TalentId.Reach]: '<path d="M4 16h24M9 10l-6 6 6 6m14-12 6 6-6 6" fill="none" stroke-width="4"/>',
   [TalentId.Magnetism]: '<path d="M6 5v13a10 10 0 0 0 20 0V5h-7v13a3 3 0 0 1-6 0V5Z"/>',
   [TalentId.Summoner]: '<ellipse cx="16" cy="18" rx="10" ry="13"/>',

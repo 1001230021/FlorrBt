@@ -78,6 +78,9 @@ const mimeTypes = {
   ".gif": "image/gif",
   ".webp": "image/webp",
   ".svg": "image/svg+xml",
+  ".ttf": "font/ttf",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
   ".mp3": "audio/mpeg",
 };
 
@@ -127,8 +130,9 @@ function createFileSender(webRoot, dataRoot) {
         return;
       }
       const extension = path.extname(filePath).toLowerCase();
-      const reusableAsset = /\.(svg|png|jpe?g|webp|ttf|woff2?|ogg|mp3)$/.test(extension) &&
-        (cleanPath.startsWith("/assets/") || cleanPath.startsWith("/data/tiles/"));
+      const reusableAsset = /\.(svg|png|jpe?g|webp|ttf|woff2?|ogg|mp3|tmj|tsj)$/.test(extension) &&
+        (cleanPath.startsWith("/assets/") || cleanPath.startsWith("/data/tiles/") ||
+          cleanPath.startsWith("/data/maps/"));
       const headers = {
         "Content-Type":
           mimeTypes[extension] ||

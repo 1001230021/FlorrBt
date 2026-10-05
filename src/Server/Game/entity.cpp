@@ -1,5 +1,6 @@
 #include "entity.h"
 #include "../../Shared/game_config.h"
+#include "../../Shared/circle_contact.h"
 #include "gameworld.h"
 #include <algorithm>
 #include <cmath>
@@ -69,24 +70,10 @@ void CEntity::OnCollision(CEntity* other)
     const bool other_locked = other->IsCollisionPositionLocked();
     if (self_locked && other_locked) return;
 
-    float self_ratio = 0.f;
-    float other_ratio = 0.f;
-    if (self_locked)
-    {
-        other_ratio = 1.f;
-    } else if (other_locked)
-    {
-        self_ratio = 1.f;
-    } else
-    {
-        const float self_mass = Mass() > 0.f ? Mass() : 1.f;
-        const float other_mass = other->Mass() > 0.f ? other->Mass() : 1.f;
-        const float total_mass = self_mass + other_mass;
-        self_ratio = other_mass / total_mass;
-        other_ratio = self_mass / total_mass;
-    }
+    const auto weights = florrbt::ComputeCircleContactWeights(Mass(), other->Mass(), self_locked, other_locked,
+                                                             game_config::mob_contact_mass_exponent);
 
     float separation = overlap + game_config::entity_collision_epsilon;
-    Pos() += normal * separation * self_ratio;
-    other->Pos() -= normal * separation * other_ratio;
+    Pos() += normal * separation * weights.lhs;
+    other->Pos() -= normal * separation * weights.rhs;
 }

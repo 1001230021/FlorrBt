@@ -2,6 +2,8 @@
 #include "../../Engine/logger.h"
 #include "../../Engine/map_tools.h"
 #include "../../Shared/math_types.h"
+#include "../../Shared/swept_collision.h"
+#include "../../Shared/spawn_dominance.h"
 #include "../../Engine/spatial_hash_grid.h"
 #include "../../Shared/shared.h"
 #include "entity.h"
@@ -9,6 +11,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -19,6 +22,7 @@
 
 class CPlayer;
 class CMobBase;
+class CChainEntity;
 
 struct CActiveTickView
 {
@@ -99,6 +103,8 @@ class CGameWorld
     CEntity* TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& target_world, const std::string& from);
 
     void Tick(float dt);
+    void ApplyChainConstraints(float dt);
+    void BreakChainsForEndpoint(const CEntity& endpoint);
 
     CEntity* GetEntity(int id) const;
     CEntity* GetEntity(int id, std::uint64_t generation) const;
@@ -157,6 +163,7 @@ class CGameWorld
     const std::string& GetMapPath() const { return m_map_path; }
     std::string GetMapName() const;
     ERarity GetSpawnZoneRarity(const florrbt::Vector2f& pos) const;
+    int GetMobSpawnRarityExcess(const CMobBase& mob) const;
     bool SegmentBlockedByWall(florrbt::Vector2f start, florrbt::Vector2f end) const;
     bool CircleBlockedByWall(florrbt::Vector2f center, float radius) const;
     bool SweptCircleBlockedByWall(florrbt::Vector2f start, florrbt::Vector2f end, float radius) const;
@@ -172,7 +179,18 @@ class CGameWorld
     // yet, edge distance at most one world tile) up to `bounces` times. Each hit
     // deals `damage` Lightning damage attributed to `owner`. The chain's node
     // positions are broadcast to the world's players for the client visual.
-    void ChainLightning(CEntity& origin, float damage, int bounces, CEntity* owner);
+    void ChainLightning(CEntity& origin, float damage, int bounces, CEntity* owner,
+                        const std::function<bool(const CMobBase&)>& target_filter = {});
+    // Blue magic chain lightning has two independent budgets. A boost bounce
+    // reads lightning power from a matching entity into the accumulated
+    // damage; hostile boost sources first take the chain's current damage. A
+    // damage bounce strikes a matching hostile mob. Boost targets are always
+    // attempted first while boost budget remains; damage targets are the
+    // fallback for that hop.
+    void MagicChainLightning(CEntity& origin, float damage, int boost_bounces, int damage_bounces, CEntity* owner,
+                             const std::function<bool(const CEntity&)>& boost_filter = {},
+                             const std::function<float(const CEntity&)>& boost_reader = {},
+                             const std::function<bool(const CMobBase&)>& damage_filter = {});
 
   private:
     inline static std::atomic<std::uint64_t> s_next_instance_generation{ 0 };
@@ -286,6 +304,15 @@ class CGameWorld
 
     std::unique_ptr<FlorrBtMap> m_map;
     std::string m_map_path;
+    std::vector<florrbt::SpawnZoneBounds> m_spawn_zone_bounds;
+    struct SHabitatCache
+    {
+        bool valid = false;
+        std::uint64_t generation = 0;
+        florrbt::Vector2f position{};
+        std::optional<float> difficulty;
+    };
+    mutable std::unordered_map<int, SHabitatCache> m_spawn_habitat_cache;
 
     entity_spatial_grid m_spatial_grid;
     wall_spatial_grid m_wall_grid;
@@ -301,9 +328,17 @@ class CGameWorld
     std::vector<CEntity*> m_active_entities;
     std::vector<CActiveTickView> m_active_tick_views;
     std::vector<CPlayerTickView> m_player_tick_views;
-    std::vector<CEntity*> m_collision_normal_entities;
-    std::vector<std::pair<float, CEntity*>> m_collision_large_entities;
     std::vector<CEntity*> m_collision_inactive_entities;
+    std::vector<std::pair<CMobBase*, CMobBase*>> m_collision_mob_contacts;
+    struct SContactSweepEntry
+    {
+        florrbt::SweptCircleBounds bounds;
+        CEntity* entity = nullptr;
+        int id = -1;
+        bool active = false;
+        float prefix_max_x = 0.f;
+    };
+    std::vector<SContactSweepEntry> m_contact_sweep;
     std::vector<std::pair<int, std::uint64_t>> m_clear_owned_owner_keys;
     std::vector<std::pair<int, std::uint64_t>> m_clear_summon_owner_keys;
     std::unordered_map<SPsionicReceiverKey, SPendingPsionicDamage, SPsionicReceiverKeyHash>

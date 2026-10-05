@@ -21,6 +21,7 @@ class CFlower : public CAttackableMob<SFlowerStats>
     {
         m_final_stats = base;
         Health() = base.max_health;
+        m_target_radius = std::max(0.f, r);
         InitSlots();
     }
     ~CFlower() override;
@@ -28,6 +29,9 @@ class CFlower : public CAttackableMob<SFlowerStats>
     void Tick(float dt) override;
 
     void Heal(float amount);
+    void RestoreMana(float amount);
+    bool TryConsumeMana(float amount);
+    float GetMaxMana() const { return std::max(0.f, m_final_stats.max_mana); }
     void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
     void ClearPetals();
     void DestroyPetalEntities();
@@ -76,9 +80,10 @@ class CFlower : public CAttackableMob<SFlowerStats>
     void SetBanned(bool banned, int slot_index);
     float GetShield() const { return m_shield; }
     float GetStoredPetalRotationAngle() const { return m_petal_rotation_angle; }
-    void RestoreFlowerRuntime(float shield, float petal_rotation_angle)
+    void RestoreFlowerRuntime(float shield, float mana, float petal_rotation_angle)
     {
         m_shield = shield;
+        Mana() = std::max(0.f, mana);
         m_petal_rotation_angle = petal_rotation_angle;
         m_final_stats_dirty = true;
     }
@@ -91,6 +96,8 @@ class CFlower : public CAttackableMob<SFlowerStats>
     int m_total_copies = 0;
 
   protected:
+    void RefreshTargetRadiusFromFinalStats();
+    void AdvanceRadiusTowardsTarget(float dt);
     void ClampShieldToMaxHealth();
     void ClearFinalStatsDirty() { m_final_stats_dirty = false; }
     void FinishFinalStatsRebuild()
@@ -107,6 +114,7 @@ class CFlower : public CAttackableMob<SFlowerStats>
     float m_shield = 0.f;
     int m_yinyang_layout_count = 0;
     float m_petal_rotation_angle = 0.f;
+    float m_target_radius = 0.f;
     bool m_final_stats_dirty = true;
     bool m_petal_state_dirty = true;
     std::uint64_t m_final_stats_revision = 0;

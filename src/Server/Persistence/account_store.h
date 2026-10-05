@@ -4,6 +4,7 @@
 #include "../../Shared/talent_type.h"
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -49,6 +50,8 @@ struct SPlayerAccount
     std::vector<SAccountTalent> talents;
     std::vector<SAccountCodexEntry> codex;
 };
+
+using SAccountSnapshot = std::vector<std::shared_ptr<const SPlayerAccount>>;
 
 // Full-state comparison used by the MySQL backend's change detection and by
 // the migration tool's round-trip verification.

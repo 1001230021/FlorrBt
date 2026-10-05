@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { drawFlowerDisc, drawFlowerFace, drawFlowerBandage, drawFlowerAntennae, getFlowerPalette, stepFlowerFace,
-  flowerGeometry, flowerAttachmentLayout, getFlowerFrameLayout } from "../web/src/flower_renderer.js";
+import { drawFlowerDisc, drawFlowerFace, drawFlowerBandage, drawFlowerAntennae, drawTitanBody,
+  getFlowerPalette, getTitanCoreRadius, stepFlowerFace, flowerGeometry, flowerAttachmentLayout,
+  magicEyeOutline, titanGeometry, getFlowerFrameLayout } from "../web/src/flower_renderer.js";
 import { getCenteredSvgViewBox, centerPetalArtSvg } from "../web/src/petal_svg.js";
 import { createCombatFeedback, formatCombatAmount, stepHealthTrail } from "../web/src/combat_feedback.js";
 import { drawMovementGuide } from "../web/src/movement_guide.js";
@@ -26,6 +27,27 @@ for (const radius of [4, 18, 32, 100, 256]) {
   assert.equal(ctxCalls.filter(call => call[0] === "save").length, ctxCalls.filter(call => call[0] === "restore").length);
   assert.equal(Object.hasOwn(context, "filter"), false); // no per-flower filter effect
 }
+for (const radius of [18, 100, 450]) {
+  ctxCalls.length = 0;
+  drawTitanBody(context, radius, getFlowerPalette({ titan: true }));
+  const arcs = ctxCalls.filter(call => call[0] === "arc");
+  const moves = ctxCalls.filter(call => call[0] === "moveTo");
+  const lines = ctxCalls.filter(call => call[0] === "lineTo");
+  assert.equal(arcs.length, 2, "Titan must have one gear root and one face disc");
+  assert.equal(moves.length, titanGeometry.toothCount, "Titan must have exactly 20 trapezoid teeth");
+  assert.equal(lines.length, titanGeometry.toothCount * 3);
+  assert.ok(Math.abs(arcs[0][3] - radius * titanGeometry.toothRootRadiusRatio) < 1e-9);
+  assert.ok(Math.abs(arcs[1][3] - getTitanCoreRadius(radius)) < 1e-9);
+  const vertices = [...moves, ...lines].map(call => Math.hypot(call[1], call[2]));
+  assert.ok(vertices.every(distance => distance <= radius + 1e-9),
+    "Titan artwork must stay inside its collision radius");
+  assert.ok(Math.abs(Math.max(...vertices) - radius) < 1e-9,
+    "Titan tooth tips must reach its collision radius");
+}
+assert.equal(getTitanCoreRadius(450), 360);
+assert.equal(getTitanCoreRadius(NaN), 0);
+assert.equal(getFlowerPalette({ titan: true }).fill, "rgb(102, 102, 102)");
+assert.equal(getFlowerPalette({ titan: true }).border, "rgb(83, 83, 83)");
 for (const radius of [4, 18, 25, 36, 100, 256]) {
   for (const [kind, draw, image] of [
     ["antennae", drawFlowerAntennae, antennaeImage],
@@ -80,6 +102,20 @@ for (const fps of [30, 60, 120]) {
   const dead = faceAt(fps, { dead: true });
   assert.ok(dead.dead && Math.abs(dead.tilt - 0.25) < 0.001);
 }
+
+ctxCalls.length = 0;
+drawFlowerFace(context, 25, faceAt(60, { attacking: true }), getFlowerPalette(), { magicEye: true });
+assert.equal(magicEyeOutline.color, "#42e3f5", "Magic Eye outline must match its SVG cyan");
+assert.equal(ctxCalls.filter(call => call[0] === "ellipse").length, 4,
+  "attack expression must outline and clip both Magic Eye sockets");
+assert.equal(ctxCalls.filter(call => call[0] === "clip").length, 2,
+  "Magic Eye's sloped attack outline must remain clipped to the eye sockets");
+assert.ok(ctxCalls.filter(call => call[0] === "stroke").length >= 4,
+  "Magic Eye must preserve its cyan border after the attack brow mask");
+ctxCalls.length = 0;
+drawFlowerFace(context, 25, faceAt(60, { dead: true }), getFlowerPalette(), { magicEye: true });
+assert.ok(ctxCalls.filter(call => call[0] === "stroke").length >= 3,
+  "Magic Eye decoration must remain around the dead-eye expression");
 
 for (const radius of [4, 8, 18, 32, 100, 256]) {
   for (const scale of [0.6, 1, 1.4]) {

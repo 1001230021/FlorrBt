@@ -2,6 +2,7 @@
 #include "../../../../Shared/game_config.h"
 #include "../../../../Shared/math_types.h"
 #include "../../../../Shared/shared.h"
+#include "../../chain.h"
 #include "../../prototype_registry.h"
 #include "../flower.h"
 #include "../projectile.h"
@@ -46,7 +47,13 @@ class CPetalBehavior
     virtual ~CPetalBehavior() = default;
 
     virtual bool IsOpen() const { return false; }
+    // Released/hidden auxiliary petals (Egg, Linker) stay in their slot for
+    // reload ownership but must not consume an orbit/layout position.
+    virtual bool CountsForPetalLayout(const CPetal*) const { return true; }
     virtual EPetalBonusMode GetBonusMode() const { return EPetalBonusMode::AliveOnly; }
+    // Charged once before a missing copy may advance its preload/reload timer.
+    // A failed payment leaves the copy idle at the start of the cycle.
+    virtual float GetSpawnManaCost(ERarity) const { return 0.f; }
 
     virtual SFlowerStats GetStats(ERarity rarity) const = 0;
     virtual SPetalStats GetPetalStats(ERarity rarity) const = 0;
@@ -102,6 +109,10 @@ class CPetal : public CProjectile
   public:
     CPetal(float r, CFlower* owner, int slot, SPetalStats petal_stats, EPetalType type);
     void Tick(float dt) override;
+    void NotifyCleared();
+    void OnBeforeRemoved(EEntityRemovalReason reason) override;
+    void RefreshOrbitAnchor(CFlower* flower);
+    CEntity* GetOrbitAnchor() const { return m_orbit_anchor; }
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
     const SEntityStats& GetEntityStats() const override { return m_final_petal_stats; }
@@ -129,11 +140,26 @@ class CPetal : public CProjectile
     int m_slot_index = 0;
     int m_target_entity_id = -1;
     std::uint64_t m_target_entity_generation = 0;
+    // Absorption/healing petals follow a short Hermite path into their target.
+    // Capturing the starting position and velocity preserves the orbit's
+    // tangent instead of snapping the petal onto a radial line.
+    florrbt::Vector2f m_attraction_start_pos = {};
+    florrbt::Vector2f m_attraction_start_velocity = {};
+    float m_attraction_elapsed = 0.f;
+    bool m_attraction_active = false;
+    // A target that was just contacted is temporarily suppressed from the
+    // homing search.  Keeping its identity separately lets behaviors such as
+    // Heavy still inspect the last contact while the petal is returning.
+    int m_target_release_id = -1;
+    std::uint64_t m_target_release_generation = 0;
+    float m_target_release_timer = 0.f;
     float m_lifetime = 0.f;
     float m_timer = 0.f;
     float m_reload_override = -1.f;
     bool m_reload_ignore_multiplier = false;
     bool m_hidden = false;
+    bool m_clear_notified = false;
+    CEntity* m_orbit_anchor = nullptr;
     bool m_detach_from_slot = false;
     bool m_spawn_flight_boost = false;
     float m_growth_base_damage = 0.f;
@@ -150,6 +176,17 @@ class CPetal : public CProjectile
     std::unordered_map<int, float> m_hit_credits;
 };
 
+class CMoonPetal : public CPetal
+{
+  public:
+    using CPetal::CPetal;
+    void Tick(float dt) override;
+    florrbt::Vector2f m_orbit_center{};
+    florrbt::Vector2f m_orbit_velocity{};
+    float m_orbit_phase = game_config::pi;
+    bool m_orbit_initialized = false;
+};
+
 class CBeetleEggPetal : public CPetal
 {
   public:
@@ -160,6 +197,29 @@ class CBeetleEggPetal : public CPetal
     int m_summon_id = -1;
     std::uint64_t m_summon_generation = 0;
     bool m_has_spawned_summon = false;
+};
+
+class CLinkerPetal final : public CPetal, public IChainLease
+{
+  public:
+    using CPetal::CPetal;
+
+    void TakeDamage(float, CEntity*, EDamageType) override {}
+    void OnChainBroken(CChainEntity& chain) override;
+    void ResetMissingChain();
+
+    int m_first_target_id = -1;
+    std::uint64_t m_first_target_generation = 0;
+    int m_chain_id = -1;
+    std::uint64_t m_chain_generation = 0;
+    float m_saved_chain_health = 0.f;
+    // Released Linkers no longer consume a layout slot, so retain the angle
+    // of their former slot relative to the flower's rotating orbit.
+    float m_released_orbit_angle_offset = 0.f;
+    int m_charges_remaining = 2;
+    bool m_released_from_slot = false;
+    bool m_chain_finalized = false;
+    bool m_has_released_orbit_angle = false;
 };
 
 class CRelicPetal : public CPetal
@@ -274,6 +334,21 @@ class CBrokenEggPetal : public CPetal
     bool CanCollide() const override { return false; }
 };
 
+class CMagicNoCollisionPetal : public CPetal
+{
+  public:
+    using CPetal::CPetal;
+    bool CanCollide() const override { return false; }
+};
+
+class CMagicEyePetal final : public CMagicNoCollisionPetal
+{
+  public:
+    using CMagicNoCollisionPetal::CMagicNoCollisionPetal;
+
+    float m_trigger_cooldown = 0.f;
+};
+
 class CShovelPetal : public CPetal
 {
   public:
@@ -304,24 +379,18 @@ class CRosePetal : public CPetal
 {
   public:
     using CPetal::CPetal;
-
-    int m_move_timer = 0;
 };
 
 class CDahliaPetal : public CPetal
 {
   public:
     using CPetal::CPetal;
-
-    int m_move_timer = 0;
 };
 
 class CYggdrasilPetal : public CPetal
 {
   public:
     using CPetal::CPetal;
-
-    int m_move_timer = 0;
     float m_revive_timer = 0.f;
 };
 

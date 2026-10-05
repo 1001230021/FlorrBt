@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstddef>
@@ -181,6 +182,7 @@ inline float default_bone_reload = 2.5f;
 inline float default_bubble_base_health = 1.0f;
 inline float default_bubble_base_radius = WorldUnits(10.0f);
 inline float default_bubble_boost_speed = WorldUnits(720.0f);
+inline float default_bubble_moon_boost_multiplier = 0.625f;
 inline float default_bubble_copy = 1.0f;
 inline float default_bubble_mass = 1.0f;
 inline float default_bubble_reload_common = 1.0f;
@@ -411,10 +413,38 @@ inline float default_moon_base_health = 5000.0f;
 inline float default_moon_base_mass = 5.0f;
 inline float default_moon_copy = 1.0f;
 inline float default_moon_orbit_k = 1.5f;
+inline float default_moon_orbit_speed = 0.2f;
 inline float default_moon_radius_step = WorldUnits(10.0f);
 inline float default_moon_reload = 100.0f;
-inline float default_moon_slowdown_time = 1.0f;
+inline float default_moon_slowdown_time = 0.1f;
 inline float default_moon_stop_velocity_epsilon = 1.0f;
+// Linker keeps the Moon health scale as its chain integrity. The chain has
+// no outgoing damage; tension only consumes this integrity while stretched.
+inline float default_linker_base_health = default_moon_base_health;
+inline float default_linker_base_radius = WorldUnits(10.0f);
+inline float default_linker_copy = 1.0f;
+inline float default_linker_mass = 1.0f;
+inline float default_linker_mass_rarity_multiplier = 1.75f;
+inline float default_linker_reload = default_moon_reload;
+// Garden tiles are 512 server-world units wide (data/maps/garden.tmj).
+// Linker body length is the free span between endpoint surfaces: two tiles at
+// Common and half a tile at Primordial.  The physical center-distance limit
+// additionally includes both connected entities' current radii.
+inline constexpr float garden_tile_world_size = 512.0f;
+inline float default_linker_chain_length_common = garden_tile_world_size * 2.0f;
+inline float default_linker_chain_length_primordial = garden_tile_world_size * 0.5f;
+inline float default_linker_chain_stiffness = 24.0f;
+inline float default_linker_chain_damping = 7.0f;
+inline float default_linker_chain_mass_pull_exponent = 0.5f;
+inline float default_linker_chain_mass_pull_min = 0.5f;
+inline float default_linker_chain_mass_pull_max = 8.0f;
+inline float default_linker_chain_damage_per_second = 600.0f;
+inline float default_linker_chain_max_correction = WorldUnits(24.0f);
+// After its first hit the Linker still follows its flower's orbit.  A small
+// share of that tether is reflected back into the flower, making the pair a
+// soft two-body constraint instead of an independently dragged projectile.
+inline float default_linker_flower_coupling = 0.16f;
+inline float default_linker_flower_max_reaction_speed = WorldUnits(120.0f);
 inline float default_missile_arm_time = 0.5f;
 inline float default_missile_base_damage = 35.0f;
 inline float default_missile_base_health = 2.0f;
@@ -579,6 +609,8 @@ inline float default_wax_base_health = 1000.0f;
 inline float default_wax_copy = 1.0f;
 inline float default_wax_mass = 0.1f;
 inline float default_wax_reload = 30.0f;
+inline float default_wax_spawn_slide_distance = WorldUnits(24.0f);
+inline float default_wax_passive_push_fraction = 0.08f;
 inline float default_orange_base_damage = 30.0f;
 inline float default_orange_base_health = 20.0f;
 inline float default_orange_base_radius = WorldUnits(10.0f);
@@ -748,7 +780,11 @@ inline float default_glass_hit_cooldown = 1.0f;
 inline float default_glass_mass = 2.0f;
 inline float default_glass_reload = 2.5f;
 inline float default_healing_petal_target_delay = 0.5f;
-inline float default_healing_petal_target_move_time = 0.05f;
+// Healing/absorption petals retain their orbit tangent and curve into their
+// target.  This duration is long enough to expose that arc to snapshots while
+// remaining much shorter than their reload cycle.
+inline float default_healing_petal_target_arc_momentum = 1.0f;
+inline float default_healing_petal_target_move_time = 0.24f;
 inline float default_healing_petal_target_range_multiplier = 5.0f;
 inline int default_light_copy_common = 1;
 inline int default_light_copy_rare = 2;
@@ -773,9 +809,21 @@ inline float default_petal_target_acceleration_multiplier = 4.0f;
 inline float default_petal_target_acceleration_scale = 1.25f;
 inline int default_petal_target_max_primordial_lentils = 2;
 inline float default_petal_target_orbit_tether = 0.35f;
+// When a homing petal has reached a target, release it instead of letting the
+// target-selection vector pin it in place.  WorldUnits(8) is half of the
+// normal 16-world-unit tile spacing.
+inline float default_petal_target_release_distance = WorldUnits(8.0f);
+inline float default_petal_target_release_cooldown = 0.24f;
+// Return velocity is a spring with a quadratic distance gain.  The cap keeps
+// a bad snapshot/teleport from creating an unbounded one-tick displacement.
+inline float default_petal_target_return_distance_gain = 4.0f;
+inline float default_petal_target_return_max_speed = WorldUnits(1800.0f);
 inline float default_petal_throw_initial_deceleration = 0.25f;
 inline float default_petal_throw_min_deceleration = 0.001f;
 inline float default_petal_swap_min_reload = 2.5f;
+// Constant-rate interpolation for all flower-size modifiers (Soil and future
+// effects). WorldUnits(20)/s makes one Common Soil settle in about 0.5 s.
+inline float default_flower_radius_change_speed = WorldUnits(20.0f);
 inline int default_pollen_copy_common = 1;
 inline int default_pollen_copy_rare = 2;
 inline int default_pollen_copy_high = 3;
@@ -873,6 +921,10 @@ inline float mob_bee_wave_strength = 0.85f;
 inline float mob_firefly_summon_interval_seconds = 6.0f;
 inline int mob_firefly_summon_limit_eternal = 18;
 inline int mob_firefly_summon_limit_primordial = 27;
+// Natural Firefly rolls have this chance to become the magic variant. The
+// variant otherwise inherits Firefly stats and habitats.
+inline float mob_magic_firefly_spawn_chance = 0.10f;
+inline float mob_magic_firefly_support_range = WorldUnits(256.0f);
 inline float chain_lightning_speed_multiplier = 0.0f;
 inline float mob_bumblebee_acceleration = WorldUnits(350.0f);
 inline float mob_bumblebee_armor = 1.0f;
@@ -903,6 +955,41 @@ inline float mob_bubble_mass = 24.0f;
 inline float mob_bubble_max_health = 1.0f;
 inline float mob_bubble_radius = WorldUnits(20.0f);
 inline int mob_bubble_team = 2;
+// Crab keeps its fast dash independent of rarity. Rarity still scales its
+// ordinary health, damage and body stats through ScaleMobStats.
+inline float mob_crab_acceleration = WorldUnits(600.0f);
+inline float mob_crab_armor = 1.0f;
+inline float mob_crab_damage = 35.0f;
+inline float mob_crab_mass = 3.5f;
+inline float mob_crab_max_health = 55.0f;
+inline float mob_crab_max_velocity = WorldUnits(190.0f);
+inline float mob_crab_radius = WorldUnits(14.0f);
+inline int mob_crab_team = 2;
+inline float mob_crab_horizon = WorldUnits(1800.0f);
+inline float mob_crab_orbit_distance = default_third_eye_reach_primordial;
+inline float mob_crab_orbit_speed = WorldUnits(150.0f);
+inline float mob_crab_strafe_time = 3.5f;
+inline float mob_crab_strafe_time_variance = 1.25f;
+inline float mob_crab_orbit_speed_variance = 0.32f;
+inline float mob_crab_orbit_distance_variance = 0.13f;
+inline float mob_crab_dash_speed = WorldUnits(520.0f);
+inline float mob_crab_dash_distance = WorldUnits(180.0f);
+inline float mob_crab_dash_cooldown = 1.8f;
+inline float mob_crab_dash_recovery = 0.28f;
+inline float mob_crab_dash_low_health_fraction = 0.35f;
+inline float mob_jellyfish_acceleration = WorldUnits(55.0f);
+inline float mob_jellyfish_armor = 1.0f;
+inline float mob_jellyfish_damage = 45.0f;
+inline float mob_jellyfish_mass = 4.0f;
+inline float mob_jellyfish_max_health = 80.0f;
+inline float mob_jellyfish_max_velocity = WorldUnits(32.0f);
+inline float mob_jellyfish_radius = WorldUnits(16.0f);
+inline float mob_jellyfish_horizon = WorldUnits(1600.0f);
+inline int mob_jellyfish_team = 2;
+inline float mob_jellyfish_lightning_damage = 13.0f;
+inline float mob_jellyfish_lightning_damage_scale = 3.0f;
+inline int mob_jellyfish_lightning_bounces = 5;
+inline float mob_jellyfish_lightning_interval = 1.0f;
 inline float mob_baby_ant_armor = 1.0f;
 inline float mob_baby_ant_damage = 10.0f;
 inline float mob_baby_ant_mass = 2.0f;
@@ -910,15 +997,17 @@ inline float mob_baby_ant_max_health = 25.0f;
 inline float mob_baby_ant_radius = WorldUnits(9.0f);
 inline int mob_baby_ant_team = 2;
 inline float mob_ant_egg_armor = 0.0f;
-inline float mob_ant_egg_damage = 0.0f;
+inline float mob_ant_egg_damage = 5.0f;
 inline float mob_ant_egg_death_hatch_chance = 0.25f;
 inline float mob_ant_egg_mass = 100000000.0f;
 inline float mob_ant_egg_max_health = 25.0f;
 inline float mob_ant_egg_radius = WorldUnits(10.0f);
 inline int mob_ant_egg_team = 2;
+inline float mob_fire_ant_egg_damage = 10.0f;
 inline float mob_queen_laid_egg_hatch_time = 1.0f;
 inline float mob_fire_ant_damage_multiplier = 2.0f;
 inline int mob_fire_ant_team = 3;
+inline float mob_termite_egg_damage = 5.0f;
 inline float mob_termite_health_multiplier = 2.0f;
 inline int mob_termite_team = 4;
 inline float mob_worker_ant_armor = 1.0f;
@@ -1114,6 +1203,10 @@ inline float mob_soldier_ant_damage = 10.0f;
 inline float mob_leafcutter_soldier_leaf_piece_attack_interval = 1.5f;
 inline float mob_leafcutter_soldier_leaf_piece_attack_radius_multiplier = 2.0f;
 inline float mob_leafcutter_soldier_leaf_piece_turn_speed = 4.0f;
+inline float mob_leafcutter_soldier_health_multiplier = 1.25f;
+inline float mob_leafcutter_soldier_mass_multiplier = 1.25f;
+inline float mob_leafcutter_soldier_radius_multiplier = 1.15f;
+inline float mob_leafcutter_soldier_damage_multiplier = 1.5f;
 inline float mob_soldier_ant_mass = 3.3333333f;
 inline float mob_soldier_ant_max_health = 100.0f;
 inline float mob_soldier_ant_radius = WorldUnits(12.0f);
@@ -1209,6 +1302,12 @@ inline int open_max_zone_population = 2048;
 inline float open_min_spawn_distance = WorldUnits(128.0f);
 inline float open_rarity_difficulty_scale = 10.0f;
 inline float open_rarity_gaussian_sigma = 0.36f;
+// A mob two rarity levels above its habitat nearly closes natural spawning
+// around itself; the rate never reaches absolute zero so the area can recover.
+inline float open_dominant_mob_range = WorldUnits(2048.0f);
+inline float open_dominant_mob_rate_strength = 12.0f;
+inline float open_dominant_mob_min_rate = 0.02f;
+inline float open_dominant_mob_level_penalty = 1.5f;
 inline float open_spawn_interval = 1.f;
 inline float open_spawn_wave_period = 30.0f;
 inline float open_spawn_wave_min_multiplier = 0.2f;
@@ -1421,8 +1520,25 @@ inline float GetMobHealthScaleForLevel(int level)
 }
 inline float GetMobMassScaleForLevel(int level)
 {
-    return std::pow(mob_mass_scale_base,
-                    static_cast<float>(std::max(1, level) - 1) * mob_mass_scale_exp_multiplier);
+    // Precomputed from the former default mass curve. Each adjacent rarity
+    // difference was multiplied by 7.8, 8.0, 8.2, ..., 9.4 respectively
+    // (7.5 + (rarity1 + rarity2) * 0.1), then accumulated once here. Keeping
+    // the final values explicit avoids a runtime power/recurrence and keeps
+    // mobs, missiles, Wax and other users on exactly the same curve.
+    static constexpr std::array<float, 10> mass_scale_by_level = {
+        1.0f,
+        6.71632444f,
+        16.87591626f,
+        34.92121724f,
+        66.95391891f,
+        123.78379897f,
+        224.55233880f,
+        403.13891370f,
+        719.48184252f,
+        1279.57744466f,
+    };
+    const int clamped_level = std::clamp(level, 1, static_cast<int>(mass_scale_by_level.size()));
+    return mass_scale_by_level[static_cast<size_t>(clamped_level - 1)];
 }
 inline float mob_hornet_attack_range_radius_multiplier = 4.0f;
 inline float mob_hornet_horizon_lifetime_multiplier = 0.5f;
@@ -1494,6 +1610,8 @@ inline float open_loot_min_damage_rate_normal = 0.05f;
 inline size_t open_controller_max_squad_size = 4;
 inline float open_squad_loot_damage_range = 1.f;
 inline size_t server_max_saved_chats = 256;
+// Legacy setting name: fraction of relative normal velocity transferred by
+// soft trap/summon contacts, not a per-body speed tax. Ordinary mobs use 1.
 inline float world_mob_overlap_velocity_retention = 0.35f;
 inline float world_mob_overlap_weak_push = 0.32f;
 // Flower contact position correction (0..1). Values above 1 are capped so
@@ -1502,6 +1620,10 @@ inline float mob_overlap_push_multiplier = 1.0f;
 // Non-flower mob pairs still collide physically, but separate more gently so
 // several attackers can pack around a flower instead of becoming a rigid shell.
 inline float nonflower_mob_overlap_push_multiplier = 0.60f;
+// Effective collision mass is mass^exponent; base stats and Web mass stay intact.
+inline float mob_contact_mass_exponent = 2.0f;
+// First contact includes position/damage; later passes transfer velocity only.
+inline int mob_contact_velocity_passes = 3;
 inline std::uint64_t config_revision = 1;
 
 inline std::uint64_t GetConfigRevision() { return config_revision; }
@@ -1754,6 +1876,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("bubble_base_health", default_bubble_base_health),
         REGISTER_CONFIG("bubble_base_radius", default_bubble_base_radius),
         REGISTER_CONFIG("bubble_boost_speed", default_bubble_boost_speed),
+        REGISTER_CONFIG("bubble_moon_boost_multiplier", default_bubble_moon_boost_multiplier),
         REGISTER_CONFIG("bubble_copy", default_bubble_copy),
         REGISTER_CONFIG("bubble_mass", default_bubble_mass),
         REGISTER_CONFIG("bubble_reload_common", default_bubble_reload_common),
@@ -1785,6 +1908,23 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("magnet_base_radius", default_magnet_base_radius),
         REGISTER_CONFIG("magnet_mass", default_magnet_mass),
         REGISTER_CONFIG("magnet_bonus_base", default_magnet_bonus_base),
+        REGISTER_CONFIG("linker_base_health", default_linker_base_health),
+        REGISTER_CONFIG("linker_base_radius", default_linker_base_radius),
+        REGISTER_CONFIG("linker_copy", default_linker_copy),
+        REGISTER_CONFIG("linker_mass", default_linker_mass),
+        REGISTER_CONFIG("linker_mass_rarity_multiplier", default_linker_mass_rarity_multiplier),
+        REGISTER_CONFIG("linker_reload", default_linker_reload),
+        REGISTER_CONFIG("linker_chain_length_common", default_linker_chain_length_common),
+        REGISTER_CONFIG("linker_chain_length_primordial", default_linker_chain_length_primordial),
+        REGISTER_CONFIG("linker_chain_stiffness", default_linker_chain_stiffness),
+        REGISTER_CONFIG("linker_chain_damping", default_linker_chain_damping),
+        REGISTER_CONFIG("linker_chain_mass_pull_exponent", default_linker_chain_mass_pull_exponent),
+        REGISTER_CONFIG("linker_chain_mass_pull_min", default_linker_chain_mass_pull_min),
+        REGISTER_CONFIG("linker_chain_mass_pull_max", default_linker_chain_mass_pull_max),
+        REGISTER_CONFIG("linker_chain_damage_per_second", default_linker_chain_damage_per_second),
+        REGISTER_CONFIG("linker_chain_max_correction", default_linker_chain_max_correction),
+        REGISTER_CONFIG("linker_flower_coupling", default_linker_flower_coupling),
+        REGISTER_CONFIG("linker_flower_max_reaction_speed", default_linker_flower_max_reaction_speed),
         REGISTER_CONFIG("compass_mass", default_compass_mass),
         REGISTER_CONFIG("compass_reload", default_compass_reload),
         REGISTER_CONFIG("compass_wait_super", default_compass_wait_super),
@@ -1972,6 +2112,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("moon_base_mass", default_moon_base_mass),
         REGISTER_CONFIG("moon_copy", default_moon_copy),
         REGISTER_CONFIG("moon_orbit_k", default_moon_orbit_k),
+        REGISTER_CONFIG("moon_orbit_speed", default_moon_orbit_speed),
         REGISTER_CONFIG("moon_radius_step", default_moon_radius_step),
         REGISTER_CONFIG("moon_reload", default_moon_reload),
         REGISTER_CONFIG("moon_slowdown_time", default_moon_slowdown_time),
@@ -2010,6 +2151,8 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_firefly_summon_interval_seconds", mob_firefly_summon_interval_seconds),
         REGISTER_CONFIG("mob_firefly_summon_limit_eternal", mob_firefly_summon_limit_eternal),
         REGISTER_CONFIG("mob_firefly_summon_limit_primordial", mob_firefly_summon_limit_primordial),
+        REGISTER_CONFIG("mob_magic_firefly_spawn_chance", mob_magic_firefly_spawn_chance),
+        REGISTER_CONFIG("mob_magic_firefly_support_range", mob_magic_firefly_support_range),
         REGISTER_CONFIG("chain_lightning_speed_multiplier", chain_lightning_speed_multiplier),
         REGISTER_CONFIG("mob_bee_damage", mob_bee_damage),
         REGISTER_CONFIG("mob_bee_mass", mob_bee_mass),
@@ -2048,6 +2191,39 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_bubble_max_health", mob_bubble_max_health),
         REGISTER_CONFIG("mob_bubble_radius", mob_bubble_radius),
         REGISTER_CONFIG("mob_bubble_team", mob_bubble_team),
+        REGISTER_CONFIG("mob_crab_acceleration", mob_crab_acceleration),
+        REGISTER_CONFIG("mob_crab_armor", mob_crab_armor),
+        REGISTER_CONFIG("mob_crab_damage", mob_crab_damage),
+        REGISTER_CONFIG("mob_crab_mass", mob_crab_mass),
+        REGISTER_CONFIG("mob_crab_max_health", mob_crab_max_health),
+        REGISTER_CONFIG("mob_crab_max_velocity", mob_crab_max_velocity),
+        REGISTER_CONFIG("mob_crab_radius", mob_crab_radius),
+        REGISTER_CONFIG("mob_crab_team", mob_crab_team),
+        REGISTER_CONFIG("mob_crab_horizon", mob_crab_horizon),
+        REGISTER_CONFIG("mob_crab_orbit_distance", mob_crab_orbit_distance),
+        REGISTER_CONFIG("mob_crab_orbit_speed", mob_crab_orbit_speed),
+        REGISTER_CONFIG("mob_crab_strafe_time", mob_crab_strafe_time),
+        REGISTER_CONFIG("mob_crab_strafe_time_variance", mob_crab_strafe_time_variance),
+        REGISTER_CONFIG("mob_crab_orbit_speed_variance", mob_crab_orbit_speed_variance),
+        REGISTER_CONFIG("mob_crab_orbit_distance_variance", mob_crab_orbit_distance_variance),
+        REGISTER_CONFIG("mob_crab_dash_speed", mob_crab_dash_speed),
+        REGISTER_CONFIG("mob_crab_dash_distance", mob_crab_dash_distance),
+        REGISTER_CONFIG("mob_crab_dash_cooldown", mob_crab_dash_cooldown),
+        REGISTER_CONFIG("mob_crab_dash_recovery", mob_crab_dash_recovery),
+        REGISTER_CONFIG("mob_crab_dash_low_health_fraction", mob_crab_dash_low_health_fraction),
+        REGISTER_CONFIG("mob_jellyfish_acceleration", mob_jellyfish_acceleration),
+        REGISTER_CONFIG("mob_jellyfish_armor", mob_jellyfish_armor),
+        REGISTER_CONFIG("mob_jellyfish_damage", mob_jellyfish_damage),
+        REGISTER_CONFIG("mob_jellyfish_mass", mob_jellyfish_mass),
+        REGISTER_CONFIG("mob_jellyfish_max_health", mob_jellyfish_max_health),
+        REGISTER_CONFIG("mob_jellyfish_max_velocity", mob_jellyfish_max_velocity),
+        REGISTER_CONFIG("mob_jellyfish_radius", mob_jellyfish_radius),
+        REGISTER_CONFIG("mob_jellyfish_horizon", mob_jellyfish_horizon),
+        REGISTER_CONFIG("mob_jellyfish_team", mob_jellyfish_team),
+        REGISTER_CONFIG("mob_jellyfish_lightning_damage", mob_jellyfish_lightning_damage),
+        REGISTER_CONFIG("mob_jellyfish_lightning_damage_scale", mob_jellyfish_lightning_damage_scale),
+        REGISTER_CONFIG("mob_jellyfish_lightning_bounces", mob_jellyfish_lightning_bounces),
+        REGISTER_CONFIG("mob_jellyfish_lightning_interval", mob_jellyfish_lightning_interval),
         REGISTER_CONFIG("mob_baby_ant_armor", mob_baby_ant_armor),
         REGISTER_CONFIG("mob_baby_ant_damage", mob_baby_ant_damage),
         REGISTER_CONFIG("mob_baby_ant_mass", mob_baby_ant_mass),
@@ -2061,9 +2237,11 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_ant_egg_max_health", mob_ant_egg_max_health),
         REGISTER_CONFIG("mob_ant_egg_radius", mob_ant_egg_radius),
         REGISTER_CONFIG("mob_ant_egg_team", mob_ant_egg_team),
+        REGISTER_CONFIG("mob_fire_ant_egg_damage", mob_fire_ant_egg_damage),
         REGISTER_CONFIG("mob_queen_laid_egg_hatch_time", mob_queen_laid_egg_hatch_time),
         REGISTER_CONFIG("mob_fire_ant_damage_multiplier", mob_fire_ant_damage_multiplier),
         REGISTER_CONFIG("mob_fire_ant_team", mob_fire_ant_team),
+        REGISTER_CONFIG("mob_termite_egg_damage", mob_termite_egg_damage),
         REGISTER_CONFIG("mob_termite_health_multiplier", mob_termite_health_multiplier),
         REGISTER_CONFIG("mob_termite_team", mob_termite_team),
         REGISTER_CONFIG("mob_worker_ant_armor", mob_worker_ant_armor),
@@ -2237,6 +2415,10 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_leafcutter_soldier_leaf_piece_attack_radius_multiplier",
                         mob_leafcutter_soldier_leaf_piece_attack_radius_multiplier),
         REGISTER_CONFIG("mob_leafcutter_soldier_leaf_piece_turn_speed", mob_leafcutter_soldier_leaf_piece_turn_speed),
+        REGISTER_CONFIG("mob_leafcutter_soldier_health_multiplier", mob_leafcutter_soldier_health_multiplier),
+        REGISTER_CONFIG("mob_leafcutter_soldier_mass_multiplier", mob_leafcutter_soldier_mass_multiplier),
+        REGISTER_CONFIG("mob_leafcutter_soldier_radius_multiplier", mob_leafcutter_soldier_radius_multiplier),
+        REGISTER_CONFIG("mob_leafcutter_soldier_damage_multiplier", mob_leafcutter_soldier_damage_multiplier),
         REGISTER_CONFIG("mob_soldier_ant_mass", mob_soldier_ant_mass),
         REGISTER_CONFIG("mob_soldier_ant_max_health", mob_soldier_ant_max_health),
         REGISTER_CONFIG("mob_soldier_ant_radius", mob_soldier_ant_radius),
@@ -2325,6 +2507,10 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("open_min_spawn_distance", open_min_spawn_distance),
         REGISTER_CONFIG("open_rarity_difficulty_scale", open_rarity_difficulty_scale),
         REGISTER_CONFIG("open_rarity_gaussian_sigma", open_rarity_gaussian_sigma),
+        REGISTER_CONFIG("open_dominant_mob_range", open_dominant_mob_range),
+        REGISTER_CONFIG("open_dominant_mob_rate_strength", open_dominant_mob_rate_strength),
+        REGISTER_CONFIG("open_dominant_mob_min_rate", open_dominant_mob_min_rate),
+        REGISTER_CONFIG("open_dominant_mob_level_penalty", open_dominant_mob_level_penalty),
         REGISTER_CONFIG("open_spawn_interval", open_spawn_interval),
         REGISTER_CONFIG("open_spawn_wave_period", open_spawn_wave_period),
         REGISTER_CONFIG("open_spawn_wave_min_multiplier", open_spawn_wave_min_multiplier),
@@ -2457,6 +2643,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("soil_copy", default_soil_copy),
         REGISTER_CONFIG("soil_flower_health", default_soil_flower_health),
         REGISTER_CONFIG("soil_flower_radius", default_soil_flower_radius),
+        REGISTER_CONFIG("flower_radius_change_speed", default_flower_radius_change_speed),
         REGISTER_CONFIG("soil_mass", default_soil_mass),
         REGISTER_CONFIG("soil_reload", default_soil_reload),
         REGISTER_CONFIG("server_fixed_dt", server_fixed_dt),
@@ -2551,6 +2738,8 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("wax_copy", default_wax_copy),
         REGISTER_CONFIG("wax_mass", default_wax_mass),
         REGISTER_CONFIG("wax_reload", default_wax_reload),
+        REGISTER_CONFIG("wax_spawn_slide_distance", default_wax_spawn_slide_distance),
+        REGISTER_CONFIG("wax_passive_push_fraction", default_wax_passive_push_fraction),
         REGISTER_CONFIG("orange_base_damage", default_orange_base_damage),
         REGISTER_CONFIG("orange_base_health", default_orange_base_health),
         REGISTER_CONFIG("orange_base_radius", default_orange_base_radius),
@@ -2710,6 +2899,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("glass_mass", default_glass_mass),
         REGISTER_CONFIG("glass_reload", default_glass_reload),
         REGISTER_CONFIG("healing_petal_target_delay", default_healing_petal_target_delay),
+        REGISTER_CONFIG("healing_petal_target_arc_momentum", default_healing_petal_target_arc_momentum),
         REGISTER_CONFIG("healing_petal_target_move_time", default_healing_petal_target_move_time),
         REGISTER_CONFIG("healing_petal_target_range_multiplier", default_healing_petal_target_range_multiplier),
         REGISTER_CONFIG("light_copy_common", default_light_copy_common),
@@ -2735,6 +2925,10 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("petal_target_acceleration_scale", default_petal_target_acceleration_scale),
         REGISTER_CONFIG("petal_target_max_primordial_lentils", default_petal_target_max_primordial_lentils),
         REGISTER_CONFIG("petal_target_orbit_tether", default_petal_target_orbit_tether),
+        REGISTER_CONFIG("petal_target_release_distance", default_petal_target_release_distance),
+        REGISTER_CONFIG("petal_target_release_cooldown", default_petal_target_release_cooldown),
+        REGISTER_CONFIG("petal_target_return_distance_gain", default_petal_target_return_distance_gain),
+        REGISTER_CONFIG("petal_target_return_max_speed", default_petal_target_return_max_speed),
         REGISTER_CONFIG("petal_throw_initial_deceleration", default_petal_throw_initial_deceleration),
         REGISTER_CONFIG("petal_throw_min_deceleration", default_petal_throw_min_deceleration),
         REGISTER_CONFIG("petal_swap_min_reload", default_petal_swap_min_reload),
@@ -2976,6 +3170,8 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("world_mob_overlap_weak_push", world_mob_overlap_weak_push),
         REGISTER_CONFIG("mob_overlap_push_multiplier", mob_overlap_push_multiplier),
         REGISTER_CONFIG("nonflower_mob_overlap_push_multiplier", nonflower_mob_overlap_push_multiplier),
+        REGISTER_CONFIG("mob_contact_mass_exponent", mob_contact_mass_exponent),
+        REGISTER_CONFIG("mob_contact_velocity_passes", mob_contact_velocity_passes),
         REGISTER_CONFIG("flower_cogwheel_moving_fraction_min", flower_cogwheel_moving_fraction_min),
         REGISTER_CONFIG("flower_revive_min_health", flower_revive_min_health),
         REGISTER_CONFIG("pincer_speed_multiplier_higher_rarity", pincer_speed_multiplier_higher_rarity),

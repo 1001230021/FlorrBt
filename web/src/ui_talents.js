@@ -4,6 +4,7 @@ import { getTalentGlyph, getTalentRootGlyph } from "./talent_icons.js";
 import { t } from "./i18n.js";
 import { rarityColor, rarityName, translationSlug } from "./protocol.js";
 import { setAnimatedVisibility } from "./ui_motion.js";
+import { bindPinchGesture } from "./pinch_gestures.js";
 
 const NS = "http://www.w3.org/2000/svg";
 const HOLD_MS = 520;
@@ -81,9 +82,12 @@ export function createTalentTree({ panel, viewport, points, getState, request })
   function queueView() { if (!frame) frame = requestAnimationFrame(drawView); }
   function centerView() {
     initialized = true;
-    const minScale = document.body.classList.contains("mobile-ui") ? 0.7 : 0.5;
-    view = { x: viewport.clientWidth * 0.5, y: viewport.clientHeight * 0.81,
-      scale: Math.max(minScale, Math.min(0.9, viewport.clientWidth / 640)) };
+    const mobile = document.body.classList.contains("mobile-ui");
+    // Reference: ~100px flower root, ~76px nodes in the 654px panel.
+    // Keep the tree rooted near the lower centre; panning reveals the rest.
+    view = { x: viewport.clientWidth * 0.5, y: viewport.clientHeight - Math.min(mobile ? 72 : viewport.clientWidth * 0.1, viewport.clientHeight * 0.15),
+      scale: mobile ? Math.max(0.7, Math.min(1.15, viewport.clientWidth / 550))
+        : Math.max(0.55, Math.min(1.65, viewport.clientWidth / 530)) };
     queueView();
   }
   function hideTip() {
@@ -234,6 +238,35 @@ export function createTalentTree({ panel, viewport, points, getState, request })
     if (id !== undefined && viewport.hasPointerCapture?.(id)) viewport.releasePointerCapture(id);
   }
   for (const event of ["pointerup", "pointercancel", "lostpointercapture"]) viewport.addEventListener(event, releasePointer);
+  bindPinchGesture(viewport, {
+    onStart: ({ center }) => {
+      releasePointer();
+      cancelHold();
+      hideTip();
+      const rect = viewport.getBoundingClientRect();
+      viewport._pinchStart = {
+        view: { ...view },
+        center: { x: center.x - rect.left, y: center.y - rect.top },
+      };
+      suppressClickUntil = performance.now() + 500;
+    },
+    onChange: ({ center, scale }) => {
+      const start = viewport._pinchStart;
+      if (!start) return;
+      const rect = viewport.getBoundingClientRect();
+      const localCenter = { x: center.x - rect.left, y: center.y - rect.top };
+      const next = zoomTalentView(start.view, start.center, start.view.scale * scale);
+      view.x = next.x + localCenter.x - start.center.x;
+      view.y = next.y + localCenter.y - start.center.y;
+      view.scale = next.scale;
+      queueView();
+      suppressClickUntil = performance.now() + 300;
+    },
+    onEnd: () => {
+      delete viewport._pinchStart;
+      suppressClickUntil = performance.now() + 300;
+    },
+  });
   viewport.addEventListener("wheel", event => {
     event.preventDefault(); event.stopPropagation();
     releasePointer(); hideTip();

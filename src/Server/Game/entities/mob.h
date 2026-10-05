@@ -15,16 +15,18 @@
 #include <vector>
 
 class CPlayer;
+class CGameContext;
 class CSnapshotReader;
 class CSnapshotWriter;
 
 struct CDamageData
 {
-    CPlayer* m_player = nullptr;
+    std::string m_account_name;
     float m_total_dmg = 0.f;
     float m_reset_timer = 0.f;
 
     void ResetTimer() { m_reset_timer = 120.f; }
+    CPlayer* ResolvePlayer(const CGameContext* context) const;
 };
 
 class CMobBase;
@@ -102,6 +104,7 @@ class CMobBase : public CEntity
     void ResetInactiveSeconds() { m_inactive_seconds = 0.f; }
     const std::vector<std::unique_ptr<CState>>& GetStates() const { return m_states; }
     void ClearStatesForRestore();
+    void ClearTeamOverrideStates();
 
     template <typename TState> std::vector<TState*> FindStates()
     {
@@ -362,7 +365,7 @@ template <> inline SFlowerStats CMobPrototype::BuildTypedStats<SFlowerStats>(ERa
 // register content without every id being mandatory at Finalize.
 using CMobRegistry =
     TPrototypeRegistry<EMobType, CMobPrototype, static_cast<std::size_t>(kMobIdCapacity),
-                       static_cast<std::size_t>(EMobType::Bubble) + 1>;
+                       static_cast<std::size_t>(EMobType::Jellyfish) + 1>;
 namespace mob_registry_detail
 {
 inline CMobRegistry& MutableRegistry()

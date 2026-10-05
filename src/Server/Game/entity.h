@@ -13,6 +13,7 @@ enum class EEntityTag : std::uint32_t
     ClearOwnedEntitiesOnDestroy = 1u << 0,
     ClearOwnedSummonsOnDestroy = 1u << 1,
     NoDefeatRewards = 1u << 2,
+    FireflySkillSummon = 1u << 3,
 };
 
 enum class EEntityRemovalReason : std::uint8_t
@@ -98,6 +99,8 @@ class CEntity
     const float& Mass() const { return m_mass; }
     float& Health() { return m_health; }
     const float& Health() const { return m_health; }
+    float& Mana() { return m_mana; }
+    const float& Mana() const { return m_mana; }
     float& FacingAngle() { return m_facing_angle; }
     const float& FacingAngle() const { return m_facing_angle; }
     bool& HasFacing() { return m_has_facing; }
@@ -160,6 +163,7 @@ class CEntity
     int m_team = 0;
     float m_mass = 0.f;
     float m_health = 1.f;
+    float m_mana = 0.f;
     float m_facing_angle = 0.f;
     bool m_has_facing = false;
     SEntityStats m_entity_stats;

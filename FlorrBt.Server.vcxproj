@@ -46,6 +46,7 @@
     <MySqlRoot Condition="'$(FLORRBT_MYSQL_ROOT)' != ''">$(FLORRBT_MYSQL_ROOT)</MySqlRoot>
     <MySqlRoot Condition="'$(MySqlRoot)' == ''">D:\库\mysql-8.4.6-winx64</MySqlRoot>
   </PropertyGroup>
+  <Import Project="tools\msbuild\isolated_outputs.props" />
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>

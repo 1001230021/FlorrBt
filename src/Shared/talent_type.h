@@ -17,7 +17,10 @@ enum class ETalentId : uint16_t
     PetalReload = 8,
     SecondChance = 9,
     SlotNum = 10,
-    Medic = 11,
+    // Numeric value 11 is retained so existing account data and packets keep
+    // resolving the former Medic talent to the renamed Regen talent.
+    Regen = 11,
+    Medic = Regen,
     Reach = 12,
     Magnetism = 13,
     Summoner = 14,
@@ -40,7 +43,7 @@ inline constexpr std::array<std::string_view, 18> talent_id_names = {
     "PetalReload",
     "SecondChance",
     "SlotNum",
-    "Medic",
+    "Regen",
     "Reach",
     "Magnetism",
     "Summoner",
@@ -90,8 +93,9 @@ inline bool MatchTalentIdAlias(std::string_view text, ETalentId id)
     case ETalentId::SlotNum:
         return text == "slot_num" || text == "slotnum" || text == "slots" || text == "slot" || text == "loadout" ||
                text == "lo";
-    case ETalentId::Medic:
-        return text == "medic" || text == "medicine" || text == "healing" || text == "med";
+    case ETalentId::Regen:
+        return text == "regen" || text == "regan" || text == "medic" || text == "medicine" ||
+               text == "healing" || text == "med";
     case ETalentId::Reach:
         return text == "reach" || text == "attack_range";
     case ETalentId::Magnetism:

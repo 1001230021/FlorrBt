@@ -19,6 +19,7 @@ enum class EStateType : std::uint8_t
     PsionicConnection = 12,
     Hallucinogenic = 13,
     DropStack = 14,
+    Pulse = 15,
 };
 
 // DropStack is not a gameplay state: it carries a drop entity's stack count
@@ -26,5 +27,5 @@ enum class EStateType : std::uint8_t
 
 inline constexpr bool IsKnownStateType(EStateType type)
 {
-    return type > EStateType::None && type <= EStateType::DropStack;
+    return type > EStateType::None && type <= EStateType::Pulse;
 }

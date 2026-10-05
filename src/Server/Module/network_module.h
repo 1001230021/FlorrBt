@@ -78,7 +78,8 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier
     void QueueCodexFull(CPlayer& player);
     void QueueCodexLoot(CPlayer& player);
     void SendCodexDelta(CPlayer& player, uint8_t mob_type, uint8_t rarity, uint32_t count);
-    void BroadcastLightningChain(CGameWorld& world, const std::vector<florrbt::Vector2f>& points);
+    void BroadcastLightningChain(CGameWorld& world, const std::vector<florrbt::Vector2f>& points,
+                                 std::uint8_t style = 0);
     void SendTerrainDelta(CPlayer& player, uint8_t layer, uint16_t row, uint16_t col, uint32_t gid);
     void BroadcastTerrainDelta(CGameWorld& world, uint8_t layer, uint16_t row, uint16_t col, uint32_t gid);
     void SendTerrainWallRemove(CPlayer& player, florrbt::Vector2f min_pos, florrbt::Vector2f max_pos);

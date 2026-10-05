@@ -8,6 +8,7 @@
 #include "mysql_account_backend.h"
 #include "../../Engine/json_value.h"
 #include "../../Shared/game_config.h"
+#include "../../Shared/immutable_snapshot.h"
 #include "../../Shared/petal_type.h"
 #include "../../Shared/rarity.h"
 #include "../../Shared/tools.h"
@@ -38,6 +39,7 @@ namespace
 {
 std::filesystem::path g_account_path;
 std::vector<SPlayerAccount> g_accounts;
+florrbt::ImmutableSnapshotCache<SPlayerAccount> g_snapshot_cache;
 int g_save_batch_depth = 0;
 bool g_save_batch_dirty = false;
 // Captured once in Load (before the save worker starts) so the worker thread
@@ -48,7 +50,7 @@ bool g_backend_is_mysql = false;
 struct SAccountSaveSnapshot
 {
     std::filesystem::path path;
-    std::vector<SPlayerAccount> accounts;
+    SAccountSnapshot accounts;
     std::uint64_t generation = 0;
 };
 
@@ -564,6 +566,7 @@ bool CAccountDataStore::Load(const std::filesystem::path& path, std::string* err
 
     g_account_path = path;
     g_accounts.clear();
+    g_snapshot_cache.Reset();
     g_save_batch_depth = 0;
     g_save_batch_dirty = false;
     g_backend_is_mysql = game_config::account_backend == "mysql";
@@ -806,6 +809,7 @@ bool CAccountDataStore::ImportAccounts(std::vector<SPlayerAccount> accounts, std
         }
     }
     g_accounts = std::move(accounts);
+    g_snapshot_cache.Reset();
     return Save(error);
 }
 
@@ -921,7 +925,9 @@ bool QueueAccountSave(std::uint64_t* generation, std::string* error)
     try
     {
         snapshot.path = g_account_path;
-        snapshot.accounts = g_accounts;
+        snapshot.accounts = g_snapshot_cache.Capture(g_accounts, [](const SPlayerAccount& account) {
+            return !account.name.empty() && account.name.rfind("@sandbox:", 0) != 0;
+        });
     } catch (const std::exception& exception)
     {
         if (error) *error = "Failed to capture account save snapshot: " + std::string(exception.what());
@@ -982,7 +988,7 @@ bool WriteAccountData(const SAccountSaveSnapshot& snapshot, std::string* error)
     size_t saved_account_count = 0;
     for (size_t i = 0; i < snapshot.accounts.size(); ++i)
     {
-        const SPlayerAccount& account = snapshot.accounts[i];
+        const SPlayerAccount& account = *snapshot.accounts[i];
         // Sandbox-room accounts are ephemeral: they never reach the disk.
         if (account.name.rfind("@sandbox:", 0) == 0) continue;
         if (saved_account_count++ > 0) file << ",\n";
@@ -1851,7 +1857,9 @@ SPlayerAccount* CAccountDataStore::FindAccount(const std::string& name)
 {
     auto it = std::find_if(g_accounts.begin(), g_accounts.end(),
                            [&name](const SPlayerAccount& account) { return account.name == name; });
-    return it == g_accounts.end() ? nullptr : &*it;
+    if (it == g_accounts.end()) return nullptr;
+    g_snapshot_cache.MarkDirty(name);
+    return &*it;
 }
 
 const SPlayerAccount* CAccountDataStore::FindAccountConst(const std::string& name)

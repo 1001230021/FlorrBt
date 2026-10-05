@@ -9,6 +9,8 @@ export const TalentId = Object.freeze({
   PetalReload: 8,
   SecondChance: 9,
   SlotNum: 10,
+  Regen: 11,
+  // Compatibility alias for older client scripts and saved UI state.
   Medic: 11,
   Reach: 12,
   Magnetism: 13,
@@ -146,8 +148,8 @@ function buildTalentNodes() {
 
   chain(
     "Support",
-    TalentId.Medic,
-    "Medic",
+    TalentId.Regen,
+    "Regen",
     talentTierRarities,
     [2, 5, 8, 11, 14, 17, 20, 23, 26],
   );

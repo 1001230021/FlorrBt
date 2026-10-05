@@ -647,10 +647,13 @@ export function prepareGardenSprites() {
     jobs.push(whenVisualReady(baseImage(`./assets/${name}.svg`, "raw", "raw")));
   for (const [name, key, mode] of [["ant_hole", "plain", false],
     ["dandelion_base", "dandelion-base", "raw"], ["sandstorm", "sandstorm", "plain"],
-    ["portal", "portal", "raw"], ["firefly", "firefly-body", "firefly-body"]])
+    ["portal", "portal", "raw"], ["firefly", "firefly-body", "firefly-body"],
+    ["firefly_cyan", "firefly-cyan-body", "firefly-body"]])
     jobs.push(whenVisualReady(baseImage(`./assets/${name}.svg`, key, mode)));
   svgParts("./assets/firefly.svg", "wings");
   jobs.push(PART_CACHE.get("wings:./assets/firefly.svg").ready);
+  svgParts("./assets/firefly_cyan.svg", "wings");
+  jobs.push(PART_CACHE.get("wings:./assets/firefly_cyan.svg").ready);
   return Promise.all(jobs);
 }
 
@@ -894,16 +897,23 @@ const FIREFLY_GLOW_ANCHOR = (65 - FIREFLY_VIEWBOX_SIZE * 0.5) / FIREFLY_BODY_RAD
 const FIREFLY_GLOW_AREA_PULSE = 0.125;
 const FIREFLY_GLOW_PULSE_HZ = 4.4;
 
-function fireflyBodyImage() {
-  return baseImage("./assets/firefly.svg", "firefly-body", "firefly-body");
+function fireflyBodyImage(magic) {
+  return baseImage(
+    magic ? "./assets/firefly_cyan.svg" : "./assets/firefly.svg",
+    magic ? "firefly-cyan-body" : "firefly-body",
+    "firefly-body",
+  );
 }
 
 // Firefly: lantern glow (under the sprite, at the butt) + body + wings that
 // flap exactly like the soldier ant's. Everything scales with `radius` so
 // bigger fireflies radiate a proportionally larger bloom.
-export function drawFirefly(ctx, pos, radius, entityId, angle, motion, time) {
-  const body = fireflyBodyImage();
-  const wings = svgParts("./assets/firefly.svg", "wings");
+export function drawFirefly(ctx, pos, radius, entityId, angle, motion, time, magic = false) {
+  const body = fireflyBodyImage(magic);
+  const wings = svgParts(
+    magic ? "./assets/firefly_cyan.svg" : "./assets/firefly.svg",
+    "wings",
+  );
   const animation = antAnimation(entityId, motion || 0, time || 0);
   const spriteSize = Math.max(
     1,
@@ -942,9 +952,9 @@ export function drawFirefly(ctx, pos, radius, entityId, angle, motion, time) {
     glowY,
     finalGlow,
   );
-  gradient.addColorStop(0, "rgba(255, 240, 160, 0.42)");
-  gradient.addColorStop(0.55, "rgba(255, 226, 110, 0.18)");
-  gradient.addColorStop(1, "rgba(255, 220, 90, 0)");
+  gradient.addColorStop(0, magic ? "rgba(145, 255, 255, 0.48)" : "rgba(255, 240, 160, 0.42)");
+  gradient.addColorStop(0.55, magic ? "rgba(70, 228, 245, 0.21)" : "rgba(255, 226, 110, 0.18)");
+  gradient.addColorStop(1, magic ? "rgba(35, 200, 235, 0)" : "rgba(255, 220, 90, 0)");
   ctx.fillStyle = gradient;
   ctx.beginPath();
   ctx.arc(glowX, glowY, finalGlow, 0, Math.PI * 2);

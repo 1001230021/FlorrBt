@@ -392,7 +392,8 @@ CCorruptionState::CCorruptionState(CMobBase* owner, float timer, ERarity rarity)
 
 CCorruptionState::~CCorruptionState()
 {
-    if (m_p_owner) m_p_owner->Team() = m_old_team;
+    // Do not overwrite a team already assigned by another controller/action.
+    if (m_p_owner && m_p_owner->Team() == 0) m_p_owner->Team() = m_old_team;
 }
 
 CInvincibleState::CInvincibleState(CMobBase* owner, float timer, ERarity rarity)
@@ -606,6 +607,54 @@ float GetPincerSpeedMultiplier(const CMobBase* mob)
         multiplier = std::min(multiplier, state->GetMultiplier());
     });
     return multiplier;
+}
+
+void CPulseState::Refresh(float timer, ERarity rarity)
+{
+    if (GetRarityValueRank(rarity) > GetRarityValueRank(m_rarity)) m_rarity = rarity;
+    if (m_timer == endless || timer == endless) m_timer = endless;
+    else m_timer = std::max(m_timer, timer);
+}
+
+int GetPulseRarityLevel(const CMobBase* mob)
+{
+    if (!mob) return 0;
+    int level = 0;
+    mob->ForEachState<CPulseState>([&](const CPulseState* state) {
+        if (!state || (state->m_timer != endless && state->m_timer <= 0.f)) return;
+        level = std::max(level, std::max(0, GetLevel(state->m_rarity)));
+    });
+    return level;
+}
+
+float GetPulseMovementMultiplier(const CMobBase* mob)
+{
+    return 1.f + 0.125f * static_cast<float>(GetPulseRarityLevel(mob));
+}
+
+float GetPulseLightningDamageMultiplier(const CMobBase* mob)
+{
+    return 1.f + 0.05f * static_cast<float>(GetPulseRarityLevel(mob));
+}
+
+float GetMobMovementSpeedMultiplier(const CMobBase* mob)
+{
+    if (!mob) return std::max(0.f, game_config::mob_velocity_multiplier);
+    float multiplier = GetPincerSpeedMultiplier(mob) * std::max(0.f, game_config::mob_velocity_multiplier) *
+                       GetPulseMovementMultiplier(mob);
+    if (mob->HasState<CDiggingState>()) multiplier *= std::max(0.f, game_config::mob_digging_speed_multiplier);
+    return std::max(0.f, multiplier);
+}
+
+void ApplyPulseState(CMobBase* mob, float timer, ERarity rarity)
+{
+    if (!mob || (timer != endless && timer <= 0.f)) return;
+    if (auto* existing = mob->FindFirstState<CPulseState>())
+    {
+        existing->Refresh(timer, rarity);
+        return;
+    }
+    mob->AddState(std::make_unique<CPulseState>(mob, timer, rarity));
 }
 
 float GetMedicMultiplier(const CMobBase* mob)

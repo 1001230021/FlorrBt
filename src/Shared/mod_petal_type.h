@@ -12,17 +12,17 @@
 // client id tables. Therefore every value below is pinned forever - never
 // renumber, never reuse a released id.
 //
-// Wire budget (see entity_type.h): petal network id = 100 + id (< 180) and
-// ground-drop network id = 180 + id (<= 255), so ids 76..79 are slot-only
-// (never spawn them as ground drops) and 80+ is a hard cap enforced in
-// petal_type.h.
+// Wire budget (see entity_type.h): live petal network id = 100 + id (<= 255).
+// Ground drops use a generic network id and carry this id separately, so every
+// declared petal remains droppable. Account/inventory packets store the id in
+// one byte as well.
 //
 // Every id used by code MUST have a row in mod_petal_type_names below -
 // RegisterModPetalDefinition refuses unnamed ids at compile time. That table
 // is the controller's type manifest.
 
 inline constexpr int kModPetalTypeBase = 68;
-inline constexpr int kPetalIdCapacity = 80;
+inline constexpr int kPetalIdCapacity = 128;
 
 enum class EModPetalType : int
 {
@@ -35,8 +35,7 @@ enum class EModPetalType : int
     // --- ant_kingdom controller (EOU) ---
     EouPheromone = 70,
 
-    // 71 = native Magnet (petal_type.h) - never allocate it here.
-    // next free id: 72 (72..75 droppable, 76..79 slot-only)
+    // 71+ are native petals (petal_type.h) - never allocate them here.
 };
 
 struct SModPetalTypeName
@@ -61,7 +60,7 @@ inline constexpr std::string_view GetModPetalTypeName(int type)
     return {};
 }
 
-inline constexpr bool IsModPetalTypeId(int type) { return type >= kModPetalTypeBase && type < kPetalIdCapacity; }
+inline constexpr bool IsModPetalTypeId(int type) { return !GetModPetalTypeName(type).empty(); }
 
 // Console alias matching for mod petals (native aliases stay in petal_type.h).
 inline bool MatchModPetalTypeAlias(std::string_view text, int type)

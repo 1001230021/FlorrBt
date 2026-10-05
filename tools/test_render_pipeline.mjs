@@ -59,6 +59,9 @@ for (const entry of map.chunkCache.values()) {
   assert.equal(entry.canvas.width, entry.pixelWidth + 4, "sample neighbours in a real gutter");
 }
 cache.draw(ctx, 100);
+const stableVisibleKeys = map.visibleChunkKeys;
+cache.draw(ctx, 108);
+assert.equal(map.visibleChunkKeys, stableVisibleKeys, "stationary frames reuse the chunk plan");
 const oldCanvases = new Set(drawn.map(call => call[0]));
 drawn.length = 0; scale = 0.26; // density 1/4 -> 1/2, new spatial keys
 cache.draw(ctx, 116);
@@ -147,6 +150,11 @@ sprites.setSpriteRasterFrameTime(2);
 sprites.drawSpriteImage(spriteContext, sprite, 0, 0, 80, 80);
 const bitmap = spriteDraws.at(-1)[0];
 assert.notEqual(bitmap, sprite); assert.ok(bitmap.width >= 160);
+const beforeZoomOut = rasterCount;
+sprites.drawSpriteImage(spriteContext, sprite, 0, 0, 40, 40);
+assert.equal(spriteDraws.at(-1)[0], bitmap, "zoom-out reuses sharper rasters rather than rerasterizing SVGs inline");
+assert.equal(rasterCount, beforeZoomOut);
+sprites.drawSpriteImage(spriteContext, sprite, 0, 0, 80, 80);
 sprites.setSpriteHitTint(true);
 sprites.drawSpriteImage(spriteContext, sprite, 0, 0, 80, 80);
 assert.notEqual(spriteDraws.at(-1)[0], bitmap); assert.ok(spriteBudget.bytes > bitmap.width * bitmap.height * 4);
@@ -223,6 +231,7 @@ for (const name of ["prepareBeeSprites", "prepareBeetleSprites", "prepareSpiderS
   assert.match(game, new RegExp(`${name}\\(\\)`));
 assert.doesNotMatch(game, /if \((?:size|drawSize) < 0\.5\) return/);
 assert.doesNotMatch(game, /drawPixelEntity|detailMinRadiusForEntity/);
+assert.doesNotMatch(game, /isEntityInRenderView: \(\) => true/);
 assert.ok(game.indexOf("setSpriteRasterFrameTime(now);", game.indexOf("export function drawScene")) <
   game.indexOf("if (devDebugUi?.isOpen())", game.indexOf("export function drawScene")), "debug gets its own frame token too");
 console.log("PASS decoded variants, failure/retry, shared bytes/pins, complete layers, retained zoom levels, gutters, stale-work cancellation, subpixel bodies and frame-rate-independent zoom/catch-up");

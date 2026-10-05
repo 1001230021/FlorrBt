@@ -223,5 +223,6 @@ assert.match(craftStyles, /--craft-card-size: 54px/);
 assert.match(craftStyles, /\.craft-stage-slot\.empty/);
 assert.match(craftStyles, /\.craft-stage\.success \.craft-stage-slot\.empty[\s\S]*?background: transparent/);
 assert.doesNotMatch(craftStyles, /\.craft-matrix-cell\.selected\s*\{/);
-assert.match(petalInfoSource, /if \(count > 0 \|\| options\.showCount === true\)/);
+assert.match(petalInfoSource, /if \(count > 1 \|\| options\.showCount === true\)/);
+assert.match(petalInfoSource, /badge\.hidden = count <= 1/);
 console.log(`PASS craft lifecycle at 30/60/120fps; conserved returns; ${talentNodes.length} talent nodes, prerequisites, layout and zoom`);

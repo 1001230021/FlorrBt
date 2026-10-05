@@ -92,6 +92,7 @@ export class SettingsPanel extends UiPanel {
       const row = document.createElement("div");
       row.className = "settings-row";
       row.dataset.settingId = definition.id;
+      row.dataset.settingType = definition.type;
 
       const label = document.createElement("label");
       label.className = "settings-label";

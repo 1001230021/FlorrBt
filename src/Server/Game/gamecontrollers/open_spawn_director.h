@@ -11,6 +11,7 @@ class CGameWorld;
 class CMobBase;
 class CSnapshotReader;
 class CSnapshotWriter;
+enum class EMobType : int;
 enum class EPlayerSpawnReason : std::uint8_t;
 struct SWeatherDiurnalSnapshot;
 
@@ -31,6 +32,8 @@ class COpenSpawnDirector
                    const SWeatherDiurnalSnapshot* environment = nullptr);
     std::optional<florrbt::Vector2f> SelectPlayerSpawn(CGameWorld& world, bool use_new_player_spawn,
                                                   EPlayerSpawnReason reason);
+    EMobType PickHabitatMobType(CGameWorld& world, florrbt::Vector2f pos,
+                                const SWeatherDiurnalSnapshot* environment = nullptr);
     void OnEntityRemoved(const CEntity& entity);
 
     void CaptureSnapshot(CSnapshotWriter& writer) const;

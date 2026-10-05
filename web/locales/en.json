@@ -221,6 +221,7 @@
         "compressionPower": "Compression power",
         "petalHpHealingPerSecond": "Petal HP healing/s",
         "throwCooldown": "Throw CD",
+        "triggerCooldown": "Trigger CD",
         "webTime": "Web time",
         "webRadius": "Web radius",
         "flowerHp": "Flower HP",
@@ -255,14 +256,24 @@
         "chain": "Chain",
         "charges": "Charges",
         "radius": "Radius",
-        "absorbRange": "Absorb range"
+        "absorbRange": "Absorb range",
+        "mana": "Mana restored",
+        "manaRegen": "Mana regen",
+        "maxMana": "Max mana",
+        "manaCost": "Mana cost",
+        "damagePerMana": "Damage / mana",
+        "boostChains": "Boost chains",
+        "attackChains": "Attack chains"
       },
       "values": {
         "corrupted": "Corrupted",
         "nullify": "Nullify",
         "leftPetal": "left petal",
         "healingPerHit": "x0.8 per hit",
-        "cosmeticOnly": "Cosmetic only"
+        "cosmeticOnly": "Cosmetic only",
+        "linkTwoMobs": "Link two mobs",
+        "halfCurrentMana": "50% current mana",
+        "forwardSpeedBoost": "Forward speed boost"
       }
     },
     "mobile": {
@@ -521,7 +532,16 @@
       "brush": "Brush",
       "eraser": "Eraser",
       "eou_pheromone": "Pheromone",
-      "magnet": "Magnet"
+      "magnet": "Magnet",
+      "linker": "Linker",
+      "orb": "Orb",
+      "magic_leaf": "Magic Leaf",
+      "magic_stinger": "Magic Stinger",
+      "magic_missile": "Magic Missile",
+      "magic_eye": "Magic Eye",
+      "magic_bubble": "Magic Bubble",
+      "magic_lightning": "Magic Lightning",
+      "magic_cactus": "Magic Cactus"
     },
     "mobs": {
       "none": "None",
@@ -563,7 +583,11 @@
       "leaf_piece": "Leaf Piece",
       "leafcutter_soldier": "Leafcutter Soldier",
       "titan": "Titan",
-      "firefly": "Firefly"
+      "firefly": "Firefly",
+      "bubble": "Bubble",
+      "crab": "Crab",
+      "jellyfish": "Jellyfish",
+      "magic_firefly": "Magic Firefly"
     }
   },
   "talents": {
@@ -580,7 +604,7 @@
       "reach": "Extends petal attack reach.",
       "duplicator": "Adds copies to eligible petals; higher tiers also affect the leftmost slot.",
       "magnetism": "Extends the range for collecting drops.",
-      "medic": "Improves healing from petals.",
+      "regen": "Improves health, defense and mana regeneration, as well as petal healing.",
       "summoner": "Increases summoned creatures' health.",
       "second_chance": "Provides a second chance against lethal damage, subject to its cooldown.",
       "poison": "Increases poison damage.",
@@ -606,7 +630,7 @@
       "reach": "Reach",
       "duplicator": "Duplicator",
       "magnetism": "Magnetism",
-      "medic": "Medic",
+      "regen": "Regen",
       "summoner": "Summoner",
       "second_chance": "Second Chance",
       "poison": "Poison",
@@ -644,6 +668,8 @@
       "bumble_bee": "A chubby bumble bee with heavy contact damage.",
       "rock": "A rock. Blocks the way and hurts to touch.",
       "bubble": "A floating bubble; light but hard to pop. High-tier bubbles split when hit.",
+      "crab": "A fast crab that circles at petal reach, then dashes straight at its target.",
+      "jellyfish": "A slow Jellyfish that continuously shocks nearby players with chain lightning.",
       "baby_ant": "A baby ant; fragile, but they come in numbers.",
       "worker_ant": "A worker ant handling hauling and nest building.",
       "queen_ant": "The ant queen, heart and guardian of the nest.",
@@ -666,7 +692,8 @@
       "leaf_piece": "A cut leaf piece hauled around by leafcutter ants.",
       "leafcutter_soldier": "A leafcutter soldier, a threat of the desert regions.",
       "titan": "The Titan, one of the strongest beings.",
-      "firefly": "A firefly that retaliates with chain lightning when attacked."
+      "firefly": "A firefly that retaliates with chain lightning when attacked.",
+      "magic_firefly": "A cyan firefly that summons ordinary fireflies and can release empowered magic lightning."
     }
   },
   "maps": {

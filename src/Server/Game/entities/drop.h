@@ -20,7 +20,8 @@ class CDrop : public CEntity
 
     void Tick(float dt) override;
     bool CanCollide() const override { return false; }
-    bool CanBePickedUpBy(uint32_t player_id) const;
+    bool CanBePickedUpBy(const CPlayer& player) const;
+    bool IsOwnedBy(const CPlayer& player) const;
     bool PickUpTo(CPlayer& player);
     // Drop inertia: the target center starts at `center_start` and inherits
     // the killer's velocity (decaying to zero over `delay`); each drop glides
@@ -31,6 +32,8 @@ class CDrop : public CEntity
     PetalType GetType() const { return m_type; }
     ERarity GetRarity() const { return m_rarity; }
     int GetOwnerId() const { return m_owner_id; }
+    const std::string& GetOwnerAccount() const { return m_owner_account; }
+    void RestoreOwnerAccount(std::string account) { m_owner_account = std::move(account); }
     uint16_t GetStackNum() const { return m_stack_num; }
     float GetPickupDelay() const { return m_unable_picked_timer; }
     float GetMergeTimer() const { return m_merge_timer; }
@@ -48,6 +51,7 @@ class CDrop : public CEntity
     PetalType m_type = PetalType::None;
     ERarity m_rarity = ERarity::Null;
     int m_owner_id = drop_owner_all;
+    std::string m_owner_account;
     uint16_t m_stack_num = 1;
 
     float m_unable_picked_timer = game_config::default_drop_pickup_delay;

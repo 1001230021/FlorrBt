@@ -42,9 +42,7 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
-  <PropertyGroup>
-    <IntDir>$(MSBuildProjectName)\$(Platform)\$(Configuration)\</IntDir>
-  </PropertyGroup>
+  <Import Project="tools\msbuild\isolated_outputs.props" />
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -80,6 +78,11 @@
     <ClInclude Include="src\Engine\map_tools.h" />
     <ClInclude Include="src\Engine\spatial_hash_grid.h" />
     <ClInclude Include="src\Shared\circle_contact.h" />
+    <ClInclude Include="src\Shared\drop_stack.h" />
+    <ClInclude Include="src\Shared\spawn_dominance.h" />
+    <ClInclude Include="src\Shared\petal_motion.h" />
+    <ClInclude Include="src\Shared\swept_collision.h" />
+    <ClInclude Include="src\Shared\immutable_snapshot.h" />
     <ClInclude Include="src\Shared\damage_type.h" />
     <ClInclude Include="src\Shared\entity_type.h" />
     <ClInclude Include="src\Shared\drop_rate.h" />

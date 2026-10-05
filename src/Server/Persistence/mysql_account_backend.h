@@ -9,8 +9,8 @@
 // game_config::mysql_* (server.cfg `set mysql_host ...`; the password may be
 // injected through the FLORRBT_MYSQL_PASSWORD environment variable).
 //
-// Threading model: every call opens its own short-lived connection, so no
-// handle ever crosses threads. LoadAll runs on the server thread during
+// Threading model: the save worker reuses a thread-local connection; no
+// handle crosses threads. LoadAll runs on the server thread during
 // startup; PublishSnapshot runs on the account save worker thread and diffs
 // against the previously published state, so an idle server costs zero SQL
 // and a typical save only rewrites the accounts that actually changed.
@@ -35,6 +35,7 @@ bool LoadAll(std::vector<SPlayerAccount>& accounts, std::uint64_t& generation, s
 // failure nothing is partially applied and the change-detection state keeps
 // marking the affected accounts dirty for the next attempt.
 bool PublishSnapshot(const std::vector<SPlayerAccount>& accounts, std::uint64_t generation, std::string* error);
+bool PublishSnapshot(const SAccountSnapshot& accounts, std::uint64_t generation, std::string* error);
 
 // Drops the cached change-detection state (used between migration runs and
 // by the store's ShutDown so a later Load starts fresh).

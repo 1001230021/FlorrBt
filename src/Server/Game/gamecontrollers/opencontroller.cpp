@@ -191,6 +191,11 @@ void COpenController::SpawnMobs(CGameWorld& world)
                                SpawnEnvironment());
 }
 
+EMobType COpenController::PickHabitatMobType(CGameWorld& world, florrbt::Vector2f pos)
+{
+    return m_spawn_director.PickHabitatMobType(world, pos, SpawnEnvironment());
+}
+
 std::optional<florrbt::Vector2f> COpenController::SelectPlayerSpawn(CGameWorld& world, CPlayer& player,
                                                                EPlayerSpawnReason reason)
 {

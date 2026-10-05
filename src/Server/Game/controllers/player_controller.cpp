@@ -21,10 +21,22 @@ void CPlayerController::OnTick(CMobBase* mob, float dt)
         ClientOperate chores = pending.chores;
         bool has_movement = pending.has_movement;
         bool has_chores = pending.has_chores;
+        const auto movement_sequence = pending.movement_sequence;
+        const auto chores_sequence = pending.chores_sequence;
         pending = {};
 
-        if (has_movement) ExecuteOperate(movement, mob);
-        if (has_chores) ExecuteOperate(chores, mob);
+        if (has_movement && (!movement_sequence || !m_applied_movement_sequence ||
+                             IsNewerSequence(*movement_sequence, *m_applied_movement_sequence)))
+        {
+            ExecuteOperate(movement, mob);
+            if (movement_sequence) m_applied_movement_sequence = movement_sequence;
+        }
+        if (has_chores && (!chores_sequence || !m_applied_chores_sequence ||
+                          IsNewerSequence(*chores_sequence, *m_applied_chores_sequence)))
+        {
+            ExecuteOperate(chores, mob);
+            if (chores_sequence) m_applied_chores_sequence = chores_sequence;
+        }
     }
 
     // Input axes already encode an analog vector. Do not normalize it back
@@ -48,7 +60,7 @@ void CPlayerController::PushOperate(const ClientOperate& op) { ScheduleOperate(o
 bool CPlayerController::PushOperate(const ClientOperate& op, std::uint32_t delay_ticks, std::uint32_t sequence)
 {
     if (m_has_last_sequence && !IsNewerSequence(sequence, m_last_sequence)) return false;
-    if (!ScheduleOperate(op, delay_ticks)) return false;
+    if (!ScheduleOperate(op, delay_ticks, sequence)) return false;
 
     m_last_sequence = sequence;
     m_has_last_sequence = true;
@@ -84,9 +96,28 @@ bool CPlayerController::RestoreSnapshot(const CSnapshotReader& reader, std::uint
     return true;
 }
 
-bool CPlayerController::ScheduleOperate(const ClientOperate& op, std::uint32_t delay_ticks)
+bool CPlayerController::ScheduleOperate(const ClientOperate& op, std::uint32_t delay_ticks,
+                                       std::optional<std::uint32_t> sequence)
 {
     if (op.type != ClientOperate::Type::Input && op.type != ClientOperate::Type::Chores) return false;
+
+    if (!sequence)
+    {
+        // Legacy immediate packets are a fence for the fields they update;
+        // an older queued InputFrame must not undo a legacy release either.
+        const bool movement = op.move_x.has_value() || op.move_y.has_value();
+        const bool chores = op.is_attacking.has_value() || op.is_defending.has_value() || op.is_digging.has_value();
+        for (auto& queued : m_pending_operates)
+        {
+            if (movement) queued.has_movement = false;
+            if (chores) queued.has_chores = false;
+        }
+        if (m_has_last_sequence)
+        {
+            if (movement) m_applied_movement_sequence = m_last_sequence;
+            if (chores) m_applied_chores_sequence = m_last_sequence;
+        }
+    }
 
     delay_ticks = std::clamp(delay_ticks, MIN_INPUT_DELAY_TICKS, MAX_INPUT_DELAY_TICKS);
     std::uint64_t target_tick = m_local_tick + delay_ticks;
@@ -98,7 +129,7 @@ bool CPlayerController::ScheduleOperate(const ClientOperate& op, std::uint32_t d
         pending.occupied = true;
     }
 
-    MergeOperate(pending, op);
+    MergeOperate(pending, op, sequence);
     return true;
 }
 
@@ -108,7 +139,8 @@ bool CPlayerController::IsNewerSequence(std::uint32_t sequence, std::uint32_t pr
     return distance != 0 && distance < 0x80000000u;
 }
 
-void CPlayerController::MergeOperate(SPendingOperate& pending, const ClientOperate& op)
+void CPlayerController::MergeOperate(SPendingOperate& pending, const ClientOperate& op,
+                                    std::optional<std::uint32_t> sequence)
 {
     if (op.move_x.has_value() || op.move_y.has_value())
     {
@@ -116,6 +148,7 @@ void CPlayerController::MergeOperate(SPendingOperate& pending, const ClientOpera
         if (op.move_x.has_value()) pending.movement.move_x = op.move_x;
         if (op.move_y.has_value()) pending.movement.move_y = op.move_y;
         pending.has_movement = true;
+        pending.movement_sequence = sequence;
     }
 
     if (op.is_attacking.has_value() || op.is_defending.has_value() || op.agree.has_value() ||
@@ -128,6 +161,7 @@ void CPlayerController::MergeOperate(SPendingOperate& pending, const ClientOpera
         if (op.disconnect.has_value()) pending.chores.disconnect = op.disconnect;
         if (op.is_digging.has_value()) pending.chores.is_digging = op.is_digging;
         pending.has_chores = true;
+        pending.chores_sequence = sequence;
     }
 }
 
@@ -136,6 +170,8 @@ void CPlayerController::ClearPendingOperates()
     for (SPendingOperate& pending : m_pending_operates) pending = {};
     m_last_sequence = 0;
     m_has_last_sequence = false;
+    m_applied_movement_sequence.reset();
+    m_applied_chores_sequence.reset();
 }
 
 void CPlayerController::ExecuteOperate(const ClientOperate& op, CMobBase* mob)
@@ -170,10 +206,8 @@ void CPlayerController::ExecuteOperate(const ClientOperate& op, CMobBase* mob)
         {
             if (op.is_attacking.has_value()) attackable->SetAttacking(*op.is_attacking);
             if (op.is_defending.has_value()) attackable->SetDefending(*op.is_defending);
-            // Attack and defend are mutually exclusive action modes. If a
-            // client holds both keys, attack wins instead of making every
-            // attack-or-defend petal attempt both paths in the same tick.
-            if (attackable->IsAttacking()) attackable->SetDefending(false);
+            // Independent holds: Bubble must still see defense during attack.
+            // Petal-specific actions (e.g. EOU throwing) choose their own mode.
         }
         if (op.is_digging.value_or(false) || op.is_defending.value_or(false))
         {

@@ -38,8 +38,15 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
   const entries = new Map();
   let wanted = new Map(), queue = [], busy = false, scheduled = false, disposed = false;
   let revision = 0, previousCamera = null, inFlight = null;
+  let planKey = "", queueDirty = false;
   map.chunkCache = entries;
   map.chunkBuildQueue = queue;
+
+  function refreshQueue() {
+    queue = [...wanted.values()].filter(job => !entries.has(job.key) && job.key !== inFlight).slice(0, maxQueuedChunks);
+    map.chunkBuildQueue = queue;
+    queueDirty = false;
+  }
 
   function plan(now) {
     const scale = Math.max(1e-6, worldScale());
@@ -56,9 +63,20 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
     ahead.left += Math.min(0, leadX); ahead.right += Math.max(0, leadX);
     ahead.top += Math.min(0, leadY); ahead.bottom += Math.max(0, leadY);
     const w = profile.span * map.tileWidth, h = profile.span * map.tileHeight;
+    const x0 = Math.floor(ahead.left / w), x1 = Math.ceil(ahead.right / w);
+    const y0 = Math.floor(ahead.top / h), y1 = Math.ceil(ahead.bottom / h);
+    const nextKey = `${profile.key}:${revision}:${x0}:${x1}:${y0}:${y1}:` +
+      `${Math.floor(visible.left / w)}:${Math.ceil(visible.right / w)}:${Math.floor(visible.top / h)}:${Math.ceil(visible.bottom / h)}`;
+    // Most frames only move within the same cells. Keep their descriptors,
+    // priorities and queue instead of allocating and sorting them at 120Hz.
+    if (nextKey === planKey) {
+      if (queueDirty) refreshQueue();
+      return visible;
+    }
+    planKey = nextKey;
     const jobs = [];
-    for (let y = Math.floor(ahead.top / h); y < Math.ceil(ahead.bottom / h); y++) {
-      for (let x = Math.floor(ahead.left / w); x < Math.ceil(ahead.right / w); x++) {
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
         const bounds = { left: x * w, top: y * h, right: (x + 1) * w, bottom: (y + 1) * h };
         const visibleNow = overlaps(bounds, visible);
         jobs.push({ key: `${profile.key}:${x}:${y}`, ...bounds, profile, revision, visible: visibleNow,
@@ -68,8 +86,7 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
     jobs.sort((a, b) => a.priority - b.priority);
     const coverage = jobs.filter((job, index) => job.visible || index < maxQueuedChunks);
     wanted = new Map(coverage.map(job => [job.key, job]));
-    queue = coverage.filter(job => !entries.has(job.key) && job.key !== inFlight).slice(0, maxQueuedChunks);
-    map.chunkBuildQueue = queue;
+    refreshQueue();
     map.visibleChunkKeys = new Set(jobs.filter(job => job.visible).map(job => job.key));
     map.chunkProfileLabel = profile.label;
     return visible;
@@ -123,6 +140,7 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
     if (!entry) return false;
     if (!budget.store(entry, entry.canvas.width * entry.canvas.height * 4, () => {
       if (entries.get(entry.key) === entry) entries.delete(entry.key);
+      queueDirty = true;
       entry.canvas.width = entry.canvas.height = 0;
     })) { entry.canvas.width = entry.canvas.height = 0; return false; }
     entries.set(entry.key, entry);
@@ -140,7 +158,7 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
       busy = true; map.chunkBuilding = true; inFlight = job.key;
       try { if (!entries.has(job.key) && publish(await build(job))) requestDraw(); }
       catch (error) { console.warn("Map chunk preparation failed", error); }
-      finally { busy = false; map.chunkBuilding = false; inFlight = null; pump(); }
+      finally { busy = false; map.chunkBuilding = false; inFlight = null; queueDirty = true; pump(); }
     });
   }
 
@@ -171,8 +189,7 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
     if (disposed) return;
     budget.beginFrame(now);
     const visible = plan(now);
-    const candidates = [...entries.values()].filter(entry => overlaps(entry, visible))
-      .sort((a, b) => a.profile.density - b.profile.density);
+    let candidates = null;
     const dpr = Math.max(0.75, state.dpr || 1);
     const contains = (entry, job) => entry.left <= job.left && entry.top <= job.top &&
       entry.right >= job.right && entry.bottom >= job.bottom;
@@ -196,6 +213,10 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
       if (exact) {
         drawEntry(exact);
       } else {
+        // A settled view only needs exact lookups. Old-level coverage is
+        // searched/sorted lazily once, only on frames with cache misses.
+        candidates ??= [...entries.values()].filter(entry => overlaps(entry, visible))
+          .sort((a, b) => a.profile.density - b.profile.density);
         const parent = candidates.findLast(entry => contains(entry, job));
         if (parent) drawEntry(parent);
         // Finer children may already cover a new, coarser cell after zooming
@@ -234,6 +255,7 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
 
   function invalidate(row, col) {
     revision += 1;
+    planKey = "";
     const tile = { left: col * map.tileWidth, top: row * map.tileHeight,
       right: (col + 1) * map.tileWidth, bottom: (row + 1) * map.tileHeight };
     for (const entry of entries.values()) {

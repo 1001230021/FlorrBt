@@ -3,14 +3,20 @@ param(
     [string]$Configuration = "Release",
     [string]$OutputZip = "",
     [switch]$IncludePdb,
-    [string]$MySqlRoot = ""
+    [string]$MySqlRoot = "",
+    [switch]$BundleMySqlServer
 )
 
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $ArtifactsDir = Join-Path $RepoRoot "artifacts"
-$AppVersion = "1.0.1"
+$VersionHeader = Join-Path $RepoRoot "src\Shared\version.h"
+$VersionText = Get-Content -LiteralPath $VersionHeader -Raw
+if ($VersionText -notmatch 'inline\s+constexpr\s+std::string_view\s+version\s*=\s*"([^"]+)"') {
+    throw "Could not read the application version from $VersionHeader"
+}
+$AppVersion = $Matches[1]
 $PackageName = "FlorrBtHotReload-v$AppVersion"
 $StageRoot = Join-Path $ArtifactsDir $PackageName
 if (-not $OutputZip) {
@@ -31,6 +37,91 @@ function Copy-File([string]$Source, [string]$Destination) {
     }
     New-Item -ItemType Directory -Force -Path (Split-Path $Destination -Parent) | Out-Null
     Copy-Item -LiteralPath $Source -Destination $Destination -Force
+}
+
+function Resolve-MySqlDistribution([string]$RequestedRoot) {
+    $candidates = @(
+        $RequestedRoot,
+        $env:FLORRBT_MYSQL_ROOT
+    ) | Where-Object { $_ } | Select-Object -Unique
+
+    foreach ($candidate in $candidates) {
+        $resolved = [IO.Path]::GetFullPath($candidate)
+        if ((Test-Path -LiteralPath (Join-Path $resolved "bin\mysqld.exe") -PathType Leaf) -and
+            (Test-Path -LiteralPath (Join-Path $resolved "bin\mysql.exe") -PathType Leaf) -and
+            (Test-Path -LiteralPath (Join-Path $resolved "bin\mysqladmin.exe") -PathType Leaf)) {
+            return $resolved
+        }
+    }
+
+    throw "A MySQL 8.x distribution is required for -BundleMySqlServer. Pass -MySqlRoot <directory> or set FLORRBT_MYSQL_ROOT."
+}
+
+function Copy-BundledMySqlServer([string]$SourceRoot, [string]$DestinationRoot) {
+    $sourceBin = Join-Path $SourceRoot "bin"
+    $destinationBin = Join-Path $DestinationRoot "bin"
+    New-Item -ItemType Directory -Force -Path $destinationBin | Out-Null
+
+    # The deployment scripts only need these three tools. Keep all release
+    # DLLs beside them because MySQL may load optional authentication support
+    # dynamically, but omit the very large debug/PDB payload from the ZIP.
+    foreach ($name in @("mysqld.exe", "mysql.exe", "mysqladmin.exe")) {
+        Copy-File (Join-Path $sourceBin $name) (Join-Path $destinationBin $name)
+    }
+    Get-ChildItem -LiteralPath $sourceBin -File -Filter "*.dll" |
+        Where-Object { $_.Name -notlike "*-debug.dll" } |
+        ForEach-Object { Copy-File $_.FullName (Join-Path $destinationBin $_.Name) }
+
+    Copy-Dir (Join-Path $SourceRoot "share") (Join-Path $DestinationRoot "share")
+    $pluginRoot = Join-Path $SourceRoot "lib\plugin"
+    if (Test-Path -LiteralPath $pluginRoot -PathType Container) {
+        $destinationPlugins = Join-Path $DestinationRoot "lib\plugin"
+        New-Item -ItemType Directory -Force -Path $destinationPlugins | Out-Null
+        Get-ChildItem -LiteralPath $pluginRoot -File |
+            ForEach-Object { Copy-File $_.FullName (Join-Path $destinationPlugins $_.Name) }
+    }
+    $privateRoot = Join-Path $SourceRoot "lib\private"
+    if (Test-Path -LiteralPath $privateRoot -PathType Container) {
+        Copy-Dir $privateRoot (Join-Path $DestinationRoot "lib\private")
+    }
+    foreach ($name in @("LICENSE", "README")) {
+        $source = Join-Path $SourceRoot $name
+        if (Test-Path -LiteralPath $source -PathType Leaf) {
+            Copy-File $source (Join-Path $DestinationRoot $name)
+        }
+    }
+}
+
+function Find-VcRuntimeDirectory {
+    $roots = @(
+        "C:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Redist\MSVC",
+        "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Redist\MSVC",
+        "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Redist\MSVC"
+    )
+    foreach ($root in $roots) {
+        if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
+        $candidate = Get-ChildItem -LiteralPath $root -Directory |
+            Sort-Object Name -Descending |
+            ForEach-Object {
+                Get-ChildItem -LiteralPath (Join-Path $_.FullName "x64") -Directory -Filter "Microsoft.VC*.CRT" -ErrorAction SilentlyContinue |
+                    Sort-Object Name -Descending |
+                    Select-Object -First 1 -ExpandProperty FullName
+            } |
+            Select-Object -First 1
+        if ($candidate) { return $candidate }
+    }
+    return $null
+}
+
+function Copy-VcRuntime([string]$Destination) {
+    $runtime = Find-VcRuntimeDirectory
+    if (-not $runtime) {
+        Write-Warning "Visual C++ x64 app-local runtime was not found; the target server must install VC++ Redistributable 2022+."
+        return
+    }
+    Get-ChildItem -LiteralPath $runtime -File -Filter "*.dll" | ForEach-Object {
+        Copy-File $_.FullName (Join-Path $Destination $_.Name)
+    }
 }
 
 function Find-NodeRuntime {
@@ -79,11 +170,9 @@ Get-ChildItem $BuildDir -Filter "sfml*.dll" -File -ErrorAction SilentlyContinue 
 # self-contained package.  New builds place these beside the executable; the
 # fallback locations also make packaging an older local build less surprising.
 $mysqlRuntimeNames = @("libmysql.dll", "libssl-3-x64.dll", "libcrypto-3-x64.dll")
-$mysqlRoots = @(
-    $MySqlRoot,
-    $env:FLORRBT_MYSQL_ROOT,
-    "D:\库\mysql-8.4.6-winx64"
-) | Where-Object { $_ } | Select-Object -Unique
+$mysqlRoots = @($MySqlRoot, $env:FLORRBT_MYSQL_ROOT) |
+    Where-Object { $_ } |
+    Select-Object -Unique
 foreach ($runtimeName in $mysqlRuntimeNames) {
     $runtimeSource = Join-Path $BuildDir $runtimeName
     if (-not (Test-Path $runtimeSource)) {
@@ -100,6 +189,15 @@ foreach ($runtimeName in $mysqlRuntimeNames) {
         }
     }
     Copy-File $runtimeSource (Join-Path $RuntimeDir $runtimeName)
+}
+
+Copy-VcRuntime $RuntimeDir
+
+if ($BundleMySqlServer) {
+    $resolvedMySqlRoot = Resolve-MySqlDistribution $MySqlRoot
+    $bundledMySqlRoot = Join-Path $StageRoot "mysql-server"
+    Copy-BundledMySqlServer $resolvedMySqlRoot $bundledMySqlRoot
+    Copy-VcRuntime (Join-Path $bundledMySqlRoot "bin")
 }
 
 if ($IncludePdb) {
@@ -133,6 +231,7 @@ cd /d "%~dp0"
 call deploy\windows\deploy.cmd -Mode start %*
 '@
 Write-TextFile (Join-Path $StageRoot "START_ALL.cmd") $StartAll
+Write-TextFile (Join-Path $StageRoot "START_ALL.bat") $StartAll
 
 $StartWeb = @'
 @echo off
@@ -212,18 +311,24 @@ pause
 '@
 Write-TextFile (Join-Path $StageRoot "STOP_AUTOSTART.cmd") $Stop
 
+$BundledMySqlNote = if ($BundleMySqlServer) {
+    "MySQL 8 is bundled under mysql-server\; START_ALL.cmd discovers it automatically."
+} else {
+    "MySQL Server is not bundled. Set FLORRBT_MYSQL_ROOT or pass -MySqlRoot <directory>."
+}
+
 $Readme = @"
 FlorrBt v$AppVersion one-click deployment package
 
 1. Extract this zip on the Windows server.
-2. Install Microsoft Visual C++ Redistributable 2022+ if FlorrBt.Server.exe cannot start.
-3. Set FLORRBT_MYSQL_ROOT or pass `-MySqlRoot <directory>` to the MySQL commands.
-4. Run START_MYSQL.cmd once, then MIGRATE_ACCOUNTS_TO_MYSQL.cmd.
-5. Double-click START_ALL.cmd. The package uses its bundled Node.js runtime.
-6. Open http://SERVER_IP:8080 from another computer.
+2. Run OPEN_FIREWALL_ADMIN.cmd once if remote clients cannot reach ports 8080/10012.
+3. Double-click START_ALL.cmd. It initializes MySQL on first launch, then starts the game server and web bridge.
+4. Open http://SERVER_IP:8080 from another computer.
+
+$BundledMySqlNote
 
 Useful files:
-- START_ALL.cmd: starts the hot-reload launcher, game server, and web bridge.
+- START_ALL.bat / START_ALL.cmd: starts MySQL, the hot-reload launcher, game server, and web bridge.
 - START_SERVER_ONLY.cmd: starts the server through FlorrBt.Launcher.exe.
 - START_MYSQL.cmd: initializes/starts the package-managed MySQL data directory.
 - MIGRATE_ACCOUNTS_TO_MYSQL.cmd: imports data/accounts.json into MySQL and verifies it.

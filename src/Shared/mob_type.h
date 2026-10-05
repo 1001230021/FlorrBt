@@ -50,6 +50,9 @@ enum class EMobType : int
     Titan,
     Firefly,
     Bubble,
+    Crab,
+    Jellyfish,
+    MagicFirefly,
 };
 
 using MobType = EMobType;
@@ -57,17 +60,18 @@ using MobType = EMobType;
 // Controller-specific ids map into the shared mob id space above the natives.
 constexpr EMobType ToMobType(EModMobType type) { return static_cast<EMobType>(type); }
 
-inline constexpr std::array<std::string_view, 41> mob_type_names = {
+inline constexpr std::array<std::string_view, 44> mob_type_names = {
     "None",          "Beetle",        "Gambler",        "NormalLadybug",  "MechaFlower",    "NormalFlower",
     "PlayerFlower",  "SoldierAnt",    "SoldierFireAnt", "SoldierTermite", "SummonedBeetle", "SummonedSoldierAnt",
     "BandageBeetle", "Bee",           "Hornet",         "BumbleBee",      "Rock",           "BabyAnt",
     "WorkerAnt",     "QueenAnt",      "AntHole",        "Spider",         "Sandstorm",      "Dummy",
     "Dandelion",     "AntEgg",        "FireAntEgg",     "TermiteEgg",     "QueenAntEgg",    "QueenFireAntEgg",
     "BabyFireAnt",   "WorkerFireAnt", "FireQueenAnt",   "BabyTermite",    "WorkerTermite",  "TermiteOvermind",
-    "LeafPiece",     "LeafcutterSoldier", "Titan",      "Firefly",        "Bubble",
+    "LeafPiece",     "LeafcutterSoldier", "Titan",      "Firefly",        "Bubble",       "Crab",
+    "Jellyfish",      "MagicFirefly",
 };
 
-static_assert(static_cast<size_t>(EMobType::Bubble) + 1 == mob_type_names.size(),
+static_assert(static_cast<size_t>(EMobType::MagicFirefly) + 1 == mob_type_names.size(),
               "mob type names must stay aligned with EMobType");
 static_assert(mob_type_names.size() <= static_cast<size_t>(kModMobTypeBase),
               "native mob ids grew into the reserved mod range");
@@ -111,6 +115,12 @@ inline bool MatchMobTypeAlias(std::string_view text, EMobType type)
         return text == "hornet";
     case EMobType::BumbleBee:
         return text == "bumblebee" || text == "bumble_bee" || text == "bbb";
+    case EMobType::Crab:
+        return text == "crab";
+    case EMobType::Jellyfish:
+        return text == "jellyfish" || text == "jelly";
+    case EMobType::MagicFirefly:
+        return text == "magicfirefly" || text == "magic_firefly" || text == "mfirefly";
     case EMobType::Rock:
         return text == "rock";
     case EMobType::Bubble:

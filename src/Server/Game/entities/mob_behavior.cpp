@@ -1,4 +1,5 @@
 #include "../../Module/network_module.h"
+#include "../../../Shared/circle_contact.h"
 #include "../controllers/melee_controller.h"
 #include "../controllers/pickup_controller.h"
 #include "../controllers/player_controller.h"
@@ -396,19 +397,11 @@ class CBeeMob : public CBasicMob
 
         m_wave_timer += dt;
 
-        float speed_multiplier = GetPincerSpeedMultiplier(this) * game_config::mob_velocity_multiplier;
+        float speed_multiplier = GetMobMovementSpeedMultiplier(this);
         float max_velocity = stats->max_velocity * speed_multiplier;
-        float acceleration = stats->acceleration * speed_multiplier;
-
-        float current_speed_sq = LengthSq(m_vel);
-        float max_speed_sq = max_velocity * max_velocity;
-        if (current_speed_sq > max_speed_sq && game_config::mob_slow_to_max_velocity_time > 0.f)
-        {
-            float current_speed = std::sqrt(current_speed_sq);
-            float slow_amount = (current_speed - max_velocity) * dt / game_config::mob_slow_to_max_velocity_time;
-            float next_speed = std::max(max_velocity, current_speed - slow_amount);
-            m_vel *= next_speed / current_speed;
-        }
+        // Slow states affect the target speed, never the mob's own steering
+        // acceleration.
+        const float acceleration = stats->acceleration;
 
         // Movement-target states (hallucination distortion) must apply here
         // too: this override replaces CMobBase::MoveTowards, which is where
@@ -420,7 +413,7 @@ class CBeeMob : public CBasicMob
         const float stop_distance = analog && target_radius < 0.f ? 0.f : Radius() + std::max(0.f, target_radius);
         if (len <= stop_distance)
         {
-            m_vel *= game_config::mob_stop_damping;
+            m_vel = florrbt::StepVelocityTowards(m_vel, {}, acceleration, dt);
             if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = { 0.f, 0.f };
             return;
         }
@@ -444,16 +437,7 @@ class CBeeMob : public CBasicMob
         HasFacing() = true;
 
         florrbt::Vector2f desired_vel = desired_dir * max_velocity;
-        florrbt::Vector2f diff = desired_vel - m_vel;
-        float diff_len = Length(diff);
-        float max_accel = acceleration * dt;
-        if (diff_len <= max_accel)
-        {
-            m_vel = desired_vel;
-        } else
-        {
-            m_vel += diff / diff_len * max_accel;
-        }
+        m_vel = florrbt::StepVelocityTowards(m_vel, desired_vel, acceleration, dt);
     }
 
   private:
@@ -505,19 +489,11 @@ class CFireflyMob : public CBasicMob
 
         m_wave_timer += dt;
 
-        float speed_multiplier = GetPincerSpeedMultiplier(this) * game_config::mob_velocity_multiplier;
+        float speed_multiplier = GetMobMovementSpeedMultiplier(this);
         float max_velocity = stats->max_velocity * speed_multiplier;
-        float acceleration = stats->acceleration * speed_multiplier;
-
-        float current_speed_sq = LengthSq(m_vel);
-        float max_speed_sq = max_velocity * max_velocity;
-        if (current_speed_sq > max_speed_sq && game_config::mob_slow_to_max_velocity_time > 0.f)
-        {
-            float current_speed = std::sqrt(current_speed_sq);
-            float slow_amount = (current_speed - max_velocity) * dt / game_config::mob_slow_to_max_velocity_time;
-            float next_speed = std::max(max_velocity, current_speed - slow_amount);
-            m_vel *= next_speed / current_speed;
-        }
+        // Slow states affect the target speed, never the mob's own steering
+        // acceleration.
+        const float acceleration = stats->acceleration;
 
         // Movement-target states (hallucination distortion) must apply here
         // too: this override replaces CMobBase::MoveTowards, which is where
@@ -529,7 +505,7 @@ class CFireflyMob : public CBasicMob
         const float stop_distance = analog && target_radius < 0.f ? 0.f : Radius() + std::max(0.f, target_radius);
         if (len <= stop_distance)
         {
-            m_vel *= game_config::mob_stop_damping;
+            m_vel = florrbt::StepVelocityTowards(m_vel, {}, acceleration, dt);
             if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = { 0.f, 0.f };
             return;
         }
@@ -553,16 +529,7 @@ class CFireflyMob : public CBasicMob
         HasFacing() = true;
 
         florrbt::Vector2f desired_vel = desired_dir * max_velocity;
-        florrbt::Vector2f diff = desired_vel - m_vel;
-        float diff_len = Length(diff);
-        float max_accel = acceleration * dt;
-        if (diff_len <= max_accel)
-        {
-            m_vel = desired_vel;
-        } else
-        {
-            m_vel += diff / diff_len * max_accel;
-        }
+        m_vel = florrbt::StepVelocityTowards(m_vel, desired_vel, acceleration, dt);
     }
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
@@ -594,7 +561,18 @@ class CFireflyMob : public CBasicMob
         m_lightning_cooldown = game_config::mob_firefly_lightning_cooldown_seconds;
         const float lightning = FireflyLightningDamage(GetRarity());
         const int bounces = FireflyLightningBounces(GetRarity());
-        GameWorld()->ChainLightning(*this, lightning, bounces, this);
+        if (ShouldUseMagicLightning())
+            GameWorld()->MagicChainLightning(*this, lightning, bounces, bounces, this);
+        else
+            GameWorld()->ChainLightning(*this, lightning, bounces, this);
+    }
+
+    bool ShouldUseMagicLightning() const
+    {
+        // Every Magic Firefly attack uses the blue magic chain.  This applies
+        // to both retaliatory and active attacks, at every rarity; ordinary
+        // Fireflies continue to use the normal chain in FireChainLightning.
+        return GetMobType() == EMobType::MagicFirefly;
     }
 
     // Super+ only: fires chain lightning at the nearest hostile target inside
@@ -2433,6 +2411,30 @@ bool RegisterMobs(std::string& error)
     }
 
     {
+        // Magic Firefly shares every stat, movement rule, summon condition,
+        // summon limit, and summon rarity with the ordinary Firefly. Only the
+        // summoned mob type differs: its skill creates Magic Fireflies.
+        CMobPrototype proto;
+        proto.m_team = game_config::mob_firefly_team;
+        proto.m_base_stats.max_health = game_config::mob_firefly_max_health;
+        proto.m_base_stats.armor = game_config::mob_firefly_armor;
+        proto.m_base_stats.damage = game_config::mob_firefly_damage;
+        proto.m_base_stats.radius = game_config::mob_firefly_radius;
+        proto.m_base_stats.mass = game_config::mob_firefly_mass;
+        proto.m_base_stats.horizon = game_config::default_horizon;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = game_config::mob_bee_max_velocity;
+        proto.m_base_stats.acceleration = game_config::mob_bee_acceleration;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(base_stats, rarity);
+        };
+        proto.m_controller_factory = [](ERarity) {
+            return std::make_unique<CFireflyController>(EMobType::MagicFirefly);
+        };
+        RegisterMobPrototype<EMobType::MagicFirefly, CFireflyMob>(std::move(proto));
+    }
+
+    {
         CMobPrototype proto;
         proto.m_team = game_config::mob_hornet_team;
         proto.m_base_stats.max_health = game_config::mob_hornet_max_health;
@@ -2544,6 +2546,44 @@ bool RegisterMobs(std::string& error)
 
     {
         CMobPrototype proto;
+        proto.m_team = game_config::mob_crab_team;
+        proto.m_base_stats.max_health = game_config::mob_crab_max_health;
+        proto.m_base_stats.armor = game_config::mob_crab_armor;
+        proto.m_base_stats.damage = game_config::mob_crab_damage;
+        proto.m_base_stats.radius = game_config::mob_crab_radius;
+        proto.m_base_stats.mass = game_config::mob_crab_mass;
+        proto.m_base_stats.horizon = game_config::mob_crab_horizon;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = game_config::mob_crab_max_velocity;
+        proto.m_base_stats.acceleration = game_config::mob_crab_acceleration;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(base_stats, rarity);
+        };
+        proto.m_controller_factory = [](ERarity) { return std::make_unique<CCrabController>(); };
+        RegisterMobPrototype<EMobType::Crab, CBasicMob>(std::move(proto));
+    }
+
+    {
+        CMobPrototype proto;
+        proto.m_team = game_config::mob_jellyfish_team;
+        proto.m_base_stats.max_health = game_config::mob_jellyfish_max_health;
+        proto.m_base_stats.armor = game_config::mob_jellyfish_armor;
+        proto.m_base_stats.damage = game_config::mob_jellyfish_damage;
+        proto.m_base_stats.radius = game_config::mob_jellyfish_radius;
+        proto.m_base_stats.mass = game_config::mob_jellyfish_mass;
+        proto.m_base_stats.horizon = game_config::mob_jellyfish_horizon;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = game_config::mob_jellyfish_max_velocity;
+        proto.m_base_stats.acceleration = game_config::mob_jellyfish_acceleration;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(base_stats, rarity);
+        };
+        proto.m_controller_factory = [](ERarity) { return std::make_unique<CJellyfishController>(); };
+        RegisterMobPrototype<EMobType::Jellyfish, CBasicMob>(std::move(proto));
+    }
+
+    {
+        CMobPrototype proto;
         proto.m_team = game_config::mob_baby_ant_team;
         proto.m_base_stats.max_health = game_config::mob_baby_ant_max_health;
         proto.m_base_stats.armor = game_config::mob_baby_ant_armor;
@@ -2622,7 +2662,7 @@ bool RegisterMobs(std::string& error)
         proto.m_team = game_config::mob_fire_ant_team;
         proto.m_base_stats.max_health = game_config::mob_ant_egg_max_health;
         proto.m_base_stats.armor = game_config::mob_ant_egg_armor;
-        proto.m_base_stats.damage = game_config::mob_ant_egg_damage;
+        proto.m_base_stats.damage = game_config::mob_fire_ant_egg_damage;
         proto.m_base_stats.radius = game_config::mob_ant_egg_radius;
         proto.m_base_stats.mass = game_config::mob_ant_egg_mass;
         proto.m_base_stats.horizon = 0.f;
@@ -2640,7 +2680,7 @@ bool RegisterMobs(std::string& error)
         proto.m_team = game_config::mob_termite_team;
         proto.m_base_stats.max_health = game_config::mob_ant_egg_max_health;
         proto.m_base_stats.armor = game_config::mob_ant_egg_armor;
-        proto.m_base_stats.damage = game_config::mob_ant_egg_damage;
+        proto.m_base_stats.damage = game_config::mob_termite_egg_damage;
         proto.m_base_stats.radius = game_config::mob_ant_egg_radius;
         proto.m_base_stats.mass = game_config::mob_ant_egg_mass;
         proto.m_base_stats.horizon = 0.f;
@@ -2679,7 +2719,7 @@ bool RegisterMobs(std::string& error)
         proto.m_team = game_config::mob_fire_ant_team;
         proto.m_base_stats.max_health = game_config::mob_ant_egg_max_health;
         proto.m_base_stats.armor = game_config::mob_ant_egg_armor;
-        proto.m_base_stats.damage = game_config::mob_ant_egg_damage;
+        proto.m_base_stats.damage = game_config::mob_fire_ant_egg_damage;
         proto.m_base_stats.radius = game_config::mob_ant_egg_radius;
         proto.m_base_stats.mass = game_config::mob_ant_egg_mass;
         proto.m_base_stats.horizon = 0.f;
@@ -3069,11 +3109,15 @@ bool RegisterMobs(std::string& error)
     {
         CMobPrototype proto;
         proto.m_team = game_config::mob_soldier_ant_team;
-        proto.m_base_stats.max_health = game_config::mob_soldier_ant_max_health;
+        proto.m_base_stats.max_health = game_config::mob_soldier_ant_max_health *
+                                       game_config::mob_leafcutter_soldier_health_multiplier;
         proto.m_base_stats.armor = game_config::mob_soldier_ant_armor;
-        proto.m_base_stats.damage = game_config::mob_soldier_ant_damage;
-        proto.m_base_stats.radius = game_config::mob_soldier_ant_radius;
-        proto.m_base_stats.mass = game_config::mob_soldier_ant_mass;
+        proto.m_base_stats.damage = game_config::mob_soldier_ant_damage *
+                                   game_config::mob_leafcutter_soldier_damage_multiplier;
+        proto.m_base_stats.radius = game_config::mob_soldier_ant_radius *
+                                   game_config::mob_leafcutter_soldier_radius_multiplier;
+        proto.m_base_stats.mass = game_config::mob_soldier_ant_mass *
+                                 game_config::mob_leafcutter_soldier_mass_multiplier;
         proto.m_base_stats.horizon = game_config::default_horizon;
         proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
         proto.m_base_stats.max_velocity = game_config::default_max_velocity;

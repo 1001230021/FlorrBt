@@ -6,6 +6,7 @@ import {
 import { state } from "./app_context.js";
 import {
   bloodSacrificeEffectType,
+  chainEntityType,
   dandelionMissileType,
   entityHasState,
   hornetMissileType,
@@ -14,12 +15,8 @@ import {
   stateDigging,
 } from "./game_ids.js";
 
-export function collectSceneRenderPasses({
-  scale,
-  isEntityInRenderView,
-  isBoss,
-}) {
-  const passes = {
+export function createSceneRenderPasses() {
+  return {
     ground: [],
     underlay: [],
     world: [],
@@ -28,6 +25,17 @@ export function collectSceneRenderPasses({
     bosses: [],
     owner: null,
   };
+}
+
+export function collectSceneRenderPasses({
+  scale,
+  isEntityInRenderView,
+  isBoss,
+  passes = createSceneRenderPasses(),
+}) {
+  passes.ground.length = passes.underlay.length = passes.world.length = 0;
+  passes.petals.length = passes.overlays.length = passes.bosses.length = 0;
+  passes.owner = null;
   const owner = state.entities.get(state.ownerEntityId) || null;
 
   for (const entity of state.entities.values()) {
@@ -43,6 +51,8 @@ export function collectSceneRenderPasses({
       // Loose cards lie on the terrain, not on top of mobs whose IDs happen
       // to sort earlier. Their fade/rotation stays in this same layer.
       passes.ground.push(entity);
+    } else if (snap.entityType === chainEntityType) {
+      passes.underlay.push(entity);
     } else if (
       snap.entityType === spiderWebZoneType ||
       snap.entityType === bloodSacrificeEffectType

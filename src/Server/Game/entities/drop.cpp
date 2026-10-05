@@ -2,6 +2,7 @@
 #include "../../Persistence/unique_petal_registry.h"
 #include "../../server.h"
 #include "../gameworld.h"
+#include "../gamecontext.h"
 #include "../player.h"
 #include "petals/petal.h"
 #include <algorithm>
@@ -31,13 +32,20 @@ CDrop::CDrop() : CDrop(nullptr, { 0.f, 0.f }, PetalType::None, ERarity::Null, dr
 CDrop::CDrop(CGameWorld* world, florrbt::Vector2f pos, PetalType type, ERarity rarity, int owner_id, float lifetime,
              uint16_t stack_num)
     : CEntity(world, pos.x, pos.y, game_config::default_drop_radius,
-              MakeDropEntityType(static_cast<std::uint8_t>(type))),
+              MakeDropEntityType()),
       m_type(type), m_rarity(rarity),
       m_owner_id(owner_id), m_stack_num(stack_num), m_merge_timer(InitialDropMergeTimer(pos, owner_id)),
       m_timer(std::max(0.f, lifetime))
 {
     Health() = 1.f;
     Mass() = game_config::default_drop_mass;
+    if (m_owner_id != drop_owner_all && world && world->GameContext())
+        for (const auto& player : world->GameContext()->Players())
+            if (player && player->IsAuthenticated() && player->GetId() == static_cast<uint32_t>(m_owner_id))
+            {
+                m_owner_account = player->GetAccountName();
+                break;
+            }
 }
 
 void CDrop::BeginInertiaDrop(florrbt::Vector2f center_start, florrbt::Vector2f center_velocity, float delay)
@@ -111,16 +119,23 @@ void CDrop::Tick(float dt)
     }
 }
 
-bool CDrop::CanBePickedUpBy(uint32_t player_id) const
+bool CDrop::IsOwnedBy(const CPlayer& player) const
 {
-    if (IsMarkedForDes() || m_unable_picked_timer > 0.f) return false;
+    return m_owner_id == drop_owner_all || (player.IsAuthenticated() && !m_owner_account.empty() &&
+                                            m_owner_account == player.GetAccountName());
+}
+
+bool CDrop::CanBePickedUpBy(const CPlayer& player) const
+{
+    if (!player.IsAuthenticated() || player.GetAccountName().empty() ||
+        IsMarkedForDes() || m_unable_picked_timer > 0.f || m_timer <= 0.f) return false;
     if (m_type == PetalType::None || m_rarity == ERarity::Null || m_stack_num == 0) return false;
-    return m_owner_id == drop_owner_all || m_owner_id == static_cast<int>(player_id);
+    return IsOwnedBy(player);
 }
 
 bool CDrop::PickUpTo(CPlayer& player)
 {
-    if (!CanBePickedUpBy(player.GetId())) return false;
+    if (!CanBePickedUpBy(player)) return false;
 
     if (m_rarity == ERarity::Unique)
     {
@@ -150,13 +165,16 @@ bool CDrop::PickUpTo(CPlayer& player)
 void CDrop::MergeNearbyDrops()
 {
     CGameWorld* world = GameWorld();
-    if (!world || game_config::default_drop_stack_range <= 0.f) return;
+    if (!world || IsMarkedForDes() || m_timer <= 0.f || m_inertia_active || m_unable_picked_timer > 0.f ||
+        game_config::default_drop_stack_range <= 0.f) return;
 
     world->GetSpatialGrid().ForEachInRange(Pos(), game_config::default_drop_stack_range, [this](CEntity* entity) {
         auto* other = dynamic_cast<CDrop*>(entity);
         if (!other || other == this || other->IsMarkedForDes()) return;
         if (other->m_type != m_type || other->m_rarity != m_rarity) return;
-        if (other->m_owner_id != m_owner_id) return;
+        if (other->m_timer <= 0.f || other->m_inertia_active || other->m_unable_picked_timer > 0.f) return;
+        if ((m_owner_id == drop_owner_all) != (other->m_owner_id == drop_owner_all)) return;
+        if (m_owner_id != drop_owner_all && (m_owner_account.empty() || m_owner_account != other->m_owner_account)) return;
         if (other->Id() <= Id()) return;
 
         uint16_t max_stack = std::numeric_limits<uint16_t>::max();
@@ -164,6 +182,8 @@ void CDrop::MergeNearbyDrops()
 
         uint16_t free_stack = static_cast<uint16_t>(max_stack - m_stack_num);
         uint16_t moved_stack = std::min(free_stack, other->m_stack_num);
+        if (moved_stack == 0) return;
+        m_timer = std::max(m_timer, other->m_timer);
         m_stack_num = static_cast<uint16_t>(m_stack_num + moved_stack);
         other->m_stack_num = static_cast<uint16_t>(other->m_stack_num - moved_stack);
         if (other->m_stack_num == 0) other->MarkForDestroy(EEntityRemovalReason::Consumed);

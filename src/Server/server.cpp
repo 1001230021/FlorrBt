@@ -16,6 +16,7 @@
 #include "Module/server_gui_module.h"
 #include "Module/world_module.h"
 #include "Persistence/server_data_store.h"
+#include "Persistence/account_store.h"
 #include "Persistence/unique_petal_registry.h"
 #include "report.h"
 #include <algorithm>
@@ -732,9 +733,11 @@ void CServer::Run()
             {
                 report::ProcessAsyncResults();
                 TickTitanForgeCooldowns(dt);
-                for (auto& module : m_modules)
                 {
-                    module->Tick(dt);
+                    // Coalesce gameplay mutations into one immutable save snapshot
+                    // per tick; release before hot-reload's durable Flush barrier.
+                    CAccountDataStore::CSaveBatch account_batch;
+                    for (auto& module : m_modules) module->Tick(dt);
                 }
                 ++m_tick;
                 ProcessHotReloadRequest();

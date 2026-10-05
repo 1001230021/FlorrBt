@@ -72,8 +72,20 @@ export function effectiveViewRadius() {
   return serverRadius * (zoom / 100) * deathFocus;
 }
 
+let cachedScale = 1, cachedWidth, cachedHeight, cachedRadius, cachedZoom, cachedZoomTarget, cachedDeath;
 export function worldScale() {
-  return scaleForViewRadius(effectiveViewRadius());
+  // Thousands of transforms per frame share these exact camera inputs.
+  // Also key temporary debug render state, so restoring the game cannot
+  // accidentally reuse the observer's scale (no manual invalidation needed).
+  if (cachedWidth !== state.canvasWidth || cachedHeight !== state.canvasHeight ||
+      cachedRadius !== state.viewRadius || cachedZoom !== state.renderViewZoomPercent ||
+      cachedZoomTarget !== state.viewZoomPercent || cachedDeath !== state.deathViewFactor) {
+    cachedWidth = state.canvasWidth; cachedHeight = state.canvasHeight;
+    cachedRadius = state.viewRadius; cachedZoom = state.renderViewZoomPercent;
+    cachedZoomTarget = state.viewZoomPercent; cachedDeath = state.deathViewFactor;
+    cachedScale = scaleForViewRadius(effectiveViewRadius());
+  }
+  return cachedScale;
 }
 
 export function worldLengthToScreen(value) {
@@ -90,10 +102,10 @@ export function currentScreenShake() {
 
 export function worldToScreen(pos) {
   const scale = worldScale();
-  const shake = currentScreenShake();
+  const shake = state.screenShake;
   return {
-    x: (pos.x - state.camera.x) * scale + state.canvasWidth * 0.5 + shake.x,
-    y: (pos.y - state.camera.y) * scale + state.canvasHeight * 0.5 + shake.y,
+    x: (pos.x - state.camera.x) * scale + state.canvasWidth * 0.5 + (Number.isFinite(shake?.x) ? shake.x : 0),
+    y: (pos.y - state.camera.y) * scale + state.canvasHeight * 0.5 + (Number.isFinite(shake?.y) ? shake.y : 0),
   };
 }
 

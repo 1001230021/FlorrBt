@@ -378,3 +378,6 @@ tools/*.exe
 # Local AI-session and stray build artifacts
 .codex_*.json
 FlorrBt..*/
+.mirasim/
+*.bak_expand
+*.svg.20??_??_??_??_??_??.*.svg

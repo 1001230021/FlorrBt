@@ -43,7 +43,7 @@ function translateButton(button) {
   button.setAttribute("aria-label", button.title);
 }
 
-export function createMobileControls({ isUiTarget, movementSurface, onAction, onSurfaceTap } = {}) {
+export function createMobileControls({ isUiTarget, movementSurface, onAction, onSurfaceTap, onLayoutChange } = {}) {
   const root = document.createElement("section");
   root.className = "mobile-controls ui hidden";
   root.setAttribute("aria-label", t("ui.mobile.ariaLabel"));
@@ -126,6 +126,7 @@ export function createMobileControls({ isUiTarget, movementSurface, onAction, on
       safeInsets = { top: Math.max(10, corner?.top || 0), left: Math.max(10, corner?.left || 0), right: Math.max(10, window.innerWidth - actionRect.right) };
     }
     if (!active) { closeSlotMenu(); reset(); }
+    onLayoutChange?.();
   }
 
   function updateKnob() {

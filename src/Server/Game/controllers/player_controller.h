@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 class CFlower;
 
@@ -33,11 +34,14 @@ class CPlayerController : public IController
         bool occupied = false;
         bool has_movement = false;
         bool has_chores = false;
+        std::optional<std::uint32_t> movement_sequence;
+        std::optional<std::uint32_t> chores_sequence;
     };
 
-    bool ScheduleOperate(const ClientOperate& op, std::uint32_t delay_ticks);
+    bool ScheduleOperate(const ClientOperate& op, std::uint32_t delay_ticks,
+                         std::optional<std::uint32_t> sequence = std::nullopt);
     static bool IsNewerSequence(std::uint32_t sequence, std::uint32_t previous);
-    static void MergeOperate(SPendingOperate& pending, const ClientOperate& op);
+    static void MergeOperate(SPendingOperate& pending, const ClientOperate& op, std::optional<std::uint32_t> sequence);
     void ClearPendingOperates();
     void ExecuteOperate(const ClientOperate& op, CMobBase* mob);
     void TryManualAttack(CMobBase* mob);
@@ -49,4 +53,6 @@ class CPlayerController : public IController
     std::uint64_t m_local_tick = 0;
     std::uint32_t m_last_sequence = 0;
     bool m_has_last_sequence = false;
+    std::optional<std::uint32_t> m_applied_movement_sequence;
+    std::optional<std::uint32_t> m_applied_chores_sequence;
 };

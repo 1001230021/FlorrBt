@@ -5,6 +5,7 @@
 #include "../../Shared/version.h"
 #include "../Game/controllers/melee_controller.h"
 #include "../Game/controllers/player_controller.h"
+#include "../Game/chain.h"
 #include "../Game/entities/blood_sacrifice_ritual.h"
 #include "../Game/entities/drop.h"
 #include "../Game/entities/flower.h"
@@ -159,11 +160,14 @@ std::unique_ptr<IController> CreateController(std::string_view key)
     if (key == "controller.leafcutter_soldier") return std::make_unique<CLeafcutterSoldierController>();
     if (key == "controller.summoned_melee") return std::make_unique<CSummonedMeleeController>(-1);
     if (key == "controller.neutral_melee") return std::make_unique<CNeutralMeleeController>();
+    if (key == "controller.firefly") return std::make_unique<CFireflyController>();
     if (key == "controller.termite_overmind") return std::make_unique<CTermiteOvermindController>();
     if (key == "controller.random_wander") return std::make_unique<CRandomWanderController>();
     if (key == "controller.queen_ant") return std::make_unique<CQueenAntController>();
     if (key == "controller.spider") return std::make_unique<CSpiderController>();
+    if (key == "controller.crab") return std::make_unique<CCrabController>();
     if (key == "controller.hornet_ranged") return std::make_unique<CHornetRangedController>();
+    if (key == "controller.jellyfish") return std::make_unique<CJellyfishController>();
     if (key == "controller.mecha_flower_ranged") return std::make_unique<CMechaFlowerRangedController>();
     if (key == "controller.hornet_special") return std::make_unique<CSpecialHornetController>();
     if (key == "controller.bumble_bee") return std::make_unique<CBumbleBeeController>();
@@ -263,6 +267,8 @@ CJsonOwner CaptureState(const CState& state, std::string& error)
         const auto& parameters = hallucinogenic->GetParameters();
         writer.Node("parameters", FloatArray(std::vector<float>(parameters.begin(), parameters.end())).release());
     }
+    else if (dynamic_cast<const CPulseState*>(&state))
+        writer.Field("type", "state.pulse");
     else
     {
         error = "Unregistered runtime state encountered while capturing snapshot";
@@ -326,6 +332,7 @@ std::unique_ptr<CState> RestoreState(CMobBase& owner, const json_t* value, std::
             &owner, timer, rarity, static_cast<std::uint8_t>(std::clamp(reader.Int("parameter_mask"), 0, 255)),
             reader.Float("effect_depth"), reader.Float("evolution_progress"), parameter_values);
     }
+    if (type == "state.pulse") return std::make_unique<CPulseState>(&owner, timer, rarity);
 
     error = "No state factory registered for " + type;
     return {};
@@ -336,6 +343,7 @@ CJsonOwner CaptureFlower(const CFlower& flower)
     CJsonOwner result = MakeJsonObject();
     CSnapshotWriter writer(result.get());
     writer.Field("shield", flower.GetShield());
+    writer.Field("mana", flower.Mana());
     writer.Field("petal_rotation_angle", flower.GetStoredPetalRotationAngle());
     writer.Field("total_copies", flower.m_total_copies);
 
@@ -357,6 +365,7 @@ CJsonOwner CaptureFlower(const CFlower& flower)
         slot_writer.Node("reload_timers", FloatArray(slot.m_reload_timers).release());
         slot_writer.Node("reload_durations", FloatArray(slot.m_reload_durations).release());
         slot_writer.Node("reload_ignore_multiplier", ByteArray(slot.m_reload_ignore_multiplier).release());
+        slot_writer.Node("spawn_cost_paid", ByteArray(slot.m_spawn_cost_paid).release());
         AppendJson(slots.get(), slot_value.release());
     }
     writer.Node("slots", slots.release());
@@ -414,8 +423,10 @@ bool RestoreFlower(CFlower& flower, const json_t* value, std::string& error)
         slot.m_reload_timers = ReadFloatArray(slot_reader.Node("reload_timers"));
         slot.m_reload_durations = ReadFloatArray(slot_reader.Node("reload_durations"));
         slot.m_reload_ignore_multiplier = ReadByteArray(slot_reader.Node("reload_ignore_multiplier"));
+        slot.m_spawn_cost_paid = ReadByteArray(slot_reader.Node("spawn_cost_paid"));
         const size_t copies = std::max({ slot.m_bonus_active.size(), slot.m_reload_timers.size(),
-                                         slot.m_reload_durations.size(), slot.m_reload_ignore_multiplier.size() });
+                                         slot.m_reload_durations.size(), slot.m_reload_ignore_multiplier.size(),
+                                         slot.m_spawn_cost_paid.size() });
         slot.m_p_petals.assign(copies, nullptr);
         slot.m_bonus_active.resize(copies, 0);
         slot.m_reload_timers.resize(copies, 0.f);
@@ -423,9 +434,10 @@ bool RestoreFlower(CFlower& flower, const json_t* value, std::string& error)
         for (size_t copy = 0; copy < copies; ++copy)
             slot.m_reload_durations[copy] = std::max(slot.m_reload_durations[copy], slot.m_reload_timers[copy]);
         slot.m_reload_ignore_multiplier.resize(copies, 0);
+        slot.m_spawn_cost_paid.resize(copies, 0);
     }
 
-    flower.RestoreFlowerRuntime(reader.Float("shield"), reader.Float("petal_rotation_angle"));
+    flower.RestoreFlowerRuntime(reader.Float("shield"), reader.Float("mana"), reader.Float("petal_rotation_angle"));
     flower.m_total_copies = reader.Int("total_copies");
     if (auto* player_flower = dynamic_cast<CPlayerFlower*>(&flower))
     {
@@ -520,10 +532,10 @@ CJsonOwner CaptureMob(const CMobBase& mob, std::string& error)
     CJsonOwner damage = MakeJsonArray();
     for (const CDamageData& record : mob.GetDamageData())
     {
-        if (!record.m_player) continue;
+        if (record.m_account_name.empty()) continue;
         CJsonOwner entry = MakeJsonObject();
         CSnapshotWriter entry_writer(entry.get());
-        entry_writer.Field("player_id", record.m_player->GetId());
+        entry_writer.Field("account_name", record.m_account_name);
         entry_writer.Field("total_damage", record.m_total_dmg);
         entry_writer.Field("reset_timer", record.m_reset_timer);
         AppendJson(damage.get(), entry.release());
@@ -545,6 +557,9 @@ CJsonOwner CapturePetal(const CPetal& petal)
     writer.Field("slot_index", petal.m_slot_index);
     writer.Field("target_entity_id", petal.m_target_entity_id);
     writer.UInt64("target_entity_generation", petal.m_target_entity_generation);
+    writer.Field("target_release_id", petal.m_target_release_id);
+    writer.UInt64("target_release_generation", petal.m_target_release_generation);
+    writer.Field("target_release_timer", petal.m_target_release_timer);
     writer.Field("lifetime", petal.m_lifetime);
     writer.Field("timer", petal.m_timer);
     writer.Field("reload_override", petal.m_reload_override);
@@ -563,6 +578,14 @@ CJsonOwner CapturePetal(const CPetal& petal)
     }
     writer.Field("linked_to_slot", linked_to_slot);
     writer.Node("hit_credits", CapturePairFloatMap(petal.m_hit_credits).release());
+
+    if (const auto* moon = dynamic_cast<const CMoonPetal*>(&petal))
+    {
+        writer.Field("moon_orbit_center", moon->m_orbit_center);
+        writer.Field("moon_orbit_velocity", moon->m_orbit_velocity);
+        writer.Field("moon_orbit_phase", moon->m_orbit_phase);
+        writer.Field("moon_orbit_initialized", moon->m_orbit_initialized);
+    }
 
     if (const auto* egg = dynamic_cast<const CBeetleEggPetal*>(&petal))
     {
@@ -612,6 +635,21 @@ CJsonOwner CapturePetal(const CPetal& petal)
         writer.Node("hit_cooldowns", CapturePairFloatMap(glass->m_hit_cooldowns).release());
     if (const auto* yggdrasil = dynamic_cast<const CYggdrasilPetal*>(&petal))
         writer.Field("revive_timer", yggdrasil->m_revive_timer);
+    if (const auto* magic_eye = dynamic_cast<const CMagicEyePetal*>(&petal))
+        writer.Field("magic_eye_trigger_cooldown", magic_eye->m_trigger_cooldown);
+    if (const auto* linker = dynamic_cast<const CLinkerPetal*>(&petal))
+    {
+        writer.Field("first_target_id", linker->m_first_target_id);
+        writer.UInt64("first_target_generation", linker->m_first_target_generation);
+        writer.Field("chain_id", linker->m_chain_id);
+        writer.UInt64("chain_generation", linker->m_chain_generation);
+        writer.Field("saved_chain_health", linker->m_saved_chain_health);
+        writer.Field("released_orbit_angle_offset", linker->m_released_orbit_angle_offset);
+        writer.Field("charges_remaining", linker->m_charges_remaining);
+        writer.Field("released_from_slot", linker->m_released_from_slot);
+        writer.Field("chain_finalized", linker->m_chain_finalized);
+        writer.Field("has_released_orbit_angle", linker->m_has_released_orbit_angle);
+    }
     return data;
 }
 
@@ -637,6 +675,24 @@ CJsonOwner CaptureEntity(const CEntity& entity, bool& ephemeral, std::string& er
     {
         writer.Field("kind", "mob");
         data = CaptureMob(*mob, error);
+    } else if (const auto* chain = dynamic_cast<const CChainEntity*>(&entity))
+    {
+        writer.Field("kind", "chain");
+        data = MakeJsonObject();
+        CSnapshotWriter data_writer(data.get());
+        const SChainEndpointRef first = chain->FirstRef();
+        const SChainEndpointRef second = chain->SecondRef();
+        const SChainEndpointRef lease = chain->LeaseRef();
+        data_writer.Field("first_id", first.id);
+        data_writer.UInt64("first_generation", first.generation);
+        data_writer.Field("second_id", second.id);
+        data_writer.UInt64("second_generation", second.generation);
+        data_writer.Field("lease_id", lease.id);
+        data_writer.UInt64("lease_generation", lease.generation);
+        data_writer.Field("max_length", chain->MaxLength());
+        data_writer.Field("max_integrity", chain->MaxIntegrity());
+        data_writer.Field("integrity", chain->Integrity());
+        data_writer.Field("tension", chain->Tension());
     } else if (const auto* petal = dynamic_cast<const CPetal*>(&entity))
     {
         writer.Field("kind", "petal");
@@ -696,6 +752,7 @@ CJsonOwner CaptureEntity(const CEntity& entity, bool& ephemeral, std::string& er
         data_writer.Field("petal_type", static_cast<int>(drop->GetType()));
         data_writer.Field("rarity", static_cast<int>(drop->GetRarity()));
         data_writer.Field("owner_id", drop->GetOwnerId());
+        data_writer.Field("owner_account", drop->GetOwnerAccount());
         data_writer.Field("stack_num", static_cast<int>(drop->GetStackNum()));
         data_writer.Field("pickup_delay", drop->GetPickupDelay());
         data_writer.Field("merge_timer", drop->GetMergeTimer());
@@ -751,7 +808,7 @@ bool ReadEntityIdentity(const json_t* record, int& id, std::uint64_t& generation
 bool IsDependentEntityKind(std::string_view kind)
 {
     return kind == "petal" || kind == "missile" || kind == "dandelion_missile" ||
-           kind == "pollen_projectile" || kind == "trap_projectile";
+           kind == "pollen_projectile" || kind == "trap_projectile" || kind == "chain";
 }
 
 bool RestoreMobInitialState(CMobBase& mob, const CSnapshotReader& data, std::string& error)
@@ -816,6 +873,9 @@ bool CreateIndependentEntity(CGameWorld& world, const json_t* record, std::strin
                                             data.Float("lifetime"),
                                             static_cast<std::uint16_t>(std::clamp(data.Int("stack_num", 1), 0, 65535)));
         drop->RestoreRuntime(data.Float("pickup_delay"), data.Float("merge_timer"), data.Float("lifetime"));
+        // A legacy numeric ID cannot prove which account originally owned a
+        // private drop. Fail closed, never bind it to a possibly reused ID.
+        drop->RestoreOwnerAccount(data.String("owner_account"));
         entity = std::move(drop);
     } else if (kind == "portal")
     {
@@ -855,6 +915,9 @@ void RestorePetalRuntime(CPetal& petal, const CSnapshotReader& data)
     petal.m_slot_index = data.Int("slot_index");
     petal.m_target_entity_id = data.Int("target_entity_id", -1);
     petal.m_target_entity_generation = data.UInt64("target_entity_generation");
+    petal.m_target_release_id = data.Int("target_release_id", -1);
+    petal.m_target_release_generation = data.UInt64("target_release_generation");
+    petal.m_target_release_timer = data.Float("target_release_timer");
     petal.m_lifetime = data.Float("lifetime");
     petal.m_timer = data.Float("timer");
     petal.m_reload_override = data.Float("reload_override", -1.f);
@@ -863,6 +926,15 @@ void RestorePetalRuntime(CPetal& petal, const CSnapshotReader& data)
     petal.m_detach_from_slot = data.Bool("detach_from_slot");
     petal.m_spawn_flight_boost = data.Bool("spawn_flight_boost");
     RestorePairFloatMap(data.Node("hit_credits"), petal.m_hit_credits);
+
+    if (auto* moon = dynamic_cast<CMoonPetal*>(&petal))
+    {
+        moon->m_orbit_center = data.Vector2("moon_orbit_center");
+        // Old snapshots saved only total orbital velocity (no external drift).
+        moon->m_orbit_velocity = data.Vector2("moon_orbit_velocity", petal.m_vel);
+        moon->m_orbit_phase = data.Float("moon_orbit_phase", game_config::pi);
+        moon->m_orbit_initialized = data.Bool("moon_orbit_initialized");
+    }
 
     if (auto* egg = dynamic_cast<CBeetleEggPetal*>(&petal))
     {
@@ -912,6 +984,21 @@ void RestorePetalRuntime(CPetal& petal, const CSnapshotReader& data)
         RestorePairFloatMap(data.Node("hit_cooldowns"), glass->m_hit_cooldowns);
     if (auto* yggdrasil = dynamic_cast<CYggdrasilPetal*>(&petal))
         yggdrasil->m_revive_timer = data.Float("revive_timer");
+    if (auto* magic_eye = dynamic_cast<CMagicEyePetal*>(&petal))
+        magic_eye->m_trigger_cooldown = std::max(0.f, data.Float("magic_eye_trigger_cooldown"));
+    if (auto* linker = dynamic_cast<CLinkerPetal*>(&petal))
+    {
+        linker->m_first_target_id = data.Int("first_target_id", -1);
+        linker->m_first_target_generation = data.UInt64("first_target_generation");
+        linker->m_chain_id = data.Int("chain_id", -1);
+        linker->m_chain_generation = data.UInt64("chain_generation");
+        linker->m_saved_chain_health = data.Float("saved_chain_health");
+        linker->m_released_orbit_angle_offset = data.Float("released_orbit_angle_offset");
+        linker->m_charges_remaining = data.Int("charges_remaining", 2);
+        linker->m_released_from_slot = data.Bool("released_from_slot");
+        linker->m_chain_finalized = data.Bool("chain_finalized");
+        linker->m_has_released_orbit_angle = data.Bool("has_released_orbit_angle");
+    }
 }
 
 bool CreateDependentEntity(CGameWorld& world, const json_t* record, std::string& error)
@@ -931,7 +1018,17 @@ bool CreateDependentEntity(CGameWorld& world, const json_t* record, std::string&
     CEntity* owner = owner_id >= 0 ? world.GetEntity(owner_id, owner_generation) : nullptr;
     std::unique_ptr<CEntity> entity;
 
-    if (kind == "petal")
+    if (kind == "chain")
+    {
+        CEntity* first = world.GetEntity(data.Int("first_id", -1), data.UInt64("first_generation"));
+        CEntity* second = world.GetEntity(data.Int("second_id", -1), data.UInt64("second_generation"));
+        CEntity* lease = world.GetEntity(data.Int("lease_id", -1), data.UInt64("lease_generation"));
+        if (!first || !second || first == second) return true;
+        auto chain = std::make_unique<CChainEntity>(&world, *first, *second, data.Float("max_length"),
+                                                    data.Float("max_integrity", 1.f), lease);
+        chain->RestoreState(data.Float("integrity", data.Float("max_integrity", 1.f)), data.Float("tension"));
+        entity = std::move(chain);
+    } else if (kind == "petal")
     {
         auto* flower = dynamic_cast<CFlower*>(owner);
         const EPetalType type = static_cast<EPetalType>(data.Int("petal_type"));
@@ -1041,6 +1138,7 @@ bool CreateDependentEntity(CGameWorld& world, const json_t* record, std::string&
             slot.m_reload_timers.resize(copy_index + 1, 0.f);
             slot.m_reload_durations.resize(copy_index + 1, 0.f);
             slot.m_reload_ignore_multiplier.resize(copy_index + 1, 0);
+            slot.m_spawn_cost_paid.resize(copy_index + 1, 0);
         }
         slot.m_p_petals[copy_index] = petal;
     }
@@ -1173,9 +1271,12 @@ bool RestoreMobState(CServer& server, CGameWorld& world, const json_t* record, s
         for (size_t i = 0; i < count; ++i)
         {
             CSnapshotReader entry(json_array_get(damage, i));
-            CPlayer* player = network ? network->FindPlayerById(entry.UInt32("player_id")) : nullptr;
-            if (!player) continue;
-            mob->GetDamageData().push_back({ player, entry.Float("total_damage"), entry.Float("reset_timer") });
+            std::string account = entry.String("account_name");
+            if (!entry.Has("account_name"))
+                if (CPlayer* player = network ? network->FindPlayerById(entry.UInt32("player_id")) : nullptr)
+                    account = player->GetAccountName();
+            if (account.empty()) continue;
+            mob->GetDamageData().push_back({ account, entry.Float("total_damage"), entry.Float("reset_timer") });
         }
     }
     return true;

@@ -19,6 +19,7 @@ class COpenController : public IGameController
                                                   EPlayerSpawnReason reason) override;
     void OnEntityRemoved(CGameWorld& world, CEntity& entity, EEntityRemovalReason reason) override;
     void OnMobDefeated(CGameWorld& world, CMobBase& mob) override;
+    EMobType PickHabitatMobType(CGameWorld& world, florrbt::Vector2f pos) override;
     std::string_view SnapshotKey() const override { return "world_controller.open"; }
     std::uint32_t SnapshotVersion() const override { return 2; }
     void CaptureSnapshot(CSnapshotWriter& writer) const override;

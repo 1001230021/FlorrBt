@@ -27,7 +27,7 @@ bool RegisterPetals(std::string& error)
     RegisterPetalDefinition<EPetalType::GoldenLeaf, CGoldenLeafBehavior>();
     RegisterPetalDefinition<EPetalType::Iris, CIrisBehavior>();
     RegisterPetalDefinition<EPetalType::Lentil, CLentilBehavior>();
-    RegisterPetalDefinition<EPetalType::Moon, CMoonBehavior>();
+    RegisterPetalDefinition<EPetalType::Moon, CMoonBehavior, CMoonPetal>();
     RegisterPetalDefinition<EPetalType::Nullification, CNullificationBehavior>();
     RegisterPetalDefinition<EPetalType::Pincer, CPincerBehavior>();
     RegisterPetalDefinition<EPetalType::Relic, CRelicBehavior, CRelicPetal>();
@@ -80,6 +80,15 @@ bool RegisterPetals(std::string& error)
     RegisterPetalDefinition<EPetalType::Battery, CBatteryBehavior, CBatteryPetal>();
     RegisterPetalDefinition<EPetalType::Bulb, CBulbBehavior>();
     RegisterPetalDefinition<EPetalType::Magnet, CMagnetBehavior>();
+    RegisterPetalDefinition<EPetalType::Linker, CLinkerBehavior, CLinkerPetal>();
+    RegisterPetalDefinition<EPetalType::Orb, COrbBehavior, CRosePetal>();
+    RegisterPetalDefinition<EPetalType::MagicLeaf, CMagicLeafBehavior>();
+    RegisterPetalDefinition<EPetalType::MagicStinger, CMagicStingerBehavior>();
+    RegisterPetalDefinition<EPetalType::MagicMissile, CMagicMissileBehavior, CMissilePetal>();
+    RegisterPetalDefinition<EPetalType::MagicEye, CMagicEyeBehavior, CMagicEyePetal>();
+    RegisterPetalDefinition<EPetalType::MagicBubble, CMagicBubbleBehavior, CMagicNoCollisionPetal>();
+    RegisterPetalDefinition<EPetalType::MagicLightning, CMagicLightningBehavior>();
+    RegisterPetalDefinition<EPetalType::MagicCactus, CMagicCactusBehavior>();
 
     return registry.Finalize(error);
 }

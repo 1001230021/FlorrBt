@@ -108,6 +108,15 @@ export const PETAL_IDS = {
   eraser: 69,
   eou_pheromone: 70,
   magnet: 71,
+  linker: 72,
+  orb: 73,
+  magic_leaf: 74,
+  magic_stinger: 75,
+  magic_missile: 76,
+  magic_eye: 77,
+  magic_bubble: 78,
+  magic_lightning: 79,
+  magic_cactus: 80,
 };
 
 export const PETAL_ICON_IDS = [
@@ -183,6 +192,15 @@ export const PETAL_ICON_IDS = [
   "eraser",
   "eou_pheromone",
   "magnet",
+  "linker",
+  "orb",
+  "magic_leaf",
+  "magic_stinger",
+  "magic_missile",
+  "magic_eye",
+  "magic_bubble",
+  "magic_lightning",
+  "magic_cactus",
 ];
 
 export const PETAL_NAMES = [
@@ -258,6 +276,15 @@ export const PETAL_NAMES = [
   "Eraser",
   "EouPheromone",
   "Magnet",
+  "Linker",
+  "Orb",
+  "MagicLeaf",
+  "MagicStinger",
+  "MagicMissile",
+  "MagicEye",
+  "MagicBubble",
+  "MagicLightning",
+  "MagicCactus",
 ];
 
 export const MOB_IDS = {
@@ -302,6 +329,9 @@ export const MOB_IDS = {
   titan: 38,
   firefly: 39,
   bubble: 40,
+  crab: 41,
+  jellyfish: 42,
+  magic_firefly: 43,
 };
 
 export const MOB_NAMES = [
@@ -346,6 +376,9 @@ export const MOB_NAMES = [
   "Titan",
   "Firefly",
   "Bubble",
+  "Crab",
+  "Jellyfish",
+  "MagicFirefly",
 ];
 
 export const STATE_IDS = {
@@ -364,4 +397,5 @@ export const STATE_IDS = {
   psionic_connection: 12,
   hallucinogenic: 13,
   drop_stack: 14,
+  pulse: 15,
 };

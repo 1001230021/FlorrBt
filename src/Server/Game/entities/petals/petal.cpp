@@ -1,4 +1,5 @@
 #include "petal.h"
+#include "../../../../Shared/petal_motion.h"
 #include "../../gamecontext.h"
 #include "../../gameworld.h"
 #include "../../player.h"
@@ -98,13 +99,9 @@ EPetalBonusMode GetSlotBonusMode(const CPetalSlot* slot, const CFlower* flower)
 void ClearSlotPetal(const CPetalSlot* slot, CPetal* petal, CFlower* flower)
 {
     if (!petal) return;
-
-    const CPetalPrototype* active_proto = GetActivePetalPrototype(slot, petal, flower);
-    if (active_proto && active_proto->m_p_behavior)
-        active_proto->m_p_behavior->OnPetalCleared(petal, slot ? slot->m_stored_rarity : petal->m_rarity, flower);
-    else if (slot && slot->m_p_proto && slot->m_p_proto->m_p_behavior)
-        slot->m_p_proto->m_p_behavior->OnPetalCleared(petal, slot->m_stored_rarity, flower);
-
+    (void)slot;
+    (void)flower;
+    petal->NotifyCleared();
     petal->MarkForDestroy(EEntityRemovalReason::Replaced);
 }
 } // namespace
@@ -121,11 +118,71 @@ CPetal::CPetal(float r, CFlower* owner, int slot, SPetalStats petal_stats, EPeta
     Health() = petal_stats.health;
 }
 
+void CPetal::NotifyCleared()
+{
+    if (m_clear_notified) return;
+    m_clear_notified = true;
+    auto* flower = dynamic_cast<CFlower*>(GetOwner());
+    const auto* proto = FindPetalPrototype(GetPetalType());
+    if (proto && proto->m_p_behavior) proto->m_p_behavior->OnPetalCleared(this, m_rarity, flower);
+}
+
+void CPetal::RefreshOrbitAnchor(CFlower* flower)
+{
+    if (!flower)
+    {
+        m_orbit_anchor = nullptr;
+        return;
+    }
+
+    // Moon itself still circles the Flower. Every other petal follows the
+    // live Moon when one exists, so generation and orbit math share one anchor.
+    if (GetPetalType() == EPetalType::Moon)
+    {
+        m_orbit_anchor = flower;
+        return;
+    }
+    CPetal* moon = flower->GetMoonPetal();
+    m_orbit_anchor = moon && moon != this ? static_cast<CEntity*>(moon) : static_cast<CEntity*>(flower);
+}
+
+void CPetal::OnBeforeRemoved(EEntityRemovalReason)
+{
+    // Also runs for sleeping owners. Detach before callbacks that may rebuild slots.
+    if (auto* flower = dynamic_cast<CFlower*>(GetOwner()))
+    {
+        for (auto& slot : flower->GetSlots())
+            for (size_t i = 0; i < slot.m_p_petals.size(); ++i)
+                if (slot.m_p_petals[i] == this)
+                {
+                    slot.m_p_petals[i] = nullptr;
+                    if (i < slot.m_bonus_active.size()) slot.m_bonus_active[i] = false;
+                    slot.StartReload(static_cast<int>(i), m_reload_override >= 0.f ? m_reload_override : m_final_petal_stats.reload);
+                    if (i < slot.m_reload_ignore_multiplier.size()) slot.m_reload_ignore_multiplier[i] = m_reload_ignore_multiplier;
+                    flower->MarkFinalStatsDirty();
+                }
+    }
+    NotifyCleared();
+}
+
 void CPetal::Tick(float dt)
 {
+    if (m_target_release_timer > 0.f)
+    {
+        const float elapsed = std::isfinite(dt) ? std::max(0.f, dt) : 0.f;
+        m_target_release_timer = std::max(0.f, m_target_release_timer - elapsed);
+        if (m_target_release_timer <= game_config::entity_collision_epsilon)
+        {
+            m_target_release_timer = 0.f;
+            m_target_release_id = -1;
+            m_target_release_generation = 0;
+        }
+    }
+
     auto* flower = dynamic_cast<CFlower*>(GetOwner());
     if (flower)
     {
+        RefreshOrbitAnchor(flower);
         Team() = flower->Team();
         const std::uint64_t flower_stats_revision = flower->GetFinalStatsRevision();
         if (m_applied_flower_stats_revision != flower_stats_revision)
@@ -198,6 +255,24 @@ bool CPetal::CollidesWithWalls() const
     }
 }
 
+void CMoonPetal::Tick(float dt)
+{
+    if (!m_orbit_initialized)
+    {
+        m_orbit_center = Pos() + florrbt::Vector2f{ Radius(), 0.f };
+        m_orbit_velocity = {};
+        m_orbit_phase = game_config::pi;
+        m_orbit_initialized = true;
+    }
+    if (!(dt > 0.f) || !std::isfinite(dt)) return;
+    const auto motion = florrbt::StepDriftingMoonOrbit(Pos(), m_vel, m_orbit_center, m_orbit_velocity,
+        m_orbit_phase, Radius(), game_config::default_moon_orbit_speed,
+        game_config::default_moon_slowdown_time, dt);
+    m_vel = motion.movement_velocity;
+    CPetal::Tick(dt);
+    m_vel = motion.final_velocity;
+}
+
 void CBeetleEggPetal::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
 {
     CEntity* summon =
@@ -210,6 +285,36 @@ void CBeetleEggPetal::TakeDamage(float dmg, CEntity* attacker, EDamageType damag
     }
 
     CPetal::TakeDamage(dmg, attacker, damage_type);
+}
+
+void CLinkerPetal::OnChainBroken(CChainEntity&)
+{
+    m_chain_id = -1;
+    m_chain_generation = 0;
+    m_first_target_id = -1;
+    m_first_target_generation = 0;
+    m_saved_chain_health = 0.f;
+    m_released_orbit_angle_offset = 0.f;
+    m_charges_remaining = 2;
+    m_chain_finalized = false;
+    m_has_released_orbit_angle = false;
+    Health() = 0.f;
+    if (auto* flower = dynamic_cast<CFlower*>(GetOwner())) flower->MarkFinalStatsDirty();
+}
+
+void CLinkerPetal::ResetMissingChain()
+{
+    m_chain_id = -1;
+    m_chain_generation = 0;
+    m_first_target_id = -1;
+    m_first_target_generation = 0;
+    m_saved_chain_health = 0.f;
+    m_released_orbit_angle_offset = 0.f;
+    m_charges_remaining = 0;
+    m_chain_finalized = false;
+    m_has_released_orbit_angle = false;
+    Health() = 0.f;
+    if (auto* flower = dynamic_cast<CFlower*>(GetOwner())) flower->MarkFinalStatsDirty();
 }
 
 void CGlassPetal::TakeDamage(float, CEntity*, EDamageType)
@@ -315,10 +420,11 @@ void CPetalSlot::SpawnCopy(int copy_index, CFlower* flower)
     if (!petal) return;
 
     petal->m_copy_index = copy_index;
+    petal->RefreshOrbitAnchor(flower);
     petal->m_max_slot_num = static_cast<int>(m_p_petals.size());
     ApplySlotPetalStats(petal.get(), GetSlotPetalStats(this, flower), flower, true);
-    petal->Pos() = flower->Pos();
-    petal->PrevPos() = flower->Pos();
+    petal->Pos() = petal->GetOrbitAnchor() ? petal->GetOrbitAnchor()->Pos() : flower->Pos();
+    petal->PrevPos() = petal->Pos();
     petal->m_spawn_flight_boost = true;
 
     CPetal* p_petal = static_cast<CPetal*>(flower->GameWorld()->InsertEntity(std::move(petal)));
@@ -326,6 +432,7 @@ void CPetalSlot::SpawnCopy(int copy_index, CFlower* flower)
 
     m_p_petals[copy_index] = p_petal;
     m_bonus_active[copy_index] = true;
+    if (copy_index < static_cast<int>(m_spawn_cost_paid.size())) m_spawn_cost_paid[copy_index] = false;
     if (copy_index < static_cast<int>(m_reload_durations.size())) m_reload_durations[copy_index] = 0.f;
     flower->MarkFinalStatsDirty();
     runtime_proto->m_p_behavior->OnPetalSpawned(p_petal, m_stored_rarity, flower);
@@ -351,6 +458,7 @@ void CPetalSlot::SetPetal(const CPetalPrototype* proto, int slot_index, ERarity 
     m_reload_timers.assign(copies, preload);
     m_reload_durations.assign(copies, preload);
     m_reload_ignore_multiplier.assign(copies, false);
+    m_spawn_cost_paid.assign(copies, false);
 }
 
 void CPetalSlot::ClearPetal()
@@ -366,6 +474,7 @@ void CPetalSlot::ClearPetal()
     m_reload_timers.clear();
     m_reload_durations.clear();
     m_reload_ignore_multiplier.clear();
+    m_spawn_cost_paid.clear();
     m_runtime_type = EPetalType::None;
 }
 
@@ -386,6 +495,7 @@ void CPetalSlot::StartReload(int copy_index, float duration)
     if (copy_index >= static_cast<int>(m_reload_durations.size()))
         m_reload_durations.resize(m_reload_timers.size(), 0.f);
     m_reload_durations[copy_index] = safe_duration;
+    if (copy_index < static_cast<int>(m_spawn_cost_paid.size())) m_spawn_cost_paid[copy_index] = false;
 }
 
 float CPetalSlot::GetLoadProgress(int copy_index) const
@@ -418,6 +528,7 @@ void CPetalSlot::RefreshPetalState(CFlower* flower)
         m_reload_timers.assign(copies, preload);
         m_reload_durations.assign(copies, preload);
         m_reload_ignore_multiplier.assign(copies, false);
+        m_spawn_cost_paid.assign(copies, false);
         m_runtime_type = runtime_type;
         if (flower) flower->MarkFinalStatsDirty();
         return;
@@ -440,6 +551,7 @@ void CPetalSlot::RefreshPetalState(CFlower* flower)
         m_reload_timers.resize(copies, preload);
         m_reload_durations.resize(copies, preload);
         m_reload_ignore_multiplier.resize(copies, false);
+        m_spawn_cost_paid.resize(copies, false);
     }
 
     for (CPetal* petal : m_p_petals)
@@ -456,8 +568,20 @@ void CPetalSlot::Tick(float dt, CFlower* flower, bool state_refreshed)
     if (m_banned || !m_p_proto || !m_p_proto->m_p_behavior || !flower) return;
     if (!state_refreshed) RefreshPetalState(flower);
 
+    const CPetalPrototype* spawn_proto = GetRuntimeSlotPrototype(this, flower);
+    const CPetalBehavior* spawn_behavior =
+        spawn_proto && spawn_proto->m_p_behavior ? spawn_proto->m_p_behavior.get() : m_p_proto->m_p_behavior.get();
+    const float spawn_mana_cost = std::max(0.f, spawn_behavior->GetSpawnManaCost(m_stored_rarity));
+    if (m_spawn_cost_paid.size() < m_reload_timers.size())
+        m_spawn_cost_paid.resize(m_reload_timers.size(), false);
+
     for (size_t i = 0; i < m_reload_timers.size(); ++i)
     {
+        if (m_p_petals[i] == nullptr && spawn_mana_cost > 0.f && !m_spawn_cost_paid[i])
+        {
+            if (!flower->TryConsumeMana(spawn_mana_cost)) continue;
+            m_spawn_cost_paid[i] = true;
+        }
         if (m_reload_timers[i] > 0.0f)
         {
             float multiplier = std::max(game_config::default_petal_reload_multiplier_min,
@@ -480,6 +604,7 @@ void CPetalSlot::Tick(float dt, CFlower* flower, bool state_refreshed)
     {
         CPetal* petal = m_p_petals[i];
         if (!petal) continue;
+        petal->RefreshOrbitAnchor(flower);
         petal->m_max_slot_num = static_cast<int>(m_p_petals.size());
         const CPetalPrototype* active_proto = GetActivePetalPrototype(this, petal, flower);
         CPetalBehavior* active_behavior = active_proto && active_proto->m_p_behavior ? active_proto->m_p_behavior.get()
@@ -603,10 +728,18 @@ int CPetalSlot::GetCurrentCopyCount(const CFlower* flower) const
     const CPetalPrototype* runtime_proto = GetRuntimeSlotPrototype(this, flower);
     const CPetalBehavior* behavior = runtime_proto && runtime_proto->m_p_behavior ? runtime_proto->m_p_behavior.get()
                                                                                   : m_p_proto->m_p_behavior.get();
-    if (behavior->IsOpen()) return static_cast<int>(m_p_petals.size());
 
-    int base_copy = static_cast<int>(m_p_petals.size());
-    return (base_copy > 0) ? 1 : 0;
+    // Layout capacity is independent from reload state. A null entry means
+    // that this copy is currently reloading, but it must still reserve its
+    // orbit position. The only exceptions are auxiliary Egg/Linker petals
+    // that have explicitly been released from the slot; their live entity is
+    // retained only for summon/chain ownership and must not occupy a slot.
+    int layout_count = 0;
+    for (const CPetal* petal : m_p_petals)
+        if (!petal || behavior->CountsForPetalLayout(petal))
+            ++layout_count;
+    if (behavior->IsOpen()) return layout_count;
+    return layout_count > 0 ? 1 : 0;
 }
 
 void CPetalSlot::ApplyStatsTo(SFlowerStats& target, const CFlower* flower) const

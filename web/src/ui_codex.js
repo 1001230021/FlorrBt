@@ -9,11 +9,14 @@ import {
   beeType,
   beetleType,
   bubbleType,
+  crabType,
+  jellyfishType,
   bumbleBeeType,
   dandelionType,
   dummyType,
   fireAntEggType,
   fireflyType,
+  magicFireflyType,
   fireQueenAntType,
   hornetType,
   leafPieceType,
@@ -72,11 +75,13 @@ export const codexMobOrder = [
   beetleType, bandageBeetleType, normalLadybugType, mechaFlowerType, normalFlowerType,
   soldierAntType, soldierFireAntType, soldierTermiteType, summonedBeetleType,
   summonedSoldierAntType, beeType, hornetType, bumbleBeeType, rockType, bubbleType,
+  crabType,
+  jellyfishType,
   babyAntType, workerAntType, queenAntType, antHoleType, spiderType, sandstormType, dummyType,
   dandelionType, antEggMobType, fireAntEggType, termiteEggType, queenAntEggType,
   queenFireAntEggType, babyFireAntType, workerFireAntType, fireQueenAntType,
   babyTermiteType, workerTermiteType, termiteOvermindType, leafPieceType,
-  leafcutterSoldierType, titanType, fireflyType,
+  leafcutterSoldierType, titanType, fireflyType, magicFireflyType,
 ];
 
 // No column is carved out for the exotic rarity: like on the server, exotic
@@ -242,6 +247,8 @@ export const codexMobIcons = {
   [queenAntType]: "queen_ant.svg",
   [antHoleType]: "ant_hole.svg",
   [bubbleType]: "bubble.svg",
+  [crabType]: "crab.svg",
+  [jellyfishType]: "jellyfish.svg",
   [spiderType]: "spider.svg",
   [sandstormType]: "sandstorm.svg",
   [dandelionType]: "dandelion.svg",
@@ -257,6 +264,7 @@ export const codexMobIcons = {
   [leafPieceType]: "leaf_piece_1.svg",
   [leafcutterSoldierType]: "soldier_leafcutter_ant.svg",
   [fireflyType]: "firefly.svg",
+  [magicFireflyType]: "firefly_cyan.svg",
   // rock / dummy / titan / queen eggs have no dedicated icon; their cells
   // keep the dark rarity backdrop and count only.
 };

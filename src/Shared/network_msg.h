@@ -745,7 +745,7 @@ struct ClientInputFrame
 // broadcast. Wind direction is degrees/360*255, wind speed is speed/20*255.
 // EntitySnap full:    [format:1 byte][entity_id:2 bytes][entity_type:1 byte][team:1 byte][x:4
 // bytes][y:4 bytes][radius:2 bytes][hp_percent:1 byte][shield_percent:1 byte][flags:2 bytes][angle:2
-// bytes][rarity:1 byte][name_len:1
+// bytes][rarity:1 byte][owner_mana:f32][owner_max_mana:f32][name_len:1
 // byte][name][primary_slot_count:1 byte][petal_type:1 byte][rarity:1 byte][visual_type:1 byte]
 // [copy_count:1 byte][copy_state:1 byte][copy_progress:1 byte][copy_visual_value:0/2 bytes]......[state_count:1 byte]
 // [state_type:1 byte][rarity:1 byte]... EntitySnap full states: EntitySnap full with each state followed by
@@ -1065,6 +1065,8 @@ using SnapHallucinationArray = std::array<float, entity_hallucination_parameter_
     X(flags, uint16_t, = 0, snap_eq::Scalar)                                               \
     X(angle, int16_t, = 0, snap_eq::Scalar)                                                \
     X(rarity, uint8_t, = 0, snap_eq::Scalar)                                               \
+    X(mana, float, = 0.f, snap_eq::Scalar)                                                 \
+    X(max_mana, float, = 0.f, snap_eq::Scalar)                                             \
     X(name, std::string, , snap_eq::Name)                                                  \
     X(primary_slots, std::vector<SOwnerPetalSlot>, , snap_eq::OwnerSlots)                  \
     X(states, std::vector<SEntityStateSnap>, , snap_eq::States)                            \
@@ -1097,6 +1099,8 @@ struct ServerEntitySnap
         snap.primary_slots.clear();
         snap.states.clear();
         snap.hallucinations.clear();
+        snap.mana = 0.f;
+        snap.max_mana = 0.f;
 
         uint8_t format = data[offset++];
         if (format == server_entity_snap_compact || format == server_entity_snap_compact_states)
@@ -1148,6 +1152,12 @@ struct ServerEntitySnap
         snap.flags = ReadU16(data, offset);
         snap.angle = static_cast<int16_t>(ReadU16(data, offset));
         snap.rarity = data[offset++];
+        if ((snap.flags & static_cast<uint16_t>(ServerEntityFlag::Owner)) != 0)
+        {
+            if (offset + sizeof(float) * 2 > len) return false;
+            snap.mana = ReadF32(data, offset);
+            snap.max_mana = ReadF32(data, offset);
+        }
         uint8_t name_len = data[offset++];
         if (offset + name_len > len) return false;
 
@@ -1245,6 +1255,11 @@ struct ServerEntitySnap
         WriteU16(out, offset, snap.flags);
         WriteU16(out, offset, static_cast<uint16_t>(snap.angle));
         out[offset++] = snap.rarity;
+        if ((snap.flags & static_cast<uint16_t>(ServerEntityFlag::Owner)) != 0)
+        {
+            WriteF32(out, offset, snap.mana);
+            WriteF32(out, offset, snap.max_mana);
+        }
         uint8_t name_len = static_cast<uint8_t>(std::min<size_t>(snap.name.size(), UINT8_MAX));
         out[offset++] = name_len;
         std::copy_n(snap.name.data(), name_len, out + offset);
@@ -1281,6 +1296,7 @@ struct ServerEntitySnap
                       std::min<size_t>(snap.name.size(), UINT8_MAX) + 1 + 1 +
                       std::min<size_t>(snap.states.size(), UINT8_MAX) * entity_state_packet_size + 1 +
                       std::min<size_t>(snap.hallucinations.size(), UINT8_MAX) * entity_hallucination_packet_size;
+        if ((snap.flags & static_cast<uint16_t>(ServerEntityFlag::Owner)) != 0) size += sizeof(float) * 2;
         const size_t slot_count = std::min<size_t>(snap.primary_slots.size(), UINT8_MAX);
         for (size_t i = 0; i < slot_count; ++i) size += GetEntityOwnerPetalSlotPackedSize(snap.primary_slots[i]);
         return size;
@@ -1462,6 +1478,7 @@ struct ServerMessage
 
     // Lightning chain visual: world-space node positions (net coords).
     std::vector<florrbt::Vector2f> lightning_points;
+    std::uint8_t lightning_style = 0; // 0 = normal white, 1 = magic blue
 
     // Batched authoritative health damage, aggregated per target/kind between
     // snapshots. Never inferred client-side from rounded health percentages.
@@ -1927,6 +1944,9 @@ struct ServerMessage
                     const float y = UnpackCoord(ReadI32(data, offset));
                     msg.lightning_points.push_back({ x, y });
                 }
+                // Appended for backward compatibility: packets produced by
+                // older servers simply render as ordinary white lightning.
+                if (offset < len) msg.lightning_style = data[offset++];
             }
             break;
         default:
@@ -2135,6 +2155,7 @@ struct ServerMessage
                 WriteI32(out, offset, PackCoord(msg.lightning_points[i].x));
                 WriteI32(out, offset, PackCoord(msg.lightning_points[i].y));
             }
+            out[offset++] = msg.lightning_style;
             return offset;
         }
         case Type::CombatFeedback: {
@@ -2225,7 +2246,7 @@ struct ServerMessage
         case Type::CodexLoot:
             return 3 + std::min<size_t>(msg.codex_loot_entries.size(), UINT16_MAX) * 6;
         case Type::LightningChain:
-            return 2 + std::min<size_t>(msg.lightning_points.size(), UINT8_MAX) * 8;
+            return 3 + std::min<size_t>(msg.lightning_points.size(), UINT8_MAX) * 8;
         case Type::TerrainDelta:
             return 10;
         case Type::TerrainWallRemove:

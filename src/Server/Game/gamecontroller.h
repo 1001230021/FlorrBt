@@ -2,6 +2,7 @@
 #include "../../Shared/talent_type.h"
 #include "controller_params.h"
 #include "../../Shared/math_types.h"
+#include "../../Shared/mob_type.h"
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -43,6 +44,10 @@ class IGameController
     virtual void OnPlayerLeftWorld(CGameWorld&, CPlayer&) {}
     virtual void OnEntityRemoved(CGameWorld&, CEntity&, EEntityRemovalReason) {}
     virtual void OnMobDefeated(CGameWorld&, CMobBase&) {}
+    // Returns a mob from the spawn habitat surrounding `pos`. Controllers
+    // without map-backed habitats return None; skills can then choose their
+    // own fallback without depending on a concrete world-controller type.
+    virtual EMobType PickHabitatMobType(CGameWorld&, florrbt::Vector2f) { return EMobType::None; }
     virtual std::string_view SnapshotKey() const = 0;
     virtual bool CanRestoreSnapshotKey(std::string_view key) const { return SnapshotKey() == key; }
     virtual std::uint32_t SnapshotVersion() const { return 1; }

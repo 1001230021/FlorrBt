@@ -1,10 +1,10 @@
 import { DebugFrameDecoder, packDebugMessage, DEBUG_SELECTION_LIMIT } from "./dev_debug_protocol.js";
 import { getDebugEntityKey, getDebugWorldKey, pointToDebugWorld, pointToDebugScreen, zoomDebugCamera,
-  hitTestDebugEntities, boxSelectDebugEntities, toggleDebugSelection, sortDebugPlayers } from "./dev_debug_model.js";
+  hitTestDebugEntities, boxSelectDebugEntities, toggleDebugSelection, sortDebugPlayers, isDebugEntityInView } from "./dev_debug_model.js";
 import { createMapRenderer } from "./map_renderer.js";
 import { createDebugTypePicker } from "./dev_type_picker.js";
 import { stepFlowerFace } from "./flower_renderer.js";
-import { flagAttacking, flagDefending, flagDead } from "./game_ids.js";
+import { flagAttacking, flagDefending, flagDead, playerFlowerType, normalFlowerType, mechaFlowerType, dummyType, titanType } from "./game_ids.js";
 import { createBurrowParticles } from "./burrow_particles.js";
 
 const make = (tag, className = "", text = "") => {
@@ -17,7 +17,7 @@ const format = value => Number.isFinite(value) ? value.toLocaleString(undefined,
 const coord = point => `${format(point.x)}, ${format(point.y)}`;
 
 export function createDevDebugUi({ renderEntities, getTypeIcon, getTypeName, onOpen = () => {}, onClose = () => {},
-  releaseVisual = () => {} } = {}) {
+  releaseVisual = () => {}, getCullScale = () => 3 } = {}) {
   let root = null, ws = null, ready = false, decoder = null, requestId = 0, visualId = -1000000;
   let ctx, viewport, canvas, worldSelect, playersPanel, inspector, logs, commandInput, statusLabel, selectionLabel, positionLabel;
   let filterSelect, hiddenToggle, idToggle, playerSearch, mapRenderer, mapState, resizeObserver, picker;
@@ -28,6 +28,8 @@ export function createDevDebugUi({ renderEntities, getTypeIcon, getTypeName, onO
   let lastFrame = 0, lastView = 0, viewDirty = true, lastInspect = 0, inspected = null, lastWorldOptions = "";
   let history = [], historyAt = 0, consoleOptions;
   let backgroundUi = [];
+  const renderEntitiesById = new Map();
+  const flowerTypes = new Set([playerFlowerType, normalFlowerType, mechaFlowerType, dummyType, titanType]);
   const rawEntities = () => Array.from(records.values(), record => record.raw);
   const worldRef = () => ({ world: world?.id, worldGeneration: world?.generation });
   const mapPathOf = value => value?.mapPath || value?.map || "";
@@ -461,7 +463,7 @@ export function createDevDebugUi({ renderEntities, getTypeIcon, getTypeName, onO
     dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
     const width = Math.round(size.width * dpr), height = Math.round(size.height * dpr);
     if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
-    mapState.canvasWidth = size.width; mapState.canvasHeight = size.height; viewDirty = true;
+    mapState.canvasWidth = size.width; mapState.canvasHeight = size.height; mapState.dpr = dpr; viewDirty = true;
   }
   function localPoint(event) { const rect = canvas.getBoundingClientRect(); return { x: event.clientX - rect.left, y: event.clientY - rect.top }; }
   function wirePointer() {
@@ -540,21 +542,28 @@ export function createDevDebugUi({ renderEntities, getTypeIcon, getTypeName, onO
       }
     }
     mapRenderer.drawGrid(now);
-    const entities = new Map();
+    const entities = renderEntitiesById;
+    entities.clear();
+    const blend = 1 - Math.exp(-20 * dt);
     for (const record of records.values()) {
-      const target = record.raw.pos, blend = 1 - Math.exp(-20 * dt);
-      if (Math.hypot(target.x - record.renderPos.x, target.y - record.renderPos.y) > 1000) record.renderPos = { ...target };
+      const target = record.raw.pos;
+      const dx = target.x - record.renderPos.x, dy = target.y - record.renderPos.y;
+      if (dx * dx + dy * dy > 1000000) record.renderPos = { ...target };
       else { record.renderPos.x += (target.x - record.renderPos.x) * blend; record.renderPos.y += (target.y - record.renderPos.y) * blend; }
       record.renderAngle = record.raw.angle || 0;
-      record.flowerFace = stepFlowerFace(record.flowerFace, { attacking: !!(record.raw.flags & flagAttacking),
+      // Keep authoritative records for selection/inspection. Only screen
+      // visibility controls drawing; tiny but visible bodies are never cut.
+      if (!visible(record.raw) || !isDebugEntityInView(record.raw, record.renderPos, camera, size,
+          Math.max(3, getCullScale(record.raw.entityType)))) continue;
+      if (flowerTypes.has(record.raw.entityType)) record.flowerFace = stepFlowerFace(record.flowerFace, { attacking: !!(record.raw.flags & flagAttacking),
         defending: !!(record.raw.flags & flagDefending), dead: !!(record.raw.flags & flagDead), lookX: Math.cos(record.renderAngle), lookY: Math.sin(record.renderAngle) }, dt);
-      if (visible(record.raw)) entities.set(record.snapshot.entityId, record);
+      entities.set(record.snapshot.entityId, record);
     }
     renderEntities?.(ctx, { entities, camera, scale: camera.scale, width: size.width, height: size.height, dpr }, now);
     burrowParticles.draw(ctx, camera.scale, pointToDebugScreen({ x: 0, y: 0 }, camera, size));
     ctx.save(); ctx.lineWidth = 1.5; ctx.font = "12px monospace"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
     for (const [key, record] of records) {
-      if (!visible(record.raw)) continue;
+      if ((!selection.has(key) && !idToggle.checked) || !entities.has(record.snapshot.entityId)) continue;
       const point = pointToDebugScreen(record.renderPos, camera, size), radius = Math.max(4, record.raw.radius * camera.scale);
       if (selection.has(key)) {
         ctx.strokeStyle = "#66ddff"; ctx.fillStyle = "rgba(64,180,255,.12)";
@@ -593,7 +602,7 @@ export function createDevDebugUi({ renderEntities, getTypeIcon, getTypeName, onO
     if (mapState) mapState.mapLoadToken++;
     mapRenderer?.dispose?.();
     for (const record of records.values()) releaseVisual(record.snapshot.entityId);
-    records.clear(); selection.clear(); root.remove(); root = null; ctx = null;
+    records.clear(); renderEntitiesById.clear(); selection.clear(); root.remove(); root = null; ctx = null;
     for (const [child, inert] of backgroundUi) child.inert = inert;
     backgroundUi = [];
     world = null; worlds = []; players = []; pendingTerrain = []; lastWorldOptions = ""; lastFrame = lastView = 0;

@@ -96,12 +96,6 @@ int CalculateTalentPointsForLevel(int level)
     return gain;
 }
 
-void SyncFlowerRadiusWithStats(CFlower& flower, SFlowerStats& stats)
-{
-    flower.Radius() = std::max(0.f, stats.radius);
-    stats.radius = flower.Radius();
-}
-
 } // namespace
 
 CFlower::~CFlower()
@@ -226,15 +220,19 @@ void CFlower::Tick(float dt)
 
     CAttackableMob<SFlowerStats>::Tick(dt);
     if (m_final_stats_dirty) RebuildFinalStats();
+    AdvanceRadiusTowardsTarget(dt);
     float health_regen = m_final_stats.health_regen;
     if (m_defending && !m_attacking) health_regen += m_final_stats.defense_health_regen;
     if (health_regen > 0.f && m_final_stats.max_health > 0.f && Health() > 0.f)
     {
-        float regen = health_regen * std::max(0.f, m_final_stats.petal_medicine_multiplier) *
+        float regen = health_regen * std::max(0.f, m_final_stats.recovery_multiplier) *
+                      std::max(0.f, m_final_stats.petal_medicine_multiplier) *
                       std::max(0.f, m_final_stats.healing_received_multiplier) *
                       std::max(0.f, GetMedicMultiplier(this));
         Heal(regen * dt);
     }
+    if (m_final_stats.mana_regen > 0.f && m_final_stats.max_mana > 0.f && Health() > 0.f)
+        RestoreMana(m_final_stats.mana_regen * std::max(0.f, m_final_stats.recovery_multiplier) * dt);
     RefreshNullificationState();
     RefreshCorruptionState();
 
@@ -294,7 +292,7 @@ void CFlower::Tick(float dt)
     float direction = screen_clockwise;
     if (m_final_stats.petal_rotation_mode == EPetalRotationMode::YinYang)
         direction = GetYinYangLayout(m_yinyang_layout_count).direction;
-    m_petal_rotation_angle += m_final_stats.petal_rotation_speed * direction * dt;
+    m_petal_rotation_angle += m_final_stats.petal_rotation_speed * GetPulseMovementMultiplier(this) * direction * dt;
     m_petal_rotation_angle = std::fmod(m_petal_rotation_angle, 2.f * game_config::pi);
 
     for (auto& slot : m_slots)
@@ -315,6 +313,27 @@ void CFlower::Heal(float amount)
     const float shield_cap = std::max(0.f, m_final_stats.max_health);
     if (excess_healing > 0.f && conversion > 0.f && shield_cap > 0.f)
         m_shield = std::min(shield_cap, m_shield + excess_healing * conversion);
+}
+
+void CFlower::RestoreMana(float amount)
+{
+    if (!(amount > 0.f) || !std::isfinite(amount)) return;
+    const float maximum = GetMaxMana();
+    if (!(maximum > 0.f))
+    {
+        Mana() = 0.f;
+        return;
+    }
+    Mana() = std::clamp(Mana() + amount, 0.f, maximum);
+}
+
+bool CFlower::TryConsumeMana(float amount)
+{
+    if (!(amount > 0.f) || !std::isfinite(amount)) return true;
+    const float available = std::max(0.f, Mana());
+    if (available + game_config::entity_collision_epsilon < amount) return false;
+    Mana() = std::clamp(available - amount, 0.f, GetMaxMana());
+    return true;
 }
 
 void CFlower::ClampShieldToMaxHealth()
@@ -366,7 +385,11 @@ void CFlower::DestroyPetalEntities()
     {
         for (CPetal*& petal : slot.m_p_petals)
         {
-            if (petal) petal->MarkForDestroy(EEntityRemovalReason::OwnerRemoved);
+            if (petal)
+            {
+                petal->NotifyCleared();
+                petal->MarkForDestroy(EEntityRemovalReason::OwnerRemoved);
+            }
             petal = nullptr;
         }
         std::fill(slot.m_bonus_active.begin(), slot.m_bonus_active.end(), 0);
@@ -393,11 +416,7 @@ void CFlower::ReloadPetals()
                 // cleared before the petal is replaced. Without this callback
                 // the egg's OnPetalDestroyed() sees an already spawned summon
                 // and deliberately keeps it alive.
-                const CPetalPrototype* active_proto = FindPetalPrototype(petal->GetPetalType());
-                CPetalBehavior* behavior =
-                    active_proto && active_proto->m_p_behavior ? active_proto->m_p_behavior.get()
-                                                                : slot.m_p_proto->m_p_behavior.get();
-                if (behavior) behavior->OnPetalCleared(petal, slot.m_stored_rarity, this);
+                petal->NotifyCleared();
                 petal->MarkForDestroy(EEntityRemovalReason::Replaced);
                 slot.m_p_petals[i] = nullptr;
             }
@@ -489,9 +508,10 @@ void CFlower::RebuildFinalStats()
     }
 
     float new_max = m_final_stats.max_health;
-    SyncFlowerRadiusWithStats(*this, m_final_stats);
+    RefreshTargetRadiusFromFinalStats();
     if (old_max > 0.f && new_max > 0.f && new_max != old_max) Health() = Health() * new_max / old_max;
     if (new_max > 0.f) Health() = std::clamp(Health(), 0.f, new_max);
+    Mana() = std::clamp(Mana(), 0.f, std::max(0.f, m_final_stats.max_mana));
     ClampShieldToMaxHealth();
     FinishFinalStatsRebuild();
 }
@@ -508,6 +528,29 @@ bool CFlower::EquipPetal(int slot_index, const CPetalPrototype* proto, ERarity r
     if (!proto->m_p_behavior->GetPetalStats(rarity).stack) ApplyExclusivity(proto->m_type);
     MarkFinalStatsDirty();
     return true;
+}
+
+void CFlower::RefreshTargetRadiusFromFinalStats()
+{
+    m_target_radius = std::max(0.f, m_final_stats.radius);
+    // Runtime systems use the actual collision radius. The requested stat
+    // radius remains in m_target_radius until the next rebuild.
+    m_final_stats.radius = std::max(0.f, Radius());
+}
+
+void CFlower::AdvanceRadiusTowardsTarget(float dt)
+{
+    const float target = std::max(0.f, m_target_radius);
+    const float current = std::max(0.f, Radius());
+    const float elapsed = std::isfinite(dt) ? std::max(0.f, dt) : 0.f;
+    const float speed = std::max(0.f, game_config::default_flower_radius_change_speed);
+    const float max_step = speed * elapsed;
+    const float delta = target - current;
+    if (speed <= game_config::entity_collision_epsilon || std::abs(delta) <= max_step)
+        Radius() = target;
+    else
+        Radius() = current + std::copysign(max_step, delta);
+    m_final_stats.radius = Radius();
 }
 
 void CFlower::LoadPetalSlot(int slot_index, const CPetalPrototype* proto, ERarity rarity)
@@ -905,9 +948,12 @@ void CPlayerFlower::RebuildFinalStats()
     }
 
     float new_max = m_final_stats.max_health;
-    SyncFlowerRadiusWithStats(*this, m_final_stats);
+    RefreshTargetRadiusFromFinalStats();
     if (old_max > 0.f && new_max > 0.f && new_max != old_max) Health() = Health() * new_max / old_max;
     if (new_max > 0.f) Health() = std::clamp(Health(), 0.f, new_max);
+    // Capacity changes never scale or fill mana. Removing capacity only clips
+    // the amount that no longer fits.
+    Mana() = std::clamp(Mana(), 0.f, std::max(0.f, m_final_stats.max_mana));
     ClampShieldToMaxHealth();
     FinishFinalStatsRebuild();
 }

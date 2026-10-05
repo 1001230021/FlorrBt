@@ -5,11 +5,12 @@
    id="svg1"
    sodipodi:docname="hallucinogenic_mushroom.svg"
    inkscape:version="1.4.3 (0d15f75, 2025-12-25)"
+   data-copy-distance="0"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns:xlink="http://www.w3.org/1999/xlink"
    xmlns="http://www.w3.org/2000/svg"
-   xmlns:svg="http://www.w3.org/2000/svg" data-copy-distance="0">
+   xmlns:svg="http://www.w3.org/2000/svg">
   <defs
      id="defs1">
     <radialGradient
@@ -203,7 +204,7 @@
      inkscape:pagecheckerboard="1"
      inkscape:deskcolor="#505050"
      inkscape:zoom="7.1545455"
-     inkscape:cx="34.034307"
+     inkscape:cx="33.964422"
      inkscape:cy="55.139771"
      inkscape:window-width="1920"
      inkscape:window-height="1001"
@@ -212,27 +213,27 @@
      inkscape:window-maximized="1"
      inkscape:current-layer="svg1" />
   <path
-     style="mix-blend-mode:normal;fill:url(#bewitchCapBase);fill-opacity:1;stroke:#a6a6a6;stroke-width:6.47461;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:0.39591837;paint-order:markers fill stroke"
+     style="mix-blend-mode:normal;fill:url(#bewitchCapBase);fill-opacity:1;stroke:#a6a6a6;stroke-width:6.47461;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:0.395918;paint-order:markers fill stroke"
      d="m 54.012377,27.333139 c -2.648307,-0.0327 -5.427339,0.490417 -7.241956,6.359312 -1.814617,5.868896 -2.664656,17.082881 -1.879957,23.442214 0.784699,6.359333 3.204043,7.863249 6.718841,8.043076 3.514798,0.179827 8.124721,-0.96448 9.988335,-7.291106 1.863614,-6.326625 0.980881,-17.834855 -0.719301,-23.883578 -1.700181,-6.048722 -4.217656,-6.637223 -6.865962,-6.669918 z"
      id="path3"
      inkscape:path-effect="#path-effect3"
      inkscape:original-d="m 54.143157,26.777322 c -2.779087,0.523122 -5.558119,1.046234 -8.337262,1.569366 -0.850091,11.214659 -1.70013,22.428644 -2.550221,33.643303 2.419489,1.504007 4.838833,3.007923 7.258322,4.511929 4.610107,-1.144352 9.22003,-2.288659 13.830045,-3.432989 C 63.461254,51.56001 62.578521,40.05178 61.695734,28.542859 59.178158,27.954335 56.660683,27.365835 54.143157,26.777322 Z"
      sodipodi:nodetypes="ccccccc"
-     transform="matrix(0.47434561,0.60939499,-0.60939499,0.47434561,51.174188,7.388805)" />
+     transform="matrix(0.62590998,0.80411076,-0.80411076,0.62590998,50.337657,-6.4257107)" />
   <path
-     style="mix-blend-mode:normal;fill:#ffffff;fill-opacity:1;stroke:#a7a7a7;stroke-width:6.07019;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:0.39591837;paint-order:markers fill stroke"
+     style="mix-blend-mode:normal;fill:#ffffff;fill-opacity:1;stroke:#a7a7a7;stroke-width:6.07019;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:0.395918;paint-order:markers fill stroke"
      d="m 40.427544,43.141241 c 3.547423,3.056995 10.249794,5.410999 16.854345,5.410999 6.60455,0 13.110623,-2.353956 16.788901,-5.296578 3.678277,-2.942622 4.528317,-6.473556 1.209694,-14.565766 C 71.96186,20.597687 64.474971,7.9451721 57.2492,7.8307371 50.023429,7.716302 43.059643,20.139959 39.773715,28.232169 c -3.285927,8.09221 -2.893594,11.852076 0.653829,14.909072 z"
      id="path4"
      inkscape:path-effect="#path-effect4"
      inkscape:original-d="m 37.272463,43.844186 c 6.702504,2.354051 13.404875,4.708054 20.107513,7.062151 6.506463,-2.354097 13.012536,-4.708053 19.519,-7.06215 C 77.749067,40.31304 78.599107,36.782106 79.449198,33.25096 71.96186,20.597687 64.474971,7.9451724 56.987634,-4.7081006 50.023429,7.7163018 43.059643,20.139959 36.095438,32.564362 c 0.392349,3.760017 0.784683,7.519883 1.177025,11.279824 z"
      sodipodi:nodetypes="ccccccc"
-     transform="matrix(0.60582849,0.55807744,-0.55807744,0.60582849,40.766326,0.36818608)" />
+     transform="matrix(0.79940468,0.73639606,-0.73639606,0.79940468,36.604242,-15.689579)" />
   <g
      clip-path="url(#bewitchCapClip)"
      pointer-events="none"
      id="g16"
-     style="mix-blend-mode:normal;filter:url(#filter1);opacity:1"
-     transform="matrix(0.84614407,0,0,0.84614407,6.2510005,17.950143)">
+     style="opacity:1;mix-blend-mode:normal;filter:url(#filter1)"
+     transform="matrix(1.1165067,0,0,1.1165067,-8.9395265,7.5102186)">
     <circle
        cx="70"
        cy="23"

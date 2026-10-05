@@ -52,7 +52,7 @@ export function createMapRenderer({
   let mapTransition = null;
   let transitionCanvas = null;
 
-  async function loadMap(mapName) {
+  async function loadMap(mapName, { showLoading = true } = {}) {
     const path = normalizeMapPath(mapName);
     if (!path) return null;
     if (state.map?.path === path) {
@@ -64,14 +64,22 @@ export function createMapRenderer({
       }
       return state.map;
     }
-    if (path === state.mapLoadPath && state.mapLoadPromise)
-      return state.mapLoadPromise;
+    if (path === state.mapLoadPath && state.mapLoadPromise) {
+      if (!showLoading) return state.mapLoadPromise;
+      setLoadingVisible(true);
+      try {
+        return await state.mapLoadPromise;
+      } finally {
+        if (!state.mapLoadPromise || state.mapLoadPath === path)
+          setLoadingVisible(false);
+      }
+    }
 
     const token = ++state.mapLoadToken;
     state.mapLoadPath = path;
     state.mapDisplayName = String(mapName || path);
     addConsoleLine(t("status.mapLoading", { path }));
-    setLoadingVisible(true);
+    if (showLoading) setLoadingVisible(true);
     const loadPromise = loadMapData(path, token);
     state.mapLoadPromise = loadPromise;
     try {
@@ -87,7 +95,7 @@ export function createMapRenderer({
 
   async function loadMapData(path, token) {
     try {
-      const response = await fetch(path, { cache: "no-cache" });
+      const response = await fetch(path, { cache: "default" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const tmj = await response.json();
       const tileImages = new Map();

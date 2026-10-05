@@ -6,7 +6,7 @@ import { DebugFrameDecoder, packDebugMessage, DEBUG_SELECTION_LIMIT } from "../w
 import * as model from "../web/src/dev_debug_model.js";
 import { stepFlowerFace } from "../web/src/flower_renderer.js";
 import { createBurrowParticles } from "../web/src/burrow_particles.js";
-import { flagAttacking, flagDefending, flagDead } from "../web/src/game_ids.js";
+import { flagAttacking, flagDefending, flagDead, playerFlowerType, normalFlowerType, mechaFlowerType, dummyType, titanType } from "../web/src/game_ids.js";
 import { parseServerMessage, ServerType } from "../web/src/protocol.js";
 
 const frame = value => {
@@ -113,6 +113,7 @@ let failMapLoad = false, debugMapState;
 const timers = new Map(); let timer = 0;
 const scope = {
   ...model, DebugFrameDecoder, packDebugMessage, DEBUG_SELECTION_LIMIT, stepFlowerFace, createBurrowParticles, flagAttacking, flagDefending, flagDead,
+  playerFlowerType, normalFlowerType, mechaFlowerType, dummyType, titanType,
   document, navigator: {}, window: { innerWidth: 1400, innerHeight: 900, devicePixelRatio: 1, prompt: () => "3", confirm: () => true },
   WebSocket: FakeSocket, performance: { now: () => clock },
   setTimeout: fn => { timers.set(++timer, fn); return timer; }, clearTimeout: id => timers.delete(id),
@@ -158,13 +159,15 @@ const refresh = socket.sent.findLast(message => message.op === "refresh");
 socket.message({ kind: "result", request: refresh.request, ok: true, message: "World view refreshed" });
 await Promise.resolve();
 socket.message({ kind: "snapshot", world: 1, worldGeneration: "5", entities: [
-  { ...entities[0], pos: { x: 100, y: 80 }, radius: 15, entityType: 7, visible: true, flags: flagDead },
+  { ...entities[0], pos: { x: 100, y: 80 }, radius: 15, entityType: playerFlowerType, visible: true, flags: flagDead },
   { ...entities[1], pos: { x: 150, y: 80 }, radius: 15, entityType: 7, visible: true, flags: 0 },
 ] });
 clock += 120; ui.render(clock);
 assert.equal(rendered.entities.size, 2);
 assert.ok([...rendered.entities.keys()].every(id => id < -1000000), "debug sprite identities cannot collide with player scene caches");
 assert.equal([...rendered.entities.values()][0].flowerFace.dead, true);
+assert.equal([...rendered.entities.values()][1].flowerFace, undefined, "non-flowers must not simulate faces");
+assert.equal(debugMapState.dpr, 1, "map and entity caches must use the same observer DPR");
 const canvas = find("dev-canvas");
 canvas.fire("pointerdown", { button: 0, pointerId: 1, clientX: 400, clientY: 250 });
 canvas.fire("pointerup", { button: 0, pointerId: 1, clientX: 400, clientY: 250 });
@@ -203,6 +206,16 @@ assert.ok(find("dev-menu").children.some(node => node.textContent.includes("ç”Ÿæ
 const oldWorld = socket.sent.findLast(message => message.op === "view");
 canvas.fire("wheel", { clientX: 500, clientY: 250, deltaY: -120 }); clock += 120; ui.render(clock);
 assert.ok(socket.sent.findLast(message => message.op === "view").radius < oldWorld.radius);
+const renderMap = rendered.entities;
+socket.message({ kind: "snapshot", world: 1, worldGeneration: "5", entities: [
+  { ...entities[0], pos: { x: 100, y: 80 }, radius: 0.01, entityType: 7, visible: true, flags: 0 },
+  { ...entities[1], pos: { x: 1000000, y: 80 }, radius: 15, entityType: 7, visible: true, flags: 0 },
+] });
+clock += 120; ui.render(clock);
+assert.equal(rendered.entities, renderMap, "observer render collections are reused");
+assert.equal(rendered.entities.size, 1, "offscreen records are not submitted to the renderer");
+assert.equal([...rendered.entities.values()][0].raw.radius, 0.01, "tiny visible entities still render");
+assert.equal(find("dev-viewport").dataset.count, "2", "culling never deletes authoritative records");
 ui.close(); await Promise.resolve();
 assert.equal(closed, 1); assert.equal(ui.isOpen(), false); assert.equal(socket.readyState, 3); assert.equal(timers.size, 0);
 assert.equal(background.inert, false, "closing restores the original game's focus state");

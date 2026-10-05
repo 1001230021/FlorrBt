@@ -2,6 +2,7 @@
 #include "spawn_rules.h"
 #include "../../../Engine/map_tools.h"
 #include "../../../Shared/game_config.h"
+#include "../../../Shared/spawn_dominance.h"
 #include "../../HotReload/snapshot_archive.h"
 #include "../controllers/melee_controller.h"
 #include "../entities/mob.h"
@@ -80,6 +81,8 @@ struct SSpawnScratch
     std::vector<SSpawnZoneWork> rare_zone_work;
     std::vector<SPendingSpawn> pending_spawns;
     std::unordered_set<int> natural_rare_types;
+    std::vector<florrbt::SpawnInfluence> dominant_mobs;
+    florrbt::SpawnInfluenceIndex dominant_index;
 };
 
 // All open-world directors run on the same server thread. Cache the expensive
@@ -344,58 +347,84 @@ struct COpenSpawnDirector::CImplementation
         has_cache_identity = true;
     }
 
-    ERarity PickRarityForDifficulty(float difficulty)
+    ERarity PickRarityForDifficulty(float difficulty, float shared_roll = -1.f)
     {
-        struct SRarityWeight
+        const float roll = shared_roll >= 0.f ? shared_roll : std::uniform_real_distribution<float>(0.f, 1.f)(rng);
+        return florrbt::SampleSpawnRarity(difficulty, game_config::open_rarity_difficulty_scale,
+                                          game_config::open_rarity_gaussian_sigma, roll, GetRarityValueLevel);
+    }
+
+    EMobType ResolveNaturalMobVariant(EMobType type)
+    {
+        if (type != EMobType::Firefly) return type;
+        const float chance = std::clamp(game_config::mob_magic_firefly_spawn_chance, 0.f, 1.f);
+        return std::uniform_real_distribution<float>(0.f, 1.f)(rng) < chance
+                   ? EMobType::MagicFirefly
+                   : type;
+    }
+
+    EMobType PickHabitatMobType(CGameWorld& world, florrbt::Vector2f pos,
+                                const SWeatherDiurnalSnapshot* environment)
+    {
+        const FlorrBtMap* map = world.GetMap();
+        if (!map || map->zones.empty()) return EMobType::None;
+        EnsureZoneCache(world, *map);
+
+        std::vector<SZoneMobEntry> selected_pool;
+        float selected_distance = std::numeric_limits<float>::infinity();
+        float selected_difficulty = -std::numeric_limits<float>::infinity();
+        for (size_t index = 0; index < map->zones.size() && index < zones.size(); ++index)
         {
-            ERarity rarity = ERarity::Null;
-            float probability = 0.f;
-        };
+            const FlorrBtMap::Zone& zone = map->zones[index];
+            if (zone.vertices.size() < 3) continue;
 
-        constexpr ERarity naturally_spawned_rarities[] = {
-            ERarity::Common, ERarity::Unusual, ERarity::Rare,  ERarity::Epic,    ERarity::Legendary,
-            ERarity::Mythic, ERarity::Ultra,   ERarity::Super, ERarity::Eternal, ERarity::Unique,
-            ERarity::Primordial,
-        };
+            const SZoneCache& cached = zones[index];
+            const SResolvedSpawnProfile* resolved =
+                cached.spawn_profile.empty() ? nullptr : spawn_rules.Resolve(cached.spawn_profile, environment);
+            const std::vector<SZoneMobEntry>* pool = resolved ? &resolved->mob_entries : &cached.mob_entries;
+            if (!pool || pool->empty()) continue;
 
-        if (difficulty <= 0) return ERarity::Common;
-
-        const float difficulty_scale =
-            std::max(game_config::entity_collision_epsilon, game_config::open_rarity_difficulty_scale);
-        const float sigma = std::max(game_config::entity_collision_epsilon, game_config::open_rarity_gaussian_sigma);
-        const float center_level =
-            std::clamp(difficulty / difficulty_scale, static_cast<float>(GetLevel(ERarity::Common)),
-                       static_cast<float>(GetLevel(ERarity::Primordial)));
-        const float two_sigma_sq = 2.f * sigma * sigma;
-
-        std::vector<SRarityWeight> weights;
-        weights.reserve(std::size(naturally_spawned_rarities));
-
-        float total_weight = 0.f;
-        for (ERarity rarity : naturally_spawned_rarities)
-        {
-            const float delta = GetRarityValueLevel(rarity) - center_level;
-            const float weight = std::exp(-(delta * delta) / two_sigma_sq);
-            if (weight <= 0.f) continue;
-
-            weights.push_back({ rarity, weight });
-            total_weight += weight;
+            const float distance = florrbt::DistanceSquaredToSpawnPolygon(pos, zone.vertices);
+            if (!std::isfinite(distance)) continue;
+            const float difficulty = zone.difficulty + (resolved ? resolved->difficulty_offset : 0.f);
+            // A containing zone has distance zero. Overlapping/equidistant
+            // habitats use the harder one, matching spawn-retirement rules.
+            if (selected_pool.empty() || distance < selected_distance ||
+                (distance == selected_distance && difficulty > selected_difficulty))
+            {
+                // Resolve() returns storage owned by an unordered cache; copy
+                // the small weighted pool so resolving another profile cannot
+                // invalidate the selected candidate through a rehash.
+                selected_pool = *pool;
+                selected_distance = distance;
+                selected_difficulty = difficulty;
+            }
         }
 
-        if (weights.empty() || total_weight <= 0.f) return ERarity::Common;
+        return selected_pool.empty() ? EMobType::None : PickZoneMobType(selected_pool, rng);
+    }
 
-        for (SRarityWeight& entry : weights)
-            entry.probability /= total_weight;
+    void RememberDominantMob(CGameWorld& world, const CMobBase& mob)
+    {
+        const int excess = world.GetMobSpawnRarityExcess(mob);
+        if (excess < 2) return;
+        scratch.dominant_mobs.push_back(florrbt::MakeSpawnInfluence(mob.Pos(), mob.Radius(), excess,
+            game_config::open_dominant_mob_range));
+        scratch.dominant_index.Add(scratch.dominant_mobs.back());
+    }
 
-        std::uniform_real_distribution<float> dist(0.f, 1.f);
-        float roll = dist(rng);
-        for (const SRarityWeight& entry : weights)
-        {
-            if (roll <= entry.probability) return entry.rarity;
-            roll -= entry.probability;
-        }
-
-        return weights.back().rarity;
+    bool ApplySpawnPressure(florrbt::Vector2f pos, float difficulty, float rarity_roll, ERarity& rarity)
+    {
+        const float pressure = scratch.dominant_index.Measure(pos);
+        if (pressure <= 0.f) return true;
+        const float rate = florrbt::SpawnRateUnderPressure(pressure, game_config::open_dominant_mob_rate_strength,
+                                                          game_config::open_dominant_mob_min_rate);
+        if (std::uniform_real_distribution<float>(0.f, 1.f)(rng) >= rate) return false;
+        const float penalty = florrbt::SpawnLevelPenalty(pressure, game_config::open_dominant_mob_level_penalty);
+        // Same quantile, lower mean: pressure cannot reroll a low result into
+        // a lucky higher result. A denied attempt consumes its spawn budget.
+        rarity = PickRarityForDifficulty(difficulty - penalty * game_config::open_rarity_difficulty_scale, rarity_roll);
+        return true;
     }
 
     bool RandomPointInZone(const FlorrBtMap::Zone& zone, const SZoneBounds& bounds, florrbt::Vector2f& out_pos)
@@ -670,6 +699,15 @@ struct COpenSpawnDirector::CImplementation
         // Filling map-wide density targets here would therefore create permanent entities without serving a player.
         if (!has_players) return;
 
+        // Once per spawn round, not a world scan for every candidate. Include
+        // sleeping high-tier inhabitants; retain them without forcing ticks.
+        scratch.dominant_mobs.clear();
+        scratch.dominant_index.Clear();
+        world.ForEachEntity([&](const CEntity* entity) {
+            const auto* mob = dynamic_cast<const CMobBase*>(entity);
+            if (CountsForZoneDensity(mob)) RememberDominantMob(world, *mob);
+        });
+
         active_zone_indices.reserve(zone_count);
         rare_zone_indices.reserve(zone_count);
         for (size_t zone_index = 0; zone_index < zone_count; ++zone_index)
@@ -737,17 +775,15 @@ struct COpenSpawnDirector::CImplementation
             const int spawn_budget = std::min({ target_mobs, max_spawn_for_zone, remaining_population });
             for (int i = 0; i < spawn_budget; ++i)
             {
-                EMobType mob_type = PickZoneMobType(mob_entries, rng);
+                EMobType mob_type = ResolveNaturalMobVariant(PickZoneMobType(mob_entries, rng));
                 if (mob_type == EMobType::None) continue;
 
-                ERarity rarity = PickRarityForDifficulty(work.difficulty);
-                if (IsNaturalRareRarity(rarity) &&
-                    scratch.natural_rare_types.contains(static_cast<int>(mob_type)))
-                    continue;
+                const float rarity_roll = std::uniform_real_distribution<float>(0.f, 1.f)(rng);
+                ERarity rarity = PickRarityForDifficulty(work.difficulty, rarity_roll);
                 const CMobPrototype* proto = FindMobPrototype(mob_type);
                 if (!proto) continue;
 
-                const float spawn_radius = SpawnRadiusFor(*proto, rarity);
+                float spawn_radius = SpawnRadiusFor(*proto, rarity);
                 florrbt::Vector2f pos;
                 switch (PickSpawnPosition(world, zone, zones[zone_index].bounds, spawn_radius,
                                           work.nearby_mob_limit, pending_spawns, player_positions, pos))
@@ -760,6 +796,12 @@ struct COpenSpawnDirector::CImplementation
                     continue;
                 }
 
+                if (!ApplySpawnPressure(pos, work.difficulty, rarity_roll, rarity)) continue;
+                if (IsNaturalRareRarity(rarity) && scratch.natural_rare_types.contains(static_cast<int>(mob_type))) continue;
+                const float final_radius = SpawnRadiusFor(*proto, rarity);
+                if (final_radius != spawn_radius && (!CanSpawnAt(world, pos, final_radius, work.nearby_mob_limit) ||
+                    !IsFarFromPendingSpawns(pos, final_radius, pending_spawns))) continue;
+                spawn_radius = final_radius;
                 auto mob = CreateMob(mob_type, &world, pos, rarity, true, true);
                 if (!mob) continue;
 
@@ -776,6 +818,7 @@ struct COpenSpawnDirector::CImplementation
                 // secondary work, so one natural ET/Unique cannot open a
                 // duplicate window within this tick.
                 RememberNaturalRareMobType(*raw_mob, scratch.natural_rare_types);
+                RememberDominantMob(world, *raw_mob);
                 if (on_spawn) on_spawn(world, *raw_mob);
                 pending_spawns.push_back({ pos, spawn_radius });
                 for (SSpawnZoneWork& counted_work : zone_work)
@@ -825,9 +868,10 @@ struct COpenSpawnDirector::CImplementation
             const int rolls = std::max(1, game_config::open_rare_spawn_rolls_per_zone_tick);
             for (int roll = 0; roll < rolls; ++roll)
             {
-                const EMobType mob_type = PickZoneMobType(mob_entries, rng);
+                const EMobType mob_type = ResolveNaturalMobVariant(PickZoneMobType(mob_entries, rng));
                 if (mob_type == EMobType::None) continue;
-                const ERarity rarity = PickRarityForDifficulty(work.difficulty);
+                const float rarity_roll = std::uniform_real_distribution<float>(0.f, 1.f)(rng);
+                ERarity rarity = PickRarityForDifficulty(work.difficulty, rarity_roll);
                 if (!IsNaturalRareRarity(rarity) ||
                     scratch.natural_rare_types.contains(static_cast<int>(mob_type)))
                     continue;
@@ -840,6 +884,10 @@ struct COpenSpawnDirector::CImplementation
                                       player_positions, pos) != ESpawnPositionStatus::Found)
                     continue;
 
+                if (!ApplySpawnPressure(pos, work.difficulty, rarity_roll, rarity) || !IsNaturalRareRarity(rarity)) continue;
+                const float final_radius = SpawnRadiusFor(*proto, rarity);
+                if (final_radius != spawn_radius && (!CanSpawnAt(world, pos, final_radius, work.nearby_mob_limit) ||
+                    !IsFarFromPendingSpawns(pos, final_radius, pending_spawns))) continue;
                 auto mob = CreateMob(mob_type, &world, pos, rarity, true, true);
                 if (!mob || !IsNaturalRareRarity(mob->GetRarity()) ||
                     scratch.natural_rare_types.contains(static_cast<int>(mob->GetMobType())))
@@ -848,8 +896,9 @@ struct COpenSpawnDirector::CImplementation
                 CMobBase* raw_mob = dynamic_cast<CMobBase*>(world.InsertEntity(std::move(mob)));
                 if (!raw_mob) continue;
                 RememberNaturalRareMobType(*raw_mob, scratch.natural_rare_types);
+                RememberDominantMob(world, *raw_mob);
                 if (on_spawn) on_spawn(world, *raw_mob);
-                pending_spawns.push_back({ pos, spawn_radius });
+                pending_spawns.push_back({ pos, final_radius });
                 ++work.current_mobs;
                 break;
             }
@@ -896,6 +945,12 @@ void COpenSpawnDirector::SpawnMobs(CGameWorld& world, float density_multiplier, 
                                    const SWeatherDiurnalSnapshot* environment)
 {
     m_impl->SpawnMobs(world, density_multiplier, on_spawn, environment);
+}
+
+EMobType COpenSpawnDirector::PickHabitatMobType(CGameWorld& world, florrbt::Vector2f pos,
+                                                const SWeatherDiurnalSnapshot* environment)
+{
+    return m_impl->PickHabitatMobType(world, pos, environment);
 }
 
 std::optional<florrbt::Vector2f> COpenSpawnDirector::SelectPlayerSpawn(CGameWorld& world, bool use_new_player_spawn,

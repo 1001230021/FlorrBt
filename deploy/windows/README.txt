@@ -1,4 +1,4 @@
-FlorrBt v1.0.1 Windows deployment
+FlorrBt v1.0.3 Windows deployment
 
 Quick start:
 1. Build FlorrBt.Server.exe first, usually x64/Release or x64/Debug.

@@ -602,7 +602,11 @@ void CDevDebugService::Impl::EntityAction(Session& session, json_t* request)
         if (entity->IsMarkedForDes()) continue;
         if (action == "despawn") entity->MarkForDestroy(EEntityRemovalReason::Despawned);
         else if (action == "kill") ApplyDebugKill(*entity);
-        else if (action == "team") entity->Team() = team;
+        else if (action == "team")
+        {
+            if (auto* mob = dynamic_cast<CMobBase*>(entity)) mob->ClearTeamOverrideStates();
+            entity->Team() = team;
+        }
         else if (action == "heal") HealDebugEntity(*entity);
         else if (action == "teleport")
         {

@@ -15,6 +15,9 @@ export class RasterBudget {
   touch(key, pin = true) {
     const entry = this.entries.get(key);
     if (!entry) return false;
+    // A shared sprite may be drawn thousands of times in the same frame.
+    // It is already pinned/recent; don't relink the LRU on each body part.
+    if (entry.frame === this.frame) return true;
     if (pin) entry.frame = this.frame;
     this.entries.delete(key);
     this.entries.set(key, entry);

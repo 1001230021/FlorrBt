@@ -18,6 +18,7 @@ const spriteRasterCache = new Map(); // image -> { src, buckets: Map(key -> entr
 const maxBucketPx = 2048;
 const minBucketPx = 8;
 const bucketLogRatio = Math.log(1.25);
+const pixelBuckets = new Uint16Array(maxBucketPx + 1);
 const pendingRasters = new Map();
 const rasterJobs = [];
 let rasterPumpScheduled = false;
@@ -42,11 +43,12 @@ export function setSpriteHitTint(active) {
 }
 
 function bucketPx(sizePx) {
-  const clamped = Math.max(minBucketPx, Math.min(maxBucketPx, sizePx));
+  const clamped = Math.ceil(Math.max(minBucketPx, Math.min(maxBucketPx, sizePx)));
+  if (pixelBuckets[clamped]) return pixelBuckets[clamped];
   const power = Math.ceil(
     Math.log(clamped / minBucketPx) / bucketLogRatio - 1e-6,
   );
-  return Math.min(
+  return pixelBuckets[clamped] = Math.min(
     maxBucketPx,
     Math.ceil(minBucketPx * Math.pow(1.25, Math.max(0, power))),
   );
@@ -112,6 +114,14 @@ function rasterizedSprite(image, dw, dh, prepare = false) {
   if (!entry) {
     if (!prepare) {
       queueSpriteRaster(image, dw, dh, key, src);
+      // Reuse a sharper already-decoded bitmap during zoom-out while the
+      // exact bucket is queued. Never upscale a coarse raster or drop bodies.
+      let fallback = null;
+      for (const candidate of cached.buckets.values()) {
+        if (candidate.canvas.width >= bucketW && candidate.canvas.height >= bucketH &&
+            (!fallback || candidate.bytes < fallback.bytes)) fallback = candidate;
+      }
+      if (fallback) { sceneRasterBudget.touch(fallback); return fallback; }
       return null; // Draw the decoded vector until its bitmap is ready.
     }
     const canvas = document.createElement("canvas");

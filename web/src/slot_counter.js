@@ -24,7 +24,7 @@ export function getSlotCounter(slot, runtime, kind) {
   // while connecting to a server that still sends that legacy payload.
   if (slot.petalType === PETAL_IDS.lightning) return null;
   const sameSlot = kind === "primary" && runtime?.petalType === slot.petalType && runtime?.rarity === slot.rarity;
-  const counterType = slot.petalType === PETAL_IDS.battery;
+  const counterType = slot.petalType === PETAL_IDS.battery || slot.petalType === PETAL_IDS.linker;
   if (sameSlot && runtime.visualType === PetalSlotVisualType.Counter) {
     return (runtime.copies || []).reduce((total, copy) =>
       total + (!runtime.banned && !copy.loading && Number.isFinite(copy.visual)

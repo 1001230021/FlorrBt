@@ -9,6 +9,7 @@
 #include "../entities/petals/petal.h"
 #include "../entities/portal.h"
 #include "../entities/projectile.h"
+#include "../chain.h"
 #include "../gamecontrollers/eou_slot_proxy.h"
 #include "../gamecontrollers/opencontroller.h"
 #include "../gameworld.h"
@@ -28,6 +29,7 @@ namespace
 {
 std::string GetEntityName(const CEntity& entity)
 {
+    if (const auto* chain = dynamic_cast<const CChainEntity*>(&entity)) return chain->SnapshotName();
     if (entity.IsEntityType(EEntityType::Mob))
     {
         const auto& mob = static_cast<const CMobBase&>(entity);
@@ -86,7 +88,7 @@ void PopulateOwnerPetalRuntime(const CEntity& owner, ServerEntitySnap& snap)
             slot_snap.visual_type = SOwnerPetalSlot::EVisualType::Size;
         // Lightning's contact-hit accumulator is internal combat state,
         // not a player-facing resource/charge count.
-        else if (runtime_type == EPetalType::Battery)
+        else if (runtime_type == EPetalType::Battery || runtime_type == EPetalType::Linker)
             slot_snap.visual_type = SOwnerPetalSlot::EVisualType::Counter;
         else
             slot_snap.visual_type = SOwnerPetalSlot::EVisualType::None;
@@ -128,6 +130,8 @@ void PopulateOwnerPetalRuntime(const CEntity& owner, ServerEntitySnap& snap)
                     {
                         if (const auto* battery = dynamic_cast<const CBatteryPetal*>(petal))
                             count = battery->m_charges_remaining;
+                        else if (const auto* linker = dynamic_cast<const CLinkerPetal*>(petal))
+                            count = linker->m_charges_remaining;
                     }
                     copy_snap.visual_value = static_cast<uint16_t>(std::clamp(count, 0, static_cast<int>(UINT16_MAX)));
                 }
@@ -173,7 +177,7 @@ struct cached_snapshot_entity
     const CEntity* root_owner = nullptr;
     ServerEntitySnap snap;
     float rarity_rank = 0.f;
-    int drop_owner_id = drop_owner_all;
+    std::string drop_owner_account;
     snapshot_pool pool = snapshot_pool::Misc;
     bool is_private_drop = false;
     bool player_entity = false;
@@ -256,7 +260,7 @@ cached_snapshot_entity BuildCachedSnapshotEntity(const CSnapshotService& service
     {
         const auto* drop = static_cast<const CDrop*>(&entity);
         cached.is_private_drop = drop->GetOwnerId() != drop_owner_all;
-        cached.drop_owner_id = drop->GetOwnerId();
+        cached.drop_owner_account = drop->GetOwnerAccount();
     }
 
     if (entity.IsEntityType(EEntityType::Mob)) cached.pool = snapshot_pool::Mob;
@@ -290,7 +294,8 @@ const cached_snapshot_entity& CachedSnapshotEntity(const CSnapshotService& servi
 
 bool CanSnapshotEntityForPlayer(const cached_snapshot_entity& cached, const CPlayer& player)
 {
-    return !cached.is_private_drop || cached.drop_owner_id == static_cast<int>(player.GetId());
+    return !cached.is_private_drop || (player.IsAuthenticated() && !cached.drop_owner_account.empty() &&
+                                      cached.drop_owner_account == player.GetAccountName());
 }
 
 visible_candidate MakeVisibleCandidate(const cached_snapshot_entity& cached, const cached_snapshot_entity& owner,
@@ -571,7 +576,13 @@ ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const 
         snap.rarity = static_cast<uint8_t>(std::clamp(player_flower->m_level, 0, static_cast<int>(UINT8_MAX)));
         snap.primary_slots = BuildPrimarySlots(*player_flower);
     }
-    if (const auto* drop = dynamic_cast<const CDrop*>(&entity)) snap.rarity = static_cast<uint8_t>(drop->GetRarity());
+    if (const auto* drop = dynamic_cast<const CDrop*>(&entity))
+    {
+        snap.rarity = static_cast<uint8_t>(drop->GetRarity());
+        // Drops have no gameplay team. Reuse that already-present wire byte as
+        // their petal subtype so the id is no longer encoded into entity_type.
+        snap.team = static_cast<uint8_t>(drop->GetType());
+    }
     if (const auto* petal = dynamic_cast<const CPetal*>(&entity)) snap.rarity = static_cast<uint8_t>(petal->m_rarity);
     if (const auto* ritual = dynamic_cast<const CBloodSacrificeRitual*>(&entity))
         snap.rarity = static_cast<uint8_t>(ritual->GetRarity());
@@ -603,6 +614,11 @@ ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const 
         const SFlowerStats* stats = flower->GetFinalStats();
         if (stats && stats->max_health > 0.f)
             snap.shield_percent = std::clamp(flower->GetShield() / stats->max_health, 0.f, 1.f);
+        if (&entity == &owner)
+        {
+            snap.mana = std::max(0.f, flower->Mana());
+            snap.max_mana = std::max(0.f, flower->GetMaxMana());
+        }
         if (HasAvailablePetal(*flower, EPetalType::Antennae))
             snap.flags |= static_cast<uint16_t>(ServerEntityFlag::Antennae);
     }
