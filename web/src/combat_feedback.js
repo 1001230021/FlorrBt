@@ -8,27 +8,65 @@ export function formatCombatAmount(value) {
 }
 
 export function createCombatFeedback() {
+  const settlementIntervalMs = 1000;
+  const labelLifetimeMs = 650;
+  const pending = new Map();
   const labels = [];
   let serial = 0;
+
+  function settlementKey(hit) {
+    return `${hit.targetId}:${hit.kind}`;
+  }
+
+  function publish(entry, now) {
+    if (!(entry.amount > 0)) return;
+    if (labels.length >= 96) labels.shift();
+    labels.push({
+      ...entry,
+      pos: { ...entry.pos },
+      started: now,
+      serial: serial++,
+      text: formatCombatAmount(entry.amount),
+    });
+  }
+
+  function settleDue(now) {
+    for (const [key, entry] of pending) {
+      if (now < entry.settleAt) continue;
+      pending.delete(key);
+      publish(entry, now);
+    }
+  }
+
   return {
     add(hits, now) {
+      settleDue(now);
       for (const hit of hits || []) {
         if (!Number.isFinite(hit.amount) || hit.amount <= 0 || !Number.isFinite(hit.pos?.x) || !Number.isFinite(hit.pos?.y)) continue;
-        const same = labels.find(label => label.targetId === hit.targetId && label.kind === hit.kind && now - label.started < 120);
-        if (same) {
-          same.amount += hit.amount;
-          same.text = formatCombatAmount(same.amount);
+        const key = settlementKey(hit);
+        const entry = pending.get(key);
+        if (entry) {
+          entry.amount += hit.amount;
+          entry.pos = { ...hit.pos };
+          entry.radius = hit.radius;
+          entry.sourceType = hit.sourceType;
+          entry.sourceRarity = hit.sourceRarity;
           continue;
         }
-        if (labels.length >= 96) labels.shift();
-        labels.push({ ...hit, pos: { ...hit.pos }, started: now, serial: serial++, text: formatCombatAmount(hit.amount) });
+        pending.set(key, {
+          ...hit,
+          pos: { ...hit.pos },
+          settleAt: now + settlementIntervalMs,
+        });
       }
     },
     draw(ctx, now, project, drawText, enabled = true) {
-      for (let i = labels.length - 1; i >= 0; i--) if (now - labels[i].started >= 650) labels.splice(i, 1);
-      if (!enabled) { labels.length = 0; return; }
+      if (!enabled) { pending.clear(); labels.length = 0; return; }
+      settleDue(now);
+      for (let i = labels.length - 1; i >= 0; i--)
+        if (now - labels[i].started >= labelLifetimeMs) labels.splice(i, 1);
       for (const label of labels) {
-        const p = Math.max(0, (now - label.started) / 650);
+        const p = Math.max(0, (now - label.started) / labelLifetimeMs);
         const anchor = project({ x: label.pos.x, y: label.pos.y - label.radius * 0.65 });
         const offset = ((label.serial * 7) % 5 - 2) * 6;
         const size = label.kind === 1 ? 15 : 22;
@@ -42,8 +80,9 @@ export function createCombatFeedback() {
         ctx.restore();
       }
     },
-    clear() { labels.length = 0; },
+    clear() { pending.clear(); labels.length = 0; },
     count: () => labels.length,
+    pendingCount: () => pending.size,
   };
 }
 
