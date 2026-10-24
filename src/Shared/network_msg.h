@@ -32,6 +32,10 @@ constexpr uint8_t client_state_request_packet_type = 0xf5;
 constexpr uint8_t client_forge_packet_type = 0xf6;
 constexpr uint8_t client_snapshot_ack_packet_type = 0xf7;
 constexpr uint8_t client_input_frame_packet_type = 0xf8;
+// One-shot skill request. It is a dedicated packet because the legacy
+// gameplay operation header has only two type bits and all four values are
+// already occupied by Input/Equip/Unequip/Chores.
+constexpr uint8_t client_skill_packet_type = 0xf9;
 // First packet a client must send after connecting; carries the wire version
 // triple. Old clients that never send it are rejected with "Outdated version".
 constexpr uint8_t client_version_packet_type = 0xfb;
@@ -45,6 +49,7 @@ constexpr size_t client_craft_packet_size = 7;
 constexpr size_t client_forge_packet_size = client_craft_packet_size;
 constexpr size_t client_snapshot_ack_packet_size = 5;
 constexpr size_t client_input_frame_packet_size = 16;
+constexpr size_t client_skill_packet_size = 2;
 constexpr size_t client_talent_header_size = 3;
 constexpr size_t talent_packet_item_size = 4;
 constexpr size_t max_client_talent_items = 64;
@@ -78,6 +83,7 @@ constexpr size_t packet_length_prefix_size = 2;
 // Forge:        [0xf6][petal_type:1 byte][rarity:1 byte][count:4 bytes]
 // SnapshotAck:  [0xf7][snapshot_id:4 bytes], UINT32_MAX requests a full snapshot
 // InputFrame:   [0xf8][sequence:4 bytes][target_server_tick:8 bytes][move_x:1 byte][move_y:1 byte][flags:1 byte]
+// Skill:        [0xf9][skill_index:1 byte]
 
 enum class EChatFlag : uint8_t
 {
@@ -104,6 +110,7 @@ struct ClientOperate
         Equip = 0x01,
         Unequip = 0x02,
         Chores = 0x03,
+        Skill = 0x04,
         Unknown = 0xff,
     } type = Type::Unknown;
 
@@ -119,6 +126,7 @@ struct ClientOperate
     std::optional<bool> agree;
     std::optional<bool> disconnect;
     std::optional<bool> is_digging;
+    std::optional<uint8_t> skill_index;
 
     static ClientOperate parse(const uint8_t* data, size_t len)
     {
@@ -126,6 +134,17 @@ struct ClientOperate
         if (!data || len < 1) return op;
 
         uint8_t first = data[0];
+        if (first == client_skill_packet_type)
+        {
+            if (len < client_skill_packet_size)
+            {
+                op.type = Type::Unknown;
+                return op;
+            }
+            op.type = Type::Skill;
+            op.skill_index = data[1];
+            return op;
+        }
         uint8_t type_code = first & client_type_mask;
         op.type = static_cast<Type>(type_code);
 
@@ -159,6 +178,9 @@ struct ClientOperate
             op.agree = ((first >> chore_agree_bit) & bit_mask) != 0;
             op.disconnect = ((first >> chore_disconnect_bit) & bit_mask) != 0;
             op.is_digging = ((first >> chore_digging_bit) & bit_mask) != 0;
+            break;
+        case Type::Skill:
+            op.type = Type::Unknown;
             break;
         default:
             op.type = Type::Unknown;
@@ -194,9 +216,36 @@ struct ClientOperate
             if (op.disconnect.value_or(false)) out[0] |= (bit_mask << chore_disconnect_bit);
             if (op.is_digging.value_or(false)) out[0] |= (bit_mask << chore_digging_bit);
             return 1;
+        case Type::Skill:
+            out[0] = client_skill_packet_type;
+            out[1] = op.skill_index.value_or(0);
+            return client_skill_packet_size;
         default:
             return 0;
         }
+    }
+};
+
+struct ClientSkillRequest
+{
+    uint8_t skill_index = 0;
+
+    static bool IsPacketStart(uint8_t value) { return value == client_skill_packet_type; }
+
+    static size_t GetPacketSize(const uint8_t* data, size_t len)
+    {
+        if (!data || len < client_skill_packet_size || !IsPacketStart(data[0])) return 0;
+        return client_skill_packet_size;
+    }
+
+    static ClientSkillRequest parse(const uint8_t* data, size_t len, bool* ok = nullptr)
+    {
+        ClientSkillRequest request;
+        if (ok) *ok = false;
+        if (!data || len < client_skill_packet_size || !IsPacketStart(data[0])) return request;
+        request.skill_index = data[1];
+        if (ok) *ok = true;
+        return request;
     }
 };
 
@@ -735,15 +784,15 @@ struct ClientInputFrame
 };
 
 // Server packets:
-// Welcome:    [type:1 byte][player_id:2 bytes][owner_entity_id:2 bytes][tick_rate:1 byte][map_len:1 byte][map_name]
+// Welcome:    [type:1 byte][player_id:2 bytes][owner_entity_id:4 bytes][tick_rate:1 byte][map_len:1 byte][map_name]
 // Snapshot:   [type:1 byte][snapshot_id:4 bytes][base_snapshot_id:4 bytes][server_tick:8 bytes]
-// [owner_entity_id:2 bytes][view_radius:4 bytes][changed_count:2 bytes][removed_count:2 bytes]
-// [entity_snap...][removed_entity_id:2 bytes]...[weather_intensity:4 bytes][wind_direction:1 byte]
+// [owner_entity_id:4 bytes][view_radius:4 bytes][changed_count:2 bytes][removed_count:2 bytes]
+// [entity_snap...][removed_entity_id:4 bytes]...[weather_intensity:4 bytes][wind_direction:1 byte]
 // [wind_speed:1 byte]
 // A base_snapshot_id of UINT32_MAX denotes a full snapshot. Weather intensities
 // and wind ride along with every snapshot; the client refreshes them without a
 // broadcast. Wind direction is degrees/360*255, wind speed is speed/20*255.
-// EntitySnap full:    [format:1 byte][entity_id:2 bytes][entity_type:1 byte][team:1 byte][x:4
+// EntitySnap full:    [format:1 byte][entity_id:4 bytes][generation:8 bytes][entity_type:1 byte][team:1 byte][x:4
 // bytes][y:4 bytes][radius:2 bytes][hp_percent:1 byte][shield_percent:1 byte][flags:2 bytes][angle:2
 // bytes][rarity:1 byte][owner_mana:f32][owner_max_mana:f32][name_len:1
 // byte][name][primary_slot_count:1 byte][petal_type:1 byte][rarity:1 byte][visual_type:1 byte]
@@ -751,7 +800,7 @@ struct ClientInputFrame
 // [state_type:1 byte][rarity:1 byte]... EntitySnap full states: EntitySnap full with each state followed by
 // [value:1 byte], then [hallucination_count:1 byte][parameter_0:i16]...[parameter_5:i16]...
 // EntitySnap compact: [format:1
-// byte][entity_id:2 bytes][entity_type:1 byte][team:1 byte][rel_x:2 bytes][rel_y:2 bytes][radius:2 bytes][hp_percent:1
+// byte][entity_id:4 bytes][generation:8 bytes][entity_type:1 byte][team:1 byte][rel_x:2 bytes][rel_y:2 bytes][radius:2 bytes][hp_percent:1
 // byte][shield_percent:1 byte][flags:2 bytes][angle:2 bytes][rarity:1 byte]
 // EntitySnap compact states: EntitySnap compact followed by [state_count:1 byte]
 // [state_type:1 byte][rarity:1 byte][value:1 byte]...
@@ -769,7 +818,7 @@ struct ClientInputFrame
 
 using net_coord = int32_t;
 using net_relative_coord = int16_t;
-using net_entity_id = uint16_t;
+using net_entity_id = uint32_t;
 
 constexpr uint8_t server_entity_snap_full = 0;
 constexpr uint8_t server_entity_snap_compact = 1;
@@ -780,11 +829,24 @@ constexpr float net_relative_coord_scale = 1.f;
 constexpr float net_radius_scale = 1.f;
 constexpr float net_angle_scale = 1000.f;
 constexpr float net_percent_scale = 255.f;
-constexpr size_t server_entity_fixed_size = 22;
+constexpr size_t server_entity_fixed_size = 32;
 constexpr size_t server_entity_format_size = 1;
-constexpr size_t server_entity_compact_size = 18;
+constexpr size_t server_entity_compact_size = 28;
 constexpr uint32_t full_snapshot_base_id = std::numeric_limits<uint32_t>::max();
-constexpr size_t server_snapshot_header_size = 27;
+constexpr uint32_t uint32_sequence_half_range = 0x80000000u;
+
+// Serial-number arithmetic for wrapping 32-bit protocol counters. Values at
+// exactly half the number space are intentionally unordered; accepting either
+// direction there would make duplicate/stale detection ambiguous.
+inline uint32_t Uint32SequenceDistance(uint32_t value, uint32_t previous) { return value - previous; }
+
+inline bool IsNewerUint32Sequence(uint32_t value, uint32_t previous)
+{
+    const uint32_t distance = Uint32SequenceDistance(value, previous);
+    return distance != 0 && distance < uint32_sequence_half_range;
+}
+
+constexpr size_t server_snapshot_header_size = 29;
 // Environment weather payload: one u8 per EWeatherType in enum order
 // (clear, cloudy, rain, fog), followed by wind direction (u8, degrees/360*255)
 // and wind speed (u8, speed/20*255 clamped).
@@ -919,8 +981,10 @@ enum class ServerEntityFlag : uint16_t
     Defending = 1 << 1,
     Dead = 1 << 2,
     Owner = 1 << 3,
+    VisualVariantMask = 0x0070,
     Antennae = 1 << 7,
     Summoned = 1 << 8,
+    Shortcut = 1 << 9,
     Attached = 1 << 10,
     CarryingLeafPiece = 1 << 10,
     SkillWindupMask = 0xf000,
@@ -928,6 +992,20 @@ enum class ServerEntityFlag : uint16_t
 
 constexpr uint16_t server_entity_skill_windup_shift = 12;
 constexpr uint16_t server_entity_skill_windup_mask = 0xf000;
+constexpr uint16_t server_entity_visual_variant_shift = 4;
+constexpr uint16_t server_entity_visual_variant_mask = 0x0070;
+
+inline uint16_t PackServerEntityVisualVariant(uint8_t variant)
+{
+    return static_cast<uint16_t>((static_cast<uint16_t>(variant) & 0x07u)
+                                 << server_entity_visual_variant_shift);
+}
+
+inline uint8_t GetServerEntityVisualVariant(uint16_t flags)
+{
+    return static_cast<uint8_t>((flags & server_entity_visual_variant_mask) >>
+                                server_entity_visual_variant_shift);
+}
 
 inline uint16_t PackServerEntitySkillWindup(uint8_t skill_id)
 {
@@ -1056,6 +1134,7 @@ using SnapHallucinationArray = std::array<float, entity_hallucination_parameter_
 
 #define PER_SNAPSHOT_FIELD(X)                                                             \
     X(entity_id, net_entity_id, = 0, snap_eq::Scalar)                                      \
+    X(generation, uint64_t, = 0, snap_eq::Scalar)                                         \
     X(entity_type, uint8_t, = 0, snap_eq::Scalar)                                          \
     X(team, uint8_t, = 0, snap_eq::Scalar)                                                 \
     X(pos, florrbt::Vector2f, = {}, snap_eq::Pos)                                               \
@@ -1107,7 +1186,8 @@ struct ServerEntitySnap
         {
             if (!has_origin || offset + (server_entity_compact_size - server_entity_format_size) > len) return false;
 
-            snap.entity_id = ReadU16(data, offset);
+            snap.entity_id = ReadU32(data, offset);
+            snap.generation = ReadU64(data, offset);
             snap.entity_type = data[offset++];
             snap.team = data[offset++];
             float rel_x = UnpackRelativeCoord(static_cast<net_relative_coord>(ReadU16(data, offset)));
@@ -1142,7 +1222,8 @@ struct ServerEntitySnap
         if (format != server_entity_snap_full && format != server_entity_snap_full_states) return false;
         if (offset + server_entity_fixed_size > len) return false;
 
-        snap.entity_id = ReadU16(data, offset);
+        snap.entity_id = ReadU32(data, offset);
+        snap.generation = ReadU64(data, offset);
         snap.entity_type = data[offset++];
         snap.team = data[offset++];
         snap.pos = florrbt::Vector2f(UnpackCoord(ReadI32(data, offset)), UnpackCoord(ReadI32(data, offset)));
@@ -1217,7 +1298,8 @@ struct ServerEntitySnap
         if (has_origin && CanPackCompact(snap, origin, owner_entity_id))
         {
             out[offset++] = snap.states.empty() ? server_entity_snap_compact : server_entity_snap_compact_states;
-            WriteU16(out, offset, snap.entity_id);
+            WriteU32(out, offset, snap.entity_id);
+            WriteU64(out, offset, snap.generation);
             out[offset++] = snap.entity_type;
             out[offset++] = snap.team;
             WriteU16(out, offset, static_cast<uint16_t>(PackRelativeCoord(snap.pos.x - origin.x)));
@@ -1244,7 +1326,8 @@ struct ServerEntitySnap
         }
 
         out[offset++] = server_entity_snap_full_states;
-        WriteU16(out, offset, snap.entity_id);
+        WriteU32(out, offset, snap.entity_id);
+        WriteU64(out, offset, snap.generation);
         out[offset++] = snap.entity_type;
         out[offset++] = snap.team;
         WriteI32(out, offset, PackCoord(snap.pos.x));
@@ -1391,6 +1474,15 @@ enum class EAuthResultCode : uint8_t
     EmailBound = 5,
 };
 
+enum class ESkillRequestResult : uint8_t
+{
+    Success = 0,
+    NoControlledMob = 1,
+    NoSkills = 2,
+    InvalidIndex = 3,
+    Unavailable = 4,
+};
+
 enum class EEmailPolicy : uint8_t
 {
     Disabled = 0,
@@ -1406,6 +1498,11 @@ inline bool IsKnownEmailPolicy(uint8_t value)
 inline bool IsKnownAuthResultCode(uint8_t value)
 {
     return value <= static_cast<uint8_t>(EAuthResultCode::EmailBound);
+}
+
+inline bool IsKnownSkillRequestResult(uint8_t value)
+{
+    return value <= static_cast<uint8_t>(ESkillRequestResult::Unavailable);
 }
 
 struct ServerMessage
@@ -1428,6 +1525,7 @@ struct ServerMessage
         TerrainWallRemove = 0x1a,
         CombatFeedback = 0x1b,
         DebugTicket = 0x1c,
+        SkillResult = 0x1d,
         Unknown = 0xff,
     } type = Type::Unknown;
 
@@ -1491,8 +1589,9 @@ struct ServerMessage
         uint8_t kind = 0; // BaseDamageType: normal / poison / lightning / true
         uint8_t source_type = 0;
         uint8_t source_rarity = 0;
+        uint64_t target_generation = 0;
     };
-    static constexpr size_t combat_hit_size = 19;
+    static constexpr size_t combat_hit_size = 29;
     static constexpr size_t combat_hit_limit = 64;
     std::vector<SCombatHit> combat_hits;
 
@@ -1522,6 +1621,9 @@ struct ServerMessage
     std::string auth_message;
     std::optional<EEmailPolicy> email_policy;
     std::optional<bool> email_bound;
+    std::optional<ESkillRequestResult> skill_result;
+    uint8_t skill_index = 0;
+    uint8_t skill_count = 0;
     std::vector<SInventoryItem> inventory;
     SChatMessage chat;
     std::optional<bool> craft_success;
@@ -1541,13 +1643,13 @@ struct ServerMessage
         switch (msg.type)
         {
         case Type::Welcome:
-            if (len < 6)
+            if (len < 8)
             {
                 msg.type = Type::Unknown;
                 break;
             }
             msg.player_id = ReadU16(data, offset);
-            msg.owner_entity_id = ReadU16(data, offset);
+            msg.owner_entity_id = ReadU32(data, offset);
             msg.tick_rate = data[offset++];
             if (offset < len)
             {
@@ -1572,7 +1674,7 @@ struct ServerMessage
             msg.snapshot_id = ReadU32(data, offset);
             msg.base_snapshot_id = ReadU32(data, offset);
             msg.server_tick = ReadU64(data, offset);
-            msg.owner_entity_id = ReadU16(data, offset);
+            msg.owner_entity_id = ReadU32(data, offset);
             msg.view_radius = UnpackViewRadius(ReadI32(data, offset));
 
             uint16_t count = ReadU16(data, offset);
@@ -1605,7 +1707,7 @@ struct ServerMessage
             }
             msg.removed_entity_ids.reserve(removed_count);
             for (uint16_t i = 0; i < removed_count; ++i)
-                msg.removed_entity_ids.push_back(ReadU16(data, offset));
+                msg.removed_entity_ids.push_back(ReadU32(data, offset));
             if (offset + server_environment_weather_count + server_environment_wind_size > len)
             {
                 msg.entities.clear();
@@ -1624,6 +1726,23 @@ struct ServerMessage
             msg.debug_ticket.assign(reinterpret_cast<const char*>(data + offset), dev_debug::ticket_size);
             if (!dev_debug::IsTicket(msg.debug_ticket)) msg.type = Type::Unknown;
             offset += dev_debug::ticket_size;
+            break;
+        }
+        case Type::SkillResult: {
+            if (len != 4)
+            {
+                msg.type = Type::Unknown;
+                break;
+            }
+            const uint8_t result = data[offset++];
+            if (!IsKnownSkillRequestResult(result))
+            {
+                msg.type = Type::Unknown;
+                break;
+            }
+            msg.skill_result = static_cast<ESkillRequestResult>(result);
+            msg.skill_index = data[offset++];
+            msg.skill_count = data[offset++];
             break;
         }
         case Type::AuthResult: {
@@ -1910,7 +2029,8 @@ struct ServerMessage
             for (size_t i = 0; i < count; ++i)
             {
                 SCombatHit hit;
-                hit.target_id = ReadU16(data, offset);
+                hit.target_id = ReadU32(data, offset);
+                hit.target_generation = ReadU64(data, offset);
                 hit.pos.x = UnpackCoord(ReadI32(data, offset));
                 hit.pos.y = UnpackCoord(ReadI32(data, offset));
                 hit.radius = UnpackRadius(ReadU16(data, offset));
@@ -1967,7 +2087,7 @@ struct ServerMessage
         {
         case Type::Welcome:
             WriteU16(out, offset, msg.player_id.value_or(0));
-            WriteU16(out, offset, msg.owner_entity_id.value_or(0));
+            WriteU32(out, offset, msg.owner_entity_id.value_or(0));
             out[offset++] = msg.tick_rate.value_or(60);
             {
                 uint8_t map_len = static_cast<uint8_t>(std::min<size_t>(msg.map_name.size(), UINT8_MAX));
@@ -1981,7 +2101,7 @@ struct ServerMessage
             WriteU32(out, offset, msg.snapshot_id.value_or(0));
             WriteU32(out, offset, msg.base_snapshot_id.value_or(full_snapshot_base_id));
             WriteU64(out, offset, msg.server_tick.value_or(0));
-            WriteU16(out, offset, msg.owner_entity_id.value_or(0));
+            WriteU32(out, offset, msg.owner_entity_id.value_or(0));
             WriteI32(out, offset, PackViewRadius(msg.view_radius.value_or(0.f)));
             uint16_t count = static_cast<uint16_t>(std::min<size_t>(msg.entities.size(), UINT16_MAX));
             WriteU16(out, offset, count);
@@ -2000,7 +2120,7 @@ struct ServerMessage
                     has_snapshot_origin = true;
                 }
             }
-            for (uint16_t i = 0; i < removed_count; ++i) WriteU16(out, offset, msg.removed_entity_ids[i]);
+            for (uint16_t i = 0; i < removed_count; ++i) WriteU32(out, offset, msg.removed_entity_ids[i]);
             // Weather intensities and wind ride along with every snapshot so clients
             // always have fresh weather without a separate broadcast.
             for (size_t i = 0; i < server_environment_weather_count; ++i)
@@ -2014,6 +2134,11 @@ struct ServerMessage
             std::copy_n(msg.debug_ticket.data(), dev_debug::ticket_size, out + offset);
             return offset + dev_debug::ticket_size;
         }
+        case Type::SkillResult:
+            out[offset++] = static_cast<uint8_t>(msg.skill_result.value_or(ESkillRequestResult::Unavailable));
+            out[offset++] = msg.skill_index;
+            out[offset++] = msg.skill_count;
+            return offset;
         case Type::AuthResult: {
             out[offset++] = static_cast<uint8_t>(msg.auth_result_code.value_or(EAuthResultCode::Failed));
             uint8_t message_len = static_cast<uint8_t>(std::min<size_t>(msg.auth_message.size(), UINT8_MAX));
@@ -2164,7 +2289,8 @@ struct ServerMessage
             for (size_t i = 0; i < count; ++i)
             {
                 const auto& hit = msg.combat_hits[i];
-                WriteU16(out, offset, hit.target_id);
+                WriteU32(out, offset, hit.target_id);
+                WriteU64(out, offset, hit.target_generation);
                 WriteI32(out, offset, PackCoord(hit.pos.x));
                 WriteI32(out, offset, PackCoord(hit.pos.y));
                 WriteU16(out, offset, PackRadius(hit.radius));
@@ -2197,7 +2323,7 @@ struct ServerMessage
         switch (msg.type)
         {
         case Type::Welcome:
-            return 8 + std::min<size_t>(msg.map_name.size(), UINT8_MAX);
+            return 10 + std::min<size_t>(msg.map_name.size(), UINT8_MAX);
         case Type::Snapshot: {
             size_t size = server_snapshot_header_size;
             size_t count = std::min<size_t>(msg.entities.size(), UINT16_MAX);
@@ -2220,6 +2346,8 @@ struct ServerMessage
         }
         case Type::DebugTicket:
             return 1 + dev_debug::ticket_size;
+        case Type::SkillResult:
+            return 4;
         case Type::AuthResult:
             return 5 + std::min<size_t>(msg.auth_message.size(), UINT8_MAX);
         case Type::OwnerState:

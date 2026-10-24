@@ -115,7 +115,8 @@
         "view_zoom": "查看或設定遊戲視野縮放百分比",
         "bench": "在登入畫面執行渲染基準測試",
         "freeze_log": "列出最近的凍結偵測記錄（客戶端卡頓/伺服器斷流）",
-        "reset": "重置用戶端設定、按鍵綁定或選項"
+        "reset": "重置用戶端設定、按鍵綁定或選項",
+        "skill": "觸發目前操控生物的技能"
       }
     },
     "settings": {
@@ -437,6 +438,16 @@
       "settings": "用戶端選項已恢復預設。",
       "all": "全部已恢復預設。",
       "unknown": "未知的重置目標：{name}"
+    },
+    "skill": {
+      "usage": "用法：skill [技能編號 0-255]",
+      "invalid": "無效的技能編號：{index}",
+      "requestFailed": "目前無法傳送技能請求。",
+      "success": "技能 {index} 已成功觸發。",
+      "noControlledMob": "目前沒有可操控的生物。",
+      "noSkills": "目前操控的生物沒有可主動觸發的技能。",
+      "outOfRange": "技能編號 {index} 無效；目前生物共有 {count} 個技能。",
+      "unavailable": "技能 {index} 目前不可用（冷卻中、缺少目標或條件不符）。"
     }
   },
   "formats": {
@@ -588,6 +599,7 @@
       "crab": "螃蟹",
       "jellyfish": "水母",
       "magic_firefly": "魔法螢火蟲"
+      ,"firefly_larva": "螢火蟲幼蟲"
     }
   },
   "talents": {
@@ -694,6 +706,7 @@
       "titan": "泰坦，最強的存在之一。",
       "firefly": "螢火蟲，受到攻擊時會用連鎖閃電反擊。",
       "magic_firefly": "散發青色光芒的螢火蟲，會召喚普通螢火蟲，並能釋放經過增傷的魔法閃電。"
+      ,"firefly_larva": "多體節的螢火蟲幼蟲，會咬住敵對生物並注入強力毒液，身體也能為魔法閃電提供增傷。"
     }
   },
   "maps": {

@@ -33,7 +33,9 @@ class CDrop : public CEntity
     ERarity GetRarity() const { return m_rarity; }
     int GetOwnerId() const { return m_owner_id; }
     const std::string& GetOwnerAccount() const { return m_owner_account; }
+    const std::string& GetOwnerProgressAccount() const { return m_owner_progress_account; }
     void RestoreOwnerAccount(std::string account) { m_owner_account = std::move(account); }
+    void RestoreOwnerProgressAccount(std::string account) { m_owner_progress_account = std::move(account); }
     uint16_t GetStackNum() const { return m_stack_num; }
     float GetPickupDelay() const { return m_unable_picked_timer; }
     float GetMergeTimer() const { return m_merge_timer; }
@@ -52,6 +54,7 @@ class CDrop : public CEntity
     ERarity m_rarity = ERarity::Null;
     int m_owner_id = drop_owner_all;
     std::string m_owner_account;
+    std::string m_owner_progress_account;
     uint16_t m_stack_num = 1;
 
     float m_unable_picked_timer = game_config::default_drop_pickup_delay;

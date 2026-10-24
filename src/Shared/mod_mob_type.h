@@ -37,7 +37,11 @@ enum class EModMobType : int
     EouSoldier,
     // next ant_kingdom id: 70 (block reserves 64..79)
 
-    // --- next controller block: base 80 ---
+    // --- native implementation details --- base 80
+    // These are not standalone bestiary entries. They use a native visual
+    // proxy and only exist so compound native mobs can own real entities.
+    FireflyLarvaBody = 80,
+    // next internal id: 81 (block reserves 80..95)
 };
 
 struct SModMobTypeName
@@ -48,13 +52,14 @@ struct SModMobTypeName
 
 // Per-controller manifest: names are snake_case so console spawn commands and
 // zone tools match them directly (spawn eou_worker).
-inline constexpr std::array<SModMobTypeName, 6> mod_mob_type_names = { {
+inline constexpr std::array<SModMobTypeName, 7> mod_mob_type_names = { {
     { static_cast<int>(EModMobType::EouWorker), "eou_worker" },
     { static_cast<int>(EModMobType::EouFood), "eou_food" },
     { static_cast<int>(EModMobType::EouCell), "eou_cell" },
     { static_cast<int>(EModMobType::EouEgg), "eou_egg" },
     { static_cast<int>(EModMobType::EouQueen), "eou_queen" },
     { static_cast<int>(EModMobType::EouSoldier), "eou_soldier" },
+    { static_cast<int>(EModMobType::FireflyLarvaBody), "firefly_larva_body" },
 } };
 
 inline constexpr std::string_view GetModMobTypeName(int type)

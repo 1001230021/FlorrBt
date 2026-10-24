@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <FlorrBtDependencyRoot>$(MSBuildThisFileDirectory)..\..\</FlorrBtDependencyRoot>
+  </PropertyGroup>
+  <Import Project="$(FlorrBtDependencyRoot)FlorrBt.Dependencies.local.props" Condition="Exists('$(FlorrBtDependencyRoot)FlorrBt.Dependencies.local.props')" />
+  <PropertyGroup>
+    <SfmlRoot Condition="'$(FLORRBT_SFML_ROOT)' != ''">$(FLORRBT_SFML_ROOT)</SfmlRoot>
+    <MySqlRoot Condition="'$(FLORRBT_MYSQL_ROOT)' != ''">$(FLORRBT_MYSQL_ROOT)</MySqlRoot>
+    <SfmlRoot Condition="'$(SfmlRoot)' == ''">$(FlorrBtDependencyRoot)dependencies\SFML</SfmlRoot>
+    <MySqlRoot Condition="'$(MySqlRoot)' == ''">$(FlorrBtDependencyRoot)dependencies\mysql</MySqlRoot>
+  </PropertyGroup>
+  <Target Name="ValidateFlorrBtDependencies" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(SfmlRoot)\include\SFML\Graphics.hpp')" Text="SFML SDK missing. Copy FlorrBt.Dependencies.example.props to FlorrBt.Dependencies.local.props, or set FLORRBT_SFML_ROOT." />
+    <Error Condition="'$(MSBuildProjectName)' == 'FlorrBt.Server' And !Exists('$(MySqlRoot)\include\mysql.h')" Text="MySQL SDK missing. Set MySqlRoot in FlorrBt.Dependencies.local.props, or set FLORRBT_MYSQL_ROOT." />
+  </Target>
+</Project>

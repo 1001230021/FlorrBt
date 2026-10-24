@@ -8,6 +8,8 @@
 #include "../../Shared/shared.h"
 #include "entity.h"
 #include "gamecontroller.h"
+#include "extensions/extension_runtime.h"
+#include "systems/environment_system.h"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -77,41 +79,57 @@ class CGameWorld
     // World IDs can be reused after deleting the last room. Debug/editor
     // references additionally carry this process-local instance identity.
     std::uint64_t GetInstanceGeneration() const { return m_instance_generation; }
+    bool RestoreInstanceGeneration(std::uint64_t generation);
+    std::uint64_t NextEntityGeneration() const { return m_next_generation; }
+    bool RestoreNextEntityGeneration(std::uint64_t generation);
 
     int GetNewID();
     void FreeID(int id);
 
     class CGameContext* GameContext() const { return m_p_game_context; }
-    void SetGameContext(class CGameContext* context) { m_p_game_context = context; }
+    void SetGameContext(class CGameContext* context);
+    const CExtensionView& Extensions() const { return m_extensions; }
+    const SWorldExtensionConfig& ExtensionConfig() const { return m_extension_config; }
+    void ConfigureExtensions(SWorldExtensionConfig config);
 
     IGameController* GetController() const { return m_p_controller.get(); }
-    void SetController(std::unique_ptr<IGameController> controller);
+    void SetController(std::unique_ptr<IGameController> controller, bool notify_players = true);
+    // Borrowed phase-local view, including disconnected sessions still in this world.
+    std::vector<CPlayer*> Players() const;
 
     CEntity* InsertEntity(std::unique_ptr<CEntity> entity);
     CEntity* InsertEntity(CEntity* entity);
-    CEntity* InsertNonOwningEntity(CEntity* entity);
     CEntity* InsertEntityWithIdentity(std::unique_ptr<CEntity> entity, int id, std::uint64_t generation);
     void ClearEntitiesForRestore();
+    bool ReloadMapForRestore(std::string& error);
     void FinalizeEntityRestore();
+    // Complete cascading removals before publishing a persistent snapshot.
+    void FlushEntityRemovals() { Cleanup(); }
 
     void RemoveEntity(int id);
-    void DestroyProjectilesOwnedBy(int owner_id);
-    void DestroySummonedMobsOwnedBy(int owner_id, std::uint64_t owner_generation = 0);
-    CEntity* TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& target_world,
+    void DestroyProjectilesOwnedBy(const SEntityHandle& owner_ref);
+    void DestroySummonedMobsOwnedBy(const SEntityHandle& owner_ref);
+    SPlayerTransitionResult TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& target_world,
                                          std::optional<florrbt::Vector2f> target_pos = std::nullopt,
                                          std::optional<std::string> from = std::nullopt);
-    CEntity* TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& target_world, const std::string& from);
+    SPlayerTransitionResult TransferPlayerEntityToWorld(CPlayer& player, CGameWorld& target_world, const std::string& from);
+    bool IsTransitionActive() const { return m_transition_active; }
 
     void Tick(float dt);
+    const CEnvironmentSystem& Environment() const { return m_environment; }
+    bool IsTicking() const { return m_tick_active; }
+    void ConstrainControlledMotion(CMobBase& mob, florrbt::Vector2f start);
     void ApplyChainConstraints(float dt);
     void BreakChainsForEndpoint(const CEntity& endpoint);
 
     CEntity* GetEntity(int id) const;
     CEntity* GetEntity(int id, std::uint64_t generation) const;
+    CEntity* ResolveEntity(const SEntityHandle& handle) const;
+    CEntity* GetEntity(const SEntityHandle& handle) const;
     bool TryRegisterCarriedEntity(const CEntity& carried, const CEntity& carrier);
-    void UnregisterCarriedEntity(int carried_id, std::uint64_t carried_generation, int carrier_id,
-                                 std::uint64_t carrier_generation);
+    void UnregisterCarriedEntity(const SEntityHandle& carried, const SEntityHandle& carrier);
     bool IsCarriedEntity(const CEntity& carried);
+    void ReleaseCarriedRelations(CEntity& entity);
     void QueueEntityForCleanup(CEntity* entity);
     void QueuePsionicDamage(CMobBase* receiver, float damage, CEntity* attacker, EDamageType damage_type);
     void RecordCombatDamage(const CEntity& target, float amount, EDamageType kind, CEntity* source);
@@ -165,8 +183,10 @@ class CGameWorld
     ERarity GetSpawnZoneRarity(const florrbt::Vector2f& pos) const;
     int GetMobSpawnRarityExcess(const CMobBase& mob) const;
     bool SegmentBlockedByWall(florrbt::Vector2f start, florrbt::Vector2f end) const;
-    bool CircleBlockedByWall(florrbt::Vector2f center, float radius) const;
-    bool SweptCircleBlockedByWall(florrbt::Vector2f start, florrbt::Vector2f end, float radius) const;
+    bool CircleBlockedByWall(florrbt::Vector2f center, float radius, EWallQuery mask = EWallQuery::All) const;
+    bool SweptCircleBlockedByWall(florrbt::Vector2f start, florrbt::Vector2f end, float radius,
+                                  EWallQuery mask = EWallQuery::All) const;
+    std::optional<florrbt::Vector2f> NearestUnblockedPosition(florrbt::Vector2f from, float radius) const;
     // Removes native map walls whose bounding box intersects the given world
     // rect and rebuilds the wall grid. Returns the number of walls removed.
     int RemoveWallsInRect(florrbt::Vector2f min_pos, florrbt::Vector2f max_pos);
@@ -193,16 +213,23 @@ class CGameWorld
                              const std::function<bool(const CMobBase&)>& damage_filter = {});
 
   private:
+    friend class CWorldTransfer;
+    friend class CServerTestAccess;
+    bool m_transition_active = false;
+    bool m_tick_active = false;
+    // Fault injection is private to the offline regression fixture.
+    int m_transfer_fault_after_insert = -1;
+    CExtensionView m_extensions;
+    SWorldExtensionConfig m_extension_config;
     inline static std::atomic<std::uint64_t> s_next_instance_generation{ 0 };
-    const std::uint64_t m_instance_generation = ++s_next_instance_generation;
+    std::uint64_t m_instance_generation = ++s_next_instance_generation;
     struct SPsionicReceiverKey
     {
-        int entity_id = -1;
-        std::uint64_t entity_generation = 0;
+        SEntityHandle entity_ref;
 
         bool operator==(const SPsionicReceiverKey& other) const
         {
-            return entity_id == other.entity_id && entity_generation == other.entity_generation;
+            return entity_ref == other.entity_ref;
         }
     };
 
@@ -210,20 +237,18 @@ class CGameWorld
     {
         std::size_t operator()(const SPsionicReceiverKey& key) const
         {
-            std::size_t seed = std::hash<int>{}(key.entity_id);
-            seed ^= std::hash<std::uint64_t>{}(key.entity_generation) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
-            return seed;
+            return SEntityHandleHash{}(key.entity_ref);
         }
     };
 
     struct SPsionicSourceKey
     {
-        CEntity* attacker = nullptr;
+        SEntityHandle attacker_ref;
         EDamageType damage_type = EDamageType::Normal;
 
         bool operator==(const SPsionicSourceKey& other) const
         {
-            return attacker == other.attacker && damage_type == other.damage_type;
+            return attacker_ref == other.attacker_ref && damage_type == other.damage_type;
         }
     };
 
@@ -231,7 +256,7 @@ class CGameWorld
     {
         std::size_t operator()(const SPsionicSourceKey& key) const
         {
-            std::size_t seed = std::hash<CEntity*>{}(key.attacker);
+            std::size_t seed = SEntityHandleHash{}(key.attacker_ref);
             seed ^= std::hash<int>{}(static_cast<int>(key.damage_type)) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
             return seed;
         }
@@ -239,15 +264,14 @@ class CGameWorld
 
     struct SPsionicDamageKey
     {
-        int entity_id = -1;
-        std::uint64_t entity_generation = 0;
-        CEntity* attacker = nullptr;
+        SEntityHandle entity_ref;
+        SEntityHandle attacker_ref;
         EDamageType damage_type = EDamageType::SharedNormal;
 
         bool operator==(const SPsionicDamageKey& other) const
         {
-            return entity_id == other.entity_id && entity_generation == other.entity_generation &&
-                   attacker == other.attacker && damage_type == other.damage_type;
+            return entity_ref == other.entity_ref && attacker_ref == other.attacker_ref &&
+                   damage_type == other.damage_type;
         }
     };
 
@@ -255,9 +279,8 @@ class CGameWorld
     {
         std::size_t operator()(const SPsionicDamageKey& key) const
         {
-            std::size_t seed = std::hash<int>{}(key.entity_id);
-            seed ^= std::hash<std::uint64_t>{}(key.entity_generation) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
-            seed ^= std::hash<CEntity*>{}(key.attacker) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
+            std::size_t seed = SEntityHandleHash{}(key.entity_ref);
+            seed ^= SEntityHandleHash{}(key.attacker_ref) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
             seed ^= std::hash<int>{}(static_cast<int>(key.damage_type)) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
             return seed;
         }
@@ -288,7 +311,7 @@ class CGameWorld
     void TickActiveEntities(float dt);
     void FlushPendingPsionicDamage();
     void RemoveTransferredActiveEntities();
-    void ResolveWallCollisions(const std::vector<CEntity*>& entities);
+    void ResolveWallCollisions(std::span<CEntity* const> entities);
     void ResolveCollisions(const std::vector<CEntity*>& entities, float dt);
     void SyncSpatialPositions(const std::vector<CEntity*>& entities);
     void SyncSpatialPositionsAndLargeMemberships(const std::vector<CEntity*>& entities);
@@ -316,11 +339,15 @@ class CGameWorld
 
     entity_spatial_grid m_spatial_grid;
     wall_spatial_grid m_wall_grid;
+    CEnvironmentSystem m_environment;
     std::unique_ptr<IGameController> m_p_controller = nullptr;
 
+    // Owning storage is m_p_entities. The following vectors are non-owning
+    // same-world indexes; membership is maintained only by the Register*/
+    // Unregister* helpers and must never outlive an entity cleanup pass.
     std::vector<std::unique_ptr<CEntity>> m_p_entities;
-    std::vector<CEntity*> m_p_entity_refs;
     std::vector<CEntity*> m_live_entities;
+    std::vector<CChainEntity*> m_chains;
     std::vector<CEntity*> m_cleanup_entities;
     std::vector<CEntity*> m_always_tick_entities;
     std::vector<CEntity*> m_conditional_tick_entities;
@@ -339,17 +366,15 @@ class CGameWorld
         float prefix_max_x = 0.f;
     };
     std::vector<SContactSweepEntry> m_contact_sweep;
-    std::vector<std::pair<int, std::uint64_t>> m_clear_owned_owner_keys;
-    std::vector<std::pair<int, std::uint64_t>> m_clear_summon_owner_keys;
+    std::vector<SEntityHandle> m_clear_owned_owner_keys;
+    std::vector<SEntityHandle> m_clear_summon_owner_keys;
     std::unordered_map<SPsionicReceiverKey, SPendingPsionicDamage, SPsionicReceiverKeyHash>
         m_pending_psionic_damage;
     struct SCarriedEntityRecord
     {
-        std::uint64_t carried_generation = 0;
-        int carrier_id = -1;
-        std::uint64_t carrier_generation = 0;
+        SEntityHandle carrier;
     };
-    std::unordered_map<int, SCarriedEntityRecord> m_carried_entities;
+    std::unordered_map<SEntityHandle, SCarriedEntityRecord, SEntityHandleHash> m_carried_entities;
     std::unordered_set<int> m_wall_query_visited;
     std::uint64_t m_active_tick_marker = 1;
     std::uint64_t m_collision_sync_marker = 1;
@@ -357,5 +382,5 @@ class CGameWorld
     float m_normal_entity_radius_limit = 1.f;
     STickPhaseTelemetry m_tick_phase_telemetry;
     std::vector<ServerMessage::SCombatHit> m_combat_feedback;
-    std::unordered_map<std::uint32_t, size_t> m_combat_feedback_indices;
+    std::unordered_map<std::uint64_t, size_t> m_combat_feedback_indices;
 };

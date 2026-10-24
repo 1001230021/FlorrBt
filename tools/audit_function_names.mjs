@@ -33,6 +33,24 @@ const behaviorPrefixes = [
   "Count", "Calculate", "Share", "Join", "Report", "Broadcast", "Remember", "Collect",
 ];
 
+// These are intentionally noun-shaped APIs, but they are not object-first
+// behavior methods.  They are accessors, immutable talent/stat table factories,
+// protocol field readers, or type adapters.  Keeping them in the audit output
+// made the report look actionable while hiding the real candidates.
+const intentionalNounNames = new Set([
+  "EntityStats",
+  "Slot",
+  "FlowerHealthTalents",
+  "PetalHealthTalents",
+  "PetalReloadTalents",
+  "PetalRotationTalents",
+  "SlotNumTalents",
+  "PetalSplitTalents",
+  "PetalNetworkType",
+  "OwnerSlots",
+  "States",
+]);
+
 function filesUnder(directory) {
   const out = [];
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -58,6 +76,7 @@ for (const directory of roots) {
     const source = lines.join("\n");
     for (const name of functionNames(source)) {
       if (!objectPrefixes.some((prefix) => name.startsWith(prefix))) continue;
+      if (intentionalNounNames.has(name)) continue;
       if (behaviorPrefixes.some((prefix) => name.startsWith(prefix))) continue;
       const line = lines.findIndex((value) => value.includes(name)) + 1;
       findings.push(`${path.relative(root, file)}:${line}: ${name}`);

@@ -79,16 +79,16 @@ bool RegisterPetals(std::string& error)
     RegisterPetalDefinition<EPetalType::Lightning, CLightningBehavior>();
     RegisterPetalDefinition<EPetalType::Battery, CBatteryBehavior, CBatteryPetal>();
     RegisterPetalDefinition<EPetalType::Bulb, CBulbBehavior>();
-    RegisterPetalDefinition<EPetalType::Magnet, CMagnetBehavior>();
-    RegisterPetalDefinition<EPetalType::Linker, CLinkerBehavior, CLinkerPetal>();
-    RegisterPetalDefinition<EPetalType::Orb, COrbBehavior, CRosePetal>();
-    RegisterPetalDefinition<EPetalType::MagicLeaf, CMagicLeafBehavior>();
-    RegisterPetalDefinition<EPetalType::MagicStinger, CMagicStingerBehavior>();
-    RegisterPetalDefinition<EPetalType::MagicMissile, CMagicMissileBehavior, CMissilePetal>();
-    RegisterPetalDefinition<EPetalType::MagicEye, CMagicEyeBehavior, CMagicEyePetal>();
-    RegisterPetalDefinition<EPetalType::MagicBubble, CMagicBubbleBehavior, CMagicNoCollisionPetal>();
-    RegisterPetalDefinition<EPetalType::MagicLightning, CMagicLightningBehavior>();
-    RegisterPetalDefinition<EPetalType::MagicCactus, CMagicCactusBehavior>();
+    RegisterModPetalDefinition<EModPetalType::Magnet, CMagnetBehavior>();
+    RegisterModPetalDefinition<EModPetalType::Linker, CLinkerBehavior, CLinkerPetal>();
+    RegisterModPetalDefinition<EModPetalType::Orb, COrbBehavior, CRosePetal>();
+    RegisterModPetalDefinition<EModPetalType::MagicLeaf, CMagicLeafBehavior>();
+    RegisterModPetalDefinition<EModPetalType::MagicStinger, CMagicStingerBehavior>();
+    RegisterModPetalDefinition<EModPetalType::MagicMissile, CMagicMissileBehavior, CMissilePetal>();
+    RegisterModPetalDefinition<EModPetalType::MagicEye, CMagicEyeBehavior, CMagicEyePetal>();
+    RegisterModPetalDefinition<EModPetalType::MagicBubble, CMagicBubbleBehavior, CMagicNoCollisionPetal>();
+    RegisterModPetalDefinition<EModPetalType::MagicLightning, CMagicLightningBehavior>();
+    RegisterModPetalDefinition<EModPetalType::MagicCactus, CMagicCactusBehavior>();
 
     return registry.Finalize(error);
 }

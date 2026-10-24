@@ -15,7 +15,7 @@ export function createCombatFeedback() {
   let serial = 0;
 
   function settlementKey(hit) {
-    return `${hit.targetId}:${hit.kind}`;
+    return `${hit.targetId}:${hit.targetGeneration ?? ""}:${hit.kind}`;
   }
 
   function publish(entry, now) {

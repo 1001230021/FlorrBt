@@ -187,7 +187,8 @@ TEST(CrabAndJellyfishAreAppendedNativeMobsWithFixedBehaviorTuning)
     CHECK(static_cast<int>(EMobType::Jellyfish) == 42);
     CHECK(GetMobTypeName(EMobType::Crab) == "Crab");
     CHECK(MatchMobTypeAlias("crab", EMobType::Crab));
-    CHECK(game_config::mob_crab_dash_speed > game_config::mob_crab_max_velocity);
+    CHECK_NEAR(game_config::mob_crab_dash_speed_multiplier, 1.5f, .00001);
+    CHECK_NEAR(game_config::mob_crab_dash_cooldown, 5.f, .00001);
     CHECK(game_config::mob_crab_dash_distance > game_config::mob_crab_radius);
     CHECK(game_config::mob_crab_orbit_distance >= game_config::default_third_eye_reach_primordial);
     CHECK(MatchMobTypeAlias("jellyfish", EMobType::Jellyfish));

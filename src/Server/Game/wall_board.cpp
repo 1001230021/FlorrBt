@@ -4,7 +4,9 @@
 #include "../Module/network_module.h"
 #include "gamecontext.h"
 #include "gameworld.h"
+#include "entities/eou_mob.h"
 #include <algorithm>
+#include <cmath>
 
 std::uint32_t CWall::CellIndex(int row, int col) const
 {
@@ -78,8 +80,11 @@ void CWall::BuildFromMap(const CGameWorld& world)
 
 void CWall::ReplayInsertedCells()
 {
+    const std::uint64_t cell_count = static_cast<std::uint64_t>(std::max(0, m_width)) *
+                                     static_cast<std::uint64_t>(std::max(0, m_height));
     for (const std::uint32_t cell : m_inserted_cells)
     {
+        if (cell_count == 0 || cell >= cell_count) continue;
         // Skip when the cell already carries a cell wall (idempotent replay).
         bool exists = false;
         for (const SWallRecord& record : m_walls)
@@ -103,15 +108,20 @@ void CWall::ReplayInsertedCells()
     }
 }
 
-void CWall::RemoveMapWallFromWorld(CGameWorld& world, const SWallRecord& record) const
+std::optional<std::pair<florrbt::Vector2f, florrbt::Vector2f>> CWall::RemovalRect(const SWallRecord& record)
 {
     // Remove by the wall's own AABB, shrunk by an epsilon: RemoveWallsInRect
     // matches on inclusive intersection, so an unshrunk rect would also take
     // out flush neighbours sharing an edge with this wall.
     const florrbt::Vector2f shrunk_min{ record.min_pos.x + kWallRemoveEpsilon, record.min_pos.y + kWallRemoveEpsilon };
     const florrbt::Vector2f shrunk_max{ record.max_pos.x - kWallRemoveEpsilon, record.max_pos.y - kWallRemoveEpsilon };
-    if (shrunk_max.x <= shrunk_min.x || shrunk_max.y <= shrunk_min.y) return;
-    world.RemoveWallsInRect(shrunk_min, shrunk_max);
+    if (!record.from_map || shrunk_max.x <= shrunk_min.x || shrunk_max.y <= shrunk_min.y) return std::nullopt;
+    return std::pair{shrunk_min, shrunk_max};
+}
+
+void CWall::RemoveMapWallFromWorld(CGameWorld& world, const SWallRecord& record) const
+{
+    if (const auto bounds = RemovalRect(record)) world.RemoveWallsInRect(bounds->first, bounds->second);
 }
 
 void CWall::ReplayRecordedRemovals(CGameWorld& world)
@@ -131,8 +141,45 @@ void CWall::Reload(CGameWorld& world)
 {
     m_world = &world;
     BuildFromMap(world);
+
+    // The map is authoritative after a reload.  Discard persisted cell keys
+    // that no longer fit it before replaying them; otherwise an old map with
+    // a different dimensions could leave phantom walls in the marker maps.
+    const std::uint64_t cell_count = static_cast<std::uint64_t>(std::max(0, m_width)) *
+                                     static_cast<std::uint64_t>(std::max(0, m_height));
+    const auto valid_cell = [cell_count](std::uint32_t cell) {
+        return cell_count != 0 && static_cast<std::uint64_t>(cell) < cell_count;
+    };
+    m_inserted_cells.erase(std::remove_if(m_inserted_cells.begin(), m_inserted_cells.end(),
+                                          [&valid_cell](std::uint32_t cell) { return !valid_cell(cell); }),
+                           m_inserted_cells.end());
+    m_removed_primary_cells.erase(
+        std::remove_if(m_removed_primary_cells.begin(), m_removed_primary_cells.end(),
+                       [&valid_cell](std::uint32_t cell) { return !valid_cell(cell); }),
+        m_removed_primary_cells.end());
+    for (auto it = m_dig_claims.begin(); it != m_dig_claims.end();)
+    {
+        if (!valid_cell(it->first)) it = m_dig_claims.erase(it);
+        else ++it;
+    }
     ReplayInsertedCells();
     ReplayRecordedRemovals(world);
+}
+
+void CWall::DetachWorld(CGameWorld& world)
+{
+    world.ForEachEntity([this](CEntity* entity) {
+        if (auto* mob = dynamic_cast<IEouMob*>(entity); mob && mob->Board() == this) mob->SetBoard(nullptr);
+    });
+    if (m_world == &world) m_world = nullptr;
+}
+
+bool CWall::WritePlayerScene(IPlayerSceneWriter& writer) const
+{
+    for (size_t i = 0; i < m_walls.size(); ++i)
+        if (!m_alive[i])
+            if (const auto bounds = RemovalRect(m_walls[i]); bounds && !writer.RemoveWall(bounds->first, bounds->second)) return false;
+    return true;
 }
 
 void CWall::BroadcastWallRemovals(CGameWorld& world, const std::vector<int>& wall_ids) const
@@ -144,11 +191,8 @@ void CWall::BroadcastWallRemovals(CGameWorld& world, const std::vector<int>& wal
     for (const int id : wall_ids)
     {
         const SWallRecord& record = m_walls[static_cast<size_t>(id)];
-        for (const auto& player : context->Players())
-        {
-            if (!player) continue;
-            network->SendTerrainWallRemove(*player, record.min_pos, record.max_pos);
-        }
+        if (const auto bounds = RemovalRect(record))
+            network->BroadcastTerrainWallRemove(world, bounds->first, bounds->second);
     }
 }
 
@@ -290,24 +334,30 @@ bool CWall::RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version
         return false;
     }
 
-    m_width = static_cast<int>(reader.UInt32("wall_width", 0));
-    m_height = static_cast<int>(reader.UInt32("wall_height", 0));
+    constexpr std::uint32_t max_restore_dimension = 1'000'000;
+    m_width = static_cast<int>(std::min(reader.UInt32("wall_width", 0), max_restore_dimension));
+    m_height = static_cast<int>(std::min(reader.UInt32("wall_height", 0), max_restore_dimension));
     m_tile_size = reader.Float("wall_tile_size", 512.f);
+    if (!std::isfinite(m_tile_size) || m_tile_size <= 0.f) m_tile_size = 512.f;
     m_inserted_cells.clear();
-    const std::uint32_t inserted_count = reader.UInt32("wall_inserted_count", 0);
+    constexpr std::uint32_t max_restore_cells = 65536;
+    const std::uint32_t inserted_count = std::min(reader.UInt32("wall_inserted_count", 0), max_restore_cells);
     for (std::uint32_t i = 0; i < inserted_count; ++i)
         m_inserted_cells.push_back(reader.UInt32("wall_inserted_cell_" + std::to_string(i), 0));
     m_removed_primary_cells.clear();
-    const std::uint32_t count = reader.UInt32("wall_removed_count", 0);
+    const std::uint32_t count = std::min(reader.UInt32("wall_removed_count", 0), max_restore_cells);
     for (std::uint32_t i = 0; i < count; ++i)
         m_removed_primary_cells.push_back(reader.UInt32("wall_removed_cell_" + std::to_string(i), 0));
     m_dig_claims.clear();
-    const std::uint32_t claim_count = reader.UInt32("wall_dig_claim_count", 0);
+    const std::uint32_t claim_count = std::min(reader.UInt32("wall_dig_claim_count", 0), max_restore_cells);
     for (std::uint32_t i = 0; i < claim_count; ++i)
     {
         const std::uint32_t cell = reader.UInt32("wall_dig_claim_cell_" + std::to_string(i), 0);
         const std::uint32_t flags = reader.UInt32("wall_dig_claim_flags_" + std::to_string(i), 0);
-        if (flags != 0) m_dig_claims[cell].team_flags = flags;
+        const std::uint64_t cell_count = static_cast<std::uint64_t>(std::max(0, m_width)) *
+                                         static_cast<std::uint64_t>(std::max(0, m_height));
+        if (flags != 0 && cell_count != 0 && static_cast<std::uint64_t>(cell) < cell_count)
+            m_dig_claims[cell].team_flags = flags;
     }
     m_loaded = false;
     return true;

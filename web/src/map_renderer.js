@@ -4,6 +4,8 @@ import { clientRuntimeConfig } from "./client_config.js";
 import { t } from "./i18n.js";
 import { createMapChunkCache } from "./map_chunk_cache.js";
 import { loadVisualImage, whenVisualReady } from "./visual_assets.js";
+import { mapLayerRole, shortcutReveal } from "./terrain_rules.js";
+import { drawRasterImage } from "./map_raster_geometry.js";
 
 const mapPrewarmBudgetMs = 1.5;
 const mapOverviewMaxDimensionPx = 2048;
@@ -51,11 +53,12 @@ export function createMapRenderer({
 } = {}) {
   let mapTransition = null;
   let transitionCanvas = null;
+  let overlayCanvas = null;
 
-  async function loadMap(mapName, { showLoading = true } = {}) {
+  async function loadMap(mapName, { showLoading = true, freshInstance = false } = {}) {
     const path = normalizeMapPath(mapName);
     if (!path) return null;
-    if (state.map?.path === path) {
+    if (!freshInstance && state.map?.path === path) {
       if (state.mapLoadPromise && state.mapLoadPath !== path) {
         state.mapLoadToken += 1;
         state.mapLoadPromise = null;
@@ -64,7 +67,7 @@ export function createMapRenderer({
       }
       return state.map;
     }
-    if (path === state.mapLoadPath && state.mapLoadPromise) {
+    if (!freshInstance && path === state.mapLoadPath && state.mapLoadPromise) {
       if (!showLoading) return state.mapLoadPromise;
       setLoadingVisible(true);
       try {
@@ -154,6 +157,7 @@ export function createMapRenderer({
         if (layer.type !== "tilelayer") continue;
         layers.push({
           name: layer.name || "",
+          role: mapLayerRole(layer.name),
           visible: layer.visible !== false,
           opacity: Number.isFinite(layer.opacity) ? clamp(layer.opacity, 0, 1) : 1,
           width: layer.width || tmj.width || 0,
@@ -219,15 +223,31 @@ export function createMapRenderer({
         chunkCache: new Map(),
         chunkBuildQueue: [],
       };
+      map.renderLayers = layers.filter(layer => layer.role === "terrain");
+      map.overlayPasses = ["shortcut", "shortcut_cover"].map(role => {
+        const passLayers = layers.filter(layer => layer.role === role);
+        return { ...map, role, layers: passLayers, renderLayers: passLayers };
+      }).filter(pass => pass.layers.length);
       await buildFullMapOverview(map, token);
+      for (const pass of map.overlayPasses) {
+        pass.overviewTileImagesCache = map.overviewTileImagesCache;
+        await buildFullMapOverview(pass, token);
+      }
       if (token !== state.mapLoadToken) { releaseMapRasters(map); return null; }
 
       map.rasterCache = createMapChunkCache({ map, state, worldScale, worldToScreen,
         createCanvas: createMapRenderCanvas, drawTile: drawTileImage, requestDraw,
+        layers: map.renderLayers,
         isActive: () => token === state.mapLoadToken || state.map === map });
+      for (const pass of map.overlayPasses) {
+        pass.rasterCache = createMapChunkCache({ map: pass, state, worldScale, worldToScreen,
+          createCanvas: createMapRenderCanvas, drawTile: drawTileImage, requestDraw, transparent: true,
+          isActive: () => token === state.mapLoadToken || state.map === map });
+      }
       // Publish only after the initial visible region has complete layers,
       // not merely an 8px-per-tile overview. Ordinary movement remains async.
       await map.rasterCache.warm();
+      for (const pass of map.overlayPasses) await pass.rasterCache.warm();
       if (token !== state.mapLoadToken) { releaseMapRasters(map); return null; }
 
       const previousMap = state.map;
@@ -324,7 +344,7 @@ export function createMapRenderer({
     overviewCtx.imageSmoothingEnabled = true;
     let sliceStarted = performance.now();
 
-    for (const layer of map.layers || []) {
+    for (const layer of map.renderLayers || map.layers || []) {
       if (layer.visible === false || !layer?.width || !layer?.height || !layer.tiles?.length) continue;
       overviewCtx.globalAlpha = layer.opacity ?? 1;
       for (let tileY = 0; tileY < layer.height; tileY += 1) {
@@ -448,6 +468,7 @@ export function createMapRenderer({
       ctx.fillRect(0, 0, state.canvasWidth, state.canvasHeight);
       drawMapOverview(map, worldScale());
       map.rasterCache?.draw(ctx, now, prepare);
+      drawShortcutPass(map, "shortcut", 1, prepare, now);
       drawMapDecorations(map);
       ctx.restore();
     } finally { ctx = output; }
@@ -457,6 +478,50 @@ export function createMapRenderer({
         0, 0, state.canvasWidth, state.canvasHeight);
       ctx.restore();
     }
+  }
+
+  function drawShortcutPass(map, role, alpha, prepare, now) {
+    const pass = map?.overlayPasses?.find(item => item.role === role);
+    if (!pass || alpha <= 0) return;
+    const dpr = state.dpr || 1;
+    const width = Math.max(1, Math.round(state.canvasWidth * dpr));
+    const height = Math.max(1, Math.round(state.canvasHeight * dpr));
+    if (!overlayCanvas) overlayCanvas = createMapRenderCanvas(width, height);
+    if (overlayCanvas.width !== width) overlayCanvas.width = width;
+    if (overlayCanvas.height !== height) overlayCanvas.height = height;
+    const output = ctx;
+    ctx = overlayCanvas.getContext("2d");
+    try {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.save();
+      drawMapOverview(pass, worldScale());
+      pass.rasterCache?.draw(ctx, now, prepare);
+      const reveal = shortcutReveal(state, map);
+      if (reveal) {
+        const center = worldToScreen(reveal.center);
+        ctx.globalCompositeOperation = "destination-out";
+        ctx.globalAlpha = role === "shortcut_cover" ? 0.95 : 0.5;
+        ctx.fillStyle = "#000";
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, reveal.radius * worldScale(), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    } finally { ctx = output; }
+    ctx.save(); ctx.globalAlpha *= alpha;
+    ctx.drawImage(overlayCanvas, 0, 0, width, height, 0, 0, state.canvasWidth, state.canvasHeight);
+    ctx.restore();
+  }
+
+  function drawShortcutCover(now = performance.now()) {
+    if (mapTransition) {
+      const linear = clamp((now - mapTransition.startedAt) / mapTransitionDurationMs, 0, 1);
+      const progress = linear * linear * (3 - 2 * linear);
+      drawShortcutPass(mapTransition.from, "shortcut_cover", 1 - progress, false, now);
+      drawShortcutPass(mapTransition.to, "shortcut_cover", progress, true, now);
+    } else drawShortcutPass(state.map, "shortcut_cover", 1, true, now);
   }
 
   function drawMapOverview(map, scale) {
@@ -596,6 +661,7 @@ export function createMapRenderer({
     layer.tiles[index] = gid;
 
     map.rasterCache?.invalidate(row, col);
+    for (const pass of map.overlayPasses || []) pass.rasterCache?.invalidate(row, col);
 
     // If the new tile's image just became available, drop the raster cache so
     // the next overview rebuild includes it.
@@ -611,6 +677,7 @@ export function createMapRenderer({
     // The fallback must change with the terrain, not show a removed wall
     // for another half second while a full-map rebuild is debounced.
     updateOverviewTile(map, row, col);
+    for (const pass of map.overlayPasses || []) updateOverviewTile(pass, row, col);
     requestDraw();
     return true;
   }
@@ -622,7 +689,7 @@ export function createMapRenderer({
     const x = col * width, y = row * height;
     target.save(); target.beginPath(); target.rect(x, y, width, height); target.clip();
     target.clearRect(x, y, width, height);
-    for (const layer of map.layers) {
+    for (const layer of map.renderLayers || map.layers) {
       if (layer.visible === false || row >= layer.height || col >= layer.width) continue;
       const raw = layer.tiles[row * layer.width + col] >>> 0;
       const image = map.tileImages.get(canonicalTileGid(raw));
@@ -670,6 +737,7 @@ export function createMapRenderer({
 
   return {
     drawGrid,
+    drawShortcutCover,
     loadMap,
     applyTerrainDelta,
     applyWallRemove,
@@ -684,11 +752,14 @@ export function createMapRenderer({
       mapTransition = null;
       if (transitionCanvas) transitionCanvas.width = transitionCanvas.height = 0;
       transitionCanvas = null;
+      if (overlayCanvas) overlayCanvas.width = overlayCanvas.height = 0;
+      overlayCanvas = null;
     },
   };
 }
 
 function releaseMapRasters(map) {
+  for (const pass of map?.overlayPasses || []) releaseMapRasters(pass);
   if (!map) return;
   map.rasterCache?.dispose();
   if (map.overviewCanvas) map.overviewCanvas.width = map.overviewCanvas.height = 0;
@@ -1346,6 +1417,7 @@ function buildMapCollisionWalls(tmj, layers, collisionDefs) {
   const tileHeight = Math.max(1, Number(tmj?.tileheight) || 512);
 
   for (const layer of layers || []) {
+    if (mapLayerRole(layer.name) === "shortcut_cover") continue;
     if (!layer.width || !layer.height || !layer.tiles?.length) continue;
     for (let y = 0; y < layer.height; y += 1) {
       for (let x = 0; x < layer.width; x += 1) {
@@ -1374,7 +1446,9 @@ function buildMapCollisionWalls(tmj, layers, collisionDefs) {
               y: y * tileHeight + transformed.y,
             };
           });
-          walls.push(finalizeCollisionWall(vertices, sourceWall.closed));
+          const wall = finalizeCollisionWall(vertices, sourceWall.closed);
+          if (wall) wall.shortcut = mapLayerRole(layer.name) === "shortcut";
+          walls.push(wall);
         }
       }
     }
@@ -1531,6 +1605,7 @@ function resolveCircleMotion(map, start, end, radius) {
         Math.max(previous.y, pos.y) + radius + 1,
       );
       for (const wall of walls) {
+        if (wall?.shortcut) continue; // Prediction is for the player-controlled actor.
         const normal = pushCircleOutOfWall(pos, radius, wall, step);
         if (!normal) continue;
         pushed = true;
@@ -1677,13 +1752,7 @@ function drawTileImage(image, pos, width, height, raw, targetCtx) {
       origin.y,
     );
   }
-  targetCtx.drawImage(
-    image,
-    0,
-    0,
-    width,
-    height,
-  );
+  drawRasterImage(targetCtx, image, 0, 0, width, height);
   targetCtx.restore();
 }
 

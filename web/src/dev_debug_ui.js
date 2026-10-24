@@ -561,6 +561,7 @@ export function createDevDebugUi({ renderEntities, getTypeIcon, getTypeName, onO
     }
     renderEntities?.(ctx, { entities, camera, scale: camera.scale, width: size.width, height: size.height, dpr }, now);
     burrowParticles.draw(ctx, camera.scale, pointToDebugScreen({ x: 0, y: 0 }, camera, size));
+    mapRenderer.drawShortcutCover?.(now);
     ctx.save(); ctx.lineWidth = 1.5; ctx.font = "12px monospace"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
     for (const [key, record] of records) {
       if ((!selection.has(key) && !idToggle.checked) || !entities.has(record.snapshot.entityId)) continue;

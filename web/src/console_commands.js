@@ -283,6 +283,22 @@ export function executeClientCommand(line) {
     executeResetCommand(args);
     return;
   }
+  if (name === "skill") {
+    if (args.length > 1 || ["help", "list"].includes(String(args[0] || "").toLowerCase())) {
+      context.addConsoleLine(t("commands.skill.usage"));
+      return;
+    }
+    const rawIndex = args.length ? Number(args[0]) : 0;
+    if (!Number.isInteger(rawIndex) || rawIndex < 0 || rawIndex > 255) {
+      context.addConsoleLine(t("commands.skill.invalid", { index: args[0] }), "error");
+      return;
+    }
+    if (!context.requestSkill?.(rawIndex)) {
+      context.addConsoleLine(t("commands.skill.requestFailed"), "error");
+      return;
+    }
+    return;
+  }
 
   context.sendChat(ChatFlag.Local, `/${line}`);
 }

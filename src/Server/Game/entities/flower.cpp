@@ -236,11 +236,8 @@ void CFlower::Tick(float dt)
     RefreshNullificationState();
     RefreshCorruptionState();
 
-    if (HasState<CDiggingState>())
-    {
-        DestroyPetalEntities();
-        return;
-    }
+    RefreshPetalSuppression();
+    if (ArePetalsSuppressed()) return;
 
     if (m_petal_state_dirty)
     {
@@ -400,6 +397,15 @@ void CFlower::DestroyPetalEntities()
 
 void CFlower::ReloadPetals()
 {
+    m_capabilities.Set(ERestrictionSource::Digging, HasState<CDiggingState>()
+        ? static_cast<std::uint8_t>(ECapabilityRestriction::Petals) : 0);
+    if (ArePetalsSuppressed())
+    {
+        if (!m_petals_suspended) DestroyPetalEntities();
+        m_petals_suspended = true;
+        return;
+    }
+    m_petals_suspended = false;
     for (auto& slot : m_slots)
     {
         if (!slot.m_p_proto || !slot.m_p_proto->m_p_behavior) continue;
@@ -430,9 +436,35 @@ void CFlower::ReloadPetals()
     MarkFinalStatsDirty();
 }
 
+bool CFlower::ArePetalsSuppressed() const
+{
+    // Digging is checked directly as well: a state can expire between the
+    // world phases, and its destructor may request a reload immediately.
+    return m_capabilities.Restricted(ECapabilityRestriction::Petals) || HasState<CDiggingState>();
+}
+
+void CFlower::RefreshPetalSuppression()
+{
+    m_capabilities.Set(ERestrictionSource::Digging, HasState<CDiggingState>()
+        ? static_cast<std::uint8_t>(ECapabilityRestriction::Petals) : 0);
+    if (ArePetalsSuppressed())
+    {
+        if (!m_petals_suspended) DestroyPetalEntities();
+        m_petals_suspended = true;
+    }
+    else if (m_petals_suspended) ReloadPetals();
+}
+
+void CFlower::OnEnvironmentChanged()
+{
+    MarkFinalStatsDirty();
+    RebuildFinalStats();
+    RefreshPetalSuppression();
+}
+
 bool CFlower::TryStartBurrowFromShovel()
 {
-    if (HasState<CDiggingState>()) return false;
+    if (ArePetalsSuppressed()) return false;
 
     for (auto& slot : m_slots)
     {
@@ -991,8 +1023,8 @@ void CPlayerFlower::RefreshTalentSlotCount()
 
             if (player && player->IsAuthenticated())
             {
-                CAccountDataStore::AddItem(player->GetAccountName(), old_type, old_rarity, 1);
-                CAccountDataStore::ClearSlot(player->GetAccountName(), static_cast<uint8_t>(i));
+                CAccountDataStore::AddItem(player->GetProgressAccountName(), old_type, old_rarity, 1);
+                CAccountDataStore::ClearSlot(player->GetProgressAccountName(), static_cast<uint8_t>(i));
             }
         }
     }
@@ -1027,7 +1059,7 @@ void CPlayerFlower::TakeExp(std::int64_t exp)
     CGameContext* context = GameContext();
     CPlayer* player = context ? context->FindPlayerFromEntity(this) : nullptr;
     if (player && gained_talent_points > 0) player->AddTalentPoints(gained_talent_points);
-    if (player && player->IsAuthenticated()) CAccountDataStore::SetProgress(player->GetAccountName(), m_level, m_exp);
+    if (player && player->IsAuthenticated()) CAccountDataStore::SetProgress(player->GetProgressAccountName(), m_level, m_exp);
 }
 
 std::int64_t CPlayerFlower::ExpRequired() const { return GetRequiredPlayerExperience(m_level); }
@@ -1110,7 +1142,7 @@ void CPlayerFlower::EnterDeathState()
     m_attacking = false;
     m_defending = false;
     BeginBloodSacrifice();
-    if (GameWorld()) GameWorld()->DestroySummonedMobsOwnedBy(Id(), Generation());
+    if (GameWorld()) GameWorld()->DestroySummonedMobsOwnedBy(GetHandle());
     DestroyPetalEntities();
 
     m_final_stats = death_stats;
@@ -1121,7 +1153,7 @@ void CPlayerFlower::EnterDeathState()
 
 void CPlayerFlower::PrepareRespawnDestroy(EEntityRemovalReason reason)
 {
-    if (GameWorld()) GameWorld()->DestroySummonedMobsOwnedBy(Id(), Generation());
+    if (GameWorld()) GameWorld()->DestroySummonedMobsOwnedBy(GetHandle());
     ClearPetals();
     m_is_dead = false;
     MarkForDestroy(reason);
@@ -1171,8 +1203,8 @@ void CPlayerFlower::ConsumeCorruptionPetalsOnDeath()
         cleared = true;
         if (player && player->IsAuthenticated())
         {
-            if (should_unequip) CAccountDataStore::AddItem(player->GetAccountName(), old_type, old_rarity, 1);
-            CAccountDataStore::ClearSlot(player->GetAccountName(), static_cast<uint8_t>(i));
+            if (should_unequip) CAccountDataStore::AddItem(player->GetProgressAccountName(), old_type, old_rarity, 1);
+            CAccountDataStore::ClearSlot(player->GetProgressAccountName(), static_cast<uint8_t>(i));
         }
     }
 
@@ -1298,5 +1330,5 @@ void CPlayerFlower::ClearBloodSacrificeSlot(int slot_index)
     CGameContext* context = GameContext();
     CPlayer* player = context ? context->FindPlayerFromEntity(this) : nullptr;
     if (player && player->IsAuthenticated())
-        CAccountDataStore::ClearSlot(player->GetAccountName(), static_cast<uint8_t>(slot_index));
+        CAccountDataStore::ClearSlot(player->GetProgressAccountName(), static_cast<uint8_t>(slot_index));
 }

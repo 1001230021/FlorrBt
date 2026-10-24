@@ -69,6 +69,37 @@ std::uint64_t Generation(json_t* object, const char* key = "generation")
     if (error != std::errc{} || end != text.data() + text.size() || !number) throw std::runtime_error("Invalid generation");
     return number;
 }
+
+SEntityHandle ReadDebugEntityHandle(json_t* object, const CGameWorld& world)
+{
+    const int id = static_cast<int>(Int(object, "id", 0, INT32_MAX));
+    const std::uint64_t generation = Generation(object);
+
+    // Entity references normally inherit the world selected by the request.
+    // If a caller sends the optional qualified fields, validate them too so a
+    // stale selection cannot be transplanted into another world by numeric ID.
+    const json_t* world_value = json_object_get(object, "world");
+    const json_t* world_generation_value = json_object_get(object, "worldGeneration");
+    if (world_value || world_generation_value)
+    {
+        if (!json_is_integer(world_value) || !json_is_string(world_generation_value))
+            throw std::runtime_error("Invalid entity world identity");
+        const auto requested_world = static_cast<std::uint32_t>(Int(object, "world", 0, UINT32_MAX));
+        const auto requested_generation = Generation(object, "worldGeneration");
+        if (requested_world != world.GetId() || requested_generation != world.GetInstanceGeneration())
+            throw std::runtime_error("Entity belongs to another world instance");
+    }
+
+    return { id, generation, world.GetId(), world.GetInstanceGeneration() };
+}
+
+SEntityHandle ReadDebugEntityHandle(json_t* object, const CGameWorld& world, CEntity*& entity)
+{
+    const SEntityHandle handle = ReadDebugEntityHandle(object, world);
+    entity = world.ResolveEntity(handle);
+    return handle;
+}
+
 json_t* Position(florrbt::Vector2f p)
 {
     auto* out = json_object(); Set(out, "x", Num(p.x)); Set(out, "y", Num(p.y)); return out;
@@ -115,11 +146,14 @@ json_t* Stats(const SMobStats* stats)
     Set(out, "absorbRange", Num(stats->max_absorb_range)); Set(out, "extraHits", json_integer(stats->extra_hit_num));
     return out;
 }
-json_t* EntityJson(const CEntity& entity, const CSnapshotService& snapshots, bool detailed = false)
+json_t* SerializeEntityJson(const CEntity& entity, const CSnapshotService& snapshots, bool detailed = false)
 {
     const auto snap = snapshots.BuildEntitySnap(entity, entity);
+    const SEntityHandle handle = entity.GetHandle();
     auto* out = json_object();
     Set(out, "entityId", json_integer(entity.Id())); Set(out, "generation", Str(std::to_string(entity.Generation())));
+    Set(out, "world", json_integer(handle.world_id));
+    Set(out, "worldGeneration", Str(std::to_string(handle.world_instance_generation)));
     Set(out, "entityType", json_integer(snap.entity_type)); Set(out, "family", json_integer(static_cast<int>(entity.GetEntityType())));
     Set(out, "pos", Position(entity.Pos())); Set(out, "radius", Num(entity.Radius()));
     Set(out, "angle", Num(entity.FacingAngle())); Set(out, "hpPercent", Num(snap.hp_percent));
@@ -167,8 +201,11 @@ json_t* EntityJson(const CEntity& entity, const CSnapshotService& snapshots, boo
         if (const auto* projectile = dynamic_cast<const CProjectile*>(&entity))
             if (const auto* owner = projectile->GetOwner())
             {
+                const SEntityHandle owner_ref = owner->GetHandle();
                 Set(out, "ownerId", json_integer(owner->Id()));
                 Set(out, "ownerGeneration", Str(std::to_string(owner->Generation())));
+                Set(out, "ownerWorld", json_integer(owner_ref.world_id));
+                Set(out, "ownerWorldGeneration", Str(std::to_string(owner_ref.world_instance_generation)));
             }
         if (const auto* petal = dynamic_cast<const CPetal*>(&entity))
         {
@@ -195,7 +232,7 @@ bool EditDebugInventory(CServer& server, CPlayer& player, const std::string& ope
         !IsKnownRarity(static_cast<ERarity>(rarity)) || count > max_inventory_item_count ||
         (operation != "add" && operation != "remove" && operation != "set"))
     { result = "Invalid inventory operation/type/rarity/count"; return false; }
-    const std::string account = player.GetAccountName();
+    const std::string account = player.GetProgressAccountName();
     int level = 0; std::int64_t exp = 0;
     if (account.empty() || !CAccountDataStore::GetProgress(account, level, exp))
     { result = "Account is unavailable"; return false; }
@@ -392,7 +429,7 @@ json_t* CDevDebugService::Impl::PlayerJson(const CPlayer& player, bool detailed)
     Set(out, "rcon", json_boolean(player.IsRconAuthorized())); Set(out, "muteSeconds", Num(player.GetMuteTimer()));
     Set(out, "timeoutSeconds", Num(player.GetTimeoutLeft())); Set(out, "talentPoints", json_integer(player.GetTalentPoints()));
     int level = 1; std::int64_t exp = 0;
-    CAccountDataStore::GetProgress(player.GetAccountName(), level, exp);
+    CAccountDataStore::GetProgress(player.GetProgressAccountName(), level, exp);
     Set(out, "level", json_integer(level)); Set(out, "exp", Str(std::to_string(exp)));
     if (const auto* entity = player.GetEntity())
     {
@@ -404,17 +441,17 @@ json_t* CDevDebugService::Impl::PlayerJson(const CPlayer& player, bool detailed)
             Set(out, "map", Str(world->GetMapName()));
             Set(out, "mapPath", Str(world->GetMapPath()));
         }
-        if (detailed) Set(out, "entity", EntityJson(*entity, snapshots, true));
+        if (detailed) Set(out, "entity", SerializeEntityJson(*entity, snapshots, true));
     }
     if (detailed)
     {
-        Set(out, "inventory", Items(CAccountDataStore::GetInventory(player.GetAccountName())));
-        Set(out, "slots", Items(CAccountDataStore::GetSlots(player.GetAccountName())));
-        Set(out, "secondarySlots", Items(CAccountDataStore::GetSecondarySlots(player.GetAccountName())));
+        Set(out, "inventory", Items(CAccountDataStore::GetInventory(player.GetProgressAccountName())));
+        Set(out, "slots", Items(CAccountDataStore::GetSlots(player.GetProgressAccountName())));
+        Set(out, "secondarySlots", Items(CAccountDataStore::GetSecondarySlots(player.GetProgressAccountName())));
         Set(out, "secondChanceCooldown", Num(player.GetSecondChanceCooldown()));
         Set(out, "reportDisabled", json_boolean(player.IsReportDisabled()));
         auto* talents = json_array();
-        for (const auto& talent : CAccountDataStore::GetTalents(player.GetAccountName()))
+        for (const auto& talent : CAccountDataStore::GetTalents(player.GetProgressAccountName()))
         {
             auto* entry = json_object(); Set(entry, "id", json_integer(static_cast<int>(talent.id)));
             Set(entry, "rarity", json_integer(static_cast<int>(talent.rarity))); Set(entry, "rank", json_integer(talent.rank));
@@ -508,7 +545,7 @@ void CDevDebugService::Impl::SendSnapshot(Session& session)
     Set(out, "mapPath", Str(world->GetMapPath()));
     Set(out, "total", json_integer(total)); Set(out, "truncated", json_boolean(total > candidates.size()));
     auto* entities = json_array();
-    for (const auto& candidate : candidates) json_array_append_new(entities, EntityJson(*candidate.entity, snapshots));
+    for (const auto& candidate : candidates) json_array_append_new(entities, SerializeEntityJson(*candidate.entity, snapshots));
     Set(out, "entities", entities); Queue(session, out);
 }
 
@@ -565,17 +602,19 @@ void CDevDebugService::Impl::EntityAction(Session& session, json_t* request)
     json_t* refs = json_object_get(request, "targets");
     if (!json_is_array(refs) || !json_array_size(refs) || json_array_size(refs) > dev_debug::selection_limit)
         throw std::runtime_error("Select 1..128 entities");
-    std::vector<CEntity*> targets; std::unordered_set<int> seen; std::string audit_targets;
+    std::vector<CEntity*> targets;
+    std::unordered_set<SEntityHandle, SEntityHandleHash> seen;
+    std::string audit_targets;
     for (std::size_t i = 0; i < json_array_size(refs); ++i)
     {
         auto* ref = json_array_get(refs, i);
-        const auto id = static_cast<int>(Int(ref, "id", 0, INT32_MAX));
-        auto* entity = world.GetEntity(id, Generation(ref));
-        if (!entity || entity->IsMarkedForDes() || !seen.insert(id).second)
+        CEntity* entity = nullptr;
+        const SEntityHandle handle = ReadDebugEntityHandle(ref, world, entity);
+        if (!entity || entity->IsMarkedForDes() || !seen.insert(handle).second)
             throw std::runtime_error("Stale/duplicate entity selection; nothing was changed");
         targets.push_back(entity);
         if (!audit_targets.empty()) audit_targets += ',';
-        audit_targets += std::to_string(id) + "@" + std::to_string(entity->Generation());
+        audit_targets += std::to_string(handle.id) + "@" + std::to_string(handle.generation);
     }
     const int team = action == "team" ? static_cast<int>(Int(request, "team", 0, 255)) : 0;
     florrbt::Vector2f shift{};
@@ -711,9 +750,10 @@ void CDevDebugService::Impl::Handle(Session& session, json_t* request)
     else if (op == "inspect")
     {
         auto& world = RequestWorld(session, request);
-        auto* entity = world.GetEntity(static_cast<int>(Int(request, "id", 0, INT32_MAX)), Generation(request));
+        CEntity* entity = nullptr;
+        ReadDebugEntityHandle(request, world, entity);
         if (!entity || entity->IsMarkedForDes()) throw std::runtime_error("Entity no longer exists");
-        Reply(session, request, true, "Entity", EntityJson(*entity, snapshots, true));
+        Reply(session, request, true, "Entity", SerializeEntityJson(*entity, snapshots, true));
     }
     else if (op == "player") Reply(session, request, true, "Player", PlayerJson(RequestPlayer(request), true));
     else if (op == "entity_action") EntityAction(session, request);

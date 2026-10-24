@@ -329,6 +329,7 @@ void CPlayerLifecycleService::ProcessDropPickups(const std::vector<std::unique_p
 
 CEntity* CPlayerLifecycleService::SpawnPlayer(CPlayer& player, CGameWorld& world, EPlayerSpawnReason reason) const
 {
+    const bool entering_world = player.GetWorld() != &world;
     std::vector<SPlayerCheckpointEntry> checkpoint_stack_before;
     if (reason == EPlayerSpawnReason::Respawn) checkpoint_stack_before = player.m_cp_stack;
 
@@ -363,21 +364,26 @@ CEntity* CPlayerLifecycleService::SpawnPlayer(CPlayer& player, CGameWorld& world
 
     if (old_flower) old_flower->PrepareRespawnDestroy(EEntityRemovalReason::Replaced);
     player.SetOwnedEntity(raw_flower);
+    if (!player.SynchronizeGameplayScope(world, old_flower))
+        throw std::runtime_error("Cannot initialize spawned player progress scope");
     player.ApplySavedProgress();
     player.LoadSavedTalents();
     player.LoadSavedSlots();
+    raw_flower->SynchronizeEnvironment();
 
     if (auto* controller = world.GetController())
     {
         controller->OnPlayerEntityReady(world, player, *raw_flower, reason);
-        if (reason == EPlayerSpawnReason::Login) controller->OnPlayerEnteredWorld(world, player);
+        if (reason == EPlayerSpawnReason::Login || entering_world) controller->OnPlayerArrivalCommitted(world, player);
     }
     if (reason == EPlayerSpawnReason::Login) player.ConsumeUseNewPlayerSpawn();
+    auto* ready_flower = dynamic_cast<CPlayerFlower*>(player.GetEntity());
+    if (ready_flower) ready_flower->SynchronizeEnvironment();
 
     player.m_logged_missing_entity = false;
     LOG_INFO("network", "Player " + std::to_string(player.GetId()) +
                             (reason == EPlayerSpawnReason::Login ? " spawned" : " respawned"));
-    return raw_flower;
+    return ready_flower;
 }
 
 void CPlayerLifecycleService::RespawnDeadControlledEntities(const std::vector<std::unique_ptr<CPlayer>>& players,
@@ -391,8 +397,9 @@ void CPlayerLifecycleService::RespawnDeadControlledEntities(const std::vector<st
         CEntity* entity = player->GetEntity();
         if (!entity)
         {
-            if (!player->HasOwnedEntity()) continue;
-            if (SpawnPlayer(*player, respawn_world, EPlayerSpawnReason::Respawn) && player->IsConnected())
+            if (!player->HasOwnedEntity() && !player->NeedsRespawn()) continue;
+            CGameWorld& destination = player->GetWorld() ? *player->GetWorld() : respawn_world;
+            if (SpawnPlayer(*player, destination, EPlayerSpawnReason::Respawn) && player->IsConnected())
                 NotifyPlayerWorldChanged(*player, notifier);
             continue;
         }
@@ -409,13 +416,9 @@ void CPlayerLifecycleService::RespawnDeadControlledEntities(const std::vector<st
 void CPlayerLifecycleService::NotifyPlayerLogin(CPlayer& player, IPlayerLifecycleNotifier& notifier) const
 {
     notifier.QueueWelcome(player);
-    notifier.QueueInventory(player);
-    notifier.QueueOwnerStateUpdate(player);
 }
 
 void CPlayerLifecycleService::NotifyPlayerWorldChanged(CPlayer& player, IPlayerLifecycleNotifier& notifier) const
 {
     notifier.QueueWelcome(player);
-    notifier.QueueInventory(player);
-    notifier.QueueOwnerStateUpdate(player);
 }

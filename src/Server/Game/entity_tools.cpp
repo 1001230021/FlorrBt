@@ -8,11 +8,12 @@
 
 CPlayer* FindPlayerFromEntity(CEntity* entity, const std::vector<std::unique_ptr<CPlayer>>& players)
 {
-    std::unordered_set<int> visited_ids;
+    std::unordered_set<SEntityHandle, SEntityHandleHash> visited_refs;
 
     while (entity)
     {
-        if (entity->Id() >= 0 && !visited_ids.insert(entity->Id()).second) return nullptr;
+        const SEntityHandle ref = entity->GetHandle();
+        if (ref.IsValid() && !visited_refs.insert(ref).second) return nullptr;
 
         for (const auto& player : players)
         {
@@ -27,6 +28,11 @@ CPlayer* FindPlayerFromEntity(CEntity* entity, const std::vector<std::unique_ptr
 
         if (auto* mob = dynamic_cast<CMobBase*>(entity))
         {
+            if (auto* body = dynamic_cast<IMultiSegmentBodyMob*>(mob))
+            {
+                entity = ResolveMultiSegmentRoot(mob->GameWorld(), body->RootHandle());
+                continue;
+            }
             auto* controller = dynamic_cast<CSummonedMeleeController*>(mob->GetController());
             CGameWorld* world = mob->GameWorld();
             if (controller && world)
@@ -44,12 +50,13 @@ CPlayer* FindPlayerFromEntity(CEntity* entity, const std::vector<std::unique_ptr
 
 CEntity* FindRootOwnerEntity(CEntity* entity)
 {
-    std::unordered_set<int> visited_ids;
+    std::unordered_set<SEntityHandle, SEntityHandleHash> visited_refs;
     CEntity* current = entity;
 
     while (current)
     {
-        if (current->Id() >= 0 && !visited_ids.insert(current->Id()).second) return current;
+        const SEntityHandle ref = current->GetHandle();
+        if (ref.IsValid() && !visited_refs.insert(ref).second) return current;
 
         if (auto* projectile = dynamic_cast<CProjectile*>(current))
         {
@@ -61,6 +68,13 @@ CEntity* FindRootOwnerEntity(CEntity* entity)
 
         if (auto* mob = dynamic_cast<CMobBase*>(current))
         {
+            if (auto* body = dynamic_cast<IMultiSegmentBodyMob*>(mob))
+            {
+                CEntity* root = ResolveMultiSegmentRoot(mob->GameWorld(), body->RootHandle());
+                if (!root) return current;
+                current = root;
+                continue;
+            }
             auto* controller = dynamic_cast<CSummonedMeleeController*>(mob->GetController());
             CGameWorld* world = mob->GameWorld();
             if (controller && world)

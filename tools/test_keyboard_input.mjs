@@ -6,7 +6,7 @@ const config = readFileSync(new URL("../web/src/client_config.js", import.meta.u
 const frameStart = game.indexOf("function drawFlowerFrame(");
 const frameEnd = game.indexOf("function drawMobFrame(", frameStart);
 const frame = game.slice(frameStart, frameEnd);
-assert.match(frame, /drawOutlinedText\(snap\.name, x, y - labelGap/);
+assert.match(frame, /drawOutlinedText\(snap\.name, x, y - manaHeight - manaGap - labelGap/);
 assert.match(frame, /align: "left", baseline: "bottom"/);
 assert.match(game, /key === "arrowup"/);
 assert.match(game, /key === "arrowdown"/);

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import select
 import socket
 import struct
@@ -19,10 +20,12 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from functools import lru_cache
 from typing import Iterable
 
 
 AUTH_RESULT_TYPE = 0x02
+VERSION_PACKET_TYPE = 0xFB
 AUTH_PACKET_TYPE = 0xF0
 CHAT_PACKET_TYPE = 0xF1
 SNAPSHOT_TYPE = 0x01
@@ -30,7 +33,7 @@ SNAPSHOT_ACK_PACKET_TYPE = 0xF7
 INPUT_FRAME_PACKET_TYPE = 0xF8
 INPUT_PACKET = bytes((0x00, 0x00, 0x00))
 FULL_SNAPSHOT_BASE_ID = 0xFFFFFFFF
-SERVER_SNAPSHOT_HEADER_SIZE = 27
+SERVER_SNAPSHOT_HEADER_SIZE = 29
 DEFAULT_TICK_RATE = 20
 INPUT_LEAD_TICKS = 2
 MAX_AUTH_NAME_BYTES = 32
@@ -38,6 +41,20 @@ MAX_AUTH_PASSWORD_BYTES = 64
 MAX_AUTH_EMAIL_BYTES = 254
 MAX_CHAT_MESSAGE_BYTES = 180
 MAX_RECEIVE_BUFFER_BYTES = 8 * 1024 * 1024
+MAX_SEND_BUFFER_BYTES = 1024 * 1024
+
+
+@lru_cache(maxsize=1)
+def version_packet() -> bytes:
+    """Use the same version source as the server, never a second hard-coded triple."""
+    source = (Path(__file__).resolve().parents[1] / "src/Shared/version.h").read_text(encoding="utf-8")
+    values = []
+    for field_name in ("major", "minor", "patch"):
+        match = re.search(rf"\bversion_{field_name}\s*=\s*(\d+)\s*;", source)
+        if not match or not 0 <= int(match.group(1)) <= 255:
+            raise ValueError(f"invalid server version_{field_name}")
+        values.append(int(match.group(1)))
+    return bytes((VERSION_PACKET_TYPE, *values))
 
 
 @dataclass
@@ -62,9 +79,26 @@ class LoadClient:
     tick_rate: int = DEFAULT_TICK_RATE
     input_sequence: int = 0
     supports_input_frames: bool = False
+    version_sent: bool = False
+    send_buffer: bytearray = field(default_factory=bytearray)
 
     def send(self, payload: bytes) -> None:
-        self.socket.sendall(payload)
+        if len(self.send_buffer) + len(payload) > MAX_SEND_BUFFER_BYTES:
+            raise BufferError(f"output buffer overflow for {self.name}")
+        self.send_buffer.extend(payload)
+        self.flush_send()
+
+    def flush_send(self) -> None:
+        # sendall on a nonblocking socket can partially write and then raise,
+        # losing the frame boundary if the next input is sent immediately.
+        while self.send_buffer:
+            try:
+                sent = self.socket.send(self.send_buffer)
+            except BlockingIOError:
+                return
+            if sent <= 0:
+                raise ConnectionError(f"server disconnected {self.name} while sending")
+            del self.send_buffer[:sent]
 
     def send_auth(self, register: bool, email: str = "", code: str = "") -> None:
         name = self.name.encode("utf-8")
@@ -77,6 +111,9 @@ class LoadClient:
             raise ValueError(f"password must be at most {MAX_AUTH_PASSWORD_BYTES} UTF-8 bytes")
         if len(encoded_email) > MAX_AUTH_EMAIL_BYTES or len(encoded_code) > 32:
             raise ValueError("email or verification code is too long")
+        if not self.version_sent:
+            self.send(version_packet())
+            self.version_sent = True
         self.send(bytes((AUTH_PACKET_TYPE, int(register), len(name), len(password), len(encoded_email),
                          len(encoded_code))) + name + password + encoded_email + encoded_code)
 
@@ -261,8 +298,8 @@ def process_frames(client: LoadClient) -> None:
             client.send_snapshot_ack(snapshot_id)
             continue
 
-        if payload[0] == 0x00 and len(payload) >= 6:
-            client.tick_rate = payload[5] or DEFAULT_TICK_RATE
+        if payload[0] == 0x00 and len(payload) >= 8:
+            client.tick_rate = payload[7] or DEFAULT_TICK_RATE
             continue
 
         if len(payload) < 3 or payload[0] != AUTH_RESULT_TYPE:
@@ -283,11 +320,15 @@ def pump(clients: Iterable[LoadClient], timeout: float) -> None:
     if not active:
         return
 
-    readable, _, failed = select.select([client.socket for client in active], [], [client.socket for client in active], timeout)
+    readable, writable, failed = select.select(
+        [client.socket for client in active], [client.socket for client in active if client.send_buffer],
+        [client.socket for client in active], timeout)
     failed_set = set(failed)
     for client in active:
         if client.socket in failed_set:
             raise ConnectionError(f"socket error for {client.name}")
+        if client.socket in writable:
+            client.flush_send()
         if client.socket not in readable:
             continue
         try:

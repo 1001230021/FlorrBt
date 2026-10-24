@@ -67,7 +67,8 @@ drawn.length = 0; scale = 0.26; // density 1/4 -> 1/2, new spatial keys
 cache.draw(ctx, 116);
 assert.ok(drawn.some(call => oldCanvases.has(call[0])), "keep old quality until new chunks finish");
 for (const call of drawn) {
-  assert.equal(call.length, 9); assert.equal(call[1], 2); assert.equal(call[2], 2);
+  assert.equal(call.length, 9); assert.equal(call[1], 0); assert.equal(call[2], 0);
+  assert.equal(call[3], call[0].width); assert.equal(call[4], call[0].height);
 }
 let work = 0;
 while (scheduled.length && work++ < 160) await scheduled.shift()();
@@ -85,7 +86,9 @@ assert.ok(![...map.chunkCache.values()].some(e => e.left <= 0 && e.right > 0 && 
 // Queue length is a scheduling cap, never a cap on visible coverage.
 state.canvasWidth = 4800; state.canvasHeight = 2700; state.dpr = 4; scale = 2;
 let regions = 0;
-ctx.rect = () => { regions++; };
+let depth = 0;
+ctx.save = () => { depth++; }; ctx.restore = () => { depth--; };
+ctx.rect = () => { if (depth === 1) regions++; };
 cache.draw(ctx, 164);
 assert.ok(map.visibleChunkKeys.size > 160);
 assert.equal(regions, map.visibleChunkKeys.size, "high-DPI viewport cannot drop the cells beyond the queue cap");

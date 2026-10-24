@@ -14,6 +14,9 @@ class CDeathmatchController : public IGameController
   public:
     CDeathmatchController(CControllerParams params);
     void OnTick(CGameWorld&, float) override {}
+    void OnPlayerArrivalCommitted(CGameWorld&, CPlayer&) override;
+    void OnPlayerEntityReady(CGameWorld&, CPlayer&, CPlayerFlower&, EPlayerSpawnReason) override;
+    void OnPlayerDepartureCommitted(CGameWorld&, CPlayer&, CEntity*) override;
     std::string_view SnapshotKey() const override { return "world_controller.deathmatch"; }
     std::uint32_t SnapshotVersion() const override { return 1; }
     bool LocksPetalLoadout() const override { return false; }

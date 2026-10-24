@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "../controller_params.h"
+#include "../extension.h"
 #include <array>
 #include <memory>
 #include <string_view>
@@ -11,7 +12,6 @@ class IGameController;
 namespace world_controller_keys
 {
 inline constexpr std::string_view open = "world_controller.open";
-inline constexpr std::string_view weather_diurnal_open = "world_controller.weather_diurnal_open";
 inline constexpr std::string_view waiting = "world_controller.waiting";
 inline constexpr std::string_view mutable_terrain = "world_controller.mutable_terrain";
 inline constexpr std::string_view pvp = "world_controller.pvp";
@@ -26,12 +26,13 @@ struct SMapDeclaration
 {
     std::string_view map_path;
     std::string_view controller_key;
+    SWorldExtensionConfig extensions;
 };
 
 inline constexpr std::array<SMapDeclaration, 3> kMaps = {{
-    { "data/maps/garden.tmj", world_controller_keys::weather_diurnal_open },
-    { "data/maps/test.tmj", world_controller_keys::mutable_terrain },
-    { "data/maps/ant_hel.tmj", world_controller_keys::open },
+    { "data/maps/garden.tmj", world_controller_keys::open, {true, true, true} },
+    { "data/maps/test.tmj", world_controller_keys::mutable_terrain, {true, false, false} },
+    { "data/maps/ant_hel.tmj", world_controller_keys::open, {true, false, false} },
 }};
 
 inline std::string_view ControllerKeyForMap(std::string_view map_path)
@@ -41,9 +42,11 @@ inline std::string_view ControllerKeyForMap(std::string_view map_path)
     return {};
 }
 
-inline bool DeclaresWeatherDiurnal(std::string_view map_path)
+inline SWorldExtensionConfig ExtensionsForMap(std::string_view map_path)
 {
-    return ControllerKeyForMap(map_path) == world_controller_keys::weather_diurnal_open;
+    for (const SMapDeclaration& declaration : kMaps)
+        if (declaration.map_path == map_path) return declaration.extensions;
+    return {};
 }
 
 // Resolves a friendly controller name (used by `/create`) to a controller
@@ -52,7 +55,7 @@ inline std::string_view ControllerKeyForName(std::string_view name)
 {
     if (name == "open" || name == "open_world") return world_controller_keys::open;
     if (name == "weather" || name == "weather_diurnal" || name == "weather_diurnal_open")
-        return world_controller_keys::weather_diurnal_open;
+        return "world_controller.weather_diurnal_open"; // legacy command blueprint, not a controller class
     if (name == "waiting" || name == "waiting_room") return world_controller_keys::waiting;
     if (name == "mutable_terrain" || name == "terrain" || name == "brush")
         return world_controller_keys::mutable_terrain;

@@ -12,6 +12,7 @@
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 
 class CPetal;
 class CPetalPrototype;
@@ -112,7 +113,7 @@ class CPetal : public CProjectile
     void NotifyCleared();
     void OnBeforeRemoved(EEntityRemovalReason reason) override;
     void RefreshOrbitAnchor(CFlower* flower);
-    CEntity* GetOrbitAnchor() const { return m_orbit_anchor; }
+    CEntity* GetOrbitAnchor() const;
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
     const SEntityStats& GetEntityStats() const override { return m_final_petal_stats; }
@@ -138,8 +139,7 @@ class CPetal : public CProjectile
     int m_max_slot_num = 0;
     int m_copy_index = 0;
     int m_slot_index = 0;
-    int m_target_entity_id = -1;
-    std::uint64_t m_target_entity_generation = 0;
+    SEntityHandle m_target_ref;
     // Absorption/healing petals follow a short Hermite path into their target.
     // Capturing the starting position and velocity preserves the orbit's
     // tangent instead of snapping the petal onto a radial line.
@@ -150,8 +150,7 @@ class CPetal : public CProjectile
     // A target that was just contacted is temporarily suppressed from the
     // homing search.  Keeping its identity separately lets behaviors such as
     // Heavy still inspect the last contact while the petal is returning.
-    int m_target_release_id = -1;
-    std::uint64_t m_target_release_generation = 0;
+    SEntityHandle m_target_release_ref;
     float m_target_release_timer = 0.f;
     float m_lifetime = 0.f;
     float m_timer = 0.f;
@@ -159,7 +158,7 @@ class CPetal : public CProjectile
     bool m_reload_ignore_multiplier = false;
     bool m_hidden = false;
     bool m_clear_notified = false;
-    CEntity* m_orbit_anchor = nullptr;
+    SEntityHandle m_orbit_anchor_ref;
     bool m_detach_from_slot = false;
     bool m_spawn_flight_boost = false;
     float m_growth_base_damage = 0.f;
@@ -170,10 +169,9 @@ class CPetal : public CProjectile
     // Lightning petal: contact-session hit accumulator. While the petal
     // touches a target each damage event increments m_chain_hit_count; when
     // the contact ends the stored chain fires once with damage*count.
-    int m_chain_target_id = -1;
-    std::uint64_t m_chain_target_generation = 0;
+    SEntityHandle m_chain_target_ref;
     int m_chain_hit_count = 0;
-    std::unordered_map<int, float> m_hit_credits;
+    std::unordered_map<SEntityHandle, float, SEntityHandleHash> m_hit_credits;
 };
 
 class CMoonPetal : public CPetal
@@ -194,8 +192,7 @@ class CBeetleEggPetal : public CPetal
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
 
-    int m_summon_id = -1;
-    std::uint64_t m_summon_generation = 0;
+    SEntityHandle m_summon_ref;
     bool m_has_spawned_summon = false;
 };
 
@@ -208,10 +205,8 @@ class CLinkerPetal final : public CPetal, public IChainLease
     void OnChainBroken(CChainEntity& chain) override;
     void ResetMissingChain();
 
-    int m_first_target_id = -1;
-    std::uint64_t m_first_target_generation = 0;
-    int m_chain_id = -1;
-    std::uint64_t m_chain_generation = 0;
+    SEntityHandle m_first_target_ref;
+    SEntityHandle m_chain_ref;
     float m_saved_chain_health = 0.f;
     // Released Linkers no longer consume a layout slot, so retain the angle
     // of their former slot relative to the flower's rotating orbit.
@@ -227,8 +222,7 @@ class CRelicPetal : public CPetal
   public:
     using CPetal::CPetal;
 
-    int m_state_zone_id = -1;
-    std::uint64_t m_state_zone_generation = 0;
+    SEntityHandle m_state_zone_ref;
 };
 
 class CThrownPetal : public CPetal
@@ -305,8 +299,7 @@ class CCompassPetal : public CPetal
   public:
     using CPetal::CPetal;
 
-    int m_compass_target_id = -1;
-    std::uint64_t m_compass_target_generation = 0;
+    SEntityHandle m_compass_target_ref;
     float m_compass_wait_timer = 0.f;
 };
 
@@ -323,7 +316,7 @@ class CGlassPetal : public CPetal
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
 
-    std::unordered_map<int, float> m_hit_cooldowns;
+    std::unordered_map<SEntityHandle, float, SEntityHandleHash> m_hit_cooldowns;
 };
 
 class CBrokenEggPetal : public CPetal

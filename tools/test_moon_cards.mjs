@@ -2,33 +2,39 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
-import { drawMoonSurface, moonSvgDrawSize, moonSvgGeometry } from "../web/src/moon_renderer.js";
-
+const drawn = [];
+const arcs = [];
+const ctx = new Proxy({ arc: (...args) => arcs.push(args) }, { get: (obj, key) => obj[key] ?? (() => {}) });
+// Execute the real renderer with only its asset boundary replaced. Importing
+// the raster cache directly initializes the browser app_context in Node.
+const rendererSource = readFileSync(new URL("../web/src/moon_renderer.js", import.meta.url), "utf8");
+const { drawMoonSurface, moonSvgDrawSize, moonSvgGeometry } = vm.runInNewContext(
+  `${rendererSource.replace(/^import .*;\r?\n/gm, "").replace(/^export /gm, "")};({drawMoonSurface,moonSvgDrawSize,moonSvgGeometry})`,
+  { drawSpriteImage: (...args) => drawn.push(args), prepareSvgImage: () => ({ complete: true, naturalWidth: 110 }),
+    whenVisualReady: image => Promise.resolve(image) },
+);
 const game = readFileSync(new URL("../web/src/game.js", import.meta.url), "utf8");
 const moonSource = game.slice(game.indexOf("function drawProceduralMoonPetal("), game.indexOf("function drawDustParticlePetal("));
-const drawn = [];
-const ctx = {};
 const drawMoon = vm.runInNewContext(`${moonSource};drawProceduralMoonPetal`, {
-  ctx,
-  assetImage: () => ({ complete: true, naturalWidth: 110, failed: false }),
-  getPetalIconPath: () => moonSvgGeometry.source,
-  petalMoonType: 42,
-  imageReady: image => !!image?.complete && image.naturalWidth > 0 && !image.failed,
-  drawSpriteImage: (...args) => drawn.push(args),
-  drawMoonSurface,
-  moonSvgGeometry,
+  ctx, drawMoonSurface, moonSvgGeometry, rarityLevel: value => value,
 });
 for (const size of [1, 10, 134.4, 840, 4000]) {
   drawn.length = 0;
   drawMoon(size, 6, 1);
-  assert.equal(drawn.length, 1, "ready Moon uses the source SVG directly");
+  assert.equal(drawn.length, 1, "ready Moon uses its prepared SVG texture");
   const drawSize = drawn[0][4];
   assert.ok(Math.abs(drawSize - moonSvgDrawSize(size * moonSvgGeometry.liveRadiusFactor)) < 1e-8);
   assert.ok(Math.abs(drawSize * moonSvgGeometry.artRadius / moonSvgGeometry.viewBoxSize -
     size * moonSvgGeometry.liveRadiusFactor) < 1e-8,
     "SVG art radius remains proportional to the client geometry data");
 }
-assert.match(game, /assetImage\(getPetalIconPath\(petalMoonType\)\)/);
+for (const level of [1, 6, 10]) {
+  drawn.length = arcs.length = 0;
+  drawMoon(20 + 10 * (level - 1), level, 1);
+  assert.ok(Math.abs(drawn[0][4] - moonSvgDrawSize(70 * moonSvgGeometry.liveRadiusFactor)) < 1e-8);
+  assert.ok(Math.abs((arcs[0][2] - arcs[1][2]) - 70 * moonSvgGeometry.liveRadiusFactor * moonSvgGeometry.rimWidthAtReferenceRatio) < 1e-8);
+}
+assert.match(game, /drawMoonSurface\(ctx, size \* moonSvgGeometry.liveRadiusFactor, rarityLevel\(rarity\)\)/);
 assert.match(readFileSync(new URL("../web/assets/petals/moon.svg", import.meta.url), "utf8"), /viewBox="0 0 110 110"/);
 
 function element(tag) {

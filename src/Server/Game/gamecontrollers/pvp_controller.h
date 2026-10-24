@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "../controller_params.h"
 #include "../gamecontroller.h"
 #include "opencontroller.h"
@@ -34,8 +34,8 @@ class CAntHelPvpController : virtual public COpenController
     void OnTick(CGameWorld& world, float dt) override;
     void OnPlayerEntityReady(CGameWorld& world, CPlayer& player, CPlayerFlower& flower,
                              EPlayerSpawnReason reason) override;
-    void OnPlayerEnteredWorld(CGameWorld& world, CPlayer& player) override;
-    void OnPlayerLeftWorld(CGameWorld& world, CPlayer& player) override;
+    void OnPlayerArrivalCommitted(CGameWorld& world, CPlayer& player) override;
+    void OnPlayerDepartureCommitted(CGameWorld& world, CPlayer& player, CEntity* departing) override;
     std::string_view SnapshotKey() const override { return "world_controller.pvp"; }
     std::uint32_t SnapshotVersion() const override { return 2; }
     void CaptureSnapshot(CSnapshotWriter& writer) const override;

@@ -39,7 +39,10 @@ writeFileSync(path.join(directory, "checks.cpp"), `
 #include <sstream>
 void check(bool ok,const char* message) { if(!ok) {std::fprintf(stderr,"FAIL %s\\n",message);std::exit(1);} }
 class CEntity { public: virtual ~CEntity()=default; florrbt::Vector2f pos{}; florrbt::Vector2f Pos() const {return pos;} };
-class CMobBase : public CEntity { public: bool attack=false,defend=false; int team=0,move=0; int& Team(){return team;} };
+class ICrabDashMob { public: virtual ~ICrabDashMob()=default;
+ virtual bool IsDashActive()const{return false;} virtual bool IsDashRecovering()const{return false;} };
+class CMobBase : public CEntity { public: bool attack=false,defend=false; int team=0,move=0; int& Team(){return team;}
+ bool IsMovementControlledBySkill()const{return false;} };
 void CPlayerController::CaptureSnapshot(CSnapshotWriter&) const {}
 bool CPlayerController::RestoreSnapshot(const CSnapshotReader&,std::uint32_t,std::string&) {return true;}
 void CPlayerController::ExecuteOperate(const ClientOperate& op,CMobBase* mob) {
@@ -50,9 +53,11 @@ void CPlayerController::ExecuteOperate(const ClientOperate& op,CMobBase* mob) {
 ${queue.map(m=>extract(controller,m)).join("\n")}
 ${queueTick}
 class CPlayer {
- public: std::string account; int id=1; bool authenticated=true;
+ public: std::string account,progress; int id=1; bool authenticated=true;
  bool IsAuthenticated() const {return authenticated;}
  const std::string& GetAccountName() const {return account;}
+ bool HasIsolatedProgress() const {return !progress.empty();}
+ const std::string& GetProgressAccountName() const {return progress.empty()?account:progress;}
  std::uint32_t GetId() const {return id;}
 };
 class CGameContext {public: std::vector<std::unique_ptr<CPlayer>> players;
@@ -68,7 +73,7 @@ struct Grid {std::vector<CEntity*> entities;
 class CGameWorld {public: Grid grid; Grid& GetSpatialGrid(){return grid;} };
 class CDrop : public CEntity {
  public: CGameWorld* world=nullptr; int id=0,m_owner_id=1;
- std::string m_owner_account; PetalType m_type=PetalType::Basic; ERarity m_rarity=ERarity::Common;
+ std::string m_owner_account,m_owner_progress_account; PetalType m_type=PetalType::Basic; ERarity m_rarity=ERarity::Common;
  std::uint16_t m_stack_num=1; float m_timer=30,m_unable_picked_timer=0;
  bool removed=false,m_inertia_active=false;
  CGameWorld* GameWorld() const {return world;} int Id()const{return id;}
@@ -93,7 +98,8 @@ class CPetal : public CEntity {
 };
 ${extract(petals,"void CPetal::NotifyCleared(")}
 ${extract(petals,"void CPetal::OnBeforeRemoved(")}
-class CCorruptionState {public: CMobBase* m_p_owner=nullptr; int m_old_team=2; ~CCorruptionState();};
+class CCorruptionState {public: CMobBase* m_p_owner=nullptr; int m_old_team=2; ~CCorruptionState();
+ CMobBase* ResolveOwner()const{return m_p_owner;} };
 ${extract(states,"CCorruptionState::~CCorruptionState(")}
 
 // Execute real SQL-generation/diff methods against a recording transaction
@@ -134,6 +140,12 @@ int main(){
  check(damage.ResolvePlayer(&context)==nullptr,"reused id does not inherit damage");
  auto again=std::make_unique<CPlayer>();again->account="A";again->id=9;auto* returning=again.get();context.players.push_back(std::move(again));
  check(damage.ResolvePlayer(&context)==returning,"same account reconnects");
+ returning->progress="@sandbox:test";
+ check(damage.ResolvePlayer(&context)==nullptr,"formal damage credit cannot enter a temporary progress scope");
+ damage.m_progress_account=returning->progress;
+ check(damage.ResolvePlayer(&context)==returning,"matching temporary damage credit resolves");
+ returning->progress.clear();
+ check(damage.ResolvePlayer(&context)==nullptr,"temporary damage credit cannot return to formal progress");
  // Private visibility/pickup and merging use accounts, never numeric ids.
  CGameWorld world;CDrop old,fresh;old.id=1;fresh.id=2;old.world=fresh.world=&world;
  old.m_owner_account=fresh.m_owner_account="A";fresh.m_owner_id=9;
@@ -142,6 +154,10 @@ int main(){
  fresh.m_unable_picked_timer=0;fresh.m_inertia_active=true;old.MergeNearbyDrops();check(old.m_stack_num==1,"inertia blocks merge");
  fresh.m_inertia_active=false;old.MergeNearbyDrops();check(old.m_stack_num==6&&old.m_timer==30&&fresh.removed,"merged stack keeps later expiry");
  check(!old.CanBePickedUpBy(*context.players[0])&&old.CanBePickedUpBy(*returning),"drop owner remains A");
+ old.m_owner_progress_account="@sandbox:test";returning->progress="@sandbox:test";
+ check(old.CanBePickedUpBy(*returning),"temporary drop matches its progress scope");
+ returning->progress.clear();check(!old.CanBePickedUpBy(*returning),"temporary drops cannot be claimed with formal progress");
+ old.m_owner_progress_account.clear();
  old.m_owner_account.clear();check(!old.CanBePickedUpBy(*returning),"unknown legacy private owner fails closed");
  // Sleeping owner: cleanup detaches actual pointers and runs callback once.
  CFlower flower; CPetal petal;petal.owner=&flower;flower.slots.resize(1);
@@ -195,10 +211,12 @@ for (const [command, args] of [
 }
 // Cross-layer hooks/serialization use the same stable owner everywhere.
 const reload=read("src/Server/HotReload/hot_reload_snapshot.cpp"),world=read("src/Server/Game/gameworld.cpp");
+const transition=read("src/Server/Game/world_transition.cpp");
 assert.match(reload,/Field\("account_name", record.m_account_name\)/);
 assert.match(reload,/Field\("owner_account", drop->GetOwnerAccount\(\)\)/);
 assert.match(reload,/RestoreOwnerAccount\(data.String\("owner_account"\)\)/);
-assert.match(world,/OnPlayerLeftWorld\(\*this, player\);[\s\S]*?ClearTeamOverrideStates\(\);[\s\S]*?OnPlayerEnteredWorld\(target_world, player\)/);
+assert.match(transition,/OnPlayerDepartureCommitted\(source, player, controlled\);[\s\S]*?ClearTeamOverrideStates\(\);[\s\S]*?OnPlayerArrivalCommitted\(destination, player\)/);
+assert.match(transition,/before_source\.Restore\(\); before_destination\.Restore\(\)/);
 assert.match(world,/entity->OnBeforeRemoved\(removal_reason\);[\s\S]*?m_p_entities\[id\].reset\(\)/);
 assert.match(read("src/Server/Game/systems/snapshot_service.cpp"),/cached.drop_owner_account == player.GetAccountName\(\)/);
 assert.doesNotMatch(reload,/record.m_player->/);

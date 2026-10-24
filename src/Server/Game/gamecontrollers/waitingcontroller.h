@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "../controller_params.h"
 #include "../../../Shared/math_types.h"
 #include "../gamecontroller.h"
@@ -46,8 +46,8 @@ class CWaitingController : public IGameController
                                                   EPlayerSpawnReason reason) override;
     void OnPlayerEntityReady(CGameWorld& world, CPlayer& player, CPlayerFlower& flower,
                              EPlayerSpawnReason reason) override;
-    void OnPlayerEnteredWorld(CGameWorld& world, CPlayer& player) override;
-    void OnPlayerLeftWorld(CGameWorld& world, CPlayer& player) override;
+    void OnPlayerArrivalCommitted(CGameWorld& world, CPlayer& player) override;
+    void OnPlayerDepartureCommitted(CGameWorld& world, CPlayer& player, CEntity* departing) override;
     // The waiting world is only a staging area. Its slots are banned while a
     // player waits, so expose the same rule to every loadout entry point
     // (primary and secondary slots alike).

@@ -1,8 +1,8 @@
 ﻿#pragma once
 #include "../../../Shared/game_config.h"
+#include "../entity.h"
 #include <cstdint>
 
-class CEntity;
 class CMobBase;
 class CSnapshotReader;
 class CSnapshotWriter;
@@ -22,6 +22,7 @@ class CPickupController
     bool IsCarrying(const CMobBase* mob, const CEntity* carried) const;
     bool TryPickup(CMobBase* mob, CEntity* candidate);
     void DropCarried(CMobBase* mob);
+    void DropCarriedFromWorld(CMobBase* mob, CGameWorld& source, const SEntityHandle& old_carrier);
     void TickCarried(CMobBase* mob, float dt);
     void SyncCarriedTransform(CMobBase* mob);
     virtual void ResolveCarriedConstraint(CMobBase* mob);
@@ -36,8 +37,8 @@ class CPickupController
     virtual void OnCarryChanged(CMobBase* mob, CEntity* carried, bool now_carrying);
     void ApplyCarryingTurn(CMobBase* mob, float previous_angle, bool had_facing, float dt) const;
 
-    std::uint32_t m_carried_world_id = 0;
-    int m_carried_id = -1;
-    std::uint64_t m_carried_generation = 0;
+    // Lazy canonicalization is performed by GetCarried() for legacy
+    // snapshots, so const inspection may still repair the cached handle.
+    mutable SEntityHandle m_carried_ref;
     float m_carry_pickup_timer = 0.f;
 };

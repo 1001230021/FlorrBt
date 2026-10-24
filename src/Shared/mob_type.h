@@ -53,6 +53,7 @@ enum class EMobType : int
     Crab,
     Jellyfish,
     MagicFirefly,
+    FireflyLarva,
 };
 
 using MobType = EMobType;
@@ -60,7 +61,7 @@ using MobType = EMobType;
 // Controller-specific ids map into the shared mob id space above the natives.
 constexpr EMobType ToMobType(EModMobType type) { return static_cast<EMobType>(type); }
 
-inline constexpr std::array<std::string_view, 44> mob_type_names = {
+inline constexpr std::array<std::string_view, 45> mob_type_names = {
     "None",          "Beetle",        "Gambler",        "NormalLadybug",  "MechaFlower",    "NormalFlower",
     "PlayerFlower",  "SoldierAnt",    "SoldierFireAnt", "SoldierTermite", "SummonedBeetle", "SummonedSoldierAnt",
     "BandageBeetle", "Bee",           "Hornet",         "BumbleBee",      "Rock",           "BabyAnt",
@@ -68,10 +69,10 @@ inline constexpr std::array<std::string_view, 44> mob_type_names = {
     "Dandelion",     "AntEgg",        "FireAntEgg",     "TermiteEgg",     "QueenAntEgg",    "QueenFireAntEgg",
     "BabyFireAnt",   "WorkerFireAnt", "FireQueenAnt",   "BabyTermite",    "WorkerTermite",  "TermiteOvermind",
     "LeafPiece",     "LeafcutterSoldier", "Titan",      "Firefly",        "Bubble",       "Crab",
-    "Jellyfish",      "MagicFirefly",
+    "Jellyfish",      "MagicFirefly", "FireflyLarva",
 };
 
-static_assert(static_cast<size_t>(EMobType::MagicFirefly) + 1 == mob_type_names.size(),
+static_assert(static_cast<size_t>(EMobType::FireflyLarva) + 1 == mob_type_names.size(),
               "mob type names must stay aligned with EMobType");
 static_assert(mob_type_names.size() <= static_cast<size_t>(kModMobTypeBase),
               "native mob ids grew into the reserved mod range");
@@ -85,6 +86,16 @@ inline std::string_view GetMobTypeName(EMobType type)
 }
 
 inline std::string_view GetMobTypeName(uint8_t type) { return GetMobTypeName(static_cast<EMobType>(type)); }
+
+// Numeric IDs cross persistence, console and debug boundaries. Keep one
+// authoritative validity check covering both native and controller-owned
+// manifests instead of relying on a factory lookup after an unchecked cast.
+inline bool IsKnownMobTypeId(int value)
+{
+    if (value <= static_cast<int>(EMobType::None) || value >= kMobIdCapacity) return false;
+    if (static_cast<size_t>(value) < mob_type_names.size()) return true;
+    return !GetModMobTypeName(value).empty();
+}
 
 inline bool MatchMobTypeAlias(std::string_view text, EMobType type)
 {
@@ -121,6 +132,8 @@ inline bool MatchMobTypeAlias(std::string_view text, EMobType type)
         return text == "jellyfish" || text == "jelly";
     case EMobType::MagicFirefly:
         return text == "magicfirefly" || text == "magic_firefly" || text == "mfirefly";
+    case EMobType::FireflyLarva:
+        return text == "fireflylarva" || text == "firefly_larva" || text == "fflarva";
     case EMobType::Rock:
         return text == "rock";
     case EMobType::Bubble:

@@ -115,7 +115,8 @@
         "view_zoom": "Show or set the in-game view zoom percentage",
         "bench": "Run the render benchmark on the login screen",
         "freeze_log": "List recent freeze watchdog events (client stalls / server gaps)",
-        "reset": "Reset client config, key bindings or settings"
+        "reset": "Reset client config, key bindings or settings",
+        "skill": "Request a skill from the currently controlled creature"
       }
     },
     "settings": {
@@ -437,6 +438,16 @@
       "settings": "Client settings restored to defaults.",
       "all": "Everything restored to defaults.",
       "unknown": "Unknown reset target: {name}"
+    },
+    "skill": {
+      "usage": "Usage: skill [skill index 0-255]",
+      "invalid": "Invalid skill index: {index}",
+      "requestFailed": "The skill request could not be sent.",
+      "success": "Skill {index} activated successfully.",
+      "noControlledMob": "There is no controllable creature for this skill request.",
+      "noSkills": "The controlled creature has no active skills.",
+      "outOfRange": "Skill index {index} is invalid; this creature has {count} skills.",
+      "unavailable": "Skill {index} is unavailable (cooldown, missing target, or unmet conditions)."
     }
   },
   "formats": {
@@ -588,6 +599,7 @@
       "crab": "Crab",
       "jellyfish": "Jellyfish",
       "magic_firefly": "Magic Firefly"
+      ,"firefly_larva": "Firefly Larva"
     }
   },
   "talents": {
@@ -694,6 +706,7 @@
       "titan": "The Titan, one of the strongest beings.",
       "firefly": "A firefly that retaliates with chain lightning when attacked.",
       "magic_firefly": "A cyan firefly that summons ordinary fireflies and can release empowered magic lightning."
+      ,"firefly_larva": "A segmented larva that clamps onto hostile creatures and injects a powerful poison. Its body can empower magic lightning."
     }
   },
   "maps": {

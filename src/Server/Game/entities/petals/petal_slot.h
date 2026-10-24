@@ -23,6 +23,11 @@ class CPetalSlot
     float GetLoadProgress(int copy_index) const;
     void RefreshPetalState(CFlower* flower);
     void Tick(float dt, CFlower* flower, bool state_refreshed = false);
+    // All per-copy arrays describe the same fixed slot layout.  Restore and
+    // controller code may receive older data with one array missing entries;
+    // normalize it before any indexed operation instead of relying on every
+    // caller to keep five vectors in lockstep.
+    void NormalizeRuntimeState();
     void ApplyStatsTo(SFlowerStats& target, const CFlower* flower = nullptr) const;
     int GetBonusCopyCount(const CFlower* flower = nullptr) const;
     int GetCurrentCopyCount(const CFlower* flower = nullptr) const;

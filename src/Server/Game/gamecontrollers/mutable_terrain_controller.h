@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "opencontroller.h"
 #include "../../../Shared/math_types.h"
 #include <cstdint>
@@ -19,11 +19,12 @@ class CMutableTerrainController : virtual public COpenController
     bool ForcesPrimordialNullification() const override { return true; }
     void OnActivate(CGameWorld& world) override;
     void OnTick(CGameWorld& world, float dt) override;
-    void OnPlayerEnteredWorld(CGameWorld& world, CPlayer& player) override;
+    bool WritePlayerScene(const CGameWorld&, const CPlayer&, IPlayerSceneWriter&) const override;
     std::string_view SnapshotKey() const override { return "world_controller.mutable_terrain"; }
     std::uint32_t SnapshotVersion() const override { return 1; }
     void CaptureSnapshot(CSnapshotWriter& writer) const override;
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
+    bool ResolveReferences(CGameWorld& world, const IGameWorldResolver&, std::string& error) override;
 
     // Brush-like terrain edit: paints a dirt blob centered near `center`
     // (world units). `size_tiles` is the block size in tiles (2x2 default =

@@ -1,4 +1,4 @@
-﻿#include "mutable_terrain_controller.h"
+#include "mutable_terrain_controller.h"
 #include "../../../Engine/json_value.h"
 #include "../../../Engine/logger.h"
 #include "../../../Shared/game_config.h"
@@ -491,7 +491,7 @@ void CMutableTerrainController::OnTick(CGameWorld& world, float dt)
     CGameContext* context = world.GameContext();
     if (!context) return;
 
-    for (const auto& player : context->Players())
+    for (CPlayer* player : world.Players())
     {
         if (!player) continue;
         auto* flower = dynamic_cast<CPlayerFlower*>(player->GetEntity());
@@ -513,22 +513,19 @@ void CMutableTerrainController::OnTick(CGameWorld& world, float dt)
     }
 }
 
-void CMutableTerrainController::OnPlayerEnteredWorld(CGameWorld& world, CPlayer& player)
+bool CMutableTerrainController::WritePlayerScene(const CGameWorld&, const CPlayer&, IPlayerSceneWriter& writer) const
 {
-    COpenController::OnPlayerEnteredWorld(world, player);
-    if (!m_terrain_loaded || m_dirty.empty()) return;
-    CGameContext* context = world.GameContext();
-    auto* network = context ? dynamic_cast<INetworkModule*>(&context->Network()) : nullptr;
-    if (!network) return;
     for (const auto& [index, gid] : m_dirty)
     {
+        if (m_dirt_layer_index < 0 || m_width <= 0) return false;
         const int row = static_cast<int>(index / static_cast<std::uint32_t>(std::max(1, m_width)));
         const int col = static_cast<int>(index % static_cast<std::uint32_t>(std::max(1, m_width)));
-        network->SendTerrainDelta(player, static_cast<std::uint8_t>(m_dirt_layer_index),
-                                  static_cast<std::uint16_t>(row), static_cast<std::uint16_t>(col), gid);
+        if (!writer.TerrainTile(static_cast<std::uint8_t>(m_dirt_layer_index),
+                               static_cast<std::uint16_t>(row), static_cast<std::uint16_t>(col), gid)) return false;
     }
     for (const auto& [min_pos, max_pos] : m_removed_wall_rects)
-        network->SendTerrainWallRemove(player, min_pos, max_pos);
+        if (!writer.RemoveWall(min_pos, max_pos)) return false;
+    return true;
 }
 
 void CMutableTerrainController::CaptureSnapshot(CSnapshotWriter& writer) const
@@ -570,10 +567,14 @@ bool CMutableTerrainController::RestoreSnapshot(const CSnapshotReader& reader, s
         return false;
     }
 
+    m_terrain_loaded = m_terrain_tried = false;
+    m_tiles.clear();
+
     m_dirt_layer_index = reader.Int("terrain_layer", -1);
-    m_width = reader.Int("terrain_width", 0);
-    m_height = reader.Int("terrain_height", 0);
+    m_width = std::clamp(reader.Int("terrain_width", 0), 0, 16384);
+    m_height = std::clamp(reader.Int("terrain_height", 0), 0, 16384);
     m_tile_size = reader.Float("terrain_tile_size", 512.f);
+    if (!std::isfinite(m_tile_size) || m_tile_size <= 0.f) m_tile_size = 512.f;
     m_dirty.clear();
     if (const json_t* dirty = reader.Node("terrain_dirty"); json_is_array(dirty))
     {
@@ -581,10 +582,14 @@ bool CMutableTerrainController::RestoreSnapshot(const CSnapshotReader& reader, s
         json_t* entry = nullptr;
         json_array_foreach(dirty, index, entry)
         {
-            if (!json_is_array(entry) || json_array_size(entry) < 2) continue;
-            const std::uint32_t cell = static_cast<std::uint32_t>(json_integer_value(json_array_get(entry, 0)));
+            if (m_dirty.size() >= 65536 || !json_is_array(entry) || json_array_size(entry) < 2 ||
+                !json_is_integer(json_array_get(entry, 0)) || !json_is_integer(json_array_get(entry, 1)))
+                continue;
+            const std::uint64_t cell = static_cast<std::uint64_t>(json_integer_value(json_array_get(entry, 0)));
             const std::uint32_t gid = static_cast<std::uint32_t>(json_integer_value(json_array_get(entry, 1)));
-            m_dirty[cell] = gid;
+            if (cell > std::numeric_limits<std::uint32_t>::max()) continue;
+            if (m_width > 0 && m_height > 0 && cell >= static_cast<std::uint64_t>(m_width) * m_height) continue;
+            m_dirty[static_cast<std::uint32_t>(cell)] = gid;
         }
     }
     m_removed_wall_rects.clear();
@@ -594,13 +599,33 @@ bool CMutableTerrainController::RestoreSnapshot(const CSnapshotReader& reader, s
         json_t* entry = nullptr;
         json_array_foreach(walls, index, entry)
         {
-            if (!json_is_array(entry) || json_array_size(entry) < 4) continue;
-            const florrbt::Vector2f min_pos{ static_cast<float>(json_real_value(json_array_get(entry, 0))),
-                                        static_cast<float>(json_real_value(json_array_get(entry, 1))) };
-            const florrbt::Vector2f max_pos{ static_cast<float>(json_real_value(json_array_get(entry, 2))),
-                                        static_cast<float>(json_real_value(json_array_get(entry, 3))) };
+            if (m_removed_wall_rects.size() >= 65536 || !json_is_array(entry) || json_array_size(entry) < 4 ||
+                !json_is_number(json_array_get(entry, 0)) || !json_is_number(json_array_get(entry, 1)) ||
+                !json_is_number(json_array_get(entry, 2)) || !json_is_number(json_array_get(entry, 3)))
+                continue;
+            const florrbt::Vector2f min_pos{ static_cast<float>(json_number_value(json_array_get(entry, 0))),
+                                             static_cast<float>(json_number_value(json_array_get(entry, 1))) };
+            const florrbt::Vector2f max_pos{ static_cast<float>(json_number_value(json_array_get(entry, 2))),
+                                             static_cast<float>(json_number_value(json_array_get(entry, 3))) };
+            if (!std::isfinite(min_pos.x) || !std::isfinite(min_pos.y) || !std::isfinite(max_pos.x) ||
+                !std::isfinite(max_pos.y))
+                continue;
             m_removed_wall_rects.emplace_back(min_pos, max_pos);
         }
     }
+    return true;
+}
+
+bool CMutableTerrainController::ResolveReferences(CGameWorld& world, const IGameWorldResolver&, std::string& error)
+{
+    LoadTerrainData(world);
+    if (!m_terrain_loaded && (!m_dirty.empty() || !m_removed_wall_rects.empty()))
+    { error = "Restored terrain has no compatible map layer"; return false; }
+    for (const auto& [index, gid] : m_dirty)
+    {
+        if (index >= m_tiles.size()) { error = "Restored terrain cell is outside its map"; return false; }
+        m_tiles[index] = gid;
+    }
+    for (const auto& [min, max] : m_removed_wall_rects) world.RemoveWallsInRect(min, max);
     return true;
 }

@@ -26,7 +26,12 @@ import {
   stateNullification,
 } from "./game_ids.js";
 import { clearLadybugPattern } from "./ladybug_sprite.js";
-import { clamp, isPetalEntity, petalTypeFromEntity } from "./protocol.js";
+import {
+  clamp,
+  isPetalEntity,
+  petalTypeFromEntity,
+  uint32SequenceDistance,
+} from "./protocol.js";
 
 // Client-side entity simulation: the per-frame step that turns server
 // snapshots into smooth render positions — owner movement prediction (with
@@ -268,7 +273,10 @@ export function updateOwnerPredictionTiming(snapshotId, snapshotNow) {
   const timing = state.ownerPredictionTiming;
   if (!timing || !Number.isFinite(snapshotNow)) return;
 
-  const idDelta = snapshotId - timing.lastSnapshotId;
+  const idDelta =
+    timing.lastSnapshotId >= 0
+      ? uint32SequenceDistance(snapshotId, timing.lastSnapshotId)
+      : 0;
   const elapsed = snapshotNow - timing.lastSnapshotAt;
   if (
     timing.lastSnapshotId >= 0 &&

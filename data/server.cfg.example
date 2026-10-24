@@ -1,0 +1,7 @@
+// Copy this file to data/server.cfg for a local server.
+// Runtime configuration is deliberately excluded from source control.
+set port 10012
+set account_backend json
+set email_enabled 0
+// For production MySQL/email/RCON configuration, see
+// deploy/windows/server.cfg.example. Keep credentials only in data/server.cfg.

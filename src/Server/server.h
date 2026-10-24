@@ -4,6 +4,8 @@
 #include "../Shared/petal_type.h"
 #include "../Shared/rarity.h"
 #include "Game/game_services.h"
+#include "Game/extensions/extension_runtime.h"
+#include "Game/extensions/extension_services.h"
 #include "Module/module.h"
 #include "../Shared/math_types.h"
 #include <array>
@@ -24,7 +26,7 @@ class INetworkModule;
 class IWorldModule;
 class IServerDataStore;
 class IUniquePetalRegistry;
-class CWeatherDiurnalSystem;
+class CReportReviewService;
 
 class CServer : public IGameEventSink, public IGameWorldResolver
 {
@@ -57,18 +59,6 @@ class CServer : public IGameEventSink, public IGameWorldResolver
         std::size_t active_entity_count = 0;
     };
 
-    struct SChatEntry
-    {
-        CGameWorld* world = nullptr;
-        florrbt::Vector2f pos = { 0.f, 0.f };
-        EChatFlag flag = EChatFlag::Global;
-        uint32_t player_id = 0;
-        int target_player_id = -1;
-        std::string player_name;
-        uint32_t system_time = 0;
-        std::string message;
-    };
-
     static CServer* GetInstance() { return s_p_instance; }
     CServer();
     ~CServer();
@@ -87,8 +77,9 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     const SPerformanceTelemetry& GetPerformanceTelemetry() const { return m_performance_telemetry; }
     void SetTickForRestore(std::uint64_t tick) { m_tick = tick; }
     CConsole& GetConsole() { return m_console; }
-    CGameWorld* GetMainWorld() const { return m_p_main_world; }
+    CGameWorld* GetMainWorld() const override;
     CGameWorld* FindWorldById(std::uint32_t world_id) const override;
+    bool DeferWorldTransfer(const SDeferredWorldTransfer&) override;
     std::vector<CGameWorld*> GetWorlds() const;
     IWorldModule* GetWorldModule() const { return m_p_world_module; }
     std::vector<CGameWorld*> FindWorldsByMapName(const std::string& map_name) const;
@@ -96,17 +87,14 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     INetworkModule* GetNetworkModule() const { return m_p_network_module; }
     IServerDataStore* GetDataStore() const { return m_p_data_store.get(); }
     IUniquePetalRegistry* GetUniquePetalRegistry() const;
-    CWeatherDiurnalSystem* GetWeatherDiurnalSystem() const { return m_p_weather_diurnal_system; }
+    CExtensionRuntime& Extensions() const { return *m_extensions; }
+    CReportReviewService& Reports() const { return *m_reports; }
     bool CanTitanForgePetal(EPetalType type) const;
     void StartTitanForgeCooldown(EPetalType type);
     const TTitanForgeCooldowns& GetTitanForgeCooldowns() const { return m_titan_forge_cooldowns; }
     void RestoreTitanForgeCooldowns(TTitanForgeCooldowns cooldowns);
     void MergeLegacyTitanForgeCooldownForRestore(float cooldown);
     CGameContext* GameContext() const { return m_p_game_context.get(); }
-    const std::vector<SChatEntry>& GetChats() const { return m_chats; }
-    SChatEntry SubmitChat(CGameWorld* world, florrbt::Vector2f pos, EChatFlag flag, uint32_t player_id,
-                          const std::string& player_name, const std::string& message, int target_player_id = -1);
-    SChatEntry SubmitServerChat(const std::string& message);
     static bool MeetsPetalReportRarity(ERarity rarity, int min_rarity);
     bool ShouldReportRarity(ERarity rarity, int minimum_rarity) const override;
     bool ReportMob(std::string_view action, ERarity rarity, std::string_view mob_name) override;
@@ -119,6 +107,9 @@ class CServer : public IGameEventSink, public IGameWorldResolver
                                  std::string_view mob_name);
 
   private:
+    // Headless regression fixtures wire modules without opening sockets,
+    // loading production accounts, or starting the GUI.
+    friend class CServerTestAccess;
     void ExecuteStartupCommands();
     void ExecuteStartupConfigCommands();
     void InstallLogSink();
@@ -128,13 +119,12 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     void TickTitanForgeCooldowns(float dt);
     static CServer* s_p_instance;
     CConsole m_console;
-    CGameWorld* m_p_main_world = nullptr;
     IWorldModule* m_p_world_module = nullptr;
     INetworkModule* m_p_network_module = nullptr;
-    CWeatherDiurnalSystem* m_p_weather_diurnal_system = nullptr;
+    std::unique_ptr<CExtensionRuntime> m_extensions;
+    std::unique_ptr<CReportReviewService> m_reports;
     std::unique_ptr<IServerDataStore> m_p_data_store;
     std::unique_ptr<CGameContext> m_p_game_context;
-    std::vector<SChatEntry> m_chats;
     std::vector<std::unique_ptr<IModule>> m_modules;
     size_t m_log_sink_id = 0;
     std::shared_ptr<std::ofstream> m_log_file;

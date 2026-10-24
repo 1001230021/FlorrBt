@@ -3,6 +3,7 @@
 #include "controller_params.h"
 #include "../../Shared/math_types.h"
 #include "../../Shared/mob_type.h"
+#include "world_transition.h"
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -15,6 +16,7 @@ class CMobBase;
 class CPlayer;
 class CPlayerFlower;
 class IGameWorldResolver;
+class IPlayerSceneWriter;
 enum class EEntityRemovalReason : std::uint8_t;
 enum class EPetalType : int;
 struct STalentContext;
@@ -40,8 +42,14 @@ class IGameController
         return std::nullopt;
     }
     virtual void OnPlayerEntityReady(CGameWorld&, CPlayer&, CPlayerFlower&, EPlayerSpawnReason) {}
-    virtual void OnPlayerEnteredWorld(CGameWorld&, CPlayer&) {}
-    virtual void OnPlayerLeftWorld(CGameWorld&, CPlayer&) {}
+    virtual bool ValidatePlayerTransition(const SPlayerTransitionView&, EPlayerTransitionSide,
+                                          std::string&) const { return true; }
+    // Committed notifications cannot veto or start nested transfers/teardown.
+    virtual void OnPlayerArrivalCommitted(CGameWorld&, CPlayer&) {}
+    // Replay only after Welcome is staged. Arrival notifications must not
+    // publish terrain before the client has crossed the scene fence.
+    virtual bool WritePlayerScene(const CGameWorld&, const CPlayer&, IPlayerSceneWriter&) const { return true; }
+    virtual void OnPlayerDepartureCommitted(CGameWorld&, CPlayer&, CEntity*) {}
     virtual void OnEntityRemoved(CGameWorld&, CEntity&, EEntityRemovalReason) {}
     virtual void OnMobDefeated(CGameWorld&, CMobBase&) {}
     // Returns a mob from the spawn habitat surrounding `pos`. Controllers
@@ -65,6 +73,9 @@ class IGameController
     // Worlds where the player flower's petal loadout is locked: equip and
     // unequip requests from players are rejected outright.
     virtual bool LocksPetalLoadout() const { return false; }
+    // Identity never changes with gameplay rules. The session independently
+    // selects an ephemeral progress store for modes such as sandbox.
+    virtual bool UsesIsolatedProgress() const { return false; }
     // Fine-grained loadout rules applied after LocksPetalLoadout(): whether a
     // player may equip the given petal type into a slot, and whether the petal
     // currently in a slot may be unequipped back into the backpack.

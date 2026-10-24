@@ -26,6 +26,22 @@ export const NET_PERCENT_SCALE = 255;
 export const NET_SLOT_SIZE_SCALE = 65535;
 export const NET_HALLUCINATION_PARAM_SCALE = 1024;
 export const FULL_SNAPSHOT_BASE_ID = 0xffffffff;
+const UINT32_SEQUENCE_HALF_RANGE = 0x80000000;
+
+export function uint32SequenceDistance(value, previous) {
+  return ((value >>> 0) - (previous >>> 0)) >>> 0;
+}
+
+export function isNewerUint32Sequence(value, previous) {
+  const distance = uint32SequenceDistance(value, previous);
+  return distance !== 0 && distance < UINT32_SEQUENCE_HALF_RANGE;
+}
+
+export function sameEntityIncarnation(a, b) {
+  return !!a && !!b && a.entityId === b.entityId && a.entityType === b.entityType &&
+    a.entityGeneration === b.entityGeneration;
+}
+
 const ENTITY_SNAPSHOT_FULL = 0;
 const ENTITY_SNAPSHOT_COMPACT = 1;
 const ENTITY_SNAPSHOT_COMPACT_STATES = 2;
@@ -56,6 +72,15 @@ export const ServerType = Object.freeze({
   TerrainWallRemove: 0x1a,
   CombatFeedback: 0x1b,
   DebugTicket: 0x1c,
+  SkillResult: 0x1d,
+});
+
+export const SkillResultCode = Object.freeze({
+  Success: 0,
+  NoControlledMob: 1,
+  NoSkills: 2,
+  InvalidIndex: 3,
+  Unavailable: 4,
 });
 
 export const PetalSlotCopyState = Object.freeze({
@@ -254,6 +279,12 @@ class Reader {
     return low + high * 0x100000000;
   }
 
+  u64Key() {
+    const low = this.u32();
+    const high = this.u32();
+    return high.toString(16).padStart(8, "0") + low.toString(16).padStart(8, "0");
+  }
+
   i32() {
     if (!this.has(4)) throw new Error("packet underrun");
     const value = this.view.getInt32(this.offset, true);
@@ -284,7 +315,8 @@ function parseEntity(reader, origin = null) {
     format === ENTITY_SNAPSHOT_COMPACT_STATES
   ) {
     if (!origin) throw new Error("compact entity without origin");
-    entity.entityId = reader.u16();
+    entity.entityId = reader.u32();
+    entity.entityGeneration = reader.u64Key();
     entity.entityType = reader.u8();
     entity.team = reader.u8();
     entity.dropPetalType = isDropEntity(entity.entityType) ? entity.team : 0;
@@ -322,7 +354,8 @@ function parseEntity(reader, origin = null) {
   )
     throw new Error("unknown entity snapshot format");
 
-  entity.entityId = reader.u16();
+  entity.entityId = reader.u32();
+  entity.entityGeneration = reader.u64Key();
   entity.entityType = reader.u8();
   entity.team = reader.u8();
   entity.dropPetalType = isDropEntity(entity.entityType) ? entity.team : 0;
@@ -413,12 +446,22 @@ export function parseServerMessage(payload) {
       return msg;
     }
 
+    if (type === ServerType.SkillResult) {
+      if (payload.length !== 4) throw new Error("Invalid skill result length");
+      msg.resultCode = reader.u8();
+      msg.skillIndex = reader.u8();
+      msg.skillCount = reader.u8();
+      if (msg.resultCode < SkillResultCode.Success || msg.resultCode > SkillResultCode.Unavailable)
+        throw new Error("Invalid skill result code");
+      return msg;
+    }
+
     if (type === ServerType.CombatFeedback) {
       const count = reader.u8();
-      if (count > 64 || !reader.has(count * 19)) throw new Error("invalid combat feedback length");
+      if (count > 64 || !reader.has(count * 29)) throw new Error("invalid combat feedback length");
       msg.hits = [];
       for (let i = 0; i < count; i++) {
-        const hit = { targetId: reader.u16(), pos: { x: reader.i32() / NET_COORD_SCALE, y: reader.i32() / NET_COORD_SCALE },
+        const hit = { targetId: reader.u32(), targetGeneration: reader.u64Key(), pos: { x: reader.i32() / NET_COORD_SCALE, y: reader.i32() / NET_COORD_SCALE },
           radius: reader.u16() / NET_RADIUS_SCALE, amount: reader.f32(), kind: reader.u8(), sourceType: reader.u8(), sourceRarity: reader.u8() };
         if (!Number.isFinite(hit.amount) || hit.amount < 0 || hit.kind > 3) throw new Error("invalid combat damage");
         msg.hits.push(hit);
@@ -428,7 +471,7 @@ export function parseServerMessage(payload) {
 
     if (type === ServerType.Welcome) {
       msg.playerId = reader.u16();
-      msg.ownerEntityId = reader.u16();
+      msg.ownerEntityId = reader.u32();
       msg.tickRate = reader.u8();
       msg.mapName = reader.has(1) ? reader.string(reader.u8()) : "";
       msg.weatherEnabled = reader.has(1) ? reader.u8() !== 0 : true;
@@ -439,7 +482,7 @@ export function parseServerMessage(payload) {
       msg.snapshotId = reader.u32();
       msg.baseSnapshotId = reader.u32();
       msg.serverTick = reader.u64();
-      msg.ownerEntityId = reader.u16();
+      msg.ownerEntityId = reader.u32();
       msg.viewRadius = reader.i32() / NET_COORD_SCALE;
       const count = reader.u16();
       const removedCount = reader.u16();
@@ -452,7 +495,7 @@ export function parseServerMessage(payload) {
       }
       msg.removedEntityIds = [];
       for (let i = 0; i < removedCount; i += 1) {
-        msg.removedEntityIds.push(reader.u16());
+        msg.removedEntityIds.push(reader.u32());
       }
       msg.weatherIntensity = [
         reader.u8(),
@@ -744,6 +787,11 @@ export function packChores(
   if (disconnect) value |= 1 << 5;
   if (digging) value |= 1 << 6;
   return new Uint8Array([value]);
+}
+
+export function packSkill(skillIndex = 0) {
+  const index = Math.max(0, Math.min(255, Math.floor(Number(skillIndex) || 0)));
+  return new Uint8Array([0xf9, index]);
 }
 
 export function packEquip(slotIndex, petalType, rarity) {

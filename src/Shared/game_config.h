@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -78,6 +79,10 @@ inline int min_craft_report_rarity = 9;
 inline int min_drop_report_rarity = 9;
 inline int min_mob_spawn_report_rarity = 9;
 inline float default_acceleration = WorldUnits(150.0f);
+// Applied to every mobile creature after prototype-specific acceleration is
+// selected. Stationary entities keep their zero acceleration.
+inline float mob_acceleration_multiplier = 1.5f;
+inline float flower_acceleration_multiplier = 1.25f;
 inline float default_air_base_mass = 16.0f;
 inline float default_air_base_radius = WorldUnits(8.0f);
 inline float default_brush_reload = 0.5f;
@@ -433,6 +438,9 @@ inline float default_linker_reload = default_moon_reload;
 inline constexpr float garden_tile_world_size = 512.0f;
 inline float default_linker_chain_length_common = garden_tile_world_size * 2.0f;
 inline float default_linker_chain_length_primordial = garden_tile_world_size * 0.5f;
+// Chain elasticity: negative is the legacy one-sided rope, zero is a hard
+// fixed-length constraint, and positive values are increasingly soft springs.
+inline float default_linker_chain_elasticity = -1.0f;
 inline float default_linker_chain_stiffness = 24.0f;
 inline float default_linker_chain_damping = 7.0f;
 inline float default_linker_chain_mass_pull_exponent = 0.5f;
@@ -884,8 +892,8 @@ inline float melee_random_idle_time = 2.0f;
 inline int melee_random_wander_candidate_attempts = 12;
 inline float melee_random_wander_divisor = 4.0f;
 inline float melee_retarget_chance_multiplier = 2.0f;
-inline float melee_target_time = 8.0f;
-inline int melee_target_scan_ticks = 10;
+inline float melee_target_time = 12.0f;
+inline int melee_target_scan_ticks = 20;
 inline float melee_wander_progress_radius_multiplier = 0.25f;
 inline float melee_wander_stuck_time = 1.5f;
 inline float mob_beetle_armor = 1.0f;
@@ -972,9 +980,11 @@ inline float mob_crab_strafe_time = 3.5f;
 inline float mob_crab_strafe_time_variance = 1.25f;
 inline float mob_crab_orbit_speed_variance = 0.32f;
 inline float mob_crab_orbit_distance_variance = 0.13f;
-inline float mob_crab_dash_speed = WorldUnits(520.0f);
 inline float mob_crab_dash_distance = WorldUnits(180.0f);
-inline float mob_crab_dash_cooldown = 1.8f;
+// Crab dash is a skill: it accelerates to 1.5x its current maximum speed and
+// cannot be requested again until the five-second skill cooldown expires.
+inline float mob_crab_dash_speed_multiplier = 1.5f;
+inline float mob_crab_dash_cooldown = 5.0f;
 inline float mob_crab_dash_recovery = 0.28f;
 inline float mob_crab_dash_low_health_fraction = 0.35f;
 inline float mob_jellyfish_acceleration = WorldUnits(55.0f);
@@ -1156,7 +1166,7 @@ inline float mob_player_flower_damage = 25.0f;
 inline float mob_player_flower_level_damage_exponent = 0.5f;
 inline float mob_player_flower_level_health_growth = 1.1f;
 inline float mob_player_flower_mass = 5.0f;
-inline float mob_player_flower_acceleration = default_acceleration * 3.f;
+inline float mob_player_flower_acceleration = default_acceleration * 5.f;
 inline float mob_player_flower_max_health = 50.0f;
 inline int mob_player_flower_max_stat_level = 75;
 inline int mob_player_flower_initial_petal_slots = 5;
@@ -1210,6 +1220,24 @@ inline float mob_leafcutter_soldier_damage_multiplier = 1.5f;
 inline float mob_soldier_ant_mass = 3.3333333f;
 inline float mob_soldier_ant_max_health = 100.0f;
 inline float mob_soldier_ant_radius = WorldUnits(12.0f);
+inline float mob_firefly_larva_max_health = 200.0f;
+inline float mob_firefly_larva_damage = 5.0f;
+inline float mob_firefly_larva_armor = 2.0f;
+inline float mob_firefly_larva_poison_damage_per_second = 50.0f;
+inline float mob_firefly_larva_poison_damage_rarity_scale = 3.0f;
+inline float mob_firefly_larva_lightning_damage = 13.0f;
+inline float mob_firefly_larva_tail_lightning_damage = 25.0f;
+inline float mob_firefly_larva_radius = mob_firefly_radius * 0.92f;
+inline float mob_firefly_larva_mass = mob_soldier_ant_mass;
+inline float mob_firefly_larva_max_velocity = default_max_velocity * 1.5f;
+inline float mob_firefly_larva_acceleration = default_acceleration * 1.5f;
+inline float mob_firefly_larva_turn_speed = mob_beetle_turn_speed * 4.0f;
+inline float mob_firefly_larva_segment_distance_radius_scale = 13.0f / 14.0f;
+inline float mob_firefly_larva_max_turn_radians = 0.5235987756f; // 30 degrees
+inline float mob_firefly_larva_grab_contact_radius_multiplier = 0.2f;
+inline float mob_firefly_larva_grab_scan_radius = WorldUnits(256.0f);
+inline float mob_firefly_larva_grab_break_radius_multiplier = 3.0f;
+inline float mob_firefly_larva_grab_poison_refresh_seconds = 0.2f;
 inline int mob_soldier_ant_team = 2;
 inline float mob_leaf_piece_armor = 1.0f;
 inline float mob_leaf_piece_damage = 5.0f;
@@ -1440,7 +1468,9 @@ inline float gui_console_text_height_padding = 4.0f;
 inline float gui_console_text_wrap_padding_multiplier = 3.0f;
 inline unsigned int gui_console_window_height = 450;
 inline unsigned int gui_console_window_width = 800;
-inline int honey_target_scan_interval_ticks = 16;
+// Honey is a hard-priority attractor, so it is checked every simulation tick
+// instead of waiting behind the slower random-target cadence.
+inline int honey_target_scan_interval_ticks = 1;
 inline size_t melee_target_los_candidate_limit = 8;
 inline float melee_target_los_recheck_interval = 0.25f;
 inline float mob_ant_hole_rarity_low_one_base_weight = 0.44f;
@@ -1641,7 +1671,9 @@ template <typename T> inline void SetConfigValue(T& variable, const std::string&
     {
         int parsed = 0;
         stream >> parsed;
-        if (!stream.fail()) variable = static_cast<uint8_t>(parsed);
+        std::string trailing;
+        if (!stream.fail() && !(stream >> trailing) && parsed >= 0 && parsed <= 255)
+            variable = static_cast<uint8_t>(parsed);
     } else if constexpr (std::is_same_v<T, bool>)
     {
         std::string normalized = value;
@@ -1654,6 +1686,29 @@ template <typename T> inline void SetConfigValue(T& variable, const std::string&
     } else if constexpr (std::is_same_v<T, std::string>)
     {
         variable = value;
+    } else if constexpr (std::is_floating_point_v<T>)
+    {
+        T parsed{};
+        stream >> parsed;
+        std::string trailing;
+        if (!stream.fail() && !(stream >> trailing) && std::isfinite(parsed)) variable = parsed;
+    } else if constexpr (std::is_integral_v<T>)
+    {
+        using wide_type = std::conditional_t<std::is_signed_v<T>, long long, unsigned long long>;
+        wide_type parsed{};
+        stream >> parsed;
+        std::string trailing;
+        if (stream.fail() || (stream >> trailing)) return;
+        if constexpr (std::is_signed_v<T>)
+        {
+            if (parsed < static_cast<wide_type>(std::numeric_limits<T>::min()) ||
+                parsed > static_cast<wide_type>(std::numeric_limits<T>::max()))
+                return;
+        } else if (parsed > static_cast<wide_type>(std::numeric_limits<T>::max()))
+        {
+            return;
+        }
+        variable = static_cast<T>(parsed);
     } else
     {
         T parsed{};
@@ -1774,6 +1829,8 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("min_mob_spawn_report_rarity", min_mob_spawn_report_rarity),
         REGISTER_CONFIG("mob_inactive_retire_seconds", mob_inactive_retire_seconds),
         REGISTER_CONFIG("acceleration", default_acceleration),
+        REGISTER_CONFIG("mob_acceleration_multiplier", mob_acceleration_multiplier),
+        REGISTER_CONFIG("flower_acceleration_multiplier", flower_acceleration_multiplier),
         REGISTER_CONFIG("air_base_mass", default_air_base_mass),
         REGISTER_CONFIG("air_base_radius", default_air_base_radius),
         REGISTER_CONFIG("brush_reload", default_brush_reload),
@@ -1916,6 +1973,7 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("linker_reload", default_linker_reload),
         REGISTER_CONFIG("linker_chain_length_common", default_linker_chain_length_common),
         REGISTER_CONFIG("linker_chain_length_primordial", default_linker_chain_length_primordial),
+        REGISTER_CONFIG("linker_chain_elasticity", default_linker_chain_elasticity),
         REGISTER_CONFIG("linker_chain_stiffness", default_linker_chain_stiffness),
         REGISTER_CONFIG("linker_chain_damping", default_linker_chain_damping),
         REGISTER_CONFIG("linker_chain_mass_pull_exponent", default_linker_chain_mass_pull_exponent),
@@ -2146,6 +2204,29 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_firefly_lightning_damage", mob_firefly_lightning_damage),
         REGISTER_CONFIG("mob_firefly_lightning_bounces", mob_firefly_lightning_bounces),
         REGISTER_CONFIG("mob_firefly_lightning_cooldown_seconds", mob_firefly_lightning_cooldown_seconds),
+        REGISTER_CONFIG("mob_firefly_larva_max_health", mob_firefly_larva_max_health),
+        REGISTER_CONFIG("mob_firefly_larva_damage", mob_firefly_larva_damage),
+        REGISTER_CONFIG("mob_firefly_larva_armor", mob_firefly_larva_armor),
+        REGISTER_CONFIG("mob_firefly_larva_poison_damage_per_second", mob_firefly_larva_poison_damage_per_second),
+        REGISTER_CONFIG("mob_firefly_larva_poison_damage_rarity_scale",
+                        mob_firefly_larva_poison_damage_rarity_scale),
+        REGISTER_CONFIG("mob_firefly_larva_lightning_damage", mob_firefly_larva_lightning_damage),
+        REGISTER_CONFIG("mob_firefly_larva_tail_lightning_damage", mob_firefly_larva_tail_lightning_damage),
+        REGISTER_CONFIG("mob_firefly_larva_radius", mob_firefly_larva_radius),
+        REGISTER_CONFIG("mob_firefly_larva_mass", mob_firefly_larva_mass),
+        REGISTER_CONFIG("mob_firefly_larva_max_velocity", mob_firefly_larva_max_velocity),
+        REGISTER_CONFIG("mob_firefly_larva_acceleration", mob_firefly_larva_acceleration),
+        REGISTER_CONFIG("mob_firefly_larva_turn_speed", mob_firefly_larva_turn_speed),
+        REGISTER_CONFIG("mob_firefly_larva_segment_distance_radius_scale",
+                        mob_firefly_larva_segment_distance_radius_scale),
+        REGISTER_CONFIG("mob_firefly_larva_max_turn_radians", mob_firefly_larva_max_turn_radians),
+        REGISTER_CONFIG("mob_firefly_larva_grab_contact_radius_multiplier",
+                        mob_firefly_larva_grab_contact_radius_multiplier),
+        REGISTER_CONFIG("mob_firefly_larva_grab_scan_radius", mob_firefly_larva_grab_scan_radius),
+        REGISTER_CONFIG("mob_firefly_larva_grab_break_radius_multiplier",
+                        mob_firefly_larva_grab_break_radius_multiplier),
+        REGISTER_CONFIG("mob_firefly_larva_grab_poison_refresh_seconds",
+                        mob_firefly_larva_grab_poison_refresh_seconds),
         REGISTER_CONFIG("mob_firefly_active_lightning_interval_seconds", mob_firefly_active_lightning_interval_seconds),
         REGISTER_CONFIG("mob_firefly_team", mob_firefly_team),
         REGISTER_CONFIG("mob_firefly_summon_interval_seconds", mob_firefly_summon_interval_seconds),
@@ -2206,8 +2287,8 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("mob_crab_strafe_time_variance", mob_crab_strafe_time_variance),
         REGISTER_CONFIG("mob_crab_orbit_speed_variance", mob_crab_orbit_speed_variance),
         REGISTER_CONFIG("mob_crab_orbit_distance_variance", mob_crab_orbit_distance_variance),
-        REGISTER_CONFIG("mob_crab_dash_speed", mob_crab_dash_speed),
         REGISTER_CONFIG("mob_crab_dash_distance", mob_crab_dash_distance),
+        REGISTER_CONFIG("mob_crab_dash_speed_multiplier", mob_crab_dash_speed_multiplier),
         REGISTER_CONFIG("mob_crab_dash_cooldown", mob_crab_dash_cooldown),
         REGISTER_CONFIG("mob_crab_dash_recovery", mob_crab_dash_recovery),
         REGISTER_CONFIG("mob_crab_dash_low_health_fraction", mob_crab_dash_low_health_fraction),

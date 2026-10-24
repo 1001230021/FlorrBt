@@ -115,7 +115,8 @@
         "view_zoom": "查看或设置游戏视野缩放百分比",
         "bench": "在登录界面运行渲染基准测试",
         "freeze_log": "列出最近的冻结检测记录（客户端卡顿/服务端断流）",
-        "reset": "重置客户端配置、按键绑定或设置"
+        "reset": "重置客户端配置、按键绑定或设置",
+        "skill": "触发当前操控生物的技能"
       }
     },
     "settings": {
@@ -437,6 +438,16 @@
       "settings": "客户端设置已恢复默认。",
       "all": "全部已恢复默认。",
       "unknown": "未知的重置目标：{name}"
+    },
+    "skill": {
+      "usage": "用法：skill [技能编号 0-255]",
+      "invalid": "无效的技能编号：{index}",
+      "requestFailed": "当前无法发送技能请求。",
+      "success": "技能 {index} 已成功触发。",
+      "noControlledMob": "当前没有可操控的生物。",
+      "noSkills": "当前操控的生物没有可主动触发的技能。",
+      "outOfRange": "技能编号 {index} 无效；当前生物共有 {count} 个技能。",
+      "unavailable": "技能 {index} 当前不可用（冷却中、缺少目标或条件不满足）。"
     }
   },
   "formats": {
@@ -588,6 +599,7 @@
       "crab": "螃蟹",
       "jellyfish": "水母",
       "magic_firefly": "魔法萤火虫"
+      ,"firefly_larva": "萤火虫幼虫"
     }
   },
   "talents": {
@@ -694,6 +706,7 @@
       "titan": "泰坦，最强的存在之一。",
       "firefly": "萤火虫，受到攻击时会用连锁闪电反击。",
       "magic_firefly": "散发青色光芒的萤火虫，会召唤普通萤火虫，并能释放经过增伤的魔法闪电。"
+      ,"firefly_larva": "多体节的萤火虫幼虫，会咬住敌对生物并注入强力毒液，身体也能为魔法闪电提供增伤。"
     }
   },
   "maps": {

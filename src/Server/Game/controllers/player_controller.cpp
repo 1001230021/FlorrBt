@@ -1,13 +1,32 @@
 #include "player_controller.h"
 #include "../../../Shared/game_config.h"
 #include "../../HotReload/snapshot_archive.h"
+#include "../../Module/network_module.h"
 #include "../entities/flower.h"
 #include "../entities/mob.h"
 #include "../entities/petals/petal.h"
+#include "../gamecontext.h"
 #include "../states/states.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <memory>
+
+namespace
+{
+void QueueSkillResult(CMobBase* mob, ESkillRequestResult result, int skill_index, int skill_count)
+{
+    if (!mob) return;
+    CGameContext* context = mob->GameContext();
+    CPlayer* player = context ? context->FindPlayerFromEntity(mob) : nullptr;
+    if (!player) return;
+
+    context->Network().QueueSkillResult(
+        *player, result,
+        static_cast<uint8_t>(std::clamp(skill_index, 0, static_cast<int>(std::numeric_limits<uint8_t>::max()))),
+        static_cast<uint8_t>(std::clamp(skill_count, 0, static_cast<int>(std::numeric_limits<uint8_t>::max()))));
+}
+} // namespace
 
 void CPlayerController::OnTick(CMobBase* mob, float dt)
 {
@@ -19,8 +38,10 @@ void CPlayerController::OnTick(CMobBase* mob, float dt)
     {
         ClientOperate movement = pending.movement;
         ClientOperate chores = pending.chores;
+        ClientOperate skill = pending.skill;
         bool has_movement = pending.has_movement;
         bool has_chores = pending.has_chores;
+        bool has_skill = pending.has_skill;
         const auto movement_sequence = pending.movement_sequence;
         const auto chores_sequence = pending.chores_sequence;
         pending = {};
@@ -37,7 +58,15 @@ void CPlayerController::OnTick(CMobBase* mob, float dt)
             ExecuteOperate(chores, mob);
             if (chores_sequence) m_applied_chores_sequence = chores_sequence;
         }
+        if (has_skill) ExecuteOperate(skill, mob);
     }
+
+    // A skill-driven movement owns the velocity for this tick.  Without this
+    // guard player input would immediately steer a crab out of its dash.
+    if (mob->IsMovementControlledBySkill()) return;
+    if (const auto* crab = dynamic_cast<const ICrabDashMob*>(mob);
+        crab && (crab->IsDashActive() || crab->IsDashRecovering()))
+        return;
 
     // Input axes already encode an analog vector. Do not normalize it back
     // to full speed or aim at an arbitrarily distant point.
@@ -99,7 +128,9 @@ bool CPlayerController::RestoreSnapshot(const CSnapshotReader& reader, std::uint
 bool CPlayerController::ScheduleOperate(const ClientOperate& op, std::uint32_t delay_ticks,
                                        std::optional<std::uint32_t> sequence)
 {
-    if (op.type != ClientOperate::Type::Input && op.type != ClientOperate::Type::Chores) return false;
+    if (op.type != ClientOperate::Type::Input && op.type != ClientOperate::Type::Chores &&
+        op.type != ClientOperate::Type::Skill)
+        return false;
 
     if (!sequence)
     {
@@ -135,8 +166,7 @@ bool CPlayerController::ScheduleOperate(const ClientOperate& op, std::uint32_t d
 
 bool CPlayerController::IsNewerSequence(std::uint32_t sequence, std::uint32_t previous)
 {
-    std::uint32_t distance = sequence - previous;
-    return distance != 0 && distance < 0x80000000u;
+    return IsNewerUint32Sequence(sequence, previous);
 }
 
 void CPlayerController::MergeOperate(SPendingOperate& pending, const ClientOperate& op,
@@ -162,6 +192,13 @@ void CPlayerController::MergeOperate(SPendingOperate& pending, const ClientOpera
         if (op.is_digging.has_value()) pending.chores.is_digging = op.is_digging;
         pending.has_chores = true;
         pending.chores_sequence = sequence;
+    }
+
+    if (op.skill_index.has_value())
+    {
+        pending.skill.type = ClientOperate::Type::Skill;
+        pending.skill.skill_index = op.skill_index;
+        pending.has_skill = true;
     }
 }
 
@@ -214,6 +251,36 @@ void CPlayerController::ExecuteOperate(const ClientOperate& op, CMobBase* mob)
             if (auto* flower = dynamic_cast<CFlower*>(mob)) flower->TryStartBurrowFromShovel();
         }
         break;
+    case ClientOperate::Type::Skill: {
+        const int skill_index = static_cast<int>(op.skill_index.value_or(0));
+        auto* skill_caster = dynamic_cast<ISkillCasterMob*>(mob);
+        if (!skill_caster)
+        {
+            QueueSkillResult(mob, ESkillRequestResult::NoSkills, skill_index, 0);
+            break;
+        }
+
+        const int skill_count = std::max(0, skill_caster->GetSkillCount());
+        if (!op.skill_index.has_value() || skill_index < 0 || skill_index >= skill_count)
+        {
+            QueueSkillResult(mob, skill_count == 0 ? ESkillRequestResult::NoSkills : ESkillRequestResult::InvalidIndex,
+                             skill_index, skill_count);
+            break;
+        }
+
+        // A manual skill request uses the same aim direction as manual
+        // attacks. The skill itself owns target, cooldown and state limits;
+        // this controller only reports the authoritative TryCastSkill result.
+        if (m_has_aim_dir && !mob->IsFacingLocked())
+        {
+            mob->FacingAngle() = std::atan2(m_aim_dir.y, m_aim_dir.x);
+            mob->HasFacing() = true;
+        }
+        const bool cast = skill_caster->TryCastSkill(skill_index, nullptr);
+        QueueSkillResult(mob, cast ? ESkillRequestResult::Success : ESkillRequestResult::Unavailable, skill_index,
+                         skill_count);
+        break;
+    }
     case ClientOperate::Type::Equip:
         break;
     case ClientOperate::Type::Unequip:

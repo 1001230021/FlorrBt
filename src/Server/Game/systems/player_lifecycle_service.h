@@ -14,6 +14,8 @@ class IPlayerLifecycleNotifier
   public:
     virtual ~IPlayerLifecycleNotifier() = default;
 
+    // Complete, atomic scene initialization (Welcome, inventory, owner and
+    // terrain baseline). Failure must retain a retry and suppress snapshots.
     virtual bool QueueWelcome(CPlayer& player) = 0;
     virtual bool QueueOwnerStateUpdate(CPlayer& player) = 0;
     virtual bool QueueInventory(CPlayer& player) = 0;

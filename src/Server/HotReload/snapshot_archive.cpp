@@ -128,18 +128,22 @@ std::uint32_t CSnapshotReader::UInt32(std::string_view key, std::uint32_t fallba
 
 float CSnapshotReader::Float(std::string_view key, float fallback) const
 {
+    const float safe_fallback = std::isfinite(fallback) ? fallback : 0.f;
     const json_t* value = Find(m_object, key);
-    if (!json_is_number(value)) return fallback;
+    if (!json_is_number(value)) return safe_fallback;
     const double parsed = json_number_value(value);
-    return std::isfinite(parsed) ? static_cast<float>(parsed) : fallback;
+    if (!std::isfinite(parsed)) return safe_fallback;
+    const float converted = static_cast<float>(parsed);
+    return std::isfinite(converted) ? converted : safe_fallback;
 }
 
 double CSnapshotReader::Double(std::string_view key, double fallback) const
 {
+    const double safe_fallback = std::isfinite(fallback) ? fallback : 0.0;
     const json_t* value = Find(m_object, key);
-    if (!json_is_number(value)) return fallback;
+    if (!json_is_number(value)) return safe_fallback;
     const double parsed = json_number_value(value);
-    return std::isfinite(parsed) ? parsed : fallback;
+    return std::isfinite(parsed) ? parsed : safe_fallback;
 }
 
 std::string CSnapshotReader::String(std::string_view key, std::string fallback) const
@@ -152,15 +156,20 @@ std::string CSnapshotReader::String(std::string_view key, std::string fallback) 
 
 florrbt::Vector2f CSnapshotReader::Vector2(std::string_view key, florrbt::Vector2f fallback) const
 {
+    const florrbt::Vector2f safe_fallback =
+        std::isfinite(fallback.x) && std::isfinite(fallback.y) ? fallback : florrbt::Vector2f{};
     const json_t* value = Find(m_object, key);
-    if (!json_is_array(value) || json_array_size(value) != 2) return fallback;
+    if (!json_is_array(value) || json_array_size(value) != 2) return safe_fallback;
     const json_t* x = json_array_get(value, 0);
     const json_t* y = json_array_get(value, 1);
-    if (!json_is_number(x) || !json_is_number(y)) return fallback;
+    if (!json_is_number(x) || !json_is_number(y)) return safe_fallback;
     const double parsed_x = json_number_value(x);
     const double parsed_y = json_number_value(y);
-    if (!std::isfinite(parsed_x) || !std::isfinite(parsed_y)) return fallback;
-    return { static_cast<float>(parsed_x), static_cast<float>(parsed_y) };
+    if (!std::isfinite(parsed_x) || !std::isfinite(parsed_y)) return safe_fallback;
+    const float converted_x = static_cast<float>(parsed_x);
+    const float converted_y = static_cast<float>(parsed_y);
+    if (!std::isfinite(converted_x) || !std::isfinite(converted_y)) return safe_fallback;
+    return { converted_x, converted_y };
 }
 
 std::uint64_t CSnapshotReader::UInt64(std::string_view key, std::uint64_t fallback) const

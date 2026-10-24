@@ -1,12 +1,14 @@
 #include "deathmatch_controller.h"
 #include "../../../Engine/logger.h"
 #include "../controller_params.h"
+#include "../player.h"
+#include "../entities/flower.h"
 #include <algorithm>
 #include <filesystem>
 
 namespace
 {
-bool MapPathExists(std::string_view value)
+bool DoesMapPathExist(std::string_view value)
 {
     if (value.empty()) return false;
     std::string path(value);
@@ -24,9 +26,24 @@ bool MapPathExists(std::string_view value)
 }
 } // namespace
 
+void CDeathmatchController::OnPlayerArrivalCommitted(CGameWorld&, CPlayer& player)
+{
+    if (auto* entity = player.GetEntity()) entity->Team() = 0;
+}
+
+void CDeathmatchController::OnPlayerEntityReady(CGameWorld&, CPlayer&, CPlayerFlower& flower, EPlayerSpawnReason)
+{
+    flower.Team() = 0;
+}
+
+void CDeathmatchController::OnPlayerDepartureCommitted(CGameWorld&, CPlayer&, CEntity* departing)
+{
+    if (departing) departing->Team() = game_config::mob_player_flower_team;
+}
+
 bool CDeathmatchController::ValidateMapPath(const std::string& value)
 {
-    return MapPathExists(value);
+    return DoesMapPathExist(value);
 }
 
 CDeathmatchController::CDeathmatchController(CControllerParams params)

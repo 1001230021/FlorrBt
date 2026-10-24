@@ -13,16 +13,13 @@ const CJsonValue* Field(const CJsonValue& object, const char* key) { return obje
 std::optional<double> ParseVirtualTime(std::string text)
 {
     const size_t separator = text.find(':');
-    try
-    {
-        const int hour = std::stoi(text.substr(0, separator));
-        const int minute = separator == std::string::npos ? 0 : std::stoi(text.substr(separator + 1));
-        if (hour < 0 || hour >= 24 || minute < 0 || minute >= 60) return std::nullopt;
-        return (static_cast<double>(hour) + static_cast<double>(minute) / 60.0) / 24.0;
-    } catch (...)
-    {
+    int hour = 0;
+    int minute = 0;
+    if (!ParseStrictIntText(text.substr(0, separator), hour) ||
+        (separator != std::string::npos && !ParseStrictIntText(text.substr(separator + 1), minute)))
         return std::nullopt;
-    }
+    if (hour < 0 || hour >= 24 || minute < 0 || minute >= 60) return std::nullopt;
+    return (static_cast<double>(hour) + static_cast<double>(minute) / 60.0) / 24.0;
 }
 
 bool ParseMob(const CJsonValue& value, EMobType& type)

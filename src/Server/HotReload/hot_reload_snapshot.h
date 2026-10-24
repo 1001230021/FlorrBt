@@ -31,6 +31,7 @@ struct SSnapshotSectionCodec
     capture_callback capture;
     restore_callback restore;
     migration_callback migrate;
+    bool write = true; // false for import-only legacy sections
 };
 
 bool RegisterSnapshotSection(SSnapshotSectionCodec codec, std::string* error = nullptr);
@@ -38,7 +39,7 @@ bool RegisterSnapshotSection(SSnapshotSectionCodec codec, std::string* error = n
 class CHotReloadSnapshotService
 {
   public:
-    static constexpr std::uint32_t container_version = 1;
+    static constexpr std::uint32_t container_version = 2;
 
     static bool Capture(CServer& server, const std::filesystem::path& path, std::string& error);
     static bool Restore(CServer& server, const std::filesystem::path& path, std::string& error);

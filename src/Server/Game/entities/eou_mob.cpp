@@ -7,10 +7,10 @@
 #include <queue>
 #include <utility>
 
-CEouFoodMob* ResolveEouFoodTarget(CGameWorld* world, int id, std::uint64_t generation)
+CEouFoodMob* ResolveEouFoodTarget(CGameWorld* world, const SEntityHandle& handle)
 {
-    if (!world || id < 0) return nullptr;
-    return dynamic_cast<CEouFoodMob*>(world->GetEntity(id, generation));
+    if (!world) return nullptr;
+    return dynamic_cast<CEouFoodMob*>(world->ResolveEntity(handle));
 }
 
 namespace
@@ -255,20 +255,25 @@ CEOUMob<SMobStats>::SFoodTarget CEOUMob<SMobStats>::FindEouFoodTarget(CGameWorld
         if (dist > max_range) return;
         candidates.emplace_back(dist, food);
     });
-    std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {
+        return a.first != b.first ? a.first < b.first : a.second->Id() < b.second->Id();
+    });
     // Bound failed path searches. A corpse behind a sealed wall must not
     // monopolise the worker or trigger a pathfind every frame.
     const size_t attempts = std::min<size_t>(candidates.size(), 4);
+    if (candidates.empty()) { m_food_search_cursor = 0; return result; }
+    const size_t first = m_food_search_cursor % candidates.size();
     for (size_t i = 0; i < attempts; ++i)
     {
-        const auto* food = candidates[i].second;
+        const auto* food = candidates[(first + i) % candidates.size()].second;
         if (!m_board || eou_find_path(*m_board, this->Pos(), food->Pos()).empty()) continue;
         result.world = world;
-        result.id = food->Id();
-        result.generation = food->Generation();
+        result.ref = food->GetHandle();
         result.pos = food->Pos();
-        break;
+        m_food_search_cursor = 0;
+        return result;
     }
+    m_food_search_cursor = (first + attempts) % candidates.size();
     return result;
 }
 
@@ -314,22 +319,20 @@ void CEouSoldierAnt::Tick(float dt)
 
 CEntity* CEouSoldierAnt::ResolveCombatTarget()
 {
-    if (m_target_id < 0) return nullptr;
+    if (!m_target_ref.IsValid()) return nullptr;
     CGameWorld* world = this->GameWorld();
     if (!world)
     {
-        m_target_id = -1;
-        m_target_generation = 0;
+        m_target_ref = {};
         return nullptr;
     }
-    CEntity* entity = world->GetEntity(m_target_id, m_target_generation);
+    CEntity* entity = world->ResolveEntity(m_target_ref);
     auto* mob = dynamic_cast<CMobBase*>(entity);
     const float leash =
         std::max(game_config::eou_soldier_leash_range, game_config::eou_soldier_aggro_range);
     if (!mob || mob->IsMarkedForDes() || mob->IsDead() || EouDistance(Pos(), mob->Pos()) > leash)
     {
-        m_target_id = -1;
-        m_target_generation = 0;
+        m_target_ref = {};
         return nullptr;
     }
     return entity;
@@ -361,8 +364,7 @@ void CEouSoldierAnt::ScanForEnemy()
     });
 
     if (!best) return;
-    m_target_id = best->Id();
-    m_target_generation = best->Generation();
+    m_target_ref = best->GetHandle();
 }
 
 float CEouWorkerAnt::DepositFood(float amount)

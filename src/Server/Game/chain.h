@@ -19,19 +19,13 @@ class IChainLease
     virtual void OnChainBroken(CChainEntity& chain) = 0;
 };
 
-struct SChainEndpointRef
-{
-    int id = -1;
-    std::uint64_t generation = 0;
-
-    bool IsValid() const { return id >= 0 && generation != 0; }
-};
+using SChainEndpointRef = SEntityHandle;
 
 class CChainEntity final : public CEntity
 {
   public:
     CChainEntity(CGameWorld* world, CEntity& first, CEntity& second, float max_length, float integrity,
-                 CEntity* lease_owner);
+                 float elasticity, CEntity* lease_owner);
 
     void Tick(float) override {}
     bool CanCollide() const override { return false; }
@@ -41,6 +35,7 @@ class CChainEntity final : public CEntity
     void OnBeforeRemoved(EEntityRemovalReason) override;
 
     void ApplyConstraint(float dt);
+    void ValidateReferences();
     void Break();
     bool ConvertEndpoint(CEntity& from, CEntity& replacement);
     bool HasEndpoint(const CEntity& entity) const;
@@ -51,6 +46,7 @@ class CChainEntity final : public CEntity
     float MaxIntegrity() const { return m_max_integrity; }
     float Integrity() const { return std::max(0.f, Health()); }
     float Tension() const { return m_tension; }
+    float Elasticity() const { return m_elasticity; }
     bool HasLease() const { return m_lease_ref.IsValid(); }
     std::string SnapshotName() const;
     void RestoreState(float integrity, float tension)
@@ -72,6 +68,8 @@ class CChainEntity final : public CEntity
     SChainEndpointRef m_lease_ref;
     float m_max_length = 0.f;
     float m_max_integrity = 1.f;
+    // 0 = hard fixed-length constraint, >0 = soft spring, <0 = one-sided rope.
+    float m_elasticity = -1.f;
     float m_tension = 0.f;
     bool m_lease_notified = false;
 };

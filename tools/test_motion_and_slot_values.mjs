@@ -73,9 +73,9 @@ const u8 = value => bytes.push(value & 255);
 const u16 = value => { u8(value); u8(value >>> 8); };
 const u32 = value => { u16(value); u16(value >>> 16); };
 u8(ServerType.Snapshot); u32(1); u32(0xffffffff); u32(1); u32(0);
-u16(42); u32(64000); u16(1); u16(0);
-u8(0); u16(42); u8(1); u8(1); u32(640); u32(1280);
-u16(36); u8(255); u8(0); u16(8); u16(0); u8(1); u8(0);
+u32(42); u32(64000); u16(1); u16(0);
+u8(0); u32(42); u32(1); u32(0); u8(1); u8(1); u32(640); u32(1280);
+u16(36); u8(255); u8(0); u16(8); u16(0); u8(1); u32(0); u32(0); u8(0);
 u8(4);
 for (const [type, raw] of [[PetalSlotVisualType.Counter, 65535], [PetalSlotVisualType.Angle, 1000],
   [PetalSlotVisualType.Size, 65535], [PetalSlotVisualType.None, 0]]) {

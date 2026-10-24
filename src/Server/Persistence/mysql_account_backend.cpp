@@ -3,6 +3,7 @@
 #include "../../Shared/game_config.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <cstring>
 #include <map>
@@ -222,13 +223,11 @@ std::string FieldOrEmpty(MYSQL_ROW row, unsigned long* lengths, int index)
 long long FieldInt(MYSQL_ROW row, int index, long long fallback = 0)
 {
     if (!row[index]) return fallback;
-    try
-    {
-        return std::stoll(row[index]);
-    } catch (...)
-    {
-        return fallback;
-    }
+    const char* begin = row[index];
+    const char* end = begin + std::strlen(begin);
+    long long value = 0;
+    const auto parsed = std::from_chars(begin, end, value, 10);
+    return parsed.ec == std::errc{} && parsed.ptr == end ? value : fallback;
 }
 
 bool EnsureSchema(CMysqlConnection& connection, std::string* error)
@@ -504,13 +503,16 @@ bool LoadAll(std::vector<SPlayerAccount>& accounts, std::uint64_t& generation, s
 
     ok = QueryRows(connection, "SELECT meta_value FROM store_meta WHERE meta_key = 'save_generation'", error,
                    [&](MYSQL_ROW row, unsigned long*) {
-                       try
-                       {
-                           generation = row[0] ? std::stoull(row[0]) : 0;
-                       } catch (...)
+                       if (!row[0])
                        {
                            generation = 0;
+                           return;
                        }
+                       const char* begin = row[0];
+                       const char* end = begin + std::strlen(begin);
+                       std::uint64_t parsed_generation = 0;
+                       const auto parsed = std::from_chars(begin, end, parsed_generation, 10);
+                       generation = parsed.ec == std::errc{} && parsed.ptr == end ? parsed_generation : 0;
                    });
     if (!ok) return false;
 

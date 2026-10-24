@@ -9,15 +9,19 @@
 
 CEntity* CPickupController::GetCarried(const CMobBase* mob) const
 {
-    if (!mob || !mob->GameWorld() || mob->IsMarkedForDes() || mob->IsDead() || m_carried_id < 0 ||
-        m_carried_generation == 0)
+    if (!mob || !mob->GameWorld() || mob->IsMarkedForDes() || mob->IsDead() || !m_carried_ref.IsValid())
         return nullptr;
 
     CGameWorld* world = mob->GameWorld();
-    if (world->GetId() != m_carried_world_id) return nullptr;
-
-    CEntity* entity = world->GetEntity(m_carried_id, m_carried_generation);
+    CEntity* entity = world->ResolveEntity(m_carried_ref);
     if (!entity || entity->IsMarkedForDes() || entity->IsDead()) return nullptr;
+
+    // Legacy snapshots did not carry world identity. ResolveEntity can still
+    // safely find the entity by id+generation, but retaining that incomplete
+    // key would make the carried-entity registry (which uses canonical
+    // handles) impossible to unregister later. Canonicalize lazily because a
+    // controller may be restored before the referenced entity is inserted.
+    if (!m_carried_ref.HasWorldIdentity()) m_carried_ref = entity->GetHandle();
     return entity;
 }
 
@@ -40,9 +44,7 @@ bool CPickupController::TryPickup(CMobBase* mob, CEntity* candidate)
 
     if (!mob->GameWorld()->TryRegisterCarriedEntity(*candidate, *mob)) return false;
 
-    m_carried_world_id = candidate->GameWorld()->GetId();
-    m_carried_id = candidate->Id();
-    m_carried_generation = candidate->Generation();
+    m_carried_ref = candidate->GetHandle();
     m_carry_pickup_timer = std::max(0.f, CarryPickupCooldown());
     OnCarryChanged(mob, candidate, true);
     return true;
@@ -50,13 +52,13 @@ bool CPickupController::TryPickup(CMobBase* mob, CEntity* candidate)
 
 void CPickupController::DropCarried(CMobBase* mob)
 {
-    CEntity* carried = GetCarried(mob);
-    if (carried) OnCarryChanged(mob, carried, false);
+    // Teardown must work even after the carrier/target is marked or dead.
+    // GetCarried intentionally excludes those for gameplay target selection.
+    CEntity* carried = mob && mob->GameWorld() ? mob->GameWorld()->ResolveEntity(m_carried_ref) : nullptr;
+    OnCarryChanged(mob, carried, false);
     if (mob && mob->GameWorld())
-        mob->GameWorld()->UnregisterCarriedEntity(m_carried_id, m_carried_generation, mob->Id(), mob->Generation());
-    m_carried_world_id = 0;
-    m_carried_id = -1;
-    m_carried_generation = 0;
+        mob->GameWorld()->UnregisterCarriedEntity(carried ? carried->GetHandle() : m_carried_ref, mob->GetHandle());
+    m_carried_ref = {};
 }
 
 void CPickupController::TickCarried(CMobBase* mob, float dt)
@@ -181,18 +183,28 @@ void CPickupController::ApplyCarryingTurn(CMobBase* mob, float previous_angle, b
 
 void CPickupController::CaptureCarriedSnapshot(CSnapshotWriter& writer) const
 {
-    writer.Field("carried_world_id", m_carried_world_id);
-    writer.Field("carried_id", m_carried_id);
-    writer.UInt64("carried_generation", m_carried_generation);
+    writer.Field("carried_world_id", m_carried_ref.world_id);
+    writer.Field("carried_id", m_carried_ref.id);
+    writer.UInt64("carried_generation", m_carried_ref.generation);
+    writer.UInt64("carried_world_instance_generation", m_carried_ref.world_instance_generation);
     writer.Field("carry_pickup_timer", m_carry_pickup_timer);
 }
 
 void CPickupController::RestoreCarriedSnapshot(const CSnapshotReader& reader)
 {
-    m_carried_world_id = reader.UInt32("carried_world_id");
-    m_carried_id = reader.Int("carried_id", -1);
-    m_carried_generation = reader.UInt64("carried_generation");
-    m_carry_pickup_timer = reader.Float("carry_pickup_timer");
+    m_carried_ref.world_id = reader.UInt32("carried_world_id");
+    m_carried_ref.id = reader.Int("carried_id", -1);
+    m_carried_ref.generation = reader.UInt64("carried_generation");
+    m_carried_ref.world_instance_generation = reader.UInt64("carried_world_instance_generation");
+    m_carry_pickup_timer = std::max(0.f, reader.Float("carry_pickup_timer"));
+}
+
+void CPickupController::DropCarriedFromWorld(CMobBase* mob, CGameWorld& source, const SEntityHandle& old_carrier)
+{
+    CEntity* carried = source.ResolveEntity(m_carried_ref);
+    OnCarryChanged(mob, carried, false);
+    source.UnregisterCarriedEntity(carried ? carried->GetHandle() : m_carried_ref, old_carrier);
+    m_carried_ref = {};
 }
 
 float CPickupController::CarryContactRadius(const CMobBase* mob, const CEntity* carried) const

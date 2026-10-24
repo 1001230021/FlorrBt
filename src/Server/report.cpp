@@ -1,10 +1,11 @@
 #include "report.h"
+#include "server.h"
 #include "../Engine/json_value.h"
 #include "../Engine/logger.h"
 #include "../Shared/game_config.h"
 #include "Game/entity.h"
 #include "Game/gamecontext.h"
-#include "Game/gamecontrollers/opencontroller.h"
+#include "Game/extensions/extension_services.h"
 #include "Game/gamecontrollers/world_controller_factory.h"
 #include "Game/gameworld.h"
 #include "Game/player.h"
@@ -12,6 +13,7 @@
 #include "Module/world_module.h"
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -24,6 +26,9 @@
 #include <sstream>
 #include <string_view>
 #include <thread>
+#include <condition_variable>
+#include <deque>
+#include <unordered_map>
 
 namespace
 {
@@ -163,21 +168,22 @@ std::string ShellQuote(const std::filesystem::path& path)
     return result;
 }
 
-std::string BuildReportedTranscript(const std::vector<CServer::SChatEntry>& chats, uint32_t target_player_id)
+std::string BuildReportedTranscript(const std::vector<SChatEntry>& chats, const SPlayerSessionRef& target)
 {
     const uint32_t now = NowSeconds();
     const uint32_t window = static_cast<uint32_t>(std::max(0.f, game_config::report_scan_window_seconds));
     std::string transcript;
     for (const auto& chat : chats)
     {
-        if (chat.player_id != target_player_id) continue;
+        if (chat.sender_session != target) continue;
         if (now > chat.system_time && now - chat.system_time > window) continue;
         transcript += "[" + std::to_string(chat.system_time) + "] " + chat.player_name + ": " + chat.message + "\n";
+        while (transcript.size() > 65536) transcript.erase(0, transcript.find('\n') + 1);
     }
     return transcript;
 }
 
-std::optional<std::string> RunCurlJson(const std::string& body)
+std::optional<std::string> RunCurlJson(const std::string& body, const std::string& url, const std::string& api_key)
 {
     static std::atomic<uint64_t> request_counter{ 0 };
     std::filesystem::path request_path;
@@ -195,9 +201,9 @@ std::optional<std::string> RunCurlJson(const std::string& body)
             request << body;
         }
 
-        std::string command = "curl -sS --max-time 6 -X POST " + ShellQuote(game_config::report_deepseek_api_url) +
+        std::string command = "curl -sS --max-time 6 -X POST " + ShellQuote(url) +
                               " -H \"Content-Type: application/json\" -H \"Authorization: Bearer " +
-                              game_config::report_deepseek_api_key + "\" --data-binary @" + ShellQuote(request_path) +
+                              api_key + "\" --data-binary @" + ShellQuote(request_path) +
                               " -o " + ShellQuote(response_path);
         int result = std::system(command.c_str());
         std::filesystem::remove(request_path);
@@ -246,7 +252,12 @@ float ParseDeepSeekMuteSeconds(const std::string& response_text)
     if (review)
     {
         if (const CJsonValue* seconds = review->Find("mute_seconds"))
-            return static_cast<float>(seconds->AsNumber(-1.0));
+        {
+            const double parsed = seconds->AsNumber(-1.0);
+            if (std::isfinite(parsed) && parsed >= 0.0 && parsed <= 86400.0 * 30.0)
+                return static_cast<float>(parsed);
+            return -1.f;
+        }
     }
 
     const std::string& text = content->AsString();
@@ -254,7 +265,11 @@ float ParseDeepSeekMuteSeconds(const std::string& response_text)
     if (pos == std::string::npos) return -1.f;
     try
     {
-        return std::stof(text.substr(pos));
+        const std::string numeric = text.substr(pos);
+        std::size_t consumed = 0;
+        const float parsed = std::stof(numeric, &consumed);
+        if (consumed != numeric.size()) return -1.f;
+        return std::isfinite(parsed) && parsed >= 0.f && parsed <= 86400.f * 30.f ? parsed : -1.f;
     } catch (...)
     {
         return -1.f;
@@ -267,61 +282,14 @@ void SendPrivateSystem(CPlayer& player, const std::string& message)
     INetworkModule* network = server ? server->GetNetworkModule() : nullptr;
     if (!server || !network) return;
 
-    CServer::SChatEntry entry;
+    SChatEntry entry;
     entry.flag = EChatFlag::Server;
     entry.player_id = 0;
     entry.target_player_id = static_cast<int>(player.GetId());
     entry.player_name = "Server";
     entry.message = message;
     entry.system_time = NowSeconds();
-    network->SendChatToPlayer(player, entry);
-}
-
-std::string BuildSquadMetadata(const std::vector<CPlayer*>& players)
-{
-    std::string metadata = "<unseen>(";
-    for (CPlayer* player : players)
-    {
-        if (!player) continue;
-        if (metadata.size() > std::string("<unseen>(").size()) metadata.push_back('\x1f');
-        metadata += player->GetName();
-    }
-    metadata += ')';
-    return metadata;
-}
-
-void SendSquadSystem(CPlayer& player, const std::string& message, const std::vector<CPlayer*>& members)
-{
-    SendPrivateSystem(player, message);
-    SendPrivateSystem(player, BuildSquadMetadata(members));
-}
-
-struct SAsyncReportResult
-{
-    uint32_t reporter_id = 0;
-    uint32_t target_id = 0;
-    std::string reporter_name;
-    std::string target_name;
-    std::vector<CServer::SChatEntry> chats;
-    float mute_seconds = -1.f;
-};
-
-std::mutex g_async_report_mutex;
-std::queue<SAsyncReportResult> g_async_report_results;
-
-void QueueAsyncResult(SAsyncReportResult result)
-{
-    std::lock_guard<std::mutex> lock(g_async_report_mutex);
-    g_async_report_results.push(std::move(result));
-}
-
-std::optional<SAsyncReportResult> PopAsyncResult()
-{
-    std::lock_guard<std::mutex> lock(g_async_report_mutex);
-    if (g_async_report_results.empty()) return std::nullopt;
-    SAsyncReportResult result = std::move(g_async_report_results.front());
-    g_async_report_results.pop();
-    return result;
+    server->Extensions().Globals().Find<IChatService>()->SendTo(player, entry);
 }
 
 void ApplyReportDecision(CPlayer& reporter, CPlayer& target, float mute_seconds, bool used_ai)
@@ -367,19 +335,10 @@ void ApplyReportDecision(CPlayer& reporter, CPlayer& target, float mute_seconds,
 
 namespace report
 {
-void SyncSquadMetadata(CPlayer& player)
-{
-    CEntity* entity = player.GetEntity();
-    CGameWorld* world = entity ? entity->GameWorld() : nullptr;
-    auto* controller = world ? dynamic_cast<COpenController*>(world->GetController()) : nullptr;
-    SendPrivateSystem(player, BuildSquadMetadata(controller ? controller->GetSquadPlayerList(*world, player)
-                                                            : std::vector<CPlayer*>{}));
-}
-
-float ReviewByKeywords(const std::vector<CServer::SChatEntry>& chats, uint32_t target_player_id)
+float ReviewByKeywords(const std::string& source)
 {
     int matches = 0;
-    std::string transcript = ToLower(BuildReportedTranscript(chats, target_player_id));
+    std::string transcript = ToLower(source);
     for (const std::string& keyword : ReportKeywords())
     {
         size_t pos = 0;
@@ -395,10 +354,10 @@ float ReviewByKeywords(const std::vector<CServer::SChatEntry>& chats, uint32_t t
     return game_config::report_keyword_base_mute_seconds * std::sqrt(static_cast<float>(matches));
 }
 
-float ReviewByDeepSeek(const std::vector<CServer::SChatEntry>& chats, uint32_t target_player_id)
+float ReviewByDeepSeek(const std::string& transcript, const std::string& url, const std::string& api_key,
+                      const std::string& model)
 {
-    if (game_config::report_deepseek_api_key.empty()) return -1.f;
-    std::string transcript = BuildReportedTranscript(chats, target_player_id);
+    if (api_key.empty()) return -1.f;
     if (transcript.empty()) return 0.f;
 
     std::string prompt = "You moderate a small multiplayer game chat. Return only JSON like {\"mute_seconds\":0}. "
@@ -407,34 +366,155 @@ float ReviewByDeepSeek(const std::vector<CServer::SChatEntry>& chats, uint32_t t
                          "Reported chat from the last minute:\n" +
                          transcript;
 
-    std::string body = "{\"model\":\"" + EscapeJsonString(game_config::report_deepseek_model) +
+    std::string body = "{\"model\":\"" + EscapeJsonString(model) +
                        "\",\"messages\":[{\"role\":\"user\",\"content\":\"" + EscapeJsonString(prompt) +
                        "\"}],\"temperature\":0}";
 
-    std::optional<std::string> response = RunCurlJson(body);
+    std::optional<std::string> response = RunCurlJson(body, url, api_key);
     if (!response) return -1.f;
     float mute_seconds = ParseDeepSeekMuteSeconds(*response);
     if (mute_seconds < 0.f) return -1.f;
     return std::max(0.f, mute_seconds);
 }
 
+} // namespace report
+
+struct CReportReviewService::CImplementation
+{
+    struct SJob
+    {
+        SPlayerSessionRef reporter, target;
+        std::string transcript, url, api_key, model;
+        float fallback = 0.f, result = -1.f;
+        std::uint64_t epoch = 0;
+    };
+    explicit CImplementation(TReview value) : review(std::move(value)) {}
+    TReview review;
+    mutable std::mutex mutex;
+    std::condition_variable wake;
+    std::thread worker;
+    std::deque<SJob> jobs, results;
+    std::unordered_map<std::string, std::uint64_t> pending;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> cooldowns;
+    std::uint64_t epoch = 1;
+    bool stopping = false;
+
+    void Run()
+    {
+        std::unique_lock lock(mutex);
+        while (true)
+        {
+            wake.wait(lock, [&] { return stopping || !jobs.empty(); });
+            if (stopping) return;
+            SJob job = std::move(jobs.front()); jobs.pop_front();
+            lock.unlock();
+            try
+            {
+                job.result = review ? review(job.transcript) :
+                    report::ReviewByDeepSeek(job.transcript, job.url, job.api_key, job.model);
+                if (!std::isfinite(job.result) || job.result > 86400.f * 30.f) job.result = -1.f;
+            }
+            catch (...) { job.result = -1.f; }
+            lock.lock();
+            if (!stopping && job.epoch == epoch) results.push_back(std::move(job));
+        }
+    }
+};
+
+CReportReviewService::CReportReviewService(TReview review) : m_impl(std::make_unique<CImplementation>(std::move(review))) {}
+CReportReviewService::~CReportReviewService() { ShutDown(); }
+
+bool CReportReviewService::Submit(CPlayer& reporter, CPlayer& target, const std::vector<SChatEntry>& chats, std::string& error)
+{
+    error.clear();
+    if (!reporter.IsAuthenticated() || !target.IsAuthenticated() || reporter.IsReportDisabled())
+    { error = "Report unavailable for this session"; return false; }
+    auto& impl = *m_impl;
+    std::unique_lock lock(impl.mutex);
+    const auto now = std::chrono::steady_clock::now();
+    std::erase_if(impl.cooldowns, [&](const auto& value) { return now - value.second >= std::chrono::seconds(5); });
+    if (impl.stopping || impl.pending.size() >= 32 || impl.cooldowns.size() >= 4096 ||
+        impl.pending.contains(reporter.GetAccountName()) || impl.cooldowns.contains(reporter.GetAccountName()))
+    { error = "Report queue busy or rate limited; retry later"; return false; }
+    CImplementation::SJob job;
+    job.reporter = reporter.SessionRef(); job.target = target.SessionRef(); job.epoch = impl.epoch;
+    job.transcript = BuildReportedTranscript(chats, job.target);
+    job.fallback = report::ReviewByKeywords(job.transcript);
+    // Capture every mutable setting on the game thread.
+    job.url = game_config::report_deepseek_api_url;
+    job.api_key = game_config::report_deepseek_api_key;
+    job.model = game_config::report_deepseek_model;
+    impl.cooldowns[reporter.GetAccountName()] = now;
+    if (job.api_key.empty() && !impl.review)
+    {
+        lock.unlock();
+        ApplyReportDecision(reporter, target, job.fallback, false);
+        return true;
+    }
+    impl.pending[job.reporter.account] = job.epoch;
+    impl.jobs.push_back(std::move(job));
+    try
+    {
+        if (!impl.worker.joinable()) impl.worker = std::thread([&impl] { impl.Run(); });
+    }
+    catch (...)
+    {
+        impl.jobs.pop_back(); impl.pending.erase(reporter.GetAccountName());
+        error = "Unable to start report worker"; return false;
+    }
+    lock.unlock(); impl.wake.notify_one();
+    SendPrivateSystem(reporter, "Report received: AI review pending.");
+    return true;
+}
+
+void CReportReviewService::Process(CServer& server)
+{
+    auto* network = server.GetNetworkModule();
+    if (!network) return;
+    std::deque<CImplementation::SJob> results;
+    {
+        std::lock_guard lock(m_impl->mutex);
+        results.swap(m_impl->results);
+        for (const auto& job : results) m_impl->pending.erase(job.reporter.account);
+    }
+    for (const auto& job : results)
+    {
+        auto* reporter = network->FindPlayerById(job.reporter.id);
+        auto* target = network->FindPlayerById(job.target.id);
+        if (!reporter || !target || !reporter->MatchesSession(job.reporter) || !target->MatchesSession(job.target)) continue;
+        ApplyReportDecision(*reporter, *target, job.result >= 0.f ? job.result : job.fallback, job.result >= 0.f);
+    }
+}
+
+void CReportReviewService::CancelPending()
+{
+    std::lock_guard lock(m_impl->mutex);
+    ++m_impl->epoch;
+    m_impl->jobs.clear(); m_impl->results.clear(); m_impl->pending.clear(); m_impl->cooldowns.clear();
+}
+
+void CReportReviewService::ShutDown()
+{
+    {
+        std::lock_guard lock(m_impl->mutex);
+        m_impl->stopping = true;
+        ++m_impl->epoch; m_impl->jobs.clear(); m_impl->results.clear(); m_impl->pending.clear();
+    }
+    m_impl->wake.notify_all();
+    if (m_impl->worker.joinable()) m_impl->worker.join();
+}
+
+std::size_t CReportReviewService::PendingCount() const
+{
+    std::lock_guard lock(m_impl->mutex);
+    return m_impl->pending.size();
+}
+
+namespace report
+{
 void ProcessAsyncResults()
 {
-    CServer* server = CServer::GetInstance();
-    CGameContext* context = server ? server->GameContext() : nullptr;
-    if (!context) return;
-
-    while (std::optional<SAsyncReportResult> result = PopAsyncResult())
-    {
-        CPlayer* reporter = context->Network().FindPlayerById(result->reporter_id);
-        CPlayer* target = context->Network().FindPlayerById(result->target_id);
-        if (!reporter || !target) continue;
-
-        float mute_seconds = result->mute_seconds;
-        bool used_ai = mute_seconds >= 0.f;
-        if (!used_ai) mute_seconds = ReviewByKeywords(result->chats, result->target_id);
-        ApplyReportDecision(*reporter, *target, mute_seconds, used_ai);
-    }
+    if (auto* server = CServer::GetInstance()) server->Reports().Process(*server);
 }
 
 bool HandleServerCommand(CPlayer& reporter, const std::string& command_line)
@@ -451,71 +531,8 @@ bool HandleServerCommand(CPlayer& reporter, const std::string& command_line)
 
     CEntity* reporter_entity = reporter.GetEntity();
     CGameWorld* reporter_world = reporter_entity ? reporter_entity->GameWorld() : nullptr;
-    auto* squad_controller = reporter_world ? dynamic_cast<COpenController*>(reporter_world->GetController()) : nullptr;
-
-    if (name == "invite" || name == "join")
-    {
-        if (!squad_controller)
-        {
-            SendPrivateSystem(reporter, "squad is unavailable in this world");
-            return true;
-        }
-
-        if (args.size() < 2)
-        {
-            SendPrivateSystem(reporter, "Usage: /invite [name|accept|refuse]");
-            return true;
-        }
-
-        const std::string action = ToLower(args[1]);
-        if (action == "accept" || action == "refuse")
-        {
-            CPlayer* inviter = squad_controller->ConsumeSquadInvite(*reporter_world, reporter);
-            if (!inviter)
-            {
-                SendPrivateSystem(reporter, "<sq-invite-none>()");
-                return true;
-            }
-
-            if (action == "refuse")
-            {
-                SendPrivateSystem(reporter, "<sq-invite-refused-you>(" + inviter->GetName() + ")");
-                SendPrivateSystem(*inviter, "<sq-invite-refused>(" + reporter.GetName() + ")");
-                return true;
-            }
-
-            if (!squad_controller->TryAcceptSquadInvite(*reporter_world, reporter, *inviter))
-            {
-                SendPrivateSystem(reporter, "<sq-invite-failed>(" + inviter->GetName() + ")");
-                SendPrivateSystem(*inviter, "<sq-invite-failed-them>(" + reporter.GetName() + ")");
-                return true;
-            }
-
-            const std::vector<CPlayer*> members = squad_controller->GetSquadPlayerList(*reporter_world, reporter);
-            for (CPlayer* member : members)
-            {
-                if (!member) continue;
-                if (member == &reporter)
-                    SendSquadSystem(*member, "<sq-joined-you>(" + inviter->GetName() + ")", members);
-                else
-                    SendSquadSystem(*member, "<sq-joined>(" + reporter.GetName() + ")", members);
-            }
-            return true;
-        }
-
-        CPlayer* target = FindPlayerByName(context, JoinArgs(args, 1));
-        CEntity* target_entity = target ? target->GetEntity() : nullptr;
-        if (!target || target == &reporter || !target_entity || target_entity->GameWorld() != reporter_world ||
-            !squad_controller->TryInviteSquad(*reporter_world, reporter, *target))
-        {
-            SendPrivateSystem(reporter, "<sq-invite-invalid>()");
-            return true;
-        }
-
-        SendPrivateSystem(reporter, "<sq-invite-sent>(" + target->GetName() + ")");
-        SendPrivateSystem(*target, "<sq-invite>(" + reporter.GetName() + ")");
-        return true;
-    }
+    args[0] = name;
+    if ((name == "invite" || name == "join") && server->Extensions().HandleCommand(reporter, args)) return true;
 
     if (name == "create" || name == "create_room" || name == "createroom")
     {
@@ -562,12 +579,13 @@ bool HandleServerCommand(CPlayer& reporter, const std::string& command_line)
 
         // The creator joins their own room.
         CEntity* reporter_entity = reporter.GetEntity();
+        const int departing_entity_id = reporter_entity ? reporter_entity->Id() : -1;
         bool transferred = false;
         if (reporter_entity && reporter_entity->GameWorld() != waiting_world)
-            transferred = reporter_entity->GameWorld()->TransferPlayerEntityToWorld(reporter, *waiting_world) != nullptr;
+            transferred = static_cast<bool>(reporter_entity->GameWorld()->TransferPlayerEntityToWorld(reporter, *waiting_world));
         LOG_INFO("room", "create: code=" + std::to_string(room_code) + " controller=" + controller_name +
                              " player=" + reporter.GetName() + " entity=" +
-                             (reporter_entity ? std::to_string(reporter_entity->Id()) : "none") +
+                             (departing_entity_id >= 0 ? std::to_string(departing_entity_id) : "none") +
                              " transferred=" + (transferred ? "yes" : "no"));
         if (!transferred)
             SendPrivateSystem(reporter, "room created: code " + std::to_string(room_code) + " (transfer failed, use /join-room)");
@@ -586,10 +604,8 @@ bool HandleServerCommand(CPlayer& reporter, const std::string& command_line)
         }
 
         int room_code = 0;
-        try
-        {
-            room_code = std::stoi(args[1]);
-        } catch (...)
+        const auto [end, error] = std::from_chars(args[1].data(), args[1].data() + args[1].size(), room_code);
+        if (error != std::errc{} || end != args[1].data() + args[1].size())
         {
             SendPrivateSystem(reporter, "invalid room code");
             return true;
@@ -611,8 +627,8 @@ bool HandleServerCommand(CPlayer& reporter, const std::string& command_line)
         }
 
         CGameWorld* source_world = reporter_entity->GameWorld();
-        CEntity* transferred_entity =
-            source_world ? source_world->TransferPlayerEntityToWorld(reporter, *waiting_world) : nullptr;
+        const bool transferred_entity = source_world &&
+            static_cast<bool>(source_world->TransferPlayerEntityToWorld(reporter, *waiting_world));
         LOG_INFO("room", "join: code=" + std::to_string(room_code) + " player=" + reporter.GetName() +
                              " source=" + (source_world ? std::to_string(source_world->GetId()) : "none") +
                              " target=" + std::to_string(waiting_world->GetId()) +
@@ -639,69 +655,7 @@ bool HandleServerCommand(CPlayer& reporter, const std::string& command_line)
         return true;
     }
 
-    if (name == "leave")
-    {
-        if (!squad_controller)
-        {
-            SendPrivateSystem(reporter, "squad is unavailable in this world");
-            return true;
-        }
-
-        const std::vector<CPlayer*> old_members = squad_controller->GetSquadPlayerList(*reporter_world, reporter);
-        if (!squad_controller->TryLeaveSquad(*reporter_world, reporter))
-        {
-            SendPrivateSystem(reporter, "failed to leave squad");
-            return true;
-        }
-
-        for (CPlayer* member : old_members)
-        {
-            if (!member || member == &reporter) continue;
-            const std::vector<CPlayer*> members = squad_controller->GetSquadPlayerList(*reporter_world, *member);
-            SendSquadSystem(*member, reporter.GetName() + " has left the squad", members);
-        }
-        SendSquadSystem(reporter, "you have left the squad",
-                        squad_controller->GetSquadPlayerList(*reporter_world, reporter));
-        return true;
-    }
-
-    if (name == "sq" || name == "squad")
-    {
-        if (!squad_controller)
-        {
-            SendPrivateSystem(reporter, "squad is unavailable in this world");
-            return true;
-        }
-        if (args.size() < 2)
-        {
-            SendPrivateSystem(reporter, "Usage: /sq [message]");
-            return true;
-        }
-        if (reporter.IsMuted())
-        {
-            SendPrivateSystem(reporter, "You are muted for " +
-                                            std::to_string(static_cast<int>(std::ceil(reporter.GetMuteTimer()))) +
-                                            "s.");
-            return true;
-        }
-
-        const std::vector<CPlayer*> members = squad_controller->GetSquadPlayerList(*reporter_world, reporter);
-        if (members.size() <= 1)
-        {
-            SendPrivateSystem(reporter, "you are not in a squad");
-            return true;
-        }
-
-        const CServer::SChatEntry entry =
-            server->SubmitChat(reporter_world, reporter_entity->Pos(), EChatFlag::Squad, reporter.GetId(),
-                               reporter.GetName(), JoinArgs(args, 1));
-        if (entry.message.empty()) return true;
-        for (CPlayer* member : members)
-        {
-            if (member) network->SendChatToPlayer(*member, entry);
-        }
-        return true;
-    }
+    if (server->Extensions().HandleCommand(reporter, args)) return true;
 
     if (name == "report")
     {
@@ -724,71 +678,9 @@ bool HandleServerCommand(CPlayer& reporter, const std::string& command_line)
             return true;
         }
 
-        std::vector<CServer::SChatEntry> chat_snapshot = server->GetChats();
-        if (game_config::report_deepseek_api_key.empty())
-        {
-            ApplyReportDecision(reporter, *target, ReviewByKeywords(chat_snapshot, target->GetId()), false);
-            return true;
-        }
-
-        SendPrivateSystem(reporter, "Report received: AI review pending.");
-        SAsyncReportResult request;
-        request.reporter_id = reporter.GetId();
-        request.target_id = target->GetId();
-        request.reporter_name = reporter.GetName();
-        request.target_name = target->GetName();
-        request.chats = std::move(chat_snapshot);
-        std::thread([request = std::move(request)]() mutable {
-            try
-            {
-                request.mute_seconds = ReviewByDeepSeek(request.chats, request.target_id);
-            } catch (const std::exception& e)
-            {
-                LOG_WARN("report", std::string("AI review failed: ") + e.what());
-                request.mute_seconds = -1.f;
-            } catch (...)
-            {
-                LOG_WARN("report", "AI review failed: unknown exception");
-                request.mute_seconds = -1.f;
-            }
-            QueueAsyncResult(std::move(request));
-        }).detach();
-        return true;
-    }
-
-    if (name == "say" && args.size() >= 2 && ToLower(args[1]) == "whisper")
-    {
-        std::vector<std::string> rewritten;
-        rewritten.push_back("whisper");
-        rewritten.insert(rewritten.end(), args.begin() + 2, args.end());
-        args = std::move(rewritten);
-        name = "whisper";
-    }
-
-    if (name == "whisper" || name == "w")
-    {
-        if (args.size() < 3)
-        {
-            SendPrivateSystem(reporter, "Usage: /whisper [name] [message]");
-            return true;
-        }
-        CPlayer* target = FindPlayerByName(context, args[1]);
-        if (!target)
-        {
-            SendPrivateSystem(reporter, "Whisper failed: player not found.");
-            return true;
-        }
-
-        CServer::SChatEntry entry;
-        entry.world = reporter.GetEntity() ? reporter.GetEntity()->GameWorld() : nullptr;
-        entry.flag = EChatFlag::Whisper;
-        entry.player_id = reporter.GetId();
-        entry.target_player_id = static_cast<int>(target->GetId());
-        entry.player_name = reporter.GetName();
-        entry.message = JoinArgs(args, 2);
-        entry.system_time = NowSeconds();
-        network->SendChatToPlayer(reporter, entry);
-        if (target != &reporter) network->SendChatToPlayer(*target, entry);
+        const auto& chats = server->Extensions().Globals().Find<IChatService>()->History();
+        std::string error;
+        if (!server->Reports().Submit(reporter, *target, chats, error)) SendPrivateSystem(reporter, error);
         return true;
     }
 

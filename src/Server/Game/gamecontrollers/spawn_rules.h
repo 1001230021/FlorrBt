@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../systems/weather_diurnal_system.h"
+#include "../extensions/weather_view.h"
 #include "../zone_mob_tools.h"
 #include <cstdint>
 #include <filesystem>

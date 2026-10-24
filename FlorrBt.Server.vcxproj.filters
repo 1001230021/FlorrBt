@@ -159,6 +159,12 @@
     <ClInclude Include="src\Server\Game\systems\snapshot_service.h">
       <Filter>src\Server\Game\systems</Filter>
     </ClInclude>
+    <ClInclude Include="src\Server\Game\systems\environment_system.h">
+      <Filter>src\Server\Game\systems</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Shared\terrain_rules.h">
+      <Filter>src\Shared</Filter>
+    </ClInclude>
     <ClInclude Include="src\Server\Game\systems\player_lifecycle_service.h">
       <Filter>src\Server\Game\systems</Filter>
     </ClInclude>
@@ -179,12 +185,17 @@
     </ClInclude>
     <ClInclude Include="src\Server\HotReload\hot_reload_snapshot.h" />
     <ClInclude Include="src\Server\HotReload\snapshot_archive.h" />
-    <ClInclude Include="src\Server\Game\gamecontrollers\weather_diurnal_open_controller.h">
-      <Filter>src\Server\Game\gamecontrollers</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Server\Game\systems\weather_diurnal_system.h">
+    <ClInclude Include="src\Server\Game\extensions\weather_extension.h">
       <Filter>src\Server\Game\systems</Filter>
     </ClInclude>
+    <ClInclude Include="src\Server\Game\extension.h" />
+    <ClInclude Include="src\Server\Game\world_transition.h" />
+    <ClInclude Include="src\Server\Game\extensions\extension_runtime.h" />
+    <ClInclude Include="src\Server\Game\extensions\extension_services.h" />
+    <ClInclude Include="src\Server\Game\extensions\chat_extension.h" />
+    <ClInclude Include="src\Server\Game\extensions\squad_extension.h" />
+    <ClInclude Include="src\Server\Game\extensions\weather_view.h" />
+    <ClInclude Include="src\Server\Game\extensions\weather_snapshot.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Server\Auth\email_verification_service.cpp">
@@ -280,9 +291,6 @@
     <ClCompile Include="src\Server\Game\gamecontrollers\waitingcontroller.cpp">
       <Filter>src\Server\Game\gamecontrollers</Filter>
     </ClCompile>
-    <ClCompile Include="src\Server\Game\gamecontrollers\weather_diurnal_open_controller.cpp">
-      <Filter>src\Server\Game\gamecontrollers</Filter>
-    </ClCompile>
     <ClCompile Include="src\Server\Game\gamecontrollers\world_controller_factory.cpp">
       <Filter>src\Server\Game\gamecontrollers</Filter>
     </ClCompile>
@@ -292,12 +300,20 @@
     <ClCompile Include="src\Server\Game\entities\blood_sacrifice_ritual.cpp">
       <Filter>src\Server\Game\entities</Filter>
     </ClCompile>
+    <ClCompile Include="src\Server\Game\systems\environment_system.cpp">
+      <Filter>src\Server\Game\systems</Filter>
+    </ClCompile>
     <ClCompile Include="src\Server\Game\systems\snapshot_service.cpp">
       <Filter>src\Server\Game\systems</Filter>
     </ClCompile>
-    <ClCompile Include="src\Server\Game\systems\weather_diurnal_system.cpp">
+    <ClCompile Include="src\Server\Game\extensions\weather_extension.cpp">
       <Filter>src\Server\Game\systems</Filter>
     </ClCompile>
+    <ClCompile Include="src\Server\Game\extensions\extension_runtime.cpp" />
+    <ClCompile Include="src\Server\Game\world_transition.cpp" />
+    <ClCompile Include="src\Server\Game\extensions\chat_extension.cpp" />
+    <ClCompile Include="src\Server\Game\extensions\squad_extension.cpp" />
+    <ClCompile Include="src\Server\Game\extensions\weather_snapshot.cpp" />
     <ClCompile Include="src\Server\Game\systems\player_lifecycle_service.cpp">
       <Filter>src\Server\Game\systems</Filter>
     </ClCompile>

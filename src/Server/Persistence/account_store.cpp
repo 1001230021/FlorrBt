@@ -1871,36 +1871,41 @@ const SPlayerAccount* CAccountDataStore::FindAccountConst(const std::string& nam
 
 bool CAccountDataStore::SandboxCloneAccount(const std::string& sandbox_key, const std::string& source_account)
 {
-    if (sandbox_key.empty() || source_account.empty()) return false;
-
     const SPlayerAccount* source = FindAccountConst(source_account);
     if (!source) return false;
+    return RestoreSandboxAccount(sandbox_key, *source);
+}
 
-    const std::string normalized_key = source_account.empty() ? sandbox_key : sandbox_key;
-
-    SPlayerAccount* existing = FindAccount(normalized_key);
-    if (existing)
-    {
-        // Refresh from the persistent account on every world enter.
-        existing->inventory = source->inventory;
-        existing->slots = source->slots;
-        existing->secondary_slots = source->secondary_slots;
-        return true;
-    }
-
-    SPlayerAccount sandbox;
-    sandbox.name = normalized_key;
-    sandbox.password = source->password;
-    sandbox.email = source->email;
-    sandbox.email_verified = source->email_verified;
-    sandbox.level = source->level;
-    sandbox.exp = source->exp;
-    sandbox.talent_points = source->talent_points;
-    sandbox.talents = source->talents;
-    sandbox.inventory = source->inventory;
-    sandbox.slots = source->slots;
-    sandbox.secondary_slots = source->secondary_slots;
-    sandbox.codex = source->codex;
-    g_accounts.push_back(std::move(sandbox));
+bool CAccountDataStore::CaptureSandboxAccount(const std::string& sandbox_key, SPlayerAccount& state)
+{
+    if (!sandbox_key.starts_with("@sandbox:")) return false;
+    const auto* account = FindAccountConst(sandbox_key);
+    if (!account) return false;
+    state = *account;
     return true;
+}
+
+bool CAccountDataStore::RestoreSandboxAccount(const std::string& sandbox_key, const SPlayerAccount& source)
+{
+    if (!sandbox_key.starts_with("@sandbox:") || sandbox_key.size() <= 9) return false;
+    // Copy gameplay data only. A progress scope is never an auth account.
+    SPlayerAccount sandbox;
+    sandbox.name = sandbox_key;
+    sandbox.level = source.level;
+    sandbox.exp = source.exp;
+    sandbox.talent_points = source.talent_points;
+    sandbox.talents = source.talents;
+    sandbox.inventory = source.inventory;
+    sandbox.slots = source.slots;
+    sandbox.secondary_slots = source.secondary_slots;
+    sandbox.codex = source.codex;
+    if (auto* existing = FindAccount(sandbox_key)) *existing = std::move(sandbox);
+    else g_accounts.push_back(std::move(sandbox));
+    return true;
+}
+
+void CAccountDataStore::RemoveSandboxAccount(const std::string& sandbox_key)
+{
+    if (!sandbox_key.starts_with("@sandbox:")) return;
+    std::erase_if(g_accounts, [&](const auto& account) { return account.name == sandbox_key; });
 }

@@ -9,6 +9,8 @@ import {
   chainEntityType,
   dandelionMissileType,
   entityHasState,
+  entityVisualVariantFromFlags,
+  fireflyLarvaType,
   hornetMissileType,
   petalTrapperType,
   spiderWebZoneType,
@@ -70,6 +72,8 @@ export function collectSceneRenderPasses({
     }
   }
 
+  orderConnectedSegmentsBackToFront(passes.world);
+
   if (
     owner &&
     !passes.owner &&
@@ -79,6 +83,30 @@ export function collectSceneRenderPasses({
     passes.owner = owner;
 
   return passes;
+}
+
+function orderConnectedSegmentsBackToFront(entities) {
+  const ordered = [];
+  for (let index = 0; index < entities.length; index += 1) {
+    const entity = entities[index];
+    if (entity?.snapshot?.entityType !== fireflyLarvaType) continue;
+    ordered.push({
+      entity,
+      originalOrder: ordered.length,
+      depth: entityVisualVariantFromFlags(entity.snapshot.flags),
+    });
+  }
+  if (ordered.length < 2) return;
+
+  ordered.sort(
+    (left, right) =>
+      right.depth - left.depth || left.originalOrder - right.originalOrder,
+  );
+  let orderedIndex = 0;
+  for (let index = 0; index < entities.length; index += 1) {
+    if (entities[index]?.snapshot?.entityType !== fireflyLarvaType) continue;
+    entities[index] = ordered[orderedIndex++].entity;
+  }
 }
 
 function isMountedPetalLayerEntity(snap) {

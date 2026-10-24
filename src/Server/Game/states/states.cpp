@@ -38,7 +38,7 @@ const CMobBase* GetInteractionMob(const CEntity* entity)
     return dynamic_cast<const CMobBase*>(owner);
 }
 
-bool MobNullifiesTarget(const CMobBase* nullified, const CMobBase* target)
+bool DoesMobNullifyTarget(const CMobBase* nullified, const CMobBase* target)
 {
     if (!nullified || !target) return false;
 
@@ -154,6 +154,30 @@ float GetHallucinogenicDuration(const CMobBase& target, ERarity effect_rarity)
     return static_cast<float>(std::clamp(duration, 0.0, static_cast<double>(std::numeric_limits<float>::max())));
 }
 } // namespace
+
+CState::CState(CMobBase* owner, float timer, ERarity rarity, EStateType type)
+    : m_p_owner_world(owner ? owner->GameWorld() : nullptr),
+      m_owner_ref(owner ? owner->GetHandle() : SEntityHandle{}), m_timer(timer), m_rarity(rarity), m_type(type)
+{
+}
+
+CMobBase* CState::ResolveOwner() const
+{
+    if (!m_p_owner_world || !m_owner_ref.IsValid()) return nullptr;
+    return dynamic_cast<CMobBase*>(m_p_owner_world->ResolveEntity(m_owner_ref));
+}
+
+void CState::RebindOwner(CMobBase* owner)
+{
+    m_p_owner_world = owner ? owner->GameWorld() : nullptr;
+    m_owner_ref = owner ? owner->GetHandle() : SEntityHandle{};
+}
+
+void CState::DetachOwner()
+{
+    m_p_owner_world = nullptr;
+    m_owner_ref = {};
+}
 
 CHallucinogenicState::CHallucinogenicState(CMobBase* owner, float timer, ERarity rarity,
                                            std::uint8_t parameter_mask, float effect_depth,
@@ -301,8 +325,7 @@ bool ApplyHallucinogenicExposure(CMobBase* mob, ERarity rarity, float evolution_
 
 CPoisonState::CPoisonState(CMobBase* owner, float timer, float basic_dmg, ERarity rarity, CEntity* applier)
     : CState(owner, timer, rarity, EStateType::Poison), m_basic_dmg(basic_dmg),
-      m_applier_id(applier ? applier->Id() : -1),
-      m_applier_generation(applier ? applier->Generation() : 0)
+      m_applier_ref(applier ? applier->GetHandle() : SEntityHandle{})
 {
     CPoisonState* existing = owner ? owner->FindFirstState<CPoisonState>() : nullptr;
 
@@ -331,14 +354,14 @@ CPoisonState::CPoisonState(CMobBase* owner, float timer, float basic_dmg, ERarit
 
 void CPoisonState::Tick(float dt)
 {
-    if (!m_is_valid || !m_p_owner) return;
+    CMobBase* owner = ResolveOwner();
+    if (!m_is_valid || !owner) return;
 
     CEntity* applier = nullptr;
-    CGameWorld* world = m_p_owner->GameWorld();
-    if (world && m_applier_id >= 0 && m_applier_generation != 0)
-        applier = world->GetEntity(m_applier_id, m_applier_generation);
+    CGameWorld* world = owner->GameWorld();
+    if (world) applier = world->ResolveEntity(m_applier_ref);
 
-    m_p_owner->TakeDamage(m_basic_dmg * dt, applier, EDamageType::Poison);
+    owner->TakeDamage(m_basic_dmg * dt, applier, EDamageType::Poison);
     m_timer -= dt;
 }
 
@@ -350,9 +373,10 @@ CUndeadState::CUndeadState(CMobBase* owner, float timer, ERarity rarity, int sou
 void CUndeadState::Tick(float dt)
 {
     m_timer -= dt;
-    if (m_timer > 0.f || !m_kill_on_destroy || !m_p_owner) return;
+    CMobBase* owner = ResolveOwner();
+    if (m_timer > 0.f || !m_kill_on_destroy || !owner) return;
 
-    if (auto* player_flower = dynamic_cast<CPlayerFlower*>(m_p_owner))
+    if (auto* player_flower = dynamic_cast<CPlayerFlower*>(owner))
     {
         m_kill_on_destroy = false;
         player_flower->EnterDeathState();
@@ -361,19 +385,20 @@ void CUndeadState::Tick(float dt)
 
 CUndeadState::~CUndeadState()
 {
-    if (!m_kill_on_destroy || !m_p_owner) return;
-    if (auto* player_flower = dynamic_cast<CPlayerFlower*>(m_p_owner))
+    CMobBase* owner = ResolveOwner();
+    if (!m_kill_on_destroy || !owner) return;
+    if (auto* player_flower = dynamic_cast<CPlayerFlower*>(owner))
     {
         player_flower->EnterDeathState();
         return;
     }
-    m_p_owner->Health() = 0.f;
-    m_p_owner->MarkForDestroy(EEntityRemovalReason::Defeated);
+    owner->Health() = 0.f;
+    owner->MarkForDestroy(EEntityRemovalReason::Defeated);
 }
 
 CDiggingState::~CDiggingState()
 {
-    if (auto* flower = dynamic_cast<CFlower*>(m_p_owner)) flower->ReloadPetals();
+    if (auto* flower = dynamic_cast<CFlower*>(ResolveOwner())) flower->ReloadPetals();
 }
 
 CCorruptionState::CCorruptionState(CMobBase* owner, float timer, ERarity rarity)
@@ -393,7 +418,7 @@ CCorruptionState::CCorruptionState(CMobBase* owner, float timer, ERarity rarity)
 CCorruptionState::~CCorruptionState()
 {
     // Do not overwrite a team already assigned by another controller/action.
-    if (m_p_owner && m_p_owner->Team() == 0) m_p_owner->Team() = m_old_team;
+    if (CMobBase* owner = ResolveOwner(); owner && owner->Team() == 0) owner->Team() = m_old_team;
 }
 
 CInvincibleState::CInvincibleState(CMobBase* owner, float timer, ERarity rarity)
@@ -409,19 +434,19 @@ CInvincibleState::CInvincibleState(CMobBase* owner, float timer, ERarity rarity)
 
 void CInvincibleState::Tick(float dt)
 {
-    if (m_p_owner)
+    if (CMobBase* owner = ResolveOwner())
     {
         if (m_marked_for_destroy)
-            m_p_owner->MarkForDestroy(m_removal_reason);
+            owner->MarkForDestroy(m_removal_reason);
         else
-            m_p_owner->CancelDestroy();
-        const SMobStats* stats = m_p_owner->GetFinalStats();
+            owner->CancelDestroy();
+        const SMobStats* stats = owner->GetFinalStats();
         float max_health = stats ? stats->max_health : 0.f;
         if (max_health > game_config::entity_collision_epsilon)
         {
-            float hp = std::max(0.f, m_p_owner->Health() / max_health);
+            float hp = std::max(0.f, owner->Health() / max_health);
             if (hp > m_hp) m_hp = hp;
-            m_p_owner->Health() = max_health * m_hp;
+            owner->Health() = max_health * m_hp;
         }
     }
     m_timer -= dt;
@@ -433,13 +458,15 @@ CBanSlotState::CBanSlotState(CMobBase* owner, float timer, int slot, ERarity rar
     if (auto* flower = dynamic_cast<CFlower*>(owner))
     {
         flower->SetBanned(true, slot);
-        m_p_flower = flower;
+        m_flower_ref = flower->GetHandle();
     }
 }
 
 CBanSlotState::~CBanSlotState()
 {
-    if (m_p_flower) m_p_flower->SetBanned(false, m_slot_index);
+    if (CMobBase* owner = ResolveOwner(); owner && owner->GameWorld())
+        if (auto* flower = dynamic_cast<CFlower*>(owner->GameWorld()->ResolveEntity(m_flower_ref)))
+            flower->SetBanned(false, m_slot_index);
 }
 
 void CBanSlotState::Tick(float dt) { m_timer -= dt; }
@@ -558,7 +585,7 @@ const CMobBase* ResolveInteractionMob(const CEntity* entity) { return GetInterac
 
 bool BlocksNullifiedMobInteraction(const CMobBase* lhs, const CMobBase* rhs)
 {
-    return MobNullifiesTarget(lhs, rhs) || MobNullifiesTarget(rhs, lhs);
+    return DoesMobNullifyTarget(lhs, rhs) || DoesMobNullifyTarget(rhs, lhs);
 }
 
 int GetPreCorruptionTeam(const CEntity* entity, const CMobBase* interaction_mob)

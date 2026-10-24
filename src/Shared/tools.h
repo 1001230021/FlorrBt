@@ -40,10 +40,11 @@ inline std::mt19937& GetRng()
 
 inline float GetLimitedRng(float start, float end)
 {
-    static std::mt19937 rng(std::random_device{}());
-
     std::uniform_real_distribution<float> dist(start, end);
-    return dist(rng);
+    // Keep every gameplay random draw on the same stream.  Hot-reload
+    // snapshots persist GetRng(); a second hidden engine here would make AI,
+    // movement and spawn decisions diverge after restore.
+    return dist(GetRng());
 }
 
 inline bool CheckChance(double chance)

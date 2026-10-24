@@ -12,8 +12,10 @@ class IController
 {
   public:
     virtual ~IController() = default;
+    virtual bool IsPlayerControlled() const { return false; }
     virtual void OnTick(CMobBase* mob, float dt) = 0;
     virtual void OnDamaged(CMobBase*, CEntity*) {}
+    virtual void OnWorldChanged(CMobBase*) {}
     virtual std::string_view SnapshotKey() const = 0;
     virtual std::uint32_t SnapshotVersion() const { return 1; }
     virtual void CaptureSnapshot(CSnapshotWriter&) const {}

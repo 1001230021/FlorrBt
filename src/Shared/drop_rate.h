@@ -126,7 +126,7 @@ inline void RegisterWikiAntHoleDropTables()
             { ERarity::Super, ERarity::Ultra, 0.227 },
         });
     RegisterDropRateTable(
-        EMobType::AntHole, EPetalType::Magnet,
+        EMobType::AntHole, ToPetalType(EModPetalType::Magnet),
         {
             { ERarity::Rare, ERarity::Rare, 0.070 },          { ERarity::Epic, ERarity::Rare, 0.610 },
             { ERarity::Epic, ERarity::Epic, 0.051 },          { ERarity::Legendary, ERarity::Rare, 0.349 },
@@ -1427,9 +1427,9 @@ inline void RegisterDropRates()
     // Magic Firefly uses the exact source-table probabilities requested for
     // its two drops, including each source mob/drop rarity pairing.
     CopyDropRateTable(EMobType::TermiteOvermind, EPetalType::Relic, EMobType::MagicFirefly,
-                      EPetalType::Orb);
+                      ToPetalType(EModPetalType::Orb));
     CopyDropRateTable(EMobType::SoldierAnt, EPetalType::Wing, EMobType::MagicFirefly,
-                      EPetalType::MagicLightning);
+                      ToPetalType(EModPetalType::MagicLightning));
     RegisterDerivedSuperAndEternalDropRates();
 }
 

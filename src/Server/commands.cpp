@@ -11,7 +11,7 @@
 #include "Game/gamecontext.h"
 #include "Game/gameworld.h"
 #include "Game/player.h"
-#include "Game/systems/weather_diurnal_system.h"
+#include "Game/extensions/weather_view.h"
 #include "Game/gamecontrollers/world_controller_factory.h"
 #include "Module/network_module.h"
 #include "Module/world_module.h"
@@ -242,7 +242,8 @@ CEntity* FindEntityByCommandTarget(CServer* server, CGameContext* context, std::
     if (text.find(':') != std::string_view::npos) return nullptr;
     if (CPlayer* player = FindPlayerByIdOrName(context, text)) return player->GetEntity();
     auto entity_id = ParseInt(text);
-    return entity_id && *entity_id >= 0 ? context->World().GetEntity(*entity_id) : nullptr;
+    CGameWorld* main = context->MainWorld();
+    return main && entity_id && *entity_id >= 0 ? main->GetEntity(*entity_id) : nullptr;
 }
 
 std::string JoinArgs(const std::vector<std::string>& args, size_t begin)
@@ -256,7 +257,7 @@ std::string JoinArgs(const std::vector<std::string>& args, size_t begin)
     return result;
 }
 
-std::string EntityCommandRef(const CEntity* entity)
+std::string FormatEntityCommandReference(const CEntity* entity)
 {
     if (!entity) return "none";
     const CGameWorld* world = entity->GameWorld();
@@ -309,7 +310,7 @@ std::optional<double> ParseVirtualTime(std::string_view text)
     return seconds / seconds_per_day;
 }
 
-void LogWeatherStatus(const CWeatherDiurnalSystem& system)
+void LogWeatherStatus(const IWeatherCommands& system)
 {
     const SWeatherDiurnalSnapshot snapshot = system.GetWeatherDiurnalSnapshot();
     const char* mode = system.IsWeatherForced() ? "forced" : system.HasMeteorologyOverride() ? "derive" : "auto";
@@ -366,7 +367,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(
     "weather time <HH:MM[:SS]>",
     {}, {
         CServer* server = CServer::GetInstance();
-        CWeatherDiurnalSystem* system = server ? server->GetWeatherDiurnalSystem() : nullptr;
+        IWeatherCommands* system = server ? server->Extensions().Globals().Find<IWeatherCommands>() : nullptr;
         if (!system)
         {
             LOG_WARN("weather", "Weather-diurnal system is unavailable.");
@@ -653,7 +654,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(who, "who <player>", "player", {
 
     CEntity* entity = player->GetEntity();
     LOG_INFO("console", "name=" + player->GetName() + " account=" + player->GetAccountName() +
-                            " player_id=" + std::to_string(player->GetId()) + " entity=" + EntityCommandRef(entity));
+                            " player_id=" + std::to_string(player->GetId()) + " entity=" + FormatEntityCommandReference(entity));
 })
 
 REGISTER_CONSOLE_COMMAND_USAGE(level_up, "level_up <player> <count>", "player", {
@@ -699,7 +700,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(level_up, "level_up <player> <count>", "player", 
     flower->RebuildFinalStats();
     if (gained_talent_points > 0) player->AddTalentPoints(gained_talent_points);
     if (player->IsAuthenticated())
-        CAccountDataStore::SetProgress(player->GetAccountName(), flower->m_level, flower->m_exp);
+        CAccountDataStore::SetProgress(player->GetProgressAccountName(), flower->m_level, flower->m_exp);
     if (context) context->Network().QueueOwnerStateUpdate(*player);
 
     LOG_INFO("console", "Level " + player->GetName() + " " + std::to_string(old_level) + " -> " +
@@ -744,7 +745,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(query_entity_id, "query_entity_id <player>", "pla
 
     CEntity* entity = player->GetEntity();
     LOG_INFO("console", "player_id=" + std::to_string(player->GetId()) + " name=" + player->GetName() +
-                            " entity=" + EntityCommandRef(entity));
+                            " entity=" + FormatEntityCommandReference(entity));
 })
 
 REGISTER_CONSOLE_COMMAND_USAGE(kill, "kill <player>", "player", {
@@ -929,6 +930,23 @@ REGISTER_CONSOLE_COMMAND_USAGE(world_controller, "world_controller <world_id> <c
     world->SetController(CreateWorldController(controller_key, {}));
     LOG_INFO("console", "World " + std::to_string(*world_id) + " controller " + std::string(old_controller) +
                             " -> " + std::string(controller_key));
+})
+
+REGISTER_CONSOLE_COMMAND_USAGE(world_main, "world_main <world_id>", "world", {
+    if (args.size() != 1)
+    {
+        LOG_INFO("console", "Usage: world_main <world_id>");
+        return;
+    }
+    const auto id = ParseWorldId(args[0]);
+    CServer* server = CServer::GetInstance();
+    IWorldModule* worlds = server ? server->GetWorldModule() : nullptr;
+    if (!id || !worlds || !worlds->SetMainWorld(*id))
+    {
+        LOG_WARN("console", "Cannot select main world (missing, room-owned, or transition in progress)");
+        return;
+    }
+    LOG_INFO("console", "Main world is now " + std::to_string(*id));
 })
 
 REGISTER_CONSOLE_COMMAND_USAGE(world_destroy, "world_destroy <world_id>", "world", {
@@ -1278,7 +1296,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(add, "add <player|account> <petal> <rarity> [coun
     auto* server = CServer::GetInstance();
     CGameContext* context = server ? server->GameContext() : nullptr;
     CPlayer* player = FindPlayerByIdOrName(context, args[target_index]);
-    std::string account_name = player ? player->GetAccountName() : args[target_index];
+    std::string account_name = player ? player->GetProgressAccountName() : args[target_index];
     if (account_name.empty())
     {
         LOG_WARN("console", "Player/account has no account name: " + args[target_index]);
@@ -1307,7 +1325,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(inventory, "inventory <player> <list|add|remove|s
     const std::string operation = ToLower(args[1]);
     if (operation == "list")
     {
-        for (const auto& item : CAccountDataStore::GetInventory(player->GetAccountName()))
+        for (const auto& item : CAccountDataStore::GetInventory(player->GetProgressAccountName()))
             LOG_INFO("console", "type=" + std::to_string(item.petal_type) + " rarity=" + std::to_string(item.rarity) +
                                 " count=" + std::to_string(item.count));
         return;
@@ -1369,7 +1387,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(
 
         auto* server = CServer::GetInstance();
         CGameContext* context = server ? server->GameContext() : nullptr;
-        CGameWorld* world = context ? &context->World() : nullptr;
+        CGameWorld* world = context ? context->MainWorld() : nullptr;
         if (!server || !context || !world)
         {
             LOG_WARN("console", "No active server/world for equip command.");
@@ -1400,11 +1418,11 @@ REGISTER_CONSOLE_COMMAND_USAGE(
         if (!flower->EquipPetal(slot, proto, *rarity))
         {
             LOG_WARN("console", "Failed to equip " + RarityName(*rarity) + " " + proto->m_name + " to entity " +
-                                      EntityCommandRef(target_entity) + " slot " + std::to_string(slot) + ".");
+                                      FormatEntityCommandReference(target_entity) + " slot " + std::to_string(slot) + ".");
             return;
         }
         LOG_INFO("console", "Equipped " + RarityName(*rarity) + " " + proto->m_name + " to entity " +
-                                EntityCommandRef(target_entity) + " slot " + std::to_string(slot) + ".");
+                                FormatEntityCommandReference(target_entity) + " slot " + std::to_string(slot) + ".");
     })
 
 REGISTER_CONSOLE_COMMAND_USAGE(
@@ -1428,7 +1446,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(
         }
 
         std::string flag = ToLower(args[0]);
-        CServer::SChatEntry chat;
+        SChatEntry chat;
         if (flag == "server")
         {
             std::string teller = "Server";
@@ -1445,7 +1463,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(
                 ++message_index;
             }
             std::string message = JoinArgs(args, message_index);
-            chat = server->SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, teller, message, target_player_id);
+            chat = server->Extensions().Globals().Find<IChatService>()->Submit(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, teller, message, target_player_id);
         } else if (flag == "global")
         {
             if (args.size() < 3)
@@ -1453,7 +1471,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(
                 LOG_INFO("console", "Usage: say global <teller> <message...>");
                 return;
             }
-            chat = server->SubmitChat(context ? &context->World() : nullptr, { 0.f, 0.f }, EChatFlag::Global, 0,
+            chat = server->Extensions().Globals().Find<IChatService>()->Submit(context ? context->MainWorld() : nullptr, { 0.f, 0.f }, EChatFlag::Global, 0,
                                       args[1], JoinArgs(args, 2));
         } else if (flag == "local")
         {
@@ -1489,7 +1507,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(
                 return;
             }
             chat =
-                server->SubmitChat(world, *pos, EChatFlag::Local, 0, args[teller_index], JoinArgs(args, message_index));
+                server->Extensions().Globals().Find<IChatService>()->Submit(world, *pos, EChatFlag::Local, 0, args[teller_index], JoinArgs(args, message_index));
         } else if (flag == "whisper")
         {
             if (args.size() < 4)
@@ -1503,7 +1521,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(
                 LOG_WARN("console", "Whisper target not found: " + args[1]);
                 return;
             }
-            chat = server->SubmitChat(context ? &context->World() : nullptr, { 0.f, 0.f }, EChatFlag::Whisper, 0,
+            chat = server->Extensions().Globals().Find<IChatService>()->Submit(context ? context->MainWorld() : nullptr, { 0.f, 0.f }, EChatFlag::Whisper, 0,
                                       args[2], JoinArgs(args, 3), static_cast<int>(target->GetId()));
         } else
         {
@@ -1516,7 +1534,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(
             LOG_WARN("console", "Empty chat message.");
             return;
         }
-        network->BroadcastChat(chat);
+        server->Extensions().Globals().Find<IChatService>()->Broadcast(chat);
     })
 
 REGISTER_CONSOLE_COMMAND_USAGE(spawn, "spawn <world_id> <mob> <rarity> <x,y>", "world mob rarity", {
@@ -1585,7 +1603,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(spawn, "spawn <world_id> <mob> <rarity> <x,y>", "
     const auto* spawned_mob = dynamic_cast<const CMobBase*>(entity);
     const ERarity spawned_rarity = spawned_mob ? spawned_mob->GetRarity() : *rarity;
     LOG_INFO("console", "Spawned " + RarityName(spawned_rarity) + " " + std::string(GetMobTypeName(proto->m_type)) +
-                            " entity " + EntityCommandRef(entity) + " at " + std::to_string(pos->x) + ", " +
+                            " entity " + FormatEntityCommandReference(entity) + " at " + std::to_string(pos->x) + ", " +
                             std::to_string(pos->y) + ".");
 
     if (server && CServer::MeetsPetalReportRarity(spawned_rarity, game_config::min_mob_spawn_report_rarity))

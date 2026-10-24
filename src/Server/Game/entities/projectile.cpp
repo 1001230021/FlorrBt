@@ -24,9 +24,8 @@ bool ApplyLifetimeHealthDecay(float dt, float lifetime, float base_health, float
 CEntity* CProjectile::GetOwner() const
 {
     CGameWorld* world = const_cast<CProjectile*>(this)->GameWorld();
-    if (!world || m_owner_id < 0) return nullptr;
-    if (m_owner_generation != 0) return world->GetEntity(m_owner_id, m_owner_generation);
-    return world->GetEntity(m_owner_id);
+    if (!world) return nullptr;
+    return m_owner_ref.IsValid() ? world->ResolveEntity(m_owner_ref) : nullptr;
 }
 
 CMissile::CMissile(CGameWorld* world, florrbt::Vector2f pos, float radius, florrbt::Vector2f direction, float speed, float damage,
@@ -87,8 +86,6 @@ bool CMissile::ApplyHit(CEntity* target)
 {
     if (m_attached_to_owner) return false;
     if (!target || target == this || Health() <= 0.f) return false;
-    if (target->Id() == m_owner_id && (m_owner_generation == 0 || target->Generation() == m_owner_generation))
-        return false;
     if (target == GetOwner()) return false;
     if (m_damage > 0.f) target->TakeDamage(m_damage, GetOwner(), EDamageType::Normal);
     return true;
@@ -206,8 +203,6 @@ void CPollenProjectile::Tick(float dt)
 bool CPollenProjectile::ApplyHit(CEntity* target)
 {
     if (!target || target == this || Health() <= 0.f) return false;
-    if (target->Id() == m_owner_id && (m_owner_generation == 0 || target->Generation() == m_owner_generation))
-        return false;
     if (target == GetOwner()) return false;
     if (m_damage > 0.f) target->TakeDamage(m_damage, GetOwner(), EDamageType::Normal);
     return true;

@@ -368,9 +368,20 @@ FodyWeavers.xsd
 build/
 
 # FlorrBt runtime and recovery data
+FlorrBt.Dependencies.local.props
+/dependencies/
+data/server.cfg
+deploy/windows-web/web.env.ps1
+.env
+.env.*
+!.env.example
+mysql/data/
+mysql/run/
 .catalog_registry_test/
 data/hot_reload/
 data/accounts.json
+data/accounts.json.*
+!data/accounts.json.example
 data/unique_petals.json
 *.corrupt.bak
 tools/*.exe

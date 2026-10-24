@@ -1,5 +1,7 @@
 # Windows 构建目录
 
+首次使用原生 Visual Studio 工程时，将根目录的 `FlorrBt.Dependencies.example.props` 复制为 `FlorrBt.Dependencies.local.props`，填写 `SfmlRoot` 和 `MySqlRoot`。本地文件不进入 Git；也可通过环境变量或 MSBuild 参数 `FLORRBT_SFML_ROOT`、`FLORRBT_MYSQL_ROOT` 指定 SDK 路径。CMake 构建继续使用自身的依赖配置。
+
 正常 `Release | x64` 的服务端仍输出到：
 
 ```text

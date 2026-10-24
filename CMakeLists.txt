@@ -1,5 +1,14 @@
 cmake_minimum_required(VERSION 3.11)
-project(FlorrBt VERSION 1.0.1)
+# Select the CRT via target properties before any language is enabled.
+# libtmj customizes CMAKE_C_FLAGS_DEBUG/RELEASE; under the old policy that
+# silently discarded /MD[d] and made tmj use the incompatible default /MT.
+if(POLICY CMP0091)
+    cmake_policy(SET CMP0091 NEW)
+    # Older subprojects call cmake_minimum_required(3.11), which otherwise
+    # unset this policy again and select a different CRT on a clean build.
+    set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+endif()
+project(FlorrBt VERSION 1.0.5)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,12 +36,15 @@ endif()
 add_subdirectory(externals/libtmj)
 add_subdirectory(externals/argon2)
 
-file(GLOB_RECURSE SHARED_SOURCES "src/Shared/*.cpp" "src/Engine/*.cpp")
-file(GLOB_RECURSE SERVER_SOURCES "src/Server/*.cpp")
+file(GLOB_RECURSE SHARED_SOURCES CONFIGURE_DEPENDS "src/Shared/*.cpp" "src/Engine/*.cpp")
+file(GLOB_RECURSE SERVER_SOURCES CONFIGURE_DEPENDS "src/Server/*.cpp")
 
-add_executable(${PROJECT_NAME}_Server ${SERVER_SOURCES} ${SHARED_SOURCES})
-target_include_directories(${PROJECT_NAME}_Server PRIVATE src)
-target_link_libraries(${PROJECT_NAME}_Server PRIVATE SFML::Graphics SFML::Network SFML::System tmj argon2)
+list(REMOVE_ITEM SERVER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/Server/main.cpp")
+add_library(${PROJECT_NAME}_ServerCore STATIC ${SERVER_SOURCES} ${SHARED_SOURCES})
+target_include_directories(${PROJECT_NAME}_ServerCore PUBLIC src)
+target_link_libraries(${PROJECT_NAME}_ServerCore PUBLIC SFML::Graphics SFML::Network SFML::System tmj argon2)
+add_executable(${PROJECT_NAME}_Server src/Server/main.cpp)
+target_link_libraries(${PROJECT_NAME}_Server PRIVATE ${PROJECT_NAME}_ServerCore)
 
 # Optional MySQL/MariaDB client for the account persistence backend
 # (account_backend mysql in server.cfg). Works with libmysql (MySQL zip) and
@@ -43,9 +55,9 @@ if(FLORRBT_WITH_MYSQL)
     find_path(FLORRBT_MYSQL_INCLUDE_DIR NAMES mysql.h PATH_SUFFIXES mysql mariadb)
     find_library(FLORRBT_MYSQL_LIBRARY NAMES libmysql mysqlclient mariadb libmariadb mariadbclient)
     if(FLORRBT_MYSQL_INCLUDE_DIR AND FLORRBT_MYSQL_LIBRARY)
-        target_compile_definitions(${PROJECT_NAME}_Server PRIVATE FLORRBT_WITH_MYSQL)
-        target_include_directories(${PROJECT_NAME}_Server PRIVATE ${FLORRBT_MYSQL_INCLUDE_DIR})
-        target_link_libraries(${PROJECT_NAME}_Server PRIVATE ${FLORRBT_MYSQL_LIBRARY})
+        target_compile_definitions(${PROJECT_NAME}_ServerCore PRIVATE FLORRBT_WITH_MYSQL)
+        target_include_directories(${PROJECT_NAME}_ServerCore PRIVATE ${FLORRBT_MYSQL_INCLUDE_DIR})
+        target_link_libraries(${PROJECT_NAME}_ServerCore PUBLIC ${FLORRBT_MYSQL_LIBRARY})
         message(STATUS "MySQL account backend: enabled (${FLORRBT_MYSQL_LIBRARY})")
 
         # The Windows MySQL ZIP ships libmysql.dll separately from its
@@ -108,7 +120,24 @@ endif()
 add_executable(${PROJECT_NAME}_Launcher src/Launcher/main.cpp src/Engine/json_value.cpp)
 target_include_directories(${PROJECT_NAME}_Launcher PRIVATE src)
 if(WIN32)
-    target_compile_definitions(${PROJECT_NAME}_Server PRIVATE NOMINMAX)
+    target_compile_definitions(${PROJECT_NAME}_ServerCore PUBLIC NOMINMAX)
 endif()
 
 add_subdirectory(tests)
+
+option(FLORRBT_BUILD_RUNTIME_TESTS "Build headless server lifecycle/snapshot regressions" OFF)
+if(FLORRBT_BUILD_RUNTIME_TESTS)
+    add_executable(FlorrBt_RuntimeTests tests/test_main.cpp tests/test_runtime_repairs.cpp)
+    target_include_directories(FlorrBt_RuntimeTests PRIVATE src tests)
+    target_link_libraries(FlorrBt_RuntimeTests PRIVATE ${PROJECT_NAME}_ServerCore)
+    if(WIN32)
+        target_compile_definitions(FlorrBt_RuntimeTests PRIVATE NOMINMAX)
+    endif()
+    enable_testing()
+    add_test(NAME runtime_repairs COMMAND FlorrBt_RuntimeTests)
+    set_tests_properties(runtime_repairs PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(runtime_repairs PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:SFML::Graphics>;PATH=path_list_prepend:$<TARGET_FILE_DIR:tmj>")
+    endif()
+endif()

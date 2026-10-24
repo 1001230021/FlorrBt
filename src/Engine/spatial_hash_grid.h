@@ -1,6 +1,7 @@
 #pragma once
 #include "../Shared/tools.h"
 #include "../Shared/math_types.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -20,10 +21,12 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
     using query_filter = std::function<bool(const TObject*)>;
 
     static constexpr float global_range = -1.0f;
+    bool HasActiveQueries() const { return m_query_depth != 0; }
 
     CSpatialHashGrid(float cell_size, position_getter get_position, id_getter get_id, resolver resolve,
                      valid_filter is_valid)
-        : m_cell_size(cell_size), m_get_position(std::move(get_position)), m_get_id(std::move(get_id)),
+        : m_cell_size(std::isfinite(cell_size) && cell_size > 0.f ? cell_size : 1.f),
+          m_get_position(std::move(get_position)), m_get_id(std::move(get_id)),
           m_resolve(std::move(resolve)), m_is_valid(std::move(is_valid))
     {
     }
@@ -36,7 +39,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
 
     void InsertTracked(TObject* object)
     {
-        if (!object || !IsValid(*object)) return;
+        if (!object || !IsValid(*object) || !HasFinitePosition(*object)) return;
         if (m_query_depth > 0)
         {
             m_pending_tracked_ops.push_back({ tracked_op_type::Insert, object, m_get_id(*object) });
@@ -62,7 +65,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
             m_pending_tracked_ops.push_back({ tracked_op_type::Update, object, id });
             return;
         }
-        if (!IsValid(*object))
+        if (!IsValid(*object) || !HasFinitePosition(*object))
         {
             RemoveTracked(id);
             return;
@@ -122,7 +125,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
 
     void Insert(TObject* object)
     {
-        if (!object || !IsValid(*object)) return;
+        if (!object || !IsValid(*object) || !HasFinitePosition(*object)) return;
 
         TId id = m_get_id(*object);
         florrbt::Vector2f pos = m_get_position(*object);
@@ -133,7 +136,9 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
 
     void Insert(TObject* object, float radius)
     {
-        if (!object || !IsValid(*object)) return;
+        if (!object || !IsValid(*object) || !HasFinitePosition(*object) || !std::isfinite(radius) ||
+            radius > max_query_radius)
+            return;
         if (radius <= 0.f)
         {
             Insert(object);
@@ -179,13 +184,16 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
 
     TObject* FindClosest(const florrbt::Vector2f& center, float max_range, query_filter filter = nullptr) const
     {
+        if (!HasFinitePosition(center) ||
+            (max_range != global_range && (!std::isfinite(max_range) || max_range <= 0.f)))
+            return nullptr;
         query_guard guard(*this);
         TObject* target = nullptr;
         float min_dist_sq = (max_range == global_range) ? std::numeric_limits<float>::max() : max_range * max_range;
 
         auto visit_object = [&](TId id) {
             TObject* object = Resolve(id);
-            if (!object || !IsValid(*object)) return;
+            if (!object || !IsValid(*object) || !HasFinitePosition(*object)) return;
             if (filter && !filter(object)) return;
 
             float dist_sq = DistanceSq(m_get_position(*object), center);
@@ -221,7 +229,8 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
     std::vector<TObject*> QueryRange(const florrbt::Vector2f& center, float radius, query_filter filter = nullptr) const
     {
         std::vector<TObject*> result;
-        if (radius <= 0.f) return result;
+        if (!HasFinitePosition(center) || !std::isfinite(radius) || radius <= 0.f || radius > max_query_radius)
+            return result;
         result.reserve(8);
 
         ForEachInRange(center, radius, [&](TObject* object) {
@@ -232,7 +241,8 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
 
     template <typename TVisitor> void ForEachInRange(const florrbt::Vector2f& center, float radius, TVisitor visitor) const
     {
-        if (radius <= 0.f) return;
+        if (!HasFinitePosition(center) || !std::isfinite(radius) || radius <= 0.f || radius > max_query_radius)
+            return;
         query_guard guard(*this);
 
         float radius_sq = radius * radius;
@@ -240,7 +250,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
             for (TId id : ids)
             {
                 TObject* object = Resolve(id);
-                if (!object || !IsValid(*object)) continue;
+                if (!object || !IsValid(*object) || !HasFinitePosition(*object)) continue;
                 if (DistanceSq(m_get_position(*object), center) <= radius_sq) visitor(object);
             }
         });
@@ -257,7 +267,8 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
     void ForEachInRangeBroadphase(const florrbt::Vector2f& center, float radius, std::unordered_set<TId>& visited,
                                   TVisitor visitor) const
     {
-        if (radius <= 0.f) return;
+        if (!HasFinitePosition(center) || !std::isfinite(radius) || radius <= 0.f || radius > max_query_radius)
+            return;
         query_guard guard(*this);
 
         visited.clear();
@@ -266,7 +277,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
             {
                 if (!visited.insert(id).second) continue;
                 TObject* object = Resolve(id);
-                if (!object || !IsValid(*object)) continue;
+                if (!object || !IsValid(*object) || !HasFinitePosition(*object)) continue;
                 visitor(object);
             }
         });
@@ -334,6 +345,8 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
     template <typename TVisitor>
     void VisitCellsInRange(const florrbt::Vector2f& center, float radius, TVisitor visitor) const
     {
+        if (!HasFinitePosition(center) || !std::isfinite(radius) || radius <= 0.f || radius > max_query_radius)
+            return;
         int min_cell_x = CellX(center.x - radius);
         int max_cell_x = CellX(center.x + radius);
         int min_cell_y = CellY(center.y - radius);
@@ -352,6 +365,13 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
     TObject* Resolve(TId id) const { return m_resolve ? m_resolve(id) : nullptr; }
     bool IsValid(const TObject& object) const { return m_is_valid ? m_is_valid(object) : true; }
 
+    bool HasFinitePosition(const TObject& object) const { return HasFinitePosition(m_get_position(object)); }
+
+    static bool HasFinitePosition(const florrbt::Vector2f& position)
+    {
+        return std::isfinite(position.x) && std::isfinite(position.y);
+    }
+
     std::uint64_t HashCell(int cell_x, int cell_y) const
     {
         return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(cell_x)) << 32) |
@@ -361,6 +381,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
     int CellX(float world_x) const { return static_cast<int>(std::floor(world_x / m_cell_size)); }
     int CellY(float world_y) const { return static_cast<int>(std::floor(world_y / m_cell_size)); }
 
+    static constexpr float max_query_radius = 10000000.f;
     float m_cell_size = 1.f;
     position_getter m_get_position;
     id_getter m_get_id;

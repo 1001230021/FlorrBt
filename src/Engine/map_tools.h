@@ -2,10 +2,13 @@
 
 #include "json_value.h"
 #include "logger.h"
+#include "../Shared/terrain_rules.h"
 
 #define template tmpl
 #define class clazz
+#define Text TmjText
 #include <tmj.h>
+#undef Text
 #undef class
 #undef template
 
@@ -15,12 +18,43 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <cerrno>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <limits>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+inline bool ParseFiniteFloatText(std::string_view text, float& out)
+{
+    std::string value(text);
+    if (value.empty()) return false;
+
+    char* end = nullptr;
+    errno = 0;
+    const float parsed = std::strtof(value.c_str(), &end);
+    if (end != value.c_str() + value.size() || errno == ERANGE || !std::isfinite(parsed)) return false;
+    out = parsed;
+    return true;
+}
+
+inline bool ParseStrictIntText(std::string_view text, int& out)
+{
+    std::string value(text);
+    if (value.empty()) return false;
+
+    char* end = nullptr;
+    errno = 0;
+    const long parsed = std::strtol(value.c_str(), &end, 10);
+    if (end != value.c_str() + value.size() || errno == ERANGE || parsed < std::numeric_limits<int>::min() ||
+        parsed > std::numeric_limits<int>::max())
+        return false;
+    out = static_cast<int>(parsed);
+    return true;
+}
 
 inline void TmjLogCb(tmj_log_priority priority, const char* msg)
 {
@@ -75,6 +109,7 @@ struct FlorrBtMap
         int height;
         std::vector<int> tiles;
         std::string name;
+        EMapLayerRole role = EMapLayerRole::Terrain;
 
         int* operator[](int row) { return tiles.data() + row * width; }
 
@@ -117,6 +152,7 @@ struct FlorrBtMap
     struct Wall
     {
         int id = -1;
+        EWallQuery category = EWallQuery::Solid;
         std::vector<Point> vertices;
         bool closed = true;
         Point center = { 0.f, 0.f };
@@ -170,7 +206,7 @@ inline bool CheckpointContainsPoint(const FlorrBtMap::Checkpoint& checkpoint, fl
            local.y <= checkpoint.h;
 }
 
-inline std::string MapObjectText(const char* text) { return text ? std::string(text) : std::string(); }
+inline std::string ReadMapObjectText(const char* text) { return text ? std::string(text) : std::string(); }
 
 inline std::string JsonStringField(const CJsonValue& object, const std::string& key)
 {
@@ -203,13 +239,8 @@ inline float JsonPropertyFloat(const CJsonValue& object, const std::string& name
     if (value->IsNumber()) return static_cast<float>(value->AsNumber());
     if (value->IsString())
     {
-        try
-        {
-            return std::stof(value->AsString());
-        } catch (...)
-        {
-            return fallback;
-        }
+        float parsed = fallback;
+        return ParseFiniteFloatText(value->AsString(), parsed) ? parsed : fallback;
     }
     return fallback;
 }
@@ -223,7 +254,7 @@ inline std::string JsonPropertyString(const CJsonValue& object, const std::strin
     return {};
 }
 
-inline bool MapPropertyFloat(const Property& prop, float& out)
+inline bool ReadMapPropertyFloat(const Property& prop, float& out)
 {
     if (!prop.type) return false;
     if (strcmp(prop.type, "float") == 0)
@@ -238,19 +269,12 @@ inline bool MapPropertyFloat(const Property& prop, float& out)
     }
     if (strcmp(prop.type, "string") == 0 && prop.value_string)
     {
-        try
-        {
-            out = std::stof(prop.value_string);
-            return true;
-        } catch (...)
-        {
-            return false;
-        }
+        return ParseFiniteFloatText(prop.value_string, out);
     }
     return false;
 }
 
-inline bool MapPropertyInt(const Property& prop, int& out)
+inline bool ReadMapPropertyInt(const Property& prop, int& out)
 {
     if (!prop.type) return false;
     if (strcmp(prop.type, "int") == 0)
@@ -265,19 +289,12 @@ inline bool MapPropertyInt(const Property& prop, int& out)
     }
     if (strcmp(prop.type, "string") == 0 && prop.value_string)
     {
-        try
-        {
-            out = std::stoi(prop.value_string);
-            return true;
-        } catch (...)
-        {
-            return false;
-        }
+        return ParseStrictIntText(prop.value_string, out);
     }
     return false;
 }
 
-inline std::string MapToLower(std::string text)
+inline std::string ConvertToLowercase(std::string text)
 {
     std::transform(text.begin(), text.end(), text.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
@@ -286,12 +303,12 @@ inline std::string MapToLower(std::string text)
 
 inline bool IsWallObject(const Layer& layer, const Object& obj)
 {
-    std::string layer_name = MapToLower(MapObjectText(layer.name));
+    std::string layer_name = ConvertToLowercase(ReadMapObjectText(layer.name));
     if (layer_name == "collision" || layer_name == "collisions" || layer_name == "walls" || layer_name == "wall")
         return true;
 
-    std::string type = MapToLower(MapObjectText(obj.type));
-    std::string name = MapToLower(MapObjectText(obj.name));
+    std::string type = ConvertToLowercase(ReadMapObjectText(obj.type));
+    std::string name = ConvertToLowercase(ReadMapObjectText(obj.name));
     return type == "wall" || type == "collision" || type == "collisions" || name == "wall" || name == "collision" ||
            name == "collisions";
 }
@@ -475,6 +492,7 @@ inline void AddTileCollisionWalls(const Map& map, FlorrBtMap& fbt_map)
 {
     for (const auto& layer : fbt_map.tile_layers)
     {
+        if (layer.role == EMapLayerRole::ShortcutCover) continue;
         for (int y = 0; y < layer.height; ++y)
         {
             for (int x = 0; x < layer.width; ++x)
@@ -496,6 +514,7 @@ inline void AddTileCollisionWalls(const Map& map, FlorrBtMap& fbt_map)
                 {
                     FlorrBtMap::Wall wall;
                     if (!BuildWallFromObject(tile->objectgroup->objects[object_index], wall)) continue;
+                    wall.category = layer.role == EMapLayerRole::Shortcut ? EWallQuery::Shortcut : EWallQuery::Solid;
                     TransformTileWall(wall, raw_gid, x, y, fbt_map.tile_width, fbt_map.tile_height, source_width,
                                       source_height);
                     wall.id = static_cast<int>(fbt_map.walls.size());
@@ -584,6 +603,7 @@ inline void AddJsonTileCollisionWalls(const std::filesystem::path& map_path, Flo
 
     for (const auto& layer : fbt_map.tile_layers)
     {
+        if (layer.role == EMapLayerRole::ShortcutCover) continue;
         for (int y = 0; y < layer.height; ++y)
         {
             for (int x = 0; x < layer.width; ++x)
@@ -596,6 +616,7 @@ inline void AddJsonTileCollisionWalls(const std::filesystem::path& map_path, Flo
                 const JsonTileCollision& def = it->second;
                 for (FlorrBtMap::Wall wall : def.walls)
                 {
+                    wall.category = layer.role == EMapLayerRole::Shortcut ? EWallQuery::Shortcut : EWallQuery::Solid;
                     TransformTileWall(wall, raw_gid, x, y, fbt_map.tile_width, fbt_map.tile_height, def.image_width,
                                       def.image_height);
                     wall.id = static_cast<int>(fbt_map.walls.size());
@@ -646,8 +667,8 @@ inline bool BuildPreciseSpawnFromJsonObject(const CJsonValue& obj, FlorrBtMap::P
     spawn = {};
     spawn.x = Scale512(JsonNumberField(obj, "x", 0.f));
     spawn.y = Scale512(JsonNumberField(obj, "y", 0.f));
-    spawn.type = MapToLower(JsonPropertyString(obj, "type"));
-    spawn.rarity = MapToLower(JsonPropertyString(obj, "rarity"));
+    spawn.type = ConvertToLowercase(JsonPropertyString(obj, "type"));
+    spawn.rarity = ConvertToLowercase(JsonPropertyString(obj, "rarity"));
     return !spawn.type.empty() && !spawn.rarity.empty();
 }
 
@@ -735,8 +756,8 @@ inline void AddJsonClassObjectLayers(const std::filesystem::path& map_path, Flor
 
         for (const CJsonValue& obj : objects->AsArray())
         {
-            std::string object_type = MapToLower(JsonStringField(obj, "class"));
-            if (object_type.empty()) object_type = MapToLower(JsonStringField(obj, "type"));
+    std::string object_type = ConvertToLowercase(JsonStringField(obj, "class"));
+    if (object_type.empty()) object_type = ConvertToLowercase(JsonStringField(obj, "type"));
             if (object_type.empty()) continue;
 
             if (object_type == "spawn_mobs")
@@ -818,6 +839,19 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
     }
 
     auto map_guard = std::unique_ptr<Map, decltype(&tmj_map_free)>(map, tmj_map_free);
+    if (map->width <= 0 || map->height <= 0 || map->tilewidth <= 0 || map->tileheight <= 0)
+    {
+        LOG_ERROR("maploader", "Map has invalid dimensions or tile size: " + path);
+        return nullptr;
+    }
+    constexpr std::uint64_t max_map_tiles = 64ull * 1024ull * 1024ull;
+    const std::uint64_t tile_count = static_cast<std::uint64_t>(map->width) *
+                                     static_cast<std::uint64_t>(map->height);
+    if (tile_count > max_map_tiles)
+    {
+        LOG_ERROR("maploader", "Map tile count exceeds the safe loader limit: " + path);
+        return nullptr;
+    }
     std::string info_msg = "Map file loaded (" + resolved_path.string() + "): " + std::to_string(map->width) + "x" +
                            std::to_string(map->height);
     LOG_INFO("maploader", info_msg);
@@ -835,6 +869,7 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
             layer.width = map->width;
             layer.height = map->height;
             layer.name = layer_ori.name ? layer_ori.name : "";
+            layer.role = MapLayerRole(layer.name);
 
             layer.tiles.resize(layer.width * layer.height);
 
@@ -861,8 +896,8 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
             for (size_t j = 0; j < layer_ori.object_count; ++j)
             {
                 const Object& obj = layer_ori.objects[j];
-                std::string layer_name = MapToLower(MapObjectText(layer_ori.name));
-                std::string object_type = MapToLower(MapObjectText(obj.type));
+                std::string layer_name = ConvertToLowercase(ReadMapObjectText(layer_ori.name));
+                std::string object_type = ConvertToLowercase(ReadMapObjectText(obj.type));
                 if (IsWallObject(layer_ori, obj))
                 {
                     FlorrBtMap::Wall wall;
@@ -883,10 +918,10 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
                         const Property& prop = obj.properties[p];
                         if (strcmp(prop.name, "density") == 0)
                         {
-                            MapPropertyFloat(prop, zone.density);
+                            ReadMapPropertyFloat(prop, zone.density);
                         } else if (strcmp(prop.name, "difficulty") == 0)
                         {
-                            MapPropertyFloat(prop, zone.difficulty);
+                            ReadMapPropertyFloat(prop, zone.difficulty);
                         } else if (strcmp(prop.name, "mobs") == 0)
                         {
                             if (prop.value_string)
@@ -929,8 +964,8 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
                     {
                         const Property& prop = obj.properties[p];
                         if (!prop.name || !prop.value_string) continue;
-                        if (strcmp(prop.name, "type") == 0) spawn.type = MapToLower(prop.value_string);
-                        else if (strcmp(prop.name, "rarity") == 0) spawn.rarity = MapToLower(prop.value_string);
+                        if (strcmp(prop.name, "type") == 0) spawn.type = ConvertToLowercase(prop.value_string);
+                        else if (strcmp(prop.name, "rarity") == 0) spawn.rarity = ConvertToLowercase(prop.value_string);
                     }
                     if (!spawn.type.empty() && !spawn.rarity.empty() && !HasPreciseSpawn(*fbt_map, spawn))
                         fbt_map->precise_spawns.push_back(std::move(spawn));
@@ -944,7 +979,7 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
                     cp.h = Scale512(static_cast<float>(obj.height));
                     cp.rotation = static_cast<float>(obj.rotation);
                     cp.level = 0;
-                    cp.name = MapObjectText(obj.name);
+                    cp.name = ReadMapObjectText(obj.name);
                     if (cp.name.empty() && object_type == "new_players") cp.name = "new_players";
                     cp.is_save = object_type == "checkpoint";
                     cp.is_respawn_area = object_type == "respawn_area";
@@ -954,7 +989,7 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
                         const Property& prop = obj.properties[p];
                         if (strcmp(prop.name, "level") == 0)
                         {
-                            MapPropertyInt(prop, cp.level);
+                            ReadMapPropertyInt(prop, cp.level);
                         }
                     }
                     fbt_map->checkpoints.push_back(cp);
@@ -964,7 +999,7 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
                     warp.x = Scale512(static_cast<float>(obj.x));
                     warp.y = Scale512(static_cast<float>(obj.y));
                     warp.radius = Scale512(static_cast<float>(std::max(obj.width, obj.height) * 0.5));
-                    warp.name = MapObjectText(obj.name);
+                    warp.name = ReadMapObjectText(obj.name);
                     warp.point = "";
                     warp.goal = "";
 
@@ -974,7 +1009,7 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
                         if (strcmp(prop.name, "radius") == 0)
                         {
                             float radius = 0.f;
-                            if (MapPropertyFloat(prop, radius)) warp.radius = Scale512(radius);
+                            if (ReadMapPropertyFloat(prop, radius)) warp.radius = Scale512(radius);
                         } else if ((strcmp(prop.name, "warp_point") == 0 || strcmp(prop.name, "from") == 0 ||
                                     strcmp(prop.name, "point") == 0) &&
                                    prop.value_string)

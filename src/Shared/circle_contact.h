@@ -50,6 +50,8 @@ inline bool ResolveCircleContact(Vector2f& lhs_pos, Vector2f& lhs_velocity, floa
     if (!std::isfinite(distance) || !std::isfinite(reach) || distance > reach + skin || reach <= 0.f) return false;
     if (!std::isfinite(lhs_inv_mass) || lhs_inv_mass < 0.f) lhs_inv_mass = 0.f;
     if (!std::isfinite(rhs_inv_mass) || rhs_inv_mass < 0.f) rhs_inv_mass = 0.f;
+    if (!std::isfinite(lhs_velocity.x) || !std::isfinite(lhs_velocity.y)) lhs_velocity = {};
+    if (!std::isfinite(rhs_velocity.x) || !std::isfinite(rhs_velocity.y)) rhs_velocity = {};
     const float largest = std::max(lhs_inv_mass, rhs_inv_mass);
     if (!(largest > 0.f)) return true;
     lhs_inv_mass /= largest;
@@ -90,12 +92,18 @@ inline bool ResolveCircleContact(Vector2f& lhs_pos, Vector2f& lhs_velocity, floa
 // relative to its requested motion without removing the slowing state.
 inline Vector2f StepVelocityTowards(Vector2f velocity, Vector2f desired, float acceleration, float dt)
 {
+    const bool finite_velocity = std::isfinite(velocity.x) && std::isfinite(velocity.y);
+    if (!finite_velocity) velocity = {};
     if (!(dt > 0.f) || !std::isfinite(dt) || !(acceleration > 0.f) || !std::isfinite(acceleration))
         return velocity;
+    const bool finite_desired = std::isfinite(desired.x) && std::isfinite(desired.y);
+    if (!finite_desired) return velocity;
     const Vector2f difference = desired - velocity;
     const float distance = std::hypot(difference.x, difference.y);
     const float step = acceleration * dt;
+    if (!std::isfinite(distance) || !std::isfinite(step)) return desired;
     if (distance <= step) return desired;
-    return velocity + difference * (step / distance);
+    const Vector2f result = velocity + difference * (step / distance);
+    return std::isfinite(result.x) && std::isfinite(result.y) ? result : desired;
 }
 } // namespace florrbt

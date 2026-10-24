@@ -47,8 +47,7 @@ struct SZoneCache
 
 struct SSingleSpawnZoneMob
 {
-    int id = -1;
-    std::uint64_t generation = 0;
+    SEntityHandle ref;
 };
 
 struct SPendingSpawn
@@ -642,24 +641,24 @@ struct COpenSpawnDirector::CImplementation
     {
         if (zone_index >= single_spawn_zone_mobs.size()) return false;
         const SSingleSpawnZoneMob& tracked = single_spawn_zone_mobs[zone_index];
-        if (tracked.id < 0 || tracked.generation == 0) return false;
+        if (!tracked.ref.IsValid()) return false;
 
-        CEntity* entity = world.GetEntity(tracked.id, tracked.generation);
+        CEntity* entity = world.ResolveEntity(tracked.ref);
         return entity && !entity->IsMarkedForDes() && !entity->IsDead();
     }
 
     void RememberSingleSpawnZoneMob(size_t zone_index, const CEntity* entity)
     {
         if (!entity || zone_index >= single_spawn_zone_mobs.size()) return;
-        single_spawn_zone_mobs[zone_index] = { entity->Id(), entity->Generation() };
+        single_spawn_zone_mobs[zone_index] = { entity->GetHandle() };
     }
 
     void ForgetSingleSpawnZoneMob(const CEntity* entity)
     {
-        if (!entity || entity->Id() < 0 || entity->Generation() == 0) return;
+        if (!entity || !entity->GetHandle().IsValid()) return;
         for (SSingleSpawnZoneMob& tracked : single_spawn_zone_mobs)
         {
-            if (tracked.id != entity->Id() || tracked.generation != entity->Generation()) continue;
+            if (!tracked.ref.RefersTo(entity->GetHandle())) continue;
             tracked = {};
         }
     }
@@ -722,6 +721,12 @@ struct COpenSpawnDirector::CImplementation
                                           ? std::min(active_zone_indices.size(),
                                                      std::max<size_t>(1, game_config::open_active_spawn_zones_per_tick))
                                           : 0;
+
+        // Cursors come from a persisted snapshot.  Normalize them against
+        // the current map-derived vectors before using them in arithmetic;
+        // this makes a corrupt/old cursor harmless even when the map changed
+        // between reloads.
+        if (!active_zone_indices.empty()) spawn_zone_cursor %= active_zone_indices.size();
 
         zone_work.reserve(zones_to_visit);
         for (size_t visit_index = 0; visit_index < zones_to_visit; ++visit_index)
@@ -837,6 +842,7 @@ struct COpenSpawnDirector::CImplementation
         // and Unique without waking/populating every idle zone on the server.
         const size_t rare_zones_to_visit =
             std::min(rare_zone_indices.size(), std::max<size_t>(1, game_config::open_rare_spawn_zones_per_tick));
+        if (!rare_zone_indices.empty()) rare_spawn_zone_cursor %= rare_zone_indices.size();
         rare_zone_work.reserve(rare_zones_to_visit);
         for (size_t visit_index = 0; visit_index < rare_zones_to_visit; ++visit_index)
         {
@@ -977,8 +983,10 @@ void COpenSpawnDirector::CaptureSnapshot(CSnapshotWriter& writer) const
     {
         CJsonOwner entry = MakeJsonObject();
         CSnapshotWriter entry_writer(entry.get());
-        entry_writer.Field("id", tracked.id);
-        entry_writer.UInt64("generation", tracked.generation);
+        entry_writer.Field("id", tracked.ref.id);
+        entry_writer.UInt64("generation", tracked.ref.generation);
+        entry_writer.Field("world_id", tracked.ref.world_id);
+        entry_writer.UInt64("world_instance_generation", tracked.ref.world_instance_generation);
         AppendJson(single_spawn_mobs.get(), entry.release());
     }
     writer.Node("single_spawn_zone_mobs", single_spawn_mobs.release());
@@ -987,6 +995,7 @@ void COpenSpawnDirector::CaptureSnapshot(CSnapshotWriter& writer) const
 bool COpenSpawnDirector::RestoreSnapshot(const CSnapshotReader& reader, std::string& error)
 {
     m_impl->count = reader.Float("spawn_countdown", game_config::open_initial_spawn_delay);
+    if (!std::isfinite(m_impl->count)) m_impl->count = game_config::open_initial_spawn_delay;
     m_impl->spawn_zone_cursor = static_cast<size_t>(reader.UInt64("spawn_zone_cursor"));
     // Accept snapshots written before the inactive rare-zone cursor was
     // introduced; the old cursor has no semantic state to preserve.
@@ -1006,12 +1015,17 @@ bool COpenSpawnDirector::RestoreSnapshot(const CSnapshotReader& reader, std::str
     m_impl->single_spawn_zone_mobs.clear();
     if (const json_t* entries = reader.Node("single_spawn_zone_mobs"); json_is_array(entries))
     {
-        const size_t count = json_array_size(entries);
+        const size_t count = std::min(json_array_size(entries), static_cast<size_t>(65536));
         m_impl->single_spawn_zone_mobs.reserve(count);
         for (size_t i = 0; i < count; ++i)
         {
             CSnapshotReader entry(json_array_get(entries, i));
-            m_impl->single_spawn_zone_mobs.push_back({ entry.Int("id", -1), entry.UInt64("generation") });
+            SEntityHandle ref;
+            ref.id = entry.Int("id", -1);
+            ref.generation = entry.UInt64("generation");
+            ref.world_id = entry.UInt32("world_id");
+            ref.world_instance_generation = entry.UInt64("world_instance_generation");
+            if (ref.id >= 0) m_impl->single_spawn_zone_mobs.push_back({ ref });
         }
     }
     return true;

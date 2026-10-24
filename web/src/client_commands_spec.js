@@ -175,6 +175,12 @@ export const clientCommandSpecs = Object.freeze([
     args: "reset_target config",
     help: "ui.console.help.reset",
   },
+  {
+    name: "skill",
+    params: "[skill index]",
+    args: "number",
+    help: "ui.console.help.skill",
+  },
 ]);
 
 export function clientCommandNames() {

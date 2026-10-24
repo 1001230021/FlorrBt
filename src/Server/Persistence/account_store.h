@@ -213,6 +213,9 @@ class CAccountDataStore
     // Sandbox keys are filtered out from disk saves, so in-world changes
     // never leak back into the persistent account.
     static bool SandboxCloneAccount(const std::string& sandbox_key, const std::string& source_account);
+    static bool CaptureSandboxAccount(const std::string& sandbox_key, SPlayerAccount& state);
+    static bool RestoreSandboxAccount(const std::string& sandbox_key, const SPlayerAccount& state);
+    static void RemoveSandboxAccount(const std::string& sandbox_key);
 
   private:
     static bool CommitRegistrationInternal(const std::string& name, const std::string& password_hash,

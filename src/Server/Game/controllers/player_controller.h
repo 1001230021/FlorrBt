@@ -17,6 +17,7 @@ class CPlayerController : public IController
     static constexpr std::uint32_t MAX_INPUT_DELAY_TICKS = 8;
 
     void OnTick(CMobBase* mob, float dt) override;
+    bool IsPlayerControlled() const override { return true; }
     std::string_view SnapshotKey() const override { return "controller.player"; }
     void CaptureSnapshot(CSnapshotWriter& writer) const override;
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
@@ -31,9 +32,11 @@ class CPlayerController : public IController
         std::uint64_t target_tick = 0;
         ClientOperate movement;
         ClientOperate chores;
+        ClientOperate skill;
         bool occupied = false;
         bool has_movement = false;
         bool has_chores = false;
+        bool has_skill = false;
         std::optional<std::uint32_t> movement_sequence;
         std::optional<std::uint32_t> chores_sequence;
     };

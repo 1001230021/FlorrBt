@@ -35,7 +35,18 @@ enum class EModPetalType : int
     // --- ant_kingdom controller (EOU) ---
     EouPheromone = 70,
 
-    // 71+ are native petals (petal_type.h) - never allocate them here.
+    // --- open-world controller --- custom content keeps its pinned wire ids,
+    // but is declared here instead of being mixed into EPetalType.
+    Magnet = 71,
+    Linker,
+    Orb,
+    MagicLeaf,
+    MagicStinger,
+    MagicMissile,
+    MagicEye,
+    MagicBubble,
+    MagicLightning,
+    MagicCactus,
 };
 
 struct SModPetalTypeName
@@ -47,10 +58,20 @@ struct SModPetalTypeName
 // Names keep the exact PascalCase spelling the entries had inside EPetalType
 // so logs, client PETAL_NAMES output, and generated snake_case slugs
 // (brush / eraser / eou_pheromone) stay byte-identical.
-inline constexpr std::array<SModPetalTypeName, 3> mod_petal_type_names = { {
+inline constexpr std::array<SModPetalTypeName, 13> mod_petal_type_names = { {
     { static_cast<int>(EModPetalType::Brush), "Brush" },
     { static_cast<int>(EModPetalType::Eraser), "Eraser" },
     { static_cast<int>(EModPetalType::EouPheromone), "EouPheromone" },
+    { static_cast<int>(EModPetalType::Magnet), "Magnet" },
+    { static_cast<int>(EModPetalType::Linker), "Linker" },
+    { static_cast<int>(EModPetalType::Orb), "Orb" },
+    { static_cast<int>(EModPetalType::MagicLeaf), "MagicLeaf" },
+    { static_cast<int>(EModPetalType::MagicStinger), "MagicStinger" },
+    { static_cast<int>(EModPetalType::MagicMissile), "MagicMissile" },
+    { static_cast<int>(EModPetalType::MagicEye), "MagicEye" },
+    { static_cast<int>(EModPetalType::MagicBubble), "MagicBubble" },
+    { static_cast<int>(EModPetalType::MagicLightning), "MagicLightning" },
+    { static_cast<int>(EModPetalType::MagicCactus), "MagicCactus" },
 } };
 
 inline constexpr std::string_view GetModPetalTypeName(int type)
@@ -73,6 +94,26 @@ inline bool MatchModPetalTypeAlias(std::string_view text, int type)
         return text == "eraser" || text == "ers";
     case EModPetalType::EouPheromone:
         return text == "eou_pheromone" || text == "pheromone" || text == "phe";
+    case EModPetalType::Magnet:
+        return text == "magnet" || text == "mgt";
+    case EModPetalType::Linker:
+        return text == "linker" || text == "lnk";
+    case EModPetalType::Orb:
+        return text == "orb" || text == "magic_orb" || text == "magicorb";
+    case EModPetalType::MagicLeaf:
+        return text == "magic_leaf" || text == "magicleaf" || text == "mleaf";
+    case EModPetalType::MagicStinger:
+        return text == "magic_stinger" || text == "magicstinger" || text == "mstinger";
+    case EModPetalType::MagicMissile:
+        return text == "magic_missile" || text == "magicmissile" || text == "mmissile";
+    case EModPetalType::MagicEye:
+        return text == "magic_eye" || text == "magiceye" || text == "meye";
+    case EModPetalType::MagicBubble:
+        return text == "magic_bubble" || text == "magicbubble" || text == "mbubble";
+    case EModPetalType::MagicLightning:
+        return text == "magic_lightning" || text == "magiclightning" || text == "mlightning";
+    case EModPetalType::MagicCactus:
+        return text == "magic_cactus" || text == "magiccactus" || text == "mcactus";
     default:
         return false;
     }

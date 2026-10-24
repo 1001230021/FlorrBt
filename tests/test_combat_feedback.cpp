@@ -8,7 +8,7 @@ TEST(CombatFeedbackRoundTripAndPackedSize)
     msg.type = ServerMessage::Type::CombatFeedback;
     msg.combat_hits.push_back({ 42, { -10.5f, 20.25f }, 36.f, 120.5f, 1, 7, 6 });
     std::vector<uint8_t> bytes(ServerMessage::GetPackedSize(msg));
-    CHECK(bytes.size() == 21);
+    CHECK(bytes.size() == 2 + ServerMessage::combat_hit_size);
     CHECK(ServerMessage::pack(msg, bytes.data()) == bytes.size());
     const auto read = ServerMessage::parse(bytes.data(), bytes.size());
     CHECK(read.type == msg.type);
@@ -24,7 +24,7 @@ TEST(CombatFeedbackRejectsInvalidAmountsAndBoundsTheBatch)
     ServerMessage msg;
     msg.type = ServerMessage::Type::CombatFeedback;
     msg.combat_hits.resize(100);
-    CHECK(ServerMessage::GetPackedSize(msg) == 2 + 64 * 19);
+    CHECK(ServerMessage::GetPackedSize(msg) == 2 + 64 * ServerMessage::combat_hit_size);
     std::vector<uint8_t> bytes(ServerMessage::GetPackedSize(msg));
     msg.combat_hits[0].amount = std::numeric_limits<float>::quiet_NaN();
     ServerMessage::pack(msg, bytes.data());

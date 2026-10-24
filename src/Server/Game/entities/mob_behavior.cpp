@@ -22,6 +22,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace
@@ -29,6 +30,47 @@ namespace
 using CBasicMob = CMob<SMobStats>;
 using CAttackableBasicMob = CAttackableMob<SMobStats>;
 using CSkillCasterBasicMob = CSkillCasterMob<SMobStats>;
+
+enum class EFireflyLarvaVisualVariant : std::uint8_t
+{
+    Head = 0,
+    Thorax = 1,
+    Tail = 7,
+};
+
+void CaptureRuntimeHandle(CSnapshotWriter& writer, std::string_view prefix, const SEntityHandle& handle)
+{
+    const std::string base(prefix);
+    writer.Field(base + "_id", handle.id);
+    writer.UInt64(base + "_generation", handle.generation);
+    writer.Field(base + "_world_id", handle.world_id);
+    writer.UInt64(base + "_world_instance_generation", handle.world_instance_generation);
+}
+
+SEntityHandle RestoreRuntimeHandle(const CSnapshotReader& reader, std::string_view prefix, CGameWorld* world)
+{
+    const std::string base(prefix);
+    SEntityHandle handle;
+    handle.id = reader.Int(base + "_id", -1);
+    handle.generation = reader.UInt64(base + "_generation");
+    handle.world_id = reader.UInt32(base + "_world_id");
+    handle.world_instance_generation = reader.UInt64(base + "_world_instance_generation");
+
+    // Older runtime snapshots only stored id (or id + generation). Resolve an
+    // id-only entry once against the restored world so it cannot remain an
+    // unsafe reference after the world has reused an id.
+    const bool has_world_identity = reader.Has(base + "_world_id") && reader.Has(base + "_world_instance_generation");
+    if (world && handle.IsValid() && !has_world_identity)
+    {
+        if (CEntity* entity = world->GetEntity(handle.id, handle.generation)) handle = entity->GetHandle();
+        else handle = {};
+    }
+    else if (!handle.IsValid() && world && handle.id >= 0 && !has_world_identity)
+    {
+        if (CEntity* entity = world->GetEntity(handle.id)) handle = entity->GetHandle();
+    }
+    return handle;
+}
 
 float HornetMissileSpeed(ERarity rarity)
 {
@@ -57,6 +99,8 @@ SMobStats ScaleMobStats(SMobStats stats, ERarity rarity)
     stats.radius *= radius_scale;
     stats.horizon *= horizon_scale;
     stats.mass *= mass_scale;
+    if (std::isfinite(stats.acceleration) && stats.acceleration > 0.f)
+        stats.acceleration *= std::max(0.f, game_config::mob_acceleration_multiplier);
     return stats;
 }
 
@@ -112,6 +156,8 @@ SMobStats TermiteStats(SMobStats stats)
 SFlowerStats ScaleFlowerStats(SFlowerStats stats, ERarity rarity)
 {
     static_cast<SMobStats&>(stats) = ScaleMobStats(stats, rarity);
+    if (std::isfinite(stats.acceleration) && stats.acceleration > 0.f)
+        stats.acceleration *= std::max(0.f, game_config::flower_acceleration_multiplier);
     return stats;
 }
 
@@ -135,10 +181,18 @@ float DotProduct(florrbt::Vector2f lhs, florrbt::Vector2f rhs) { return lhs.x * 
 
 florrbt::Vector2f NormalizeOrZero(florrbt::Vector2f value)
 {
+    if (!std::isfinite(value.x) || !std::isfinite(value.y)) return { 0.f, 0.f };
     float len = Length(value);
-    if (len <= game_config::entity_collision_epsilon) return { 0.f, 0.f };
+    if (!std::isfinite(len) || len <= game_config::entity_collision_epsilon) return { 0.f, 0.f };
     return value / len;
 }
+
+float FiniteNonNegative(float value, float fallback = 0.f)
+{
+    return std::isfinite(value) ? std::max(0.f, value) : fallback;
+}
+
+constexpr std::size_t max_runtime_snapshot_entries = 4096;
 
 florrbt::Vector2f GetEntityVelocity(CEntity* entity)
 {
@@ -197,9 +251,9 @@ void SendDummyDamageReport(uint32_t player_id, float total_damage, float dps)
     if (!player || !player->IsAuthenticated()) return;
 
     std::string message = "Dummy total dmg: " + FormatDummyNumber(total_damage) + " | DPS: " + FormatDummyNumber(dps);
-const CServer::SChatEntry chat = server->SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Dummy", message,
+const SChatEntry chat = server->Extensions().Globals().Find<IChatService>()->Submit(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Dummy", message,
                                                      static_cast<int>(player->GetId()));
-    if (!chat.message.empty()) network->SendChatToPlayer(*player, chat);
+    if (!chat.message.empty()) server->Extensions().Globals().Find<IChatService>()->SendTo(*player, chat);
 }
 
 float DummyInitialReportDelay(const CEntity* attacker)
@@ -392,52 +446,7 @@ class CBeeMob : public CBasicMob
     void MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius,
                      float full_speed_distance) override
     {
-        const SMobStats* stats = GetFinalStats();
-        if (!stats) return;
-
-        m_wave_timer += dt;
-
-        float speed_multiplier = GetMobMovementSpeedMultiplier(this);
-        float max_velocity = stats->max_velocity * speed_multiplier;
-        // Slow states affect the target speed, never the mob's own steering
-        // acceleration.
-        const float acceleration = stats->acceleration;
-
-        // Movement-target states (hallucination distortion) must apply here
-        // too: this override replaces CMobBase::MoveTowards, which is where
-        // the hook normally runs.
-        const florrbt::Vector2f effective_target_pos = ApplyMovementTargetStates(target_pos);
-        florrbt::Vector2f delta = effective_target_pos - Pos();
-        float len = Length(delta);
-        const bool analog = std::isfinite(full_speed_distance) && full_speed_distance > 0.f;
-        const float stop_distance = analog && target_radius < 0.f ? 0.f : Radius() + std::max(0.f, target_radius);
-        if (len <= stop_distance)
-        {
-            m_vel = florrbt::StepVelocityTowards(m_vel, {}, acceleration, dt);
-            if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = { 0.f, 0.f };
-            return;
-        }
-
-        if (analog) max_velocity *= std::clamp((len - stop_distance) / full_speed_distance, 0.f, 1.f);
-
-        florrbt::Vector2f forward = delta / len;
-        florrbt::Vector2f left(-forward.y, forward.x);
-        float near_factor =
-            std::clamp((len - Radius()) / std::max(game_config::mob_bee_wave_near_range_min,
-                                                   Radius() * game_config::mob_bee_wave_near_range_radius_multiplier),
-                       game_config::mob_bee_wave_near_factor_min, 1.f);
-        float wave = std::sin(m_wave_timer * game_config::mob_bee_wave_frequency) * game_config::mob_bee_wave_strength *
-                     near_factor;
-        florrbt::Vector2f desired_dir = forward + left * wave;
-        float desired_len = Length(desired_dir);
-        if (desired_len <= game_config::entity_collision_epsilon) desired_dir = forward;
-        else desired_dir /= desired_len;
-
-        FacingAngle() = std::atan2(desired_dir.y, desired_dir.x);
-        HasFacing() = true;
-
-        florrbt::Vector2f desired_vel = desired_dir * max_velocity;
-        m_vel = florrbt::StepVelocityTowards(m_vel, desired_vel, acceleration, dt);
+        MoveTowardsWithWave(target_pos, dt, target_radius, full_speed_distance, m_wave_timer);
     }
 
   private:
@@ -445,7 +454,7 @@ class CBeeMob : public CBasicMob
 };
 
 // Firefly: bee-style wave flight, retaliates with chain lightning when damaged.
-class CFireflyMob : public CBasicMob
+class CFireflyMob : public CBasicMob, public ILightningBoostSource
 {
   public:
     using CBasicMob::CBasicMob;
@@ -462,8 +471,9 @@ class CFireflyMob : public CBasicMob
     {
         if (!CBasicMob::RestoreRuntimeSnapshot(reader, version, error)) return false;
         m_wave_timer = reader.Float("wave_timer", m_wave_timer);
-        m_lightning_cooldown = reader.Float("lightning_cooldown", m_lightning_cooldown);
-        m_active_lightning_cooldown = reader.Float("active_lightning_cooldown", m_active_lightning_cooldown);
+        m_lightning_cooldown = FiniteNonNegative(reader.Float("lightning_cooldown", m_lightning_cooldown));
+        m_active_lightning_cooldown =
+            FiniteNonNegative(reader.Float("active_lightning_cooldown", m_active_lightning_cooldown));
         return true;
     }
 
@@ -484,52 +494,7 @@ class CFireflyMob : public CBasicMob
     void MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius,
                      float full_speed_distance) override
     {
-        const SMobStats* stats = GetFinalStats();
-        if (!stats) return;
-
-        m_wave_timer += dt;
-
-        float speed_multiplier = GetMobMovementSpeedMultiplier(this);
-        float max_velocity = stats->max_velocity * speed_multiplier;
-        // Slow states affect the target speed, never the mob's own steering
-        // acceleration.
-        const float acceleration = stats->acceleration;
-
-        // Movement-target states (hallucination distortion) must apply here
-        // too: this override replaces CMobBase::MoveTowards, which is where
-        // the hook normally runs.
-        const florrbt::Vector2f effective_target_pos = ApplyMovementTargetStates(target_pos);
-        florrbt::Vector2f delta = effective_target_pos - Pos();
-        float len = Length(delta);
-        const bool analog = std::isfinite(full_speed_distance) && full_speed_distance > 0.f;
-        const float stop_distance = analog && target_radius < 0.f ? 0.f : Radius() + std::max(0.f, target_radius);
-        if (len <= stop_distance)
-        {
-            m_vel = florrbt::StepVelocityTowards(m_vel, {}, acceleration, dt);
-            if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = { 0.f, 0.f };
-            return;
-        }
-
-        if (analog) max_velocity *= std::clamp((len - stop_distance) / full_speed_distance, 0.f, 1.f);
-
-        florrbt::Vector2f forward = delta / len;
-        florrbt::Vector2f left(-forward.y, forward.x);
-        float near_factor =
-            std::clamp((len - Radius()) / std::max(game_config::mob_bee_wave_near_range_min,
-                                                   Radius() * game_config::mob_bee_wave_near_range_radius_multiplier),
-                       game_config::mob_bee_wave_near_factor_min, 1.f);
-        float wave = std::sin(m_wave_timer * game_config::mob_bee_wave_frequency) * game_config::mob_bee_wave_strength *
-                     near_factor;
-        florrbt::Vector2f desired_dir = forward + left * wave;
-        float desired_len = Length(desired_dir);
-        if (desired_len <= game_config::entity_collision_epsilon) desired_dir = forward;
-        else desired_dir /= desired_len;
-
-        FacingAngle() = std::atan2(desired_dir.y, desired_dir.x);
-        HasFacing() = true;
-
-        florrbt::Vector2f desired_vel = desired_dir * max_velocity;
-        m_vel = florrbt::StepVelocityTowards(m_vel, desired_vel, acceleration, dt);
+        MoveTowardsWithWave(target_pos, dt, target_radius, full_speed_distance, m_wave_timer);
     }
 
     void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
@@ -613,6 +578,9 @@ class CFireflyMob : public CBasicMob
                std::pow(3.f, static_cast<float>(GetRaritySortRank(rarity) - 1.f));
     }
 
+    float LightningBoostDamage() const override { return FireflyLightningDamage(GetRarity()); }
+    float LightningBoostDamageAtRarity(ERarity rarity) const override { return FireflyLightningDamage(rarity); }
+
     static int FireflyLightningBounces(ERarity rarity)
     {
         return game_config::mob_firefly_lightning_bounces +
@@ -625,23 +593,280 @@ class CFireflyMob : public CBasicMob
     float m_active_lightning_cooldown = 0.f;
 };
 
+class CJellyfishMob : public CBasicMob, public ILightningBoostSource
+{
+  public:
+    using CBasicMob::CBasicMob;
+
+    float LightningBoostDamage() const override { return LightningBoostDamageAtRarity(GetRarity()); }
+    float LightningBoostDamageAtRarity(ERarity rarity) const override
+    {
+        const int level = std::max(1, static_cast<int>(GetRaritySortRank(rarity)));
+        return std::max(0.f, game_config::mob_jellyfish_lightning_damage) *
+               std::pow(std::max(0.f, game_config::mob_jellyfish_lightning_damage_scale),
+                        static_cast<float>(level - 1));
+    }
+};
+
+float ScaleFireflyLarvaDamage(float base, ERarity rarity, float rarity_scale)
+{
+    return std::max(0.f, base) *
+           std::pow(std::max(0.f, rarity_scale), std::max(0.f, GetRaritySortRank(rarity) - 1.f));
+}
+
+class CFireflyLarvaHeadMob final : public CMultiSegmentHeadMob<SMobStats>,
+                                   public IAttackableMob,
+                                   public ISkillCasterMob,
+                                   public ILightningBoostSource
+{
+  public:
+    using CMultiSegmentHeadMob<SMobStats>::CMultiSegmentHeadMob;
+
+    void Tick(float dt) override
+    {
+        CMultiSegmentHeadMob<SMobStats>::Tick(dt);
+        if (IsDead() || IsMarkedForDes() || !GameWorld())
+        {
+            ReleaseGrab();
+            return;
+        }
+
+        if (!m_grabbed_target_ref.IsValid())
+        {
+            m_attacking = false;
+            return;
+        }
+
+        CEntity* target = ResolveGrabbedTarget();
+        if (!target || !IsGrabWithinBreakDistance(*target))
+        {
+            ReleaseGrab();
+            return;
+        }
+
+        m_attacking = true;
+        HoldGrabbedTarget(*target, dt);
+        m_poison_refresh_timer -= std::max(0.f, dt);
+        if (m_poison_refresh_timer <= 0.f)
+        {
+            const float refresh = std::max(game_config::server_fixed_dt,
+                                           game_config::mob_firefly_larva_grab_poison_refresh_seconds);
+            m_poison_refresh_timer = refresh;
+            auto* target_mob = dynamic_cast<CMobBase*>(target);
+            auto poison = std::make_unique<CPoisonState>(
+                target_mob, refresh * 1.5f,
+                ScaleFireflyLarvaDamage(game_config::mob_firefly_larva_poison_damage_per_second, GetRarity(),
+                                        game_config::mob_firefly_larva_poison_damage_rarity_scale),
+                GetRarity(), this);
+            if (poison->IsValid()) target_mob->AddState(std::move(poison));
+        }
+    }
+
+    bool IsAttacking() const override { return m_attacking; }
+    bool IsDefending() const override { return false; }
+    void SetAttacking(bool attacking) override { m_attacking = attacking; }
+    void SetDefending(bool) override {}
+    bool TryAttack(CEntity* target) override { return TryCastSkill(grab_skill, target); }
+
+    int GetSkillCount() const override { return 1; }
+
+    bool CanCastSkill(int skill_index) const override
+    {
+        if (skill_index != grab_skill || !GameWorld() || IsDead() || IsMarkedForDes()) return false;
+        if (HasState<CNullificationState>()) return false;
+        CEntity* target = ResolveGrabbedTarget();
+        return !target || !IsGrabWithinBreakDistance(*target);
+    }
+
+    bool TryCastSkill(int skill_index, CEntity* target) override
+    {
+        if (!CanCastSkill(skill_index)) return false;
+
+        // A stale or overextended handle must not block a fresh cast. Clearing
+        // it here keeps the skill valid even when invoked before this mob's
+        // maintenance Tick (for example by its controller or /skill).
+        if (m_grabbed_target_ref.IsValid()) ReleaseGrab();
+
+        CEntity* selected = FindGrabTarget(target);
+        if (!selected) return false;
+
+        m_grabbed_target_ref = selected->GetHandle();
+        m_poison_refresh_timer = 0.f;
+        m_attacking = true;
+        return true;
+    }
+
+    bool IsSkillBusy() const override
+    {
+        CEntity* target = ResolveGrabbedTarget();
+        return target && IsGrabWithinBreakDistance(*target);
+    }
+
+    uint8_t GetWindupSkillId() const override { return 0; }
+
+    float LightningBoostDamage() const override { return LightningBoostDamageAtRarity(GetRarity()); }
+    float LightningBoostDamageAtRarity(ERarity rarity) const override
+    {
+        return ScaleFireflyLarvaDamage(game_config::mob_firefly_larva_lightning_damage, rarity,
+                                       game_config::mob_damage_scale_base);
+    }
+
+    void CaptureRuntimeSnapshot(CSnapshotWriter& writer) const override
+    {
+        CMultiSegmentHeadMob<SMobStats>::CaptureRuntimeSnapshot(writer);
+        CaptureRuntimeHandle(writer, "grabbed_target", m_grabbed_target_ref);
+        writer.Field("poison_refresh_timer", m_poison_refresh_timer);
+    }
+
+    bool RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override
+    {
+        if (!CMultiSegmentHeadMob<SMobStats>::RestoreRuntimeSnapshot(reader, version, error)) return false;
+        m_grabbed_target_ref = RestoreRuntimeHandle(reader, "grabbed_target", GameWorld());
+        m_poison_refresh_timer = FiniteNonNegative(reader.Float("poison_refresh_timer", 0.f));
+        m_attacking = m_grabbed_target_ref.IsValid();
+        return true;
+    }
+
+  private:
+    static constexpr int grab_skill = 0;
+
+    bool IsValidGrabTarget(const CEntity* target) const
+    {
+        const auto* mob = dynamic_cast<const CMobBase*>(target);
+        if (!mob || mob == this || mob->GameWorld() != GameWorld()) return false;
+        if (mob->IsDead() || mob->IsMarkedForDes() || !mob->CanCollide()) return false;
+        if (CheckTeam(Team(), mob->Team()) || ShareMultiSegmentAssembly(this, mob)) return false;
+        if (HasState<CNullificationState>() || mob->HasState<CNullificationState>()) return false;
+        return true;
+    }
+
+    CEntity* ResolveGrabbedTarget() const
+    {
+        CEntity* target = GameWorld() ? GameWorld()->ResolveEntity(m_grabbed_target_ref) : nullptr;
+        return IsValidGrabTarget(target) ? target : nullptr;
+    }
+
+    bool IsGrabWithinContactDistance(const CEntity& target) const
+    {
+        const float contact = Radius() + target.Radius() +
+                              Radius() * std::max(0.f, game_config::mob_firefly_larva_grab_contact_radius_multiplier);
+        return DistanceSq(Pos(), target.Pos()) <= contact * contact;
+    }
+
+    bool IsGrabWithinBreakDistance(const CEntity& target) const
+    {
+        const float break_distance = Radius() + target.Radius() +
+                                     Radius() * std::max(0.f, game_config::mob_firefly_larva_grab_break_radius_multiplier);
+        return DistanceSq(Pos(), target.Pos()) <= break_distance * break_distance;
+    }
+
+    CEntity* FindGrabTarget(CEntity* preferred) const
+    {
+        if (IsValidGrabTarget(preferred) && IsGrabWithinContactDistance(*preferred)) return preferred;
+        if (!GameWorld()) return nullptr;
+
+        CEntity* best = nullptr;
+        float best_distance_sq = std::numeric_limits<float>::max();
+        const float query_radius = Radius() + std::max(0.f, game_config::mob_firefly_larva_grab_scan_radius);
+        GameWorld()->GetSpatialGrid().ForEachInRange(Pos(), query_radius, [&](CEntity* candidate) {
+            if (!IsValidGrabTarget(candidate) || !IsGrabWithinContactDistance(*candidate)) return;
+            const float distance_sq = DistanceSq(Pos(), candidate->Pos());
+            if (distance_sq >= best_distance_sq) return;
+            best = candidate;
+            best_distance_sq = distance_sq;
+        });
+        return best;
+    }
+
+    void HoldGrabbedTarget(CEntity& target, float dt)
+    {
+        const florrbt::Vector2f forward{ std::cos(FacingAngle()), std::sin(FacingAngle()) };
+        const florrbt::Vector2f desired = Pos() + forward * (Radius() + target.Radius() * 0.35f);
+        const florrbt::Vector2f correction = desired - target.Pos();
+        const float follow = std::clamp(std::max(0.f, dt) * 8.f, 0.f, 0.45f);
+        target.Pos() += correction * follow;
+        if (auto* mob = dynamic_cast<CMobBase*>(&target))
+            mob->m_vel = mob->m_vel * (1.f - follow * 0.5f) + m_vel * (follow * 0.5f);
+    }
+
+    void ReleaseGrab()
+    {
+        m_grabbed_target_ref = {};
+        m_poison_refresh_timer = 0.f;
+        m_attacking = false;
+    }
+
+    SEntityHandle m_grabbed_target_ref;
+    float m_poison_refresh_timer = 0.f;
+    bool m_attacking = false;
+};
+
+class CFireflyLarvaBodyMob final : public CMultiSegmentBodyMob<SMobStats>, public ILightningBoostSource
+{
+  public:
+    using CMultiSegmentBodyMob<SMobStats>::CMultiSegmentBodyMob;
+
+    float LightningBoostDamage() const override { return LightningBoostDamageAtRarity(GetRarity()); }
+    float LightningBoostDamageAtRarity(ERarity rarity) const override
+    {
+        const float base = IsTailSegment() ? game_config::mob_firefly_larva_tail_lightning_damage
+                                           : game_config::mob_firefly_larva_lightning_damage;
+        return ScaleFireflyLarvaDamage(base, rarity, game_config::mob_damage_scale_base);
+    }
+
+  private:
+    bool IsTailSegment() const
+    {
+        const CMobBase* root = ResolveRoot();
+        const CMobPrototype* prototype = root ? FindMobPrototype(root->GetMobType()) : nullptr;
+        return root && prototype && SegmentIndex() == prototype->ResolveSegmentCount(root->GetRarity());
+    }
+};
+
 class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
 {
   public:
     using CSkillCasterBasicMob::CSkillCasterBasicMob;
+    std::uint32_t RuntimeSnapshotVersion() const override { return 2; }
+    CPickupController* GetPickupController() override { return &m_skill_actions; }
+    const CPickupController* GetPickupController() const override { return &m_skill_actions; }
+    bool IsMovementControlledBySkill() const override { return m_skill_tick_owns_movement || m_skill_actions.IsActive(); }
+    void OnBeforeRemoved(EEntityRemovalReason) override { m_skill_actions.Cancel(this); }
+    void OnWorldTransferCommitted() override
+    {
+        // Orbit centers, grab targets and queued shots belong to the source
+        // world. Keep cooldowns, but do not replay those actions at arrival.
+        m_skill_actions.Cancel(this);
+        m_skill_tick_owns_movement = false;
+        m_attack_windup_timer = 0.f;
+        m_attack_target_ref = {};
+        m_has_attack_direction = false;
+        // Attached ammunition is part of the transfer graph. Its identity
+        // was remapped at commit; do not consume or reload it a second time.
+    }
+    void RemapTransferredReferences(TEntityHandleRemap mapping) noexcept override
+    {
+        CSkillCasterBasicMob::RemapTransferredReferences(mapping);
+        m_loaded_missile_ref = RemapTransferredHandle(m_loaded_missile_ref, mapping);
+        m_attack_target_ref = RemapTransferredHandle(m_attack_target_ref, mapping);
+    }
+    bool RestoreSkillActions(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override
+    {
+        return m_skill_actions.RestoreSnapshot(reader, version, error);
+    }
 
     void CaptureRuntimeSnapshot(CSnapshotWriter& writer) const override
     {
         writer.Field("attack_timer", m_attack_timer);
         writer.Field("attack_windup_timer", m_attack_windup_timer);
         writer.Field("attack_recovery_timer", m_attack_recovery_timer);
-        writer.Field("special_windup_timer", m_special_windup_timer);
         writer.Field("missile_reload_timer", m_missile_reload_timer);
-        writer.Field("special_windup_id", static_cast<int>(m_special_windup_id));
-        writer.Field("attack_target_id", m_attack_target_id);
-        writer.UInt64("attack_target_generation", m_attack_target_generation);
-        writer.Field("loaded_missile_id", m_loaded_missile_id);
-        writer.UInt64("loaded_missile_generation", m_loaded_missile_generation);
+        CJsonOwner actions = MakeJsonObject();
+        CSnapshotWriter action_writer(actions.get());
+        m_skill_actions.CaptureSnapshot(action_writer);
+        writer.Node("special_actions", actions.release());
+        CaptureRuntimeHandle(writer, "attack_target", m_attack_target_ref);
+        CaptureRuntimeHandle(writer, "loaded_missile", m_loaded_missile_ref);
         writer.Field("attack_direction", m_attack_direction);
         writer.Field("has_attack_direction", m_has_attack_direction);
         writer.Field("missile_generation_suppressed", m_missile_generation_suppressed);
@@ -650,16 +875,14 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
     bool RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override
     {
         if (!CSkillCasterBasicMob::RestoreRuntimeSnapshot(reader, version, error)) return false;
-        m_attack_timer = reader.Float("attack_timer", m_attack_timer);
-        m_attack_windup_timer = reader.Float("attack_windup_timer", m_attack_windup_timer);
-        m_attack_recovery_timer = reader.Float("attack_recovery_timer", m_attack_recovery_timer);
-        m_special_windup_timer = reader.Float("special_windup_timer", m_special_windup_timer);
-        m_missile_reload_timer = reader.Float("missile_reload_timer", m_missile_reload_timer);
-        m_special_windup_id = static_cast<std::uint8_t>(std::clamp(reader.Int("special_windup_id"), 0, 255));
-        m_attack_target_id = reader.Int("attack_target_id", m_attack_target_id);
-        m_attack_target_generation = reader.UInt64("attack_target_generation", m_attack_target_generation);
-        m_loaded_missile_id = reader.Int("loaded_missile_id", m_loaded_missile_id);
-        m_loaded_missile_generation = reader.UInt64("loaded_missile_generation", m_loaded_missile_generation);
+        m_attack_timer = FiniteNonNegative(reader.Float("attack_timer", m_attack_timer));
+        m_attack_windup_timer = FiniteNonNegative(reader.Float("attack_windup_timer", m_attack_windup_timer));
+        m_attack_recovery_timer = FiniteNonNegative(reader.Float("attack_recovery_timer", m_attack_recovery_timer));
+        m_missile_reload_timer = FiniteNonNegative(reader.Float("missile_reload_timer", m_missile_reload_timer));
+        if (reader.Has("special_actions") && !RestoreSkillActions(CSnapshotReader(reader.Node("special_actions")), 1, error))
+            return false;
+        m_attack_target_ref = RestoreRuntimeHandle(reader, "attack_target", GameWorld());
+        m_loaded_missile_ref = RestoreRuntimeHandle(reader, "loaded_missile", GameWorld());
         m_attack_direction = reader.Vector2("attack_direction", m_attack_direction);
         m_has_attack_direction = reader.Bool("has_attack_direction", m_has_attack_direction);
         m_missile_generation_suppressed =
@@ -671,7 +894,7 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
     {
         m_attack_timer = std::max(0.f, m_attack_timer - dt);
         m_attack_recovery_timer = std::max(0.f, m_attack_recovery_timer - dt);
-        if (m_special_windup_timer > 0.f) m_special_windup_timer = std::max(0.f, m_special_windup_timer - dt);
+        m_skill_tick_owns_movement = m_skill_actions.Tick(this, dt);
         if (m_attack_windup_timer > 0.f)
         {
             m_attack_windup_timer -= dt;
@@ -681,7 +904,10 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
         UpdateLoadedMissile(dt);
     }
 
-    bool IsFacingLocked() const override { return m_attack_windup_timer > 0.f || m_attack_recovery_timer > 0.f; }
+    bool IsFacingLocked() const override
+    {
+        return IsMovementControlledBySkill() || m_attack_windup_timer > 0.f || m_attack_recovery_timer > 0.f;
+    }
 
     int GetSkillCount() const override { return 4; }
 
@@ -690,12 +916,12 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
         if (!GameWorld()) return false;
         if (skill_index == hornet_missile_skill)
         {
-            return m_attack_timer <= 0.f && m_attack_windup_timer <= 0.f && m_special_windup_timer <= 0.f &&
+            return m_attack_timer <= 0.f && m_attack_windup_timer <= 0.f && !m_skill_actions.IsActive() &&
                    !m_missile_generation_suppressed &&
-                   (m_loaded_missile_id >= 0 || m_missile_reload_timer <= 0.f);
+                   (m_loaded_missile_ref.IsValid() || m_missile_reload_timer <= 0.f);
         }
         if (skill_index == hornet_summon_skill || skill_index == hornet_dash_skill || skill_index == hornet_grab_skill)
-            return m_attack_windup_timer <= 0.f && m_special_windup_timer <= 0.f;
+            return m_attack_windup_timer <= 0.f && !m_skill_actions.IsActive();
         return false;
     }
 
@@ -703,20 +929,16 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
     {
         if (skill_index == hornet_summon_skill || skill_index == hornet_dash_skill || skill_index == hornet_grab_skill)
         {
-            if (m_attack_windup_timer > 0.f || m_special_windup_timer > 0.f || !GameWorld()) return false;
-            m_special_windup_id = SkillWindupId(skill_index);
-            m_special_windup_timer = skill_index == hornet_grab_skill ? game_config::mob_hornet_skill3_charge_time
-                                                                      : game_config::mob_hornet_skill_windup_time;
-            return true;
+            if (!CanCastSkill(skill_index)) return false;
+            return m_skill_actions.TryStart(this, skill_index, target);
         }
 
         if (skill_index != hornet_missile_skill) return false;
-        if (m_attack_timer > 0.f || m_attack_windup_timer > 0.f || m_special_windup_timer > 0.f || !GameWorld())
+        if (m_attack_timer > 0.f || m_attack_windup_timer > 0.f || m_skill_actions.IsActive() || !GameWorld())
             return false;
         if (!GetLoadedMissile()) return false;
 
-        m_attack_target_id = target ? target->Id() : -1;
-        m_attack_target_generation = target ? target->Generation() : 0;
+        m_attack_target_ref = target ? target->GetHandle() : SEntityHandle{};
         m_has_attack_direction = false;
         m_attack_windup_timer = game_config::mob_hornet_attack_windup;
         return true;
@@ -724,7 +946,7 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
 
     bool TryCastMissileInDirection(florrbt::Vector2f direction) override
     {
-        if (m_attack_timer > 0.f || m_attack_windup_timer > 0.f || m_special_windup_timer > 0.f ||
+        if (m_attack_timer > 0.f || m_attack_windup_timer > 0.f || m_skill_actions.IsActive() ||
             m_missile_generation_suppressed || !GameWorld())
             return false;
         if (!GetLoadedMissile()) return false;
@@ -733,8 +955,7 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
         if (length <= game_config::entity_collision_epsilon) return false;
         m_attack_direction = direction / length;
         m_has_attack_direction = true;
-        m_attack_target_id = -1;
-        m_attack_target_generation = 0;
+        m_attack_target_ref = {};
         m_attack_windup_timer = game_config::mob_hornet_attack_windup;
         return true;
     }
@@ -744,16 +965,15 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
         m_missile_generation_suppressed = suppressed;
         if (!discard_loaded) return;
         if (CMissile* missile = FindLoadedMissile()) missile->MarkForDestroy(EEntityRemovalReason::Replaced);
-        m_loaded_missile_id = -1;
-        m_loaded_missile_generation = 0;
+        m_loaded_missile_ref = {};
         m_missile_reload_timer = 0.f;
     }
 
     bool TryAttack(CEntity* target) override { return TryCastSkill(hornet_missile_skill, target); }
-    bool IsSkillBusy() const override { return m_attack_windup_timer > 0.f; }
+    bool IsSkillBusy() const override { return m_attack_windup_timer > 0.f || m_skill_actions.IsActive(); }
     uint8_t GetWindupSkillId() const override
     {
-        if (m_special_windup_timer > 0.f) return m_special_windup_id;
+        if (m_skill_actions.IsActive()) return m_skill_actions.WindupSkillId();
         return m_attack_windup_timer > 0.f ? hornet_missile_windup_id : 0;
     }
 
@@ -763,23 +983,12 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
     static constexpr int hornet_dash_skill = 2;
     static constexpr int hornet_grab_skill = 3;
     static constexpr uint8_t hornet_missile_windup_id = 1;
-    static constexpr uint8_t hornet_summon_windup_id = 2;
-    static constexpr uint8_t hornet_dash_windup_id = 3;
-    static constexpr uint8_t hornet_grab_windup_id = 4;
-
-    static uint8_t SkillWindupId(int skill_index)
-    {
-        if (skill_index == hornet_summon_skill) return hornet_summon_windup_id;
-        if (skill_index == hornet_dash_skill) return hornet_dash_windup_id;
-        if (skill_index == hornet_grab_skill) return hornet_grab_windup_id;
-        return hornet_missile_windup_id;
-    }
 
     CMissile* FindLoadedMissile()
     {
-        if (!GameWorld() || m_loaded_missile_id < 0) return nullptr;
+        if (!GameWorld() || !m_loaded_missile_ref.IsValid()) return nullptr;
 
-        CEntity* entity = GameWorld()->GetEntity(m_loaded_missile_id, m_loaded_missile_generation);
+        CEntity* entity = GameWorld()->ResolveEntity(m_loaded_missile_ref);
         auto* missile = dynamic_cast<CMissile*>(entity);
         if (!missile || missile->IsMarkedForDes() || missile->GetOwner() != this || !missile->IsAttachedToOwner())
         {
@@ -790,18 +999,17 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
 
     void RefreshLoadedMissileState()
     {
-        if (m_loaded_missile_id < 0) return;
+        if (!m_loaded_missile_ref.IsValid()) return;
         if (FindLoadedMissile()) return;
 
-        m_loaded_missile_id = -1;
-        m_loaded_missile_generation = 0;
+        m_loaded_missile_ref = {};
         if (m_missile_reload_timer <= 0.f) m_missile_reload_timer = game_config::mob_hornet_missile_reload;
     }
 
     CMissile* GetLoadedMissile()
     {
         RefreshLoadedMissileState();
-        if (m_loaded_missile_id < 0 && m_missile_reload_timer <= 0.f && !m_missile_generation_suppressed)
+        if (!m_loaded_missile_ref.IsValid() && m_missile_reload_timer <= 0.f && !m_missile_generation_suppressed)
             SpawnLoadedMissile();
         return FindLoadedMissile();
     }
@@ -824,7 +1032,7 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
         if (!GameWorld() || IsMarkedForDes() || IsDead()) return;
 
         RefreshLoadedMissileState();
-        if (m_loaded_missile_id >= 0) return;
+        if (m_loaded_missile_ref.IsValid()) return;
         if (m_missile_generation_suppressed) return;
 
         if (m_missile_reload_timer > 0.f)
@@ -861,16 +1069,14 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
             return;
         }
 
-        m_loaded_missile_id = inserted->Id();
-        m_loaded_missile_generation = inserted->Generation();
+        m_loaded_missile_ref = inserted->GetHandle();
         m_missile_reload_timer = 0.f;
     }
 
     void FireQueuedAttack()
     {
         auto clear_queued_attack = [this]() {
-            m_attack_target_id = -1;
-            m_attack_target_generation = 0;
+            m_attack_target_ref = {};
             m_attack_direction = { 1.f, 0.f };
             m_has_attack_direction = false;
         };
@@ -887,8 +1093,7 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
             return;
         }
 
-        CEntity* target =
-            m_attack_target_id >= 0 ? GameWorld()->GetEntity(m_attack_target_id, m_attack_target_generation) : nullptr;
+        CEntity* target = GameWorld()->ResolveEntity(m_attack_target_ref);
         florrbt::Vector2f rear_direction = { std::cos(FacingAngle()), std::sin(FacingAngle()) };
         float missile_speed = HornetMissileSpeed(GetRarity());
         if (m_has_attack_direction)
@@ -924,8 +1129,7 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
             return;
         }
 
-        m_loaded_missile_id = -1;
-        m_loaded_missile_generation = 0;
+        m_loaded_missile_ref = {};
         m_missile_reload_timer = game_config::mob_hornet_missile_reload;
 
         m_vel += recoil_direction * game_config::mob_hornet_recoil_speed;
@@ -937,16 +1141,129 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
     float m_attack_timer = 0.f;
     float m_attack_windup_timer = 0.f;
     float m_attack_recovery_timer = 0.f;
-    float m_special_windup_timer = 0.f;
     float m_missile_reload_timer = 0.f;
-    uint8_t m_special_windup_id = 0;
-    int m_attack_target_id = -1;
-    std::uint64_t m_attack_target_generation = 0;
-    int m_loaded_missile_id = -1;
-    std::uint64_t m_loaded_missile_generation = 0;
+    CHornetSkillActions m_skill_actions;
+    bool m_skill_tick_owns_movement = false;
+    SEntityHandle m_attack_target_ref;
+    SEntityHandle m_loaded_missile_ref;
     florrbt::Vector2f m_attack_direction = { 1.f, 0.f };
     bool m_has_attack_direction = false;
     bool m_missile_generation_suppressed = false;
+};
+
+class CCrabMob final : public CSkillCasterBasicMob, public ICrabDashMob
+{
+  public:
+    using CSkillCasterBasicMob::CSkillCasterBasicMob;
+    void OnWorldTransferCommitted() override
+    {
+        m_dash_skill_active = false;
+        m_dash_skill_remaining = 0.f;
+        m_dash_skill_recovery = 0.f;
+    }
+
+    void CaptureRuntimeSnapshot(CSnapshotWriter& writer) const override
+    {
+        CSkillCasterBasicMob::CaptureRuntimeSnapshot(writer);
+        writer.Field("dash_skill_cooldown", m_dash_skill_cooldown);
+        writer.Field("dash_skill_active", m_dash_skill_active);
+        writer.Field("dash_skill_remaining", m_dash_skill_remaining);
+        writer.Field("dash_skill_recovery", m_dash_skill_recovery);
+        writer.Field("dash_skill_direction", m_dash_skill_direction);
+    }
+
+    bool RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override
+    {
+        if (!CSkillCasterBasicMob::RestoreRuntimeSnapshot(reader, version, error)) return false;
+        m_dash_skill_cooldown = FiniteNonNegative(reader.Float("dash_skill_cooldown"));
+        m_dash_skill_active = reader.Bool("dash_skill_active", reader.Bool("dash_skill_requested"));
+        m_dash_skill_remaining = FiniteNonNegative(reader.Float("dash_skill_remaining"));
+        m_dash_skill_recovery = FiniteNonNegative(reader.Float("dash_skill_recovery"));
+        m_dash_skill_direction = reader.Vector2("dash_skill_direction", { 1.f, 0.f });
+        const florrbt::Vector2f normalized_direction = NormalizeOrZero(m_dash_skill_direction);
+        if (LengthSq(normalized_direction) <= game_config::entity_collision_epsilon *
+                                                   game_config::entity_collision_epsilon)
+            m_dash_skill_direction = { 1.f, 0.f };
+        else
+            m_dash_skill_direction = normalized_direction;
+        return true;
+    }
+
+    void Tick(float dt) override
+    {
+        dt = FiniteNonNegative(dt);
+        m_dash_skill_cooldown = std::max(0.f, m_dash_skill_cooldown - dt);
+        m_dash_skill_recovery = std::max(0.f, m_dash_skill_recovery - dt);
+        const SMobStats* stats = GetFinalStats();
+        if (m_dash_skill_active && stats)
+        {
+            // Dash is a multiplier of the Crab's actual configured maximum
+            // speed, not a second hard-coded movement speed.  This keeps the
+            // skill correct when a server tunes Crab speed or applies a
+            // rarity/status-specific movement multiplier.
+            const float base_speed = std::isfinite(stats->max_velocity) && stats->max_velocity > 0.f
+                                         ? stats->max_velocity
+                                         : game_config::mob_crab_max_velocity;
+            const float speed = FiniteNonNegative(base_speed) *
+                                FiniteNonNegative(game_config::mob_crab_dash_speed_multiplier) *
+                                FiniteNonNegative(GetMobMovementSpeedMultiplier(this));
+            const float step = std::min(m_dash_skill_remaining, speed * dt);
+            if (dt > 0.f && step > 0.f)
+            {
+                m_vel = m_dash_skill_direction * (step / dt);
+                FacingAngle() = std::atan2(m_dash_skill_direction.y, m_dash_skill_direction.x);
+                HasFacing() = true;
+                m_dash_skill_remaining -= step;
+            }
+            if (m_dash_skill_remaining <= game_config::entity_collision_epsilon)
+            {
+                m_dash_skill_remaining = 0.f;
+                m_dash_skill_active = false;
+                m_dash_skill_recovery = std::max(0.f, game_config::mob_crab_dash_recovery);
+            }
+        }
+        else if (m_dash_skill_recovery > 0.f && stats)
+        {
+            m_vel = florrbt::StepVelocityTowards(m_vel, {}, stats->acceleration, dt);
+        }
+        CSkillCasterBasicMob::Tick(dt);
+    }
+
+    int GetSkillCount() const override { return 1; }
+
+    bool CanCastSkill(int skill_index) const override
+    {
+        return skill_index == 0 && GameWorld() && !IsMarkedForDes() && !IsDead() &&
+               m_dash_skill_cooldown <= 0.f && !m_dash_skill_active;
+    }
+
+    bool TryCastSkill(int skill_index, CEntity* target) override
+    {
+        if (!CanCastSkill(skill_index)) return false;
+
+        florrbt::Vector2f direction = target ? target->Pos() - Pos()
+                                              : florrbt::Vector2f{ std::cos(FacingAngle()), std::sin(FacingAngle()) };
+        if (LengthSq(direction) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+            direction = { 1.f, 0.f };
+        m_dash_skill_direction = direction / Length(direction);
+        m_dash_skill_active = true;
+        m_dash_skill_remaining = FiniteNonNegative(game_config::mob_crab_dash_distance);
+        m_dash_skill_cooldown = FiniteNonNegative(game_config::mob_crab_dash_cooldown);
+        return true;
+    }
+
+    bool IsSkillBusy() const override { return m_dash_skill_active; }
+    uint8_t GetWindupSkillId() const override { return 0; }
+
+    bool IsDashActive() const override { return m_dash_skill_active; }
+    bool IsDashRecovering() const override { return m_dash_skill_recovery > 0.f; }
+
+  private:
+    float m_dash_skill_cooldown = 0.f;
+    bool m_dash_skill_active = false;
+    float m_dash_skill_remaining = 0.f;
+    float m_dash_skill_recovery = 0.f;
+    florrbt::Vector2f m_dash_skill_direction = { 1.f, 0.f };
 };
 
 class CDandelionMob : public CAttackableBasicMob
@@ -958,8 +1275,24 @@ class CDandelionMob : public CAttackableBasicMob
                   const SMobStats& stats)
         : CAttackableBasicMob(pworld, pos, r, mob_type, rarity, stats)
     {
-        m_loaded_missile_ids.fill(-1);
-        m_loaded_missile_generations.fill(0);
+        m_loaded_missile_refs.fill({});
+    }
+
+    void CollectTransferDependencies(std::vector<SEntityHandle>& output) const override
+    {
+        if (!GameWorld()) return;
+        for (const SEntityHandle& ref : m_loaded_missile_refs)
+        {
+            const auto* missile = dynamic_cast<const CDandelionMissile*>(GameWorld()->ResolveEntity(ref));
+            if (missile && !missile->IsMarkedForDes() && !missile->IsDead() &&
+                missile->GetOwner() == this && missile->IsAttachedToOwner())
+                output.push_back(ref);
+        }
+    }
+    void RemapTransferredReferences(TEntityHandleRemap mapping) noexcept override
+    {
+        CAttackableBasicMob::RemapTransferredReferences(mapping);
+        for (auto& ref : m_loaded_missile_refs) ref = RemapTransferredHandle(ref, mapping);
     }
 
     void CaptureRuntimeSnapshot(CSnapshotWriter& writer) const override
@@ -970,8 +1303,11 @@ class CDandelionMob : public CAttackableBasicMob
             CJsonOwner missile = MakeJsonObject();
             CSnapshotWriter missile_writer(missile.get());
             missile_writer.Field("index", index);
-            missile_writer.Field("id", m_loaded_missile_ids[index]);
-            missile_writer.UInt64("generation", m_loaded_missile_generations[index]);
+            const SEntityHandle& ref = m_loaded_missile_refs[index];
+            missile_writer.Field("id", ref.id);
+            missile_writer.UInt64("generation", ref.generation);
+            missile_writer.Field("world_id", ref.world_id);
+            missile_writer.UInt64("world_instance_generation", ref.world_instance_generation);
             AppendJson(missiles.get(), missile.release());
         }
         writer.Node("loaded_missiles", missiles.release());
@@ -985,25 +1321,38 @@ class CDandelionMob : public CAttackableBasicMob
     bool RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override
     {
         if (!CAttackableBasicMob::RestoreRuntimeSnapshot(reader, version, error)) return false;
-        m_loaded_missile_ids.fill(-1);
-        m_loaded_missile_generations.fill(0);
+        m_loaded_missile_refs.fill({});
         const json_t* missiles = reader.Node("loaded_missiles");
         if (json_is_array(missiles))
         {
-            const size_t count = json_array_size(missiles);
+            const size_t count = std::min(json_array_size(missiles), static_cast<size_t>(missile_capacity));
             for (size_t i = 0; i < count; ++i)
             {
                 CSnapshotReader missile(json_array_get(missiles, i));
                 const int index = missile.Int("index", -1);
                 if (index < 0 || index >= missile_capacity) continue;
-                m_loaded_missile_ids[index] = missile.Int("id", -1);
-                m_loaded_missile_generations[index] = missile.UInt64("generation");
+                SEntityHandle ref;
+                ref.id = missile.Int("id", -1);
+                ref.generation = missile.UInt64("generation");
+                ref.world_id = missile.UInt32("world_id");
+                ref.world_instance_generation = missile.UInt64("world_instance_generation");
+                const bool has_world_identity = missile.Has("world_id") && missile.Has("world_instance_generation");
+                if (GameWorld() && ref.IsValid() && !has_world_identity)
+                {
+                    if (CEntity* entity = GameWorld()->GetEntity(ref.id, ref.generation)) ref = entity->GetHandle();
+                    else ref = {};
+                }
+                else if (!ref.IsValid() && GameWorld() && ref.id >= 0 && !has_world_identity)
+                {
+                    if (CEntity* entity = GameWorld()->GetEntity(ref.id)) ref = entity->GetHandle();
+                }
+                m_loaded_missile_refs[index] = ref;
             }
         }
         m_spawned_initial_missiles = reader.Bool("spawned_initial_missiles", m_spawned_initial_missiles);
         m_attack_committed = reader.Bool("attack_committed", m_attack_committed);
         m_fire_active = reader.Bool("fire_active", m_fire_active);
-        m_fire_timer = reader.Float("fire_timer", m_fire_timer);
+        m_fire_timer = FiniteNonNegative(reader.Float("fire_timer", m_fire_timer));
         m_next_fire_index = std::clamp(reader.Int("next_fire_index", m_next_fire_index), 0, missile_capacity - 1);
         return true;
     }
@@ -1064,8 +1413,7 @@ class CDandelionMob : public CAttackableBasicMob
                 CDandelionMissile* missile = FindMissile(index);
                 if (!missile) continue;
                 missile->MarkForDestroy(EEntityRemovalReason::OwnerRemoved);
-                m_loaded_missile_ids[index] = -1;
-                m_loaded_missile_generations[index] = 0;
+                m_loaded_missile_refs[index] = {};
             }
         }
         RemoveTag(EEntityTag::ClearOwnedEntitiesOnDestroy);
@@ -1099,14 +1447,13 @@ class CDandelionMob : public CAttackableBasicMob
 
     CDandelionMissile* FindMissile(int index)
     {
-        if (!GameWorld() || index < 0 || index >= missile_capacity || m_loaded_missile_ids[index] < 0) return nullptr;
+        if (!GameWorld() || index < 0 || index >= missile_capacity || !m_loaded_missile_refs[index].IsValid()) return nullptr;
 
-        CEntity* entity = GameWorld()->GetEntity(m_loaded_missile_ids[index], m_loaded_missile_generations[index]);
+        CEntity* entity = GameWorld()->ResolveEntity(m_loaded_missile_refs[index]);
         auto* missile = dynamic_cast<CDandelionMissile*>(entity);
         if (!missile || missile->IsMarkedForDes() || missile->GetOwner() != this || !missile->IsAttachedToOwner())
         {
-            m_loaded_missile_ids[index] = -1;
-            m_loaded_missile_generations[index] = 0;
+            m_loaded_missile_refs[index] = {};
             return nullptr;
         }
         return missile;
@@ -1150,8 +1497,7 @@ class CDandelionMob : public CAttackableBasicMob
 
             CEntity* inserted = world->InsertEntity(std::move(missile));
             if (!inserted) continue;
-            m_loaded_missile_ids[i] = inserted->Id();
-            m_loaded_missile_generations[i] = inserted->Generation();
+            m_loaded_missile_refs[i] = inserted->GetHandle();
         }
     }
 
@@ -1207,21 +1553,18 @@ class CDandelionMob : public CAttackableBasicMob
             if (!missile->Fire(direction, game_config::mob_dandelion_missile_speed,
                                game_config::mob_dandelion_missile_lifetime))
             {
-                m_loaded_missile_ids[index] = -1;
-                m_loaded_missile_generations[index] = 0;
+                m_loaded_missile_refs[index] = {};
                 continue;
             }
 
-            m_loaded_missile_ids[index] = -1;
-            m_loaded_missile_generations[index] = 0;
+            m_loaded_missile_refs[index] = {};
             return true;
         }
 
         return false;
     }
 
-    std::array<int, missile_capacity> m_loaded_missile_ids;
-    std::array<std::uint64_t, missile_capacity> m_loaded_missile_generations;
+    std::array<SEntityHandle, missile_capacity> m_loaded_missile_refs;
     bool m_spawned_initial_missiles = false;
     bool m_attack_committed = false;
     bool m_fire_active = false;
@@ -1244,7 +1587,8 @@ class CAntEggMob : public CBasicMob
     {
         if (!CBasicMob::RestoreRuntimeSnapshot(reader, version, error)) return false;
         m_initialized = reader.Bool("initialized", m_initialized);
-        m_auto_hatch_timer = reader.Float("auto_hatch_timer", m_auto_hatch_timer);
+        const float auto_hatch_timer = reader.Float("auto_hatch_timer", m_auto_hatch_timer);
+        m_auto_hatch_timer = auto_hatch_timer < 0.f ? -1.f : auto_hatch_timer;
         return true;
     }
 
@@ -1368,16 +1712,16 @@ class CQueenAntMob : public CAttackableBasicMob
         writer.Field("attack_timer", m_attack_timer);
         writer.Field("attack_windup_timer", m_attack_windup_timer);
         writer.Field("attack_recovery_timer", m_attack_recovery_timer);
-        writer.Field("attack_target_id", m_attack_target_id);
+        CaptureRuntimeHandle(writer, "attack_target", m_attack_target_ref);
     }
 
     bool RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override
     {
         if (!CAttackableBasicMob::RestoreRuntimeSnapshot(reader, version, error)) return false;
-        m_attack_timer = reader.Float("attack_timer", m_attack_timer);
-        m_attack_windup_timer = reader.Float("attack_windup_timer", m_attack_windup_timer);
-        m_attack_recovery_timer = reader.Float("attack_recovery_timer", m_attack_recovery_timer);
-        m_attack_target_id = reader.Int("attack_target_id", m_attack_target_id);
+        m_attack_timer = FiniteNonNegative(reader.Float("attack_timer", m_attack_timer));
+        m_attack_windup_timer = FiniteNonNegative(reader.Float("attack_windup_timer", m_attack_windup_timer));
+        m_attack_recovery_timer = FiniteNonNegative(reader.Float("attack_recovery_timer", m_attack_recovery_timer));
+        m_attack_target_ref = RestoreRuntimeHandle(reader, "attack_target", GameWorld());
         return true;
     }
 
@@ -1418,7 +1762,7 @@ class CQueenAntMob : public CAttackableBasicMob
             HasFacing() = true;
         }
 
-        m_attack_target_id = target->Id();
+        m_attack_target_ref = target->GetHandle();
         m_attack_windup_timer = game_config::mob_queen_ant_attack_windup;
         m_attacking = true;
         return true;
@@ -1462,13 +1806,13 @@ class CQueenAntMob : public CAttackableBasicMob
     {
         m_attack_timer = game_config::mob_queen_ant_attack_interval;
         m_attack_recovery_timer = game_config::mob_queen_ant_attack_recovery;
-        m_attack_target_id = -1;
+        m_attack_target_ref = {};
     }
 
     float m_attack_timer = 0.f;
     float m_attack_windup_timer = 0.f;
     float m_attack_recovery_timer = 0.f;
-    int m_attack_target_id = -1;
+    SEntityHandle m_attack_target_ref;
 };
 
 class CAntHoleMob : public CBasicMob
@@ -1508,18 +1852,21 @@ class CAntHoleMob : public CBasicMob
         const json_t* queue = reader.Node("spawn_queue");
         if (json_is_array(queue))
         {
-            const size_t count = json_array_size(queue);
+            const size_t count = std::min(json_array_size(queue), max_runtime_snapshot_entries);
             m_spawn_queue.reserve(count);
             for (size_t i = 0; i < count; ++i)
             {
                 CSnapshotReader value(json_array_get(queue, i));
-                m_spawn_queue.push_back({ static_cast<EMobType>(value.Int("type", static_cast<int>(EMobType::None))),
-                                          static_cast<ERarity>(value.Int("rarity", static_cast<int>(ERarity::Common))) });
+                const int type = value.Int("type", -1);
+                const ERarity rarity = static_cast<ERarity>(value.Int("rarity", -1));
+                if (!IsKnownMobTypeId(type) || !IsKnownRarity(rarity))
+                { error = "Invalid ant-hole queued spawn type or rarity"; return false; }
+                m_spawn_queue.push_back({static_cast<EMobType>(type), rarity});
             }
         }
         m_spawn_index = static_cast<size_t>(
             std::min<std::uint64_t>(reader.UInt64("spawn_index"), static_cast<std::uint64_t>(m_spawn_queue.size())));
-        m_release_timer = reader.Float("release_timer", m_release_timer);
+        m_release_timer = FiniteNonNegative(reader.Float("release_timer", m_release_timer));
         m_health_wave_index = static_cast<size_t>(
             std::min<std::uint64_t>(reader.UInt64("health_wave_index"), HealthWaves().size()));
         m_same_rarity_queen_queued = reader.Bool("same_rarity_queen_queued", m_same_rarity_queen_queued);
@@ -1750,19 +2097,6 @@ class CAntHoleMob : public CBasicMob
     int m_death_release_ticks = 0;
 };
 
-class CRockAttackOnDamagedController : public IController
-{
-  public:
-    void OnTick(CMobBase*, float) override {}
-    std::string_view SnapshotKey() const override { return "controller.rock_attack_on_damaged"; }
-
-    void OnDamaged(CMobBase* mob, CEntity* attacker) override
-    {
-        auto* attackable = dynamic_cast<IAttackableMob*>(mob);
-        if (attackable) attackable->TryAttack(attacker);
-    }
-};
-
 class CRockMob : public CAttackableBasicMob
 {
   public:
@@ -1777,8 +2111,8 @@ class CRockMob : public CAttackableBasicMob
     bool RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override
     {
         if (!CAttackableBasicMob::RestoreRuntimeSnapshot(reader, version, error)) return false;
-        m_attack_cooldown_timer = reader.Float("attack_cooldown_timer", m_attack_cooldown_timer);
-        m_attack_flash_timer = reader.Float("attack_flash_timer", m_attack_flash_timer);
+        m_attack_cooldown_timer = FiniteNonNegative(reader.Float("attack_cooldown_timer", m_attack_cooldown_timer));
+        m_attack_flash_timer = FiniteNonNegative(reader.Float("attack_flash_timer", m_attack_flash_timer));
         return true;
     }
 
@@ -2057,8 +2391,8 @@ class CBubbleMob : public CAttackableBasicMob
     bool RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override
     {
         if (!CAttackableBasicMob::RestoreRuntimeSnapshot(reader, version, error)) return false;
-        m_attack_cooldown_timer = reader.Float("attack_cooldown_timer", m_attack_cooldown_timer);
-        m_attack_flash_timer = reader.Float("attack_flash_timer", m_attack_flash_timer);
+        m_attack_cooldown_timer = FiniteNonNegative(reader.Float("attack_cooldown_timer", m_attack_cooldown_timer));
+        m_attack_flash_timer = FiniteNonNegative(reader.Float("attack_flash_timer", m_attack_flash_timer));
         return true;
     }
 
@@ -2171,7 +2505,7 @@ class CDummyMob : public CBasicMob
         const json_t* reports = reader.Node("reports");
         if (!json_is_array(reports)) return true;
 
-        const size_t count = json_array_size(reports);
+        const size_t count = std::min(json_array_size(reports), max_runtime_snapshot_entries);
         m_reports.reserve(count);
         for (size_t i = 0; i < count; ++i)
         {
@@ -2315,7 +2649,7 @@ class CLeafcutterSoldierMob : public CBasicMob
     void Tick(float dt) override
     {
         CBasicMob::Tick(dt);
-        auto* pickup = dynamic_cast<CPickupController*>(GetController());
+        auto* pickup = GetPickupController();
         if (pickup) pickup->SyncCarriedTransform(this);
     }
 };
@@ -2342,6 +2676,7 @@ bool RegisterMobs(std::string& error)
         proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
         proto.m_base_stats.max_velocity = game_config::default_max_velocity;
         proto.m_base_stats.acceleration = game_config::default_acceleration;
+        proto.m_base_stats.turn_speed = game_config::mob_beetle_turn_speed;
         proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
             SMobStats stats = ScaleMobStats(base_stats, rarity);
             SMobStats soldier_stats;
@@ -2365,6 +2700,7 @@ bool RegisterMobs(std::string& error)
         proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
         proto.m_base_stats.max_velocity = game_config::default_max_velocity;
         proto.m_base_stats.acceleration = game_config::default_acceleration;
+        proto.m_base_stats.turn_speed = game_config::mob_beetle_turn_speed;
         proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
             return ScaleMobStats(base_stats, rarity);
         };
@@ -2432,6 +2768,71 @@ bool RegisterMobs(std::string& error)
             return std::make_unique<CFireflyController>(EMobType::MagicFirefly);
         };
         RegisterMobPrototype<EMobType::MagicFirefly, CFireflyMob>(std::move(proto));
+    }
+
+    {
+        CMobPrototype proto;
+        proto.m_team = game_config::mob_firefly_team;
+        proto.m_base_stats.max_health = game_config::mob_firefly_larva_max_health;
+        proto.m_base_stats.armor = game_config::mob_firefly_larva_armor;
+        proto.m_base_stats.damage = game_config::mob_firefly_larva_damage;
+        proto.m_base_stats.radius = game_config::mob_firefly_larva_radius;
+        proto.m_base_stats.mass = game_config::mob_firefly_larva_mass;
+        proto.m_base_stats.horizon = game_config::default_horizon;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = game_config::mob_firefly_larva_max_velocity;
+        proto.m_base_stats.acceleration = game_config::mob_firefly_larva_acceleration;
+        proto.m_base_stats.turn_speed = game_config::mob_firefly_larva_turn_speed;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(base_stats, rarity);
+        };
+        proto.m_controller_factory = [](ERarity) { return std::make_unique<CFireflyLarvaController>(); };
+        proto.m_segment_count_factory = [](ERarity rarity) {
+            const float rank = GetRaritySortRank(rarity);
+            if (rank <= GetRaritySortRank(ERarity::Epic)) return 3; // four total, including the head
+            if (rank < GetRaritySortRank(ERarity::Super)) return 4; // five total through Ultra/Exotic
+            return 5;                                               // six total for Super+
+        };
+          proto.m_segment_type_factory = [](int) { return ToMobType(EModMobType::FireflyLarvaBody); };
+          proto.m_segment_visual_variant_factory = [](int index, int body_count) -> std::uint8_t {
+              if (index <= 0) return static_cast<std::uint8_t>(EFireflyLarvaVisualVariant::Head);
+              if (index >= body_count) return static_cast<std::uint8_t>(EFireflyLarvaVisualVariant::Tail);
+              // Interior values retain the actual root-to-tail order. The
+              // client maps them to alternating authored body crops while
+              // using the same value to render the chain back-to-front.
+              return static_cast<std::uint8_t>(std::clamp(
+                  index, static_cast<int>(EFireflyLarvaVisualVariant::Thorax),
+                  static_cast<int>(EFireflyLarvaVisualVariant::Tail) - 1));
+          };
+        proto.m_constrain_segment_chain = true;
+        proto.m_share_segment_health = true;
+        proto.m_segment_center_distance_radius_scale =
+            game_config::mob_firefly_larva_segment_distance_radius_scale;
+        proto.m_segment_max_turn_radians = game_config::mob_firefly_larva_max_turn_radians;
+        proto.m_allow_skip_tick = false;
+        RegisterMobPrototype<EMobType::FireflyLarva, CFireflyLarvaHeadMob>(std::move(proto));
+    }
+
+    {
+        CMobPrototype proto;
+        proto.m_team = game_config::mob_firefly_team;
+        proto.m_base_stats.max_health = game_config::mob_firefly_larva_max_health;
+        proto.m_base_stats.armor = game_config::mob_firefly_larva_armor;
+        proto.m_base_stats.damage = game_config::mob_firefly_larva_damage;
+        proto.m_base_stats.radius = game_config::mob_firefly_larva_radius;
+        proto.m_base_stats.mass = game_config::mob_firefly_larva_mass;
+        proto.m_base_stats.horizon = game_config::default_horizon;
+        proto.m_base_stats.max_absorb_range = game_config::default_absorb_range;
+        proto.m_base_stats.max_velocity = game_config::mob_firefly_larva_max_velocity;
+        proto.m_base_stats.acceleration = game_config::mob_firefly_larva_acceleration;
+        proto.m_base_stats.turn_speed = game_config::mob_firefly_larva_turn_speed;
+        proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
+            return ScaleMobStats(base_stats, rarity);
+        };
+        proto.m_after_create = [](CMobBase& mob, ERarity) { mob.AddTag(EEntityTag::NoDefeatRewards); };
+        proto.m_allow_skip_tick = false;
+        RegisterModMob<EModMobType::FireflyLarvaBody, CFireflyLarvaBodyMob>(
+            std::move(proto), EMobType::FireflyLarva);
     }
 
     {
@@ -2560,7 +2961,7 @@ bool RegisterMobs(std::string& error)
             return ScaleMobStats(base_stats, rarity);
         };
         proto.m_controller_factory = [](ERarity) { return std::make_unique<CCrabController>(); };
-        RegisterMobPrototype<EMobType::Crab, CBasicMob>(std::move(proto));
+        RegisterMobPrototype<EMobType::Crab, CCrabMob>(std::move(proto));
     }
 
     {
@@ -2579,7 +2980,7 @@ bool RegisterMobs(std::string& error)
             return ScaleMobStats(base_stats, rarity);
         };
         proto.m_controller_factory = [](ERarity) { return std::make_unique<CJellyfishController>(); };
-        RegisterMobPrototype<EMobType::Jellyfish, CBasicMob>(std::move(proto));
+        RegisterMobPrototype<EMobType::Jellyfish, CJellyfishMob>(std::move(proto));
     }
 
     {
@@ -3006,7 +3407,12 @@ bool RegisterMobs(std::string& error)
         proto.m_base_flower_stats.max_velocity = game_config::default_max_velocity;
         proto.m_base_flower_stats.acceleration = game_config::mob_player_flower_acceleration;
         proto.m_base_flower_stats.petal_rotation_speed = game_config::mob_player_flower_petal_rotation_speed;
-        proto.m_flower_stats_factory = [base_stats = proto.m_base_flower_stats](ERarity) { return base_stats; };
+        proto.m_flower_stats_factory = [base_stats = proto.m_base_flower_stats](ERarity) {
+            SFlowerStats stats = base_stats;
+            if (std::isfinite(stats.acceleration) && stats.acceleration > 0.f)
+                stats.acceleration *= std::max(0.f, game_config::flower_acceleration_multiplier);
+            return stats;
+        };
         proto.m_controller_factory = [](ERarity) { return std::make_unique<CPlayerController>(); };
         proto.m_allow_skip_tick = false;
         RegisterMobPrototype<EMobType::PlayerFlower, CPlayerFlower>(std::move(proto));

@@ -4,9 +4,11 @@
 #include <cstdint>
 #include <unordered_map>
 #include <utility>
+#include <optional>
 #include <vector>
 
 class CGameWorld;
+class IPlayerSceneWriter;
 
 // Wall overlay: marks which map walls still stand, cell by cell. Walls in
 // FlorrBtMap are arbitrary polygons (Tiled collision objects) that may only
@@ -30,6 +32,10 @@ class CWall : public CTileBoard
     // Rebuilds registration from the world's map and replays recorded
     // removals. Safe to call again after a hot-reload map rebuild.
     void Reload(CGameWorld& world) override;
+    // Invalidates the non-owning world context before the controller/world
+    // lifetime ends. CommitRemove must never rely on destruction order.
+    void DetachWorld(CGameWorld& world);
+    bool WritePlayerScene(IPlayerSceneWriter& writer) const;
 
     int Width() const override { return m_width; }
     int Height() const override { return m_height; }
@@ -101,6 +107,7 @@ class CWall : public CTileBoard
     // Keeps flush neighbours out of rect-based world removals (see
     // RemoveMapWallFromWorld).
     static constexpr float kWallRemoveEpsilon = 1.f;
+    static std::optional<std::pair<florrbt::Vector2f, florrbt::Vector2f>> RemovalRect(const SWallRecord& record);
 
     std::uint32_t CellIndex(int row, int col) const;
     bool HasAliveWallOnCell(std::uint32_t cell) const;

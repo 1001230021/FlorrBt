@@ -8,10 +8,11 @@ const sawStart = behavior.indexOf("class CSawbladeBehavior");
 const sawEnd = behavior.indexOf("class C", sawStart + 12);
 const saw = behavior.slice(sawStart, sawEnd < 0 ? undefined : sawEnd);
 
-assert.match(petal, /CEntity\* m_orbit_anchor = nullptr/);
+assert.match(petal, /SEntityHandle m_orbit_anchor_ref/);
 assert.match(petal, /RefreshOrbitAnchor\(CFlower\* flower\)/);
-assert.match(petalCpp, /GetPetalType\(\) == EPetalType::Moon[\s\S]*?m_orbit_anchor = flower/);
-assert.match(petalCpp, /GetMoonPetal\(\)[\s\S]*?m_orbit_anchor = moon && moon != this/);
+assert.match(petalCpp, /GetPetalType\(\) == EPetalType::Moon[\s\S]*?m_orbit_anchor_ref = flower->GetHandle\(\)/);
+assert.match(petalCpp, /GetMoonPetal\(\)[\s\S]*?anchor = moon && moon != this[\s\S]*?m_orbit_anchor_ref = anchor \? anchor->GetHandle\(\)/);
+assert.match(petalCpp, /ResolveEntity\(m_orbit_anchor_ref\)/);
 assert.match(petalCpp, /RefreshOrbitAnchor\(flower\);[\s\S]*?petal->Pos\(\) = petal->GetOrbitAnchor\(\)/);
 assert.match(behavior, /CEntity\* anchor = owner->GetOrbitAnchor\(\);[\s\S]*?anchor == flower/);
 assert.match(behavior, /CEntity\* anchor = owner->GetOrbitAnchor\(\);[\s\S]*?return anchor \? anchor->Pos\(\) : flower->Pos\(\)/);

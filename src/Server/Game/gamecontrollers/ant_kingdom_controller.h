@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "../tile_board.h"
 #include "../wall_board.h"
 #include "eou_slot_proxy.h"
@@ -8,6 +8,7 @@
 #include "../../../Shared/math_types.h"
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // Ant-kingdom world controller (eou). Merges the mutable-terrain rules (dirt
@@ -52,13 +53,15 @@ class CAntKingdomController : virtual public CMutableTerrainController,
     explicit CAntKingdomController(CControllerParams params = {});
 
     void OnActivate(CGameWorld& world) override;
+    void OnDeactivate(CGameWorld& world) override;
     void OnTick(CGameWorld& world, float dt) override;
     void OnMobDefeated(CGameWorld& world, CMobBase& mob) override;
     void OnEntityRemoved(CGameWorld& world, CEntity& entity, EEntityRemovalReason reason) override;
     void OnPlayerEntityReady(CGameWorld& world, CPlayer& player, CPlayerFlower& flower,
                              EPlayerSpawnReason reason) override;
-    void OnPlayerEnteredWorld(CGameWorld& world, CPlayer& player) override;
-    void OnPlayerLeftWorld(CGameWorld& world, CPlayer& player) override;
+    void OnPlayerArrivalCommitted(CGameWorld& world, CPlayer& player) override;
+    bool WritePlayerScene(const CGameWorld& world, const CPlayer& player, IPlayerSceneWriter& writer) const override;
+    void OnPlayerDepartureCommitted(CGameWorld& world, CPlayer& player, CEntity* departing) override;
     bool HandlePlayerCommand(CGameWorld& world, CPlayer& player,
                              const std::vector<std::string>& args) override;
     std::string_view SnapshotKey() const override { return "world_controller.ant_kingdom"; }
@@ -168,7 +171,8 @@ class CAntKingdomController : virtual public CMutableTerrainController,
     std::unordered_map<int, EEouBuildMode> m_team_build_type;
     CEouSlotProxy m_slot_proxy;
     std::unordered_map<int, CEouSlotProxy> m_team_slot_proxies;
-    // Live food entities ({id, generation} handles; erased on removal).
-    std::unordered_map<int, std::uint64_t> m_food_entities;
+    // Live food entities. The full handle prevents a newly spawned food mob
+    // from inheriting a stale entry after an id is recycled.
+    std::unordered_set<SEntityHandle, SEntityHandleHash> m_food_entities;
     float m_food_replenish_timer = 0.f;
 };

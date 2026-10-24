@@ -4,6 +4,7 @@
 #include "../tile_board.h"
 #include "mob.h"
 #include "../../../Shared/math_types.h"
+#include <algorithm>
 #include <cmath>
 #include <deque>
 #include <optional>
@@ -14,10 +15,10 @@ class CGameWorld;
 
 class CEouFoodMob;
 
-// Defined in eou_mob.cpp: resolves a {world, id, generation} food handle to a
-// live food mob (nullptr when stale). Out of line because it dereferences the
+// Defined in eou_mob.cpp: resolves a fully-qualified food handle to a live
+// food mob (nullptr when stale). Out of line because it dereferences the
 // forward-declared CGameWorld.
-CEouFoodMob* ResolveEouFoodTarget(CGameWorld* world, int id, std::uint64_t generation);
+CEouFoodMob* ResolveEouFoodTarget(CGameWorld* world, const SEntityHandle& handle);
 
 inline constexpr float kEouArriveRadius = 16.f;
 
@@ -49,6 +50,7 @@ class IEouMob
     virtual ~IEouMob() = default;
 
     virtual void SetBoard(const CTileBoard* board) = 0;
+    virtual const CTileBoard* Board() const = 0;
     // Replaces the waypoint queue with a path to `goal`. Consecutive
     // waypoints are directly reachable (straight-line walkable).
     virtual void SetTarget(florrbt::Vector2f goal) = 0;
@@ -98,17 +100,24 @@ class CEOUMob : public CMob<TStats>, public IEouMob
         this->MoveTowards(m_waypoints.front(), dt);
     }
 
-    void SetBoard(const CTileBoard* board) override { m_board = board; }
+    const CTileBoard* Board() const override { return m_board; }
+    void SetBoard(const CTileBoard* board) override
+    {
+        if (m_board == board && board) return;
+        const bool invalidate = m_board || !board;
+        m_board = board;
+        if (!invalidate) return; // Initial restore binding preserves saved waypoints.
+        m_waypoints.clear();
+        m_food_target = {};
+        m_food_phase = EFoodPhase::None;
+        m_food_scan_timer = m_food_path_timer = 0.f;
+        OnBoardDetached();
+    }
+    void OnWorldTransferCommitted() override { SetBoard(nullptr); }
 
     void SetTarget(florrbt::Vector2f goal) override
     {
-        if (!m_board) return;
-        const std::vector<florrbt::Vector2f> path = eou_find_path(*m_board, this->Pos(), goal);
-        m_waypoints.clear();
-        if (path.empty()) return;
-        std::size_t first = 0;
-        if (path.size() > 1 && EouDistance(this->Pos(), path.front()) <= kEouArriveRadius) first = 1;
-        for (std::size_t i = first; i < path.size(); ++i) m_waypoints.push_back(path[i]);
+        TryReplaceEouPath(goal);
     }
 
     bool     HasTarget() const override { return !m_waypoints.empty(); }
@@ -159,12 +168,17 @@ class CEOUMob : public CMob<TStats>, public IEouMob
         m_waypoints.clear();
         if (const json_t* node = reader.Node("eou_waypoints"); node && json_is_array(node))
         {
-            for (std::size_t i = 0; i < json_array_size(node); ++i)
+            constexpr std::size_t max_waypoints = 4096;
+            const std::size_t count = std::min(json_array_size(node), max_waypoints);
+            for (std::size_t i = 0; i < count; ++i)
             {
                 const json_t* entry = json_array_get(node, i);
-                if (!entry || !json_is_array(entry) || json_array_size(entry) < 2) continue;
-                m_waypoints.emplace_back(static_cast<float>(json_real_value(json_array_get(entry, 0))),
-                                         static_cast<float>(json_real_value(json_array_get(entry, 1))));
+                if (!entry || !json_is_array(entry) || json_array_size(entry) < 2 ||
+                    !json_is_number(json_array_get(entry, 0)) || !json_is_number(json_array_get(entry, 1)))
+                    continue;
+                const float x = static_cast<float>(json_number_value(json_array_get(entry, 0)));
+                const float y = static_cast<float>(json_number_value(json_array_get(entry, 1)));
+                if (std::isfinite(x) && std::isfinite(y)) m_waypoints.emplace_back(x, y);
             }
         }
         m_eou_group_id = reader.Int("eou_group_id", 0);
@@ -179,6 +193,7 @@ class CEOUMob : public CMob<TStats>, public IEouMob
 
   protected:
     const CTileBoard* m_board = nullptr;
+    virtual void OnBoardDetached() {}
 
     void WanderEou(float dt)
     {
@@ -318,11 +333,10 @@ class CEOUMob : public CMob<TStats>, public IEouMob
     struct SFoodTarget
     {
         CGameWorld* world = nullptr;
-        int id = -1;
-        std::uint64_t generation = 0;
+        SEntityHandle ref;
         florrbt::Vector2f pos{};
 
-        bool valid() const { return id >= 0; }
+        bool valid() const { return ref.IsValid(); }
         bool alive() const
         {
             CEouFoodMob* food = resolve();
@@ -331,7 +345,7 @@ class CEOUMob : public CMob<TStats>, public IEouMob
 
         // Out of line (eou_mob.cpp): dereferencing the world needs the full
         // CGameWorld type, which this header only forward-declares.
-        CEouFoodMob* resolve() const { return ResolveEouFoodTarget(world, id, generation); }
+        CEouFoodMob* resolve() const { return ResolveEouFoodTarget(world, ref); }
     };
 
     void BeginFoodPhase()
@@ -366,34 +380,31 @@ class CEOUMob : public CMob<TStats>, public IEouMob
     void SetEouHomeTarget()
     {
         m_food_path_timer = 2.f;
-        if (!m_board) return;
-        m_waypoints.clear();
-        AddEouPathTo(m_home_pos);
+        TryReplaceEouPath(m_home_pos);
     }
 
     void RefreshFoodPath()
     {
         m_food_path_timer = 2.f;
         if (!m_board || !m_food_target.valid()) return;
-        m_waypoints.clear();
-        AddEouPathTo(m_food_target.pos);
-        if (m_waypoints.empty())
-        {
-            m_food_phase = EFoodPhase::None;
-            m_food_target = {};
-            m_food_scan_timer = std::max(0.2f, game_config::eou_food_scan_interval);
-        }
+        // Path refresh is transactional. A temporary obstruction must not
+        // erase the still-usable route or abandon the selected food target;
+        // keep following the old route and retry on the next refresh tick.
+        TryReplaceEouPath(m_food_target.pos);
     }
 
-    void AddEouPathTo(florrbt::Vector2f goal)
+    bool TryReplaceEouPath(florrbt::Vector2f goal)
     {
-        if (!m_board) return;
+        if (!m_board) return false;
         const std::vector<florrbt::Vector2f> path = eou_find_path(*m_board, this->Pos(), goal);
-        m_waypoints.clear();
-        if (path.empty()) return;
+        if (path.empty()) return false;
+
+        std::deque<florrbt::Vector2f> replacement;
         std::size_t first = 0;
         if (path.size() > 1 && EouDistance(this->Pos(), path.front()) <= kEouArriveRadius) first = 1;
-        for (std::size_t i = first; i < path.size(); ++i) m_waypoints.push_back(path[i]);
+        for (std::size_t i = first; i < path.size(); ++i) replacement.push_back(path[i]);
+        m_waypoints = std::move(replacement);
+        return true;
     }
 
     SFoodTarget FindEouFoodTarget(CGameWorld* world);
@@ -401,6 +412,7 @@ class CEOUMob : public CMob<TStats>, public IEouMob
     SFoodTarget m_food_target;
     float m_carry = 0.f;
     float m_food_scan_timer = 0.f;
+    std::size_t m_food_search_cursor = 0;
     float m_food_path_timer = 0.f;
     florrbt::Vector2f m_home_pos{};
 
@@ -459,6 +471,7 @@ class CEouWorkerAnt final : public CEOUMob<SMobStats>
     float DepositFood(float amount) override;
 
   private:
+    void OnBoardDetached() override { m_goal.reset(); m_scan_timer = m_dig_progress = 0.f; }
     std::optional<florrbt::Vector2f> FindBestMarkedWall();
     // Digs while inside dig range of the goal; on completion asks the
     // controller to remove the wall, then rescans immediately.
@@ -501,8 +514,7 @@ class CEouSoldierAnt final : public CEOUMob<SMobStats>
     CEntity* ResolveCombatTarget();
     void ScanForEnemy();
 
-    int m_target_id = -1;
-    std::uint64_t m_target_generation = 0;
+    SEntityHandle m_target_ref;
     florrbt::Vector2f m_target_pos{};
     bool m_engaged = false;
     float m_combat_scan_timer = 0.f;
@@ -623,21 +635,15 @@ class CEouCellMob : public CMob<SMobStats>
         return added;
     }
 
-    // Hatchery cells: bound egg (id/gen) and its hatch type (= egg type the
+    // Hatchery cells: bound egg handle and its hatch type (= egg type the
     // cell passes to the egg at construction) + retry timer when empty.
-    bool HasEgg() const { return m_egg_id >= 0; }
-    void SetEgg(int id, std::uint64_t generation)
-    {
-        m_egg_id = id;
-        m_egg_generation = generation;
-    }
+    bool HasEgg() const { return m_egg_ref.IsValid(); }
+    void SetEgg(const SEntityHandle& ref) { m_egg_ref = ref; }
     void ClearEgg()
     {
-        m_egg_id = -1;
-        m_egg_generation = 0;
+        m_egg_ref = {};
     }
-    int EggId() const { return m_egg_id; }
-    std::uint64_t EggGeneration() const { return m_egg_generation; }
+    const SEntityHandle& EggRef() const { return m_egg_ref; }
     void SetEggType(EMobType type) { m_egg_type = type; }
     EMobType EggType() const { return m_egg_type; }
     void TickEggRetry(float dt) { m_egg_retry_timer = std::max(0.f, m_egg_retry_timer - dt); }
@@ -646,19 +652,13 @@ class CEouCellMob : public CMob<SMobStats>
 
     // One tile, one ant (the EotU rule): the hatchery binds the ant it
     // hatched and only lays a fresh egg once that ant is dead or missing.
-    bool HasBoundAnt() const { return m_ant_id >= 0; }
-    void SetBoundAnt(int id, std::uint64_t generation)
-    {
-        m_ant_id = id;
-        m_ant_generation = generation;
-    }
+    bool HasBoundAnt() const { return m_ant_ref.IsValid(); }
+    void SetBoundAnt(const SEntityHandle& ref) { m_ant_ref = ref; }
     void ClearBoundAnt()
     {
-        m_ant_id = -1;
-        m_ant_generation = 0;
+        m_ant_ref = {};
     }
-    int BoundAntId() const { return m_ant_id; }
-    std::uint64_t BoundAntGeneration() const { return m_ant_generation; }
+    const SEntityHandle& BoundAntRef() const { return m_ant_ref; }
 
     int GroupId() const { return m_group_id; }
     void SetGroupId(int id) { m_group_id = id; }
@@ -681,12 +681,16 @@ class CEouCellMob : public CMob<SMobStats>
         writer.Field("cell_group", m_group_id);
         writer.Field("cell_team", m_team_id);
         writer.Field("cell_food", m_food_stored);
-        writer.Field("cell_egg_id", m_egg_id);
-        writer.UInt64("cell_egg_gen", m_egg_generation);
+        writer.Field("cell_egg_id", m_egg_ref.id);
+        writer.UInt64("cell_egg_gen", m_egg_ref.generation);
+        writer.Field("cell_egg_world_id", m_egg_ref.world_id);
+        writer.UInt64("cell_egg_world_instance_generation", m_egg_ref.world_instance_generation);
         writer.Field("cell_egg_type", static_cast<int>(m_egg_type));
         writer.Field("cell_egg_retry", m_egg_retry_timer);
-        writer.Field("cell_ant_id", m_ant_id);
-        writer.UInt64("cell_ant_gen", m_ant_generation);
+        writer.Field("cell_ant_id", m_ant_ref.id);
+        writer.UInt64("cell_ant_gen", m_ant_ref.generation);
+        writer.Field("cell_ant_world_id", m_ant_ref.world_id);
+        writer.UInt64("cell_ant_world_instance_generation", m_ant_ref.world_instance_generation);
     }
     bool RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override
     {
@@ -699,14 +703,18 @@ class CEouCellMob : public CMob<SMobStats>
         m_group_id = reader.Int("cell_group", m_group_id);
         m_team_id = reader.Int("cell_team", m_team_id);
         m_food_stored = std::max(0.f, reader.Float("cell_food", m_food_stored));
-        m_egg_id = reader.Int("cell_egg_id", m_egg_id);
-        m_egg_generation = reader.UInt64("cell_egg_gen", m_egg_generation);
+        m_egg_ref.id = reader.Int("cell_egg_id", -1);
+        m_egg_ref.generation = reader.UInt64("cell_egg_gen");
+        m_egg_ref.world_id = reader.UInt32("cell_egg_world_id");
+        m_egg_ref.world_instance_generation = reader.UInt64("cell_egg_world_instance_generation");
         m_egg_type = static_cast<EMobType>(reader.Int("cell_egg_type", static_cast<int>(m_egg_type)));
         m_egg_retry_timer = std::max(0.f, reader.Float("cell_egg_retry", m_egg_retry_timer));
         // Version 1 snapshots carry no ant binding: the cell simply lays a
         // fresh egg on the next tick, which matches the old behaviour.
-        m_ant_id = reader.Int("cell_ant_id", -1);
-        m_ant_generation = reader.UInt64("cell_ant_gen", 0);
+        m_ant_ref.id = reader.Int("cell_ant_id", -1);
+        m_ant_ref.generation = reader.UInt64("cell_ant_gen");
+        m_ant_ref.world_id = reader.UInt32("cell_ant_world_id");
+        m_ant_ref.world_instance_generation = reader.UInt64("cell_ant_world_instance_generation");
         return true;
     }
 
@@ -715,13 +723,11 @@ class CEouCellMob : public CMob<SMobStats>
     int m_group_id = 0;
     int m_team_id = 0;
     float m_food_stored = 0.f;
-    int m_egg_id = -1;
-    std::uint64_t m_egg_generation = 0;
+    SEntityHandle m_egg_ref;
     EMobType m_egg_type = EMobType::None;
     float m_egg_retry_timer = 0.f;
     float m_retire_timer = 1.f;
-    int m_ant_id = -1;
-    std::uint64_t m_ant_generation = 0;
+    SEntityHandle m_ant_ref;
 };
 
 // EOU egg: grows over time (radius eou_egg_size_start -> eou_egg_size_final),
@@ -737,13 +743,8 @@ class CEouEggMob : public CMob<SMobStats>
     EMobType HatchType() const { return m_hatch_type; }
     void SetTeamId(int team) { m_team_id = team; }
     int TeamId() const { return m_team_id; }
-    void SetBinding(int cell_id, std::uint64_t cell_generation)
-    {
-        m_cell_id = cell_id;
-        m_cell_generation = cell_generation;
-    }
-    int CellId() const { return m_cell_id; }
-    std::uint64_t CellGeneration() const { return m_cell_generation; }
+    void SetBinding(const SEntityHandle& ref) { m_cell_ref = ref; }
+    const SEntityHandle& CellRef() const { return m_cell_ref; }
     void SetGrown(bool grown) { m_grown = grown; }
     bool Grown() const { return m_grown; }
     float GrowProgress() const { return m_grow_progress; }
@@ -767,8 +768,10 @@ class CEouEggMob : public CMob<SMobStats>
     {
         writer.Field("egg_hatch_type", static_cast<int>(m_hatch_type));
         writer.Field("egg_team", m_team_id);
-        writer.Field("egg_cell", m_cell_id);
-        writer.UInt64("egg_cell_gen", m_cell_generation);
+        writer.Field("egg_cell", m_cell_ref.id);
+        writer.UInt64("egg_cell_gen", m_cell_ref.generation);
+        writer.Field("egg_cell_world_id", m_cell_ref.world_id);
+        writer.UInt64("egg_cell_world_instance_generation", m_cell_ref.world_instance_generation);
         writer.Field("egg_age", m_age);
     }
     bool RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override
@@ -776,8 +779,10 @@ class CEouEggMob : public CMob<SMobStats>
         if (version > RuntimeSnapshotVersion()) { error = "Unsupported eou egg snapshot"; return false; }
         m_hatch_type = static_cast<EMobType>(reader.Int("egg_hatch_type", static_cast<int>(m_hatch_type)));
         m_team_id = reader.Int("egg_team", m_team_id);
-        m_cell_id = reader.Int("egg_cell", m_cell_id);
-        m_cell_generation = reader.UInt64("egg_cell_gen", m_cell_generation);
+        m_cell_ref.id = reader.Int("egg_cell", -1);
+        m_cell_ref.generation = reader.UInt64("egg_cell_gen");
+        m_cell_ref.world_id = reader.UInt32("egg_cell_world_id");
+        m_cell_ref.world_instance_generation = reader.UInt64("egg_cell_world_instance_generation");
         m_age = std::max(0.f, reader.Float("egg_age", 0.f));
         m_grow_progress = std::clamp(m_age / std::max(0.1f, game_config::eou_egg_grow_time), 0.f, 1.f);
         m_grown = m_grow_progress >= 1.f;
@@ -787,8 +792,7 @@ class CEouEggMob : public CMob<SMobStats>
   private:
     EMobType m_hatch_type = EMobType::None;
     int m_team_id = 0;
-    int m_cell_id = -1;
-    std::uint64_t m_cell_generation = 0;
+    SEntityHandle m_cell_ref;
     float m_age = 0.f;
     float m_grow_progress = 0.f;
     bool m_grown = false;

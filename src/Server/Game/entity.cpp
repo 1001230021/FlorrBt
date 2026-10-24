@@ -8,6 +8,12 @@
 
 CGameContext* CEntity::GameContext() { return m_p_game_world ? m_p_game_world->GameContext() : nullptr; }
 
+SEntityHandle CEntity::GetHandle() const
+{
+    if (!m_p_game_world || m_id < 0 || m_generation == 0) return {};
+    return { m_id, m_generation, m_p_game_world->GetId(), m_p_game_world->GetInstanceGeneration() };
+}
+
 void CEntity::MarkForDestroy(EEntityRemovalReason reason)
 {
     if (!IsMarkedForDes() || reason == EEntityRemovalReason::Defeated)
@@ -24,6 +30,9 @@ void CEntity::CancelDestroy()
 
 bool CEntity::IsCollision(const CEntity& other) const
 {
+    if (!std::isfinite(Pos().x) || !std::isfinite(Pos().y) || !std::isfinite(other.Pos().x) ||
+        !std::isfinite(other.Pos().y) || !std::isfinite(Radius()) || !std::isfinite(other.Radius()))
+        return false;
     florrbt::Vector2f diff = Pos() - other.Pos();
     float dist_sq = diff.x * diff.x + diff.y * diff.y;
     float radius_sum = Radius() + other.Radius();
@@ -32,6 +41,7 @@ bool CEntity::IsCollision(const CEntity& other) const
 
 void CEntity::TakeDamage(float dmg, CEntity*, EDamageType)
 {
+    if (!std::isfinite(dmg)) return;
     dmg = std::max(0.f, dmg);
     if (dmg <= 0.f) return;
 
@@ -46,6 +56,9 @@ void CEntity::TakeDamage(float dmg, CEntity*, EDamageType)
 void CEntity::OnCollision(CEntity* other)
 {
     if (!other) return;
+    if (!std::isfinite(Pos().x) || !std::isfinite(Pos().y) || !std::isfinite(other->Pos().x) ||
+        !std::isfinite(other->Pos().y) || !std::isfinite(Radius()) || !std::isfinite(other->Radius()))
+        return;
 
     florrbt::Vector2f diff = Pos() - other->Pos();
     float dist = std::sqrt(diff.x * diff.x + diff.y * diff.y);

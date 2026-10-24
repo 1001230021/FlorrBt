@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 
 class CEntity;
 class CFlower;
@@ -24,7 +25,25 @@ class CSnapshotService
         size_t packed_size = 0;
     };
 
+    // Reuse serialized entities only during one immutable snapshot pass.
+    // Keep this local to a worker job; do not retain it across world mutation
+    // or share it between threads. Standalone builds use their own batch.
+    class CBuildBatch
+    {
+      public:
+        CBuildBatch();
+        ~CBuildBatch();
+        CBuildBatch(const CBuildBatch&) = delete;
+        CBuildBatch& operator=(const CBuildBatch&) = delete;
+
+      private:
+        friend class CSnapshotService;
+        struct SImpl;
+        std::unique_ptr<SImpl> m_impl;
+    };
+
     bool BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id, SBuildResult& out) const;
+    bool BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id, SBuildResult& out, CBuildBatch& batch) const;
     static std::vector<SOwnerPetalSlot> BuildPrimarySlots(const CFlower& flower);
     ServerEntitySnap BuildEntitySnap(const CEntity& entity, const CEntity& owner) const;
 };

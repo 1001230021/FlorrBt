@@ -2,6 +2,7 @@
 #include "../Shared/version.h"
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -234,14 +235,16 @@ int main(int argc, char** argv)
         }
         if (argument == "--ready-timeout" && i + 1 < argc)
         {
-            try
-            {
-                ready_timeout = std::chrono::seconds(std::max(1, std::stoi(argv[++i])));
-            } catch (...)
+            const std::string timeout_text = argv[++i] ? argv[i] : "";
+            int timeout_seconds = 0;
+            const auto [end, error] =
+                std::from_chars(timeout_text.data(), timeout_text.data() + timeout_text.size(), timeout_seconds);
+            if (error != std::errc{} || end != timeout_text.data() + timeout_text.size())
             {
                 std::cerr << "[launcher] Invalid ready timeout\n";
                 return 1;
             }
+            ready_timeout = std::chrono::seconds(std::max(1, timeout_seconds));
             continue;
         }
         if (server_executable.empty()) server_executable = argument;

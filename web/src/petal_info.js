@@ -109,6 +109,7 @@ import {
 } from "./protocol.js";
 import { TalentId } from "./talent_data.js";
 import { setAnimatedVisibility } from "./ui_motion.js";
+import { MAGIC_PETAL_DATA } from "./generated_magic_petal_data.js";
 
 export const PetalNameToType = new Map(
   PetalNames.map((name, index) => [normalizePetalName(name), index]),
@@ -662,13 +663,13 @@ export function buildPetalInfo(petalType, rarity) {
       break;
     case petalOrbType:
       addCombat(5 * scale, 25 * scale, 1.5, { preload: 2.5 });
-      addNumber("Mana", 4.1 * scale);
-      addNumber("Max mana", magicManaCost(57.8, rarity));
+      addNumber("Mana", MAGIC_PETAL_DATA.orb_mana_restore_common * scale);
+      addNumber("Max mana", magicManaCost(MAGIC_PETAL_DATA.base_mana_capacity_common, rarity));
       break;
     case petalMagicLeafType:
       addCombat(16 * scale, 12 * scale, 1.8);
-      addNumber("Mana regen", 2.5 * scale, "/s");
-      addNumber("Max mana", magicManaCost(57.8, rarity));
+      addNumber("Mana regen", MAGIC_PETAL_DATA.magic_leaf_mana_regen_common * scale, "/s");
+      addNumber("Max mana", magicManaCost(MAGIC_PETAL_DATA.base_mana_capacity_common, rarity));
       break;
     case petalMagicStingerType:
       addCombat(100 * scale, 1, 0.1);
@@ -693,15 +694,15 @@ export function buildPetalInfo(petalType, rarity) {
       break;
     case petalMagicLightningType:
       addNumber("Durability", 20 * scale);
-      addSeconds("Reload", 0.1);
-      addNumber("Damage", 15 * scale);
-      addNumber("Mana cost", magicManaCost(15, rarity));
+      addSeconds("Reload", MAGIC_PETAL_DATA.magic_lightning_reload_seconds);
+      addNumber("Damage", MAGIC_PETAL_DATA.magic_lightning_damage_common * scale);
+      addNumber("Mana cost", magicManaCost(MAGIC_PETAL_DATA.magic_lightning_mana_cost_common, rarity));
       addNumber("Boost chains", 2 + level - 1);
       addNumber("Attack chains", 3);
       break;
     case petalMagicCactusType:
       addCombat(7 * scale, 15 * scale, 1);
-      addNumber("Max mana", magicManaCost(115.5, rarity));
+      addNumber("Max mana", magicManaCost(MAGIC_PETAL_DATA.magic_cactus_mana_capacity_common, rarity));
       break;
     case petalBulbType:
       addNumber("Damage", 5 * scale);

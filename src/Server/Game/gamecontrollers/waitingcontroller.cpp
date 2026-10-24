@@ -1,4 +1,4 @@
-﻿#include "waitingcontroller.h"
+#include "waitingcontroller.h"
 #include "../../HotReload/snapshot_archive.h"
 #include "../../Module/network_module.h"
 #include "../../Module/world_module.h"
@@ -10,6 +10,7 @@
 #include "../player.h"
 #include "world_controller_factory.h"
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <chrono>
 #include <filesystem>
@@ -197,16 +198,18 @@ void CWaitingController::OnPlayerEntityReady(CGameWorld& world, CPlayer& player,
     SetPlayerPetalsBanned(&player, true);
 }
 
-void CWaitingController::OnPlayerEnteredWorld(CGameWorld& world, CPlayer& player)
+void CWaitingController::OnPlayerArrivalCommitted(CGameWorld& world, CPlayer& player)
 {
     (void)world;
     SetPlayerPetalsBanned(&player, true);
 }
 
-void CWaitingController::OnPlayerLeftWorld(CGameWorld& world, CPlayer& player)
+void CWaitingController::OnPlayerDepartureCommitted(CGameWorld& world, CPlayer& player, CEntity* departing)
 {
     (void)world;
-    SetPlayerPetalsBanned(&player, false);
+    (void)player;
+    if (auto* flower = dynamic_cast<CPlayerFlower*>(departing))
+        for (size_t i = 0; i < flower->GetSlots().size(); ++i) flower->SetBanned(false, static_cast<int>(i));
 }
 
 bool CWaitingController::HandlePlayerCommand(CGameWorld& world, CPlayer& player,
@@ -316,10 +319,8 @@ bool CWaitingController::HandleSettingCommand(CGameWorld& world, CPlayer& player
     if (key == "min_players" || key == "minplayers" || key == "minimum")
     {
         std::uint32_t count = 0;
-        try
-        {
-            count = static_cast<std::uint32_t>(std::stoul(value));
-        } catch (...)
+        const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), count);
+        if (error != std::errc{} || end != value.data() + value.size())
         {
             SendSystemMessage(world, player, "invalid player count: " + value);
             return true;
@@ -453,7 +454,7 @@ void CWaitingController::SendSystemMessage(CGameWorld& world, CPlayer& player, c
     CGameContext* context = world.GameContext();
     if (!context) return;
 
-    CServer::SChatEntry entry;
+    SChatEntry entry;
     entry.flag = EChatFlag::Server;
     entry.player_id = 0;
     entry.target_player_id = static_cast<int>(player.GetId());
@@ -462,5 +463,5 @@ void CWaitingController::SendSystemMessage(CGameWorld& world, CPlayer& player, c
     entry.system_time = static_cast<uint32_t>(
         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
             .count());
-    context->Network().SendChatToPlayer(player, entry);
+    context->Extensions().Globals().Find<IChatService>()->SendTo(player, entry);
 }

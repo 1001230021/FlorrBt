@@ -8,7 +8,7 @@
 #include "Game/entities/mob.h"
 #include "Game/entities/petals/petals_behavior.h"
 #include "Game/gamecontext.h"
-#include "Game/systems/weather_diurnal_system.h"
+#include "Game/extensions/weather_extension.h"
 #include "HotReload/hot_reload_snapshot.h"
 #include "HotReload/snapshot_archive.h"
 #include "Module/console_module.h"
@@ -122,6 +122,8 @@ CServer* CServer::s_p_instance = nullptr;
 CServer::CServer()
 {
     s_p_instance = this;
+    m_extensions = std::make_unique<CExtensionRuntime>();
+    m_reports = std::make_unique<CReportReviewService>();
     m_p_data_store = CreateServerDataStore();
     m_modules.emplace_back(std::make_unique<IConsoleModule>(m_console));
     m_modules.emplace_back(std::make_unique<IServerGuiModule>(m_console));
@@ -129,6 +131,13 @@ CServer::CServer()
 
 CServer::~CServer()
 {
+    m_reports->ShutDown();
+    // All borrowed views are detached while network/player services still
+    // exist. Runtime ownership never keeps a dead world alive.
+    for (const auto& module : m_modules)
+        if (auto* worlds = dynamic_cast<IWorldModule*>(module.get()))
+            for (const auto& world : worlds->GetWorlds()) if (world) world->SetGameContext(nullptr);
+    m_extensions->ShutDown();
     if (m_log_sink_id != 0)
     {
         CLogger::RemoveSink(m_log_sink_id);
@@ -164,28 +173,26 @@ void CServer::Init()
     LOG_INFO("server", std::string(florrbt::version_label) + " starting");
     EnsureRconPasswordInitialized();
 
-    auto weather_diurnal = std::make_unique<CWeatherDiurnalSystem>();
-    m_p_weather_diurnal_system = weather_diurnal.get();
-    m_modules.emplace_back(std::move(weather_diurnal));
-
     auto world_mod = std::make_unique<IWorldModule>();
     m_p_world_module = world_mod.get();
     auto& worlds = world_mod->GetWorlds();
-    if (worlds.empty() || !worlds.front())
+    CGameWorld* main_world = world_mod->GetMainWorld();
+    if (worlds.empty() || !main_world)
     {
         LOG_FATAL("server", "No game worlds were configured");
         m_running = false;
         return;
     }
 
-    CGameWorld& world = *worlds.front();
-    m_p_main_world = &world;
     m_modules.emplace_back(std::move(world_mod));
-    auto network_mod = std::make_unique<INetworkModule>(*this, world);
+    auto network_mod = std::make_unique<INetworkModule>(*this);
     m_p_network_module = network_mod.get();
     m_modules.emplace_back(std::move(network_mod));
-    m_p_game_context = std::make_unique<CGameContext>(world, *m_p_network_module, *this, *this,
-                                                      *m_p_weather_diurnal_system);
+    std::string extension_error;
+    if (!m_extensions->Init(*m_p_network_module, *m_p_network_module, extension_error))
+    { LOG_FATAL("extensions", extension_error); m_running = false; return; }
+    m_p_game_context = std::make_unique<CGameContext>(*m_p_network_module, *this, *this,
+                                                      *m_extensions);
     for (const auto& game_world : worlds)
         if (game_world) game_world->SetGameContext(m_p_game_context.get());
 
@@ -219,6 +226,11 @@ void CServer::Init()
         m_exit_code = 1;
         m_running = false;
     }
+}
+
+CGameWorld* CServer::GetMainWorld() const
+{
+    return m_p_world_module ? m_p_world_module->GetMainWorld() : nullptr;
 }
 
 void CServer::RequestHotReload(std::string candidate)
@@ -272,8 +284,8 @@ void CServer::ProcessHotReloadRequest()
 
     if (m_p_network_module)
     {
-        const SChatEntry reload_chat = SubmitServerChat("Server is reloading");
-        if (!reload_chat.message.empty()) m_p_network_module->BroadcastChat(reload_chat);
+        const SChatEntry reload_chat = Extensions().Globals().Find<IChatService>()->Submit(nullptr, {0.f, 0.f}, EChatFlag::Server, 0, "Server", "Server is reloading");
+        if (!reload_chat.message.empty()) Extensions().Globals().Find<IChatService>()->Broadcast(reload_chat);
     }
 
     const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -317,6 +329,11 @@ std::vector<CGameWorld*> CServer::FindWorldsByMapName(const std::string& map_nam
 CGameWorld* CServer::FindWorldById(std::uint32_t world_id) const
 {
     return m_p_world_module ? m_p_world_module->FindWorldById(world_id) : nullptr;
+}
+
+bool CServer::DeferWorldTransfer(const SDeferredWorldTransfer& request)
+{
+    return m_p_world_module && m_p_world_module->DeferWorldTransfer(request);
 }
 
 IUniquePetalRegistry* CServer::GetUniquePetalRegistry() const
@@ -481,36 +498,6 @@ void CServer::ExecuteStartupConfigCommands()
     }
 }
 
-CServer::SChatEntry CServer::SubmitChat(CGameWorld* world, florrbt::Vector2f pos, EChatFlag flag, uint32_t player_id,
-                                        const std::string& player_name, const std::string& message,
-                                        int target_player_id)
-{
-    if (message.empty()) return {};
-
-    SChatEntry entry;
-    entry.world = world;
-    entry.pos = pos;
-    entry.flag = flag;
-    entry.player_id = player_id;
-    entry.target_player_id = target_player_id;
-    entry.player_name = player_name;
-    entry.message = std::string(TruncateUtf8(message, max_chat_message_size));
-    entry.system_time = static_cast<uint32_t>(
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-
-    m_chats.push_back(entry);
-    const size_t max_saved_chats = std::max<size_t>(1, game_config::server_max_saved_chats);
-    if (m_chats.size() > max_saved_chats)
-        m_chats.erase(m_chats.begin(), m_chats.begin() + static_cast<std::ptrdiff_t>(m_chats.size() - max_saved_chats));
-
-    return entry;
-}
-
-CServer::SChatEntry CServer::SubmitServerChat(const std::string& message)
-{
-    return SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Server", message);
-}
-
 bool CServer::MeetsPetalReportRarity(ERarity rarity, int min_rarity)
 {
     if (!IsKnownRarity(rarity)) return false;
@@ -562,9 +549,9 @@ bool CServer::BroadcastPetalReport(std::string_view done, ERarity rarity, std::s
     message.append(doer);
     message += ")";
 
-    const SChatEntry chat = SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Server", message);
+    const SChatEntry chat = Extensions().Globals().Find<IChatService>()->Submit(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Server", message);
     if (chat.message.empty()) return false;
-    network->BroadcastChat(chat);
+    Extensions().Globals().Find<IChatService>()->Broadcast(chat);
     return true;
 }
 
@@ -590,9 +577,9 @@ bool CServer::BroadcastMobReport(std::string_view action, ERarity rarity, std::s
     message.append(action);
     message += ")";
 
-    const SChatEntry chat = SubmitChat(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Server", message);
+    const SChatEntry chat = Extensions().Globals().Find<IChatService>()->Submit(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Server", message);
     if (chat.message.empty()) return false;
-    network->BroadcastChat(chat);
+    Extensions().Globals().Find<IChatService>()->Broadcast(chat);
     return true;
 }
 
@@ -632,9 +619,9 @@ bool CServer::BroadcastMobSpawnReport(CGameWorld& source_world, std::string_view
             world_message += ">(somewhere)";
         }
 
-        const SChatEntry chat = SubmitChat(world.get(), { 0.f, 0.f }, EChatFlag::Server, 0, "Server", world_message);
+        const SChatEntry chat = Extensions().Globals().Find<IChatService>()->Submit(world.get(), { 0.f, 0.f }, EChatFlag::Server, 0, "Server", world_message);
         if (chat.message.empty()) continue;
-        network->BroadcastChat(chat);
+        Extensions().Globals().Find<IChatService>()->Broadcast(chat);
         sent = true;
     }
     return sent;
@@ -737,7 +724,13 @@ void CServer::Run()
                     // Coalesce gameplay mutations into one immutable save snapshot
                     // per tick; release before hot-reload's durable Flush barrier.
                     CAccountDataStore::CSaveBatch account_batch;
-                    for (auto& module : m_modules) module->Tick(dt);
+                    for (auto& module : m_modules)
+                    {
+                        // Preserve the old weather-before-world phase while
+                        // ticking shared extensions once, not once per world.
+                        if (module.get() == m_p_world_module) m_extensions->Tick(dt);
+                        module->Tick(dt);
+                    }
                 }
                 ++m_tick;
                 ProcessHotReloadRequest();
@@ -793,6 +786,7 @@ void CServer::ShutDown()
 {
     if (m_shutdown) return;
     m_shutdown = true;
+    m_reports->ShutDown();
     for (auto& module : m_modules)
     {
         module->ShutDown();

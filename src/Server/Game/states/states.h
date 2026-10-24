@@ -15,13 +15,17 @@ class CPoisonState : public CState
 
     bool IsValid() const { return m_is_valid; }
     float GetBasicDmg() const { return m_basic_dmg; }
-    int GetApplierId() const { return m_applier_id; }
-    std::uint64_t GetApplierGeneration() const { return m_applier_generation; }
+    const SEntityHandle& GetApplierRef() const { return m_applier_ref; }
+    void RemapTransferredReferences(TEntityHandleRemap mapping) noexcept override
+    { m_applier_ref = RemapTransferredHandle(m_applier_ref, mapping); }
+    // Legacy accessors retained for old snapshot/debug consumers. The state
+    // itself stores one qualified handle, not separate id/generation fields.
+    int GetApplierId() const { return m_applier_ref.id; }
+    std::uint64_t GetApplierGeneration() const { return m_applier_ref.generation; }
 
   private:
     float m_basic_dmg = 0.f;
-    int m_applier_id = -1;
-    std::uint64_t m_applier_generation = 0;
+    SEntityHandle m_applier_ref;
     bool m_is_valid = false;
 };
 
@@ -32,10 +36,12 @@ class CBanSlotState : public CState
     ~CBanSlotState() override;
     void Tick(float dt) override;
     int GetSlotIndex() const { return m_slot_index; }
+    void RemapTransferredReferences(TEntityHandleRemap mapping) noexcept override
+    { m_flower_ref = RemapTransferredHandle(m_flower_ref, mapping); }
 
   private:
     int m_slot_index = -1;
-    CFlower* m_p_flower = nullptr;
+    SEntityHandle m_flower_ref;
 };
 
 class CPincerSpeedReduceState : public CState

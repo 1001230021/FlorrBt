@@ -4116,19 +4116,32 @@
    "id": 125,
    "image": "foliage_bri_0.svg",
    "imageheight": 256,
-   "imagewidth": 256
+   "imagewidth": 256,
+   "objectgroup": {
+    "draworder": "index", "name": "", "type": "objectgroup", "opacity": 1, "visible": true, "x": 0, "y": 0,
+    "objects": [{"id": 1, "name": "", "type": "", "x": 0, "y": 0, "width": 0, "height": 0, "rotation": 0, "visible": true,
+     "polygon": [{"x": 0, "y": 0}, {"x": 256, "y": 0}, {"x": 256, "y": 128}, {"x": 128, "y": 128}, {"x": 128, "y": 256}, {"x": 0, "y": 256}]}]
+   }
   },
   {
    "id": 126,
    "image": "foliage_t_0.svg",
    "imageheight": 256,
-   "imagewidth": 256
+   "imagewidth": 256,
+   "objectgroup": {
+    "draworder": "index", "name": "", "type": "objectgroup", "opacity": 1, "visible": true, "x": 0, "y": 0,
+    "objects": [{"id": 1, "name": "", "type": "", "x": 0, "y": 0, "width": 256, "height": 128, "rotation": 0, "visible": true}]
+   }
   },
   {
    "id": 127,
    "image": "foliage_tl_0.svg",
    "imageheight": 256,
-   "imagewidth": 256
+   "imagewidth": 256,
+   "objectgroup": {
+    "draworder": "index", "name": "", "type": "objectgroup", "opacity": 1, "visible": true, "x": 0, "y": 0,
+    "objects": [{"id": 1, "name": "", "type": "", "x": 0, "y": 0, "width": 128, "height": 128, "rotation": 0, "visible": true}]
+   }
   },
   {
    "id": 128,

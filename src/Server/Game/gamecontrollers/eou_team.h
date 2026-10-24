@@ -10,14 +10,10 @@ class CSnapshotReader;
 class CSnapshotWriter;
 class CEouCellMob;
 
-// Stable entity handle: {id, generation} resolves through
-// world.GetEntity(id, generation), so stale handles (dead or reused ids)
-// safely fail instead of dangling.
-struct SEouEntityHandle
-{
-    int id = 0;
-    std::uint64_t generation = 0;
-};
+// EOU uses the same generation/world-aware handle as every other controller.
+// Keep the controller-specific alias for source compatibility with snapshots
+// and team APIs, but do not maintain a second handle implementation.
+using SEouEntityHandle = SEntityHandle;
 
 // One connected block of same-type cells (a "union-find group": merging two
 // groups collapses them into one block). Cells are adjacent on the 4-neighbour
@@ -61,6 +57,7 @@ class CCellGroupSet
 
     void CaptureSnapshot(CSnapshotWriter& writer) const;
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error);
+    void ResolveReferences(CGameWorld& world, int team_id);
 
   private:
     std::pair<int, int> CellKeyOf(CGameWorld& world, SEouEntityHandle handle) const;
@@ -101,7 +98,7 @@ class CEouPheromoneGroup
     void SetPheromoneTarget(florrbt::Vector2f target);
 
     bool AddMember(CEntity* entity);
-    bool RemoveMember(int id, std::uint64_t generation);
+    bool RemoveMember(const SEouEntityHandle& handle);
     std::size_t MemberCount() const { return m_members.size(); }
     const std::vector<SEouEntityHandle>& Members() const { return m_members; }
 
@@ -111,6 +108,7 @@ class CEouPheromoneGroup
 
     void CaptureSnapshot(CSnapshotWriter& writer) const;
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error);
+    void ResolveReferences(CGameWorld& world);
 
   private:
     void RebuildUnupdated();
@@ -161,9 +159,9 @@ class CTeam
     // the controller detects it by matching defeated mobs against this.
     void SetQueen(SEouEntityHandle handle) { m_queen = handle; }
     SEouEntityHandle Queen() const { return m_queen; }
-    bool IsQueen(int id, std::uint64_t generation) const
+    bool IsQueen(const SEouEntityHandle& handle) const
     {
-        return m_queen.id > 0 && m_queen.id == id && m_queen.generation == generation;
+        return m_queen.RefersTo(handle);
     }
 
     // Keys a cell into the connectivity set (unifies same-type neighbours).
@@ -197,6 +195,7 @@ class CTeam
 
     void CaptureSnapshot(CSnapshotWriter& writer) const;
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error);
+    void ResolveReferences(CGameWorld& world);
 
   private:
     int m_team_id;

@@ -42,6 +42,7 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <Import Project="tools\msbuild\dependencies.props" />
   <Import Project="tools\msbuild\isolated_outputs.props" />
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -50,7 +51,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <PreprocessorDefinitions>_DEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;HAVE_CONFIG_H;LIBTMJ_VERSION_MAJOR=1;LIBTMJ_VERSION_MINOR=6;LIBTMJ_VERSION_PATCH=0;LIBTMJ_VERSION="1.6.0";%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;$(SfmlRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>
@@ -64,7 +65,7 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <PreprocessorDefinitions>NDEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;HAVE_CONFIG_H;LIBTMJ_VERSION_MAJOR=1;LIBTMJ_VERSION_MINOR=6;LIBTMJ_VERSION_PATCH=0;LIBTMJ_VERSION="1.6.0";%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;$(SfmlRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>

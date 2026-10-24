@@ -29,11 +29,14 @@ inline void ReportFailure(const char* file, int line, const std::string& message
     ++FailureCount();
 }
 
-inline int RunAll()
+inline int RunAll(const std::string& filter = {})
 {
     int passed = 0;
+    size_t selected = 0;
     for (const TestCase& t : Registry())
     {
+        if (!filter.empty() && std::string(t.name).find(filter) == std::string::npos) continue;
+        ++selected;
         const int before = FailureCount();
         t.fn();
         if (FailureCount() == before)
@@ -44,9 +47,10 @@ inline int RunAll()
         {
             std::printf("FAIL %s\n", t.name);
         }
+        std::fflush(stdout);
     }
-    std::printf("%d/%zu tests passed\n", passed, Registry().size());
-    return FailureCount() == 0 ? 0 : 1;
+    std::printf("%d/%zu tests passed\n", passed, selected);
+    return selected > 0 && FailureCount() == 0 ? 0 : 1;
 }
 } // namespace test
 

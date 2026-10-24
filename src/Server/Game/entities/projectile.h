@@ -17,8 +17,7 @@ class CProjectile : public CEntity
     }
 
     CProjectile(CGameWorld* world, florrbt::Vector2f pos, float r, CEntity* owner, SEntityTypeInfo entity_type)
-        : CEntity(world, pos.x, pos.y, r, entity_type), m_p_owner(owner), m_owner_id(owner ? owner->Id() : -1),
-          m_owner_generation(owner ? owner->Generation() : 0)
+        : CEntity(world, pos.x, pos.y, r, entity_type), m_owner_ref(owner ? owner->GetHandle() : SEntityHandle{})
     {
         AllowSkipTick() = owner && owner->AllowSkipTick();
         if (owner)
@@ -39,14 +38,18 @@ class CProjectile : public CEntity
         Pos() += m_vel * dt;
     }
     CEntity* GetOwner() const;
+    void RemapTransferredReferences(TEntityHandleRemap mapping) noexcept override
+    {
+        m_owner_ref = RemapTransferredHandle(m_owner_ref, mapping);
+    }
     bool CanPhysicallyCollideWith(const CEntity* other) const override
     {
         return other && !CheckTeam(Team(), other->Team());
     }
 
-    CEntity* m_p_owner = nullptr;
-    int m_owner_id = -1;
-    std::uint64_t m_owner_generation = 0;
+    // The owner is resolved through the world each time.  Keeping a raw owner
+    // pointer here made projectiles dereference freed entities after cleanup.
+    SEntityHandle m_owner_ref;
     florrbt::Vector2f m_vel = { 0.0f, 0.0f };
 };
 

@@ -1,12 +1,70 @@
 #pragma once
 #include "../../Shared/shared.h"
 #include "../../Shared/math_types.h"
+#include "../../Shared/terrain_rules.h"
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
+#include <span>
+#include <utility>
+#include <vector>
 
 class CGameWorld;
 class CGameContext;
+
+// A stable reference to an entity.  An id alone is not sufficient because
+// CGameWorld intentionally reuses ids after cleanup; generation closes that
+// hole.  The world instance fields additionally prevent a handle captured in
+// one room from resolving an entity in a different room after a transfer or
+// room recreation.  Zero world_instance_generation is accepted only for
+// legacy snapshots and is always resolved against the caller's world.
+struct SEntityHandle
+{
+    int id = -1;
+    std::uint64_t generation = 0;
+    std::uint32_t world_id = 0;
+    std::uint64_t world_instance_generation = 0;
+
+    bool IsValid() const { return id >= 0 && generation != 0; }
+    bool HasWorldIdentity() const { return world_instance_generation != 0; }
+
+    // Legacy snapshots have id + generation but no process-local world
+    // identity. They can still be compared safely after being restored into
+    // the current world; fully-qualified handles must match their world too.
+    bool RefersTo(const SEntityHandle& other) const
+    {
+        if (!IsValid() || !other.IsValid() || id != other.id || generation != other.generation) return false;
+        if (!HasWorldIdentity() || !other.HasWorldIdentity()) return true;
+        return world_id == other.world_id && world_instance_generation == other.world_instance_generation;
+    }
+
+    bool operator==(const SEntityHandle& other) const
+    {
+        return id == other.id && generation == other.generation && world_id == other.world_id &&
+               world_instance_generation == other.world_instance_generation;
+    }
+};
+
+struct SEntityHandleHash
+{
+    std::size_t operator()(const SEntityHandle& value) const noexcept
+    {
+        std::size_t seed = std::hash<int>{}(value.id);
+        seed ^= std::hash<std::uint64_t>{}(value.generation) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
+        seed ^= std::hash<std::uint32_t>{}(value.world_id) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
+        seed ^= std::hash<std::uint64_t>{}(value.world_instance_generation) + 0x9e3779b9U + (seed << 6U) +
+                (seed >> 2U);
+        return seed;
+    }
+};
+
+using TEntityHandleRemap = std::span<const std::pair<SEntityHandle, SEntityHandle>>;
+inline SEntityHandle RemapTransferredHandle(const SEntityHandle& handle, TEntityHandleRemap mapping) noexcept
+{
+    for (const auto& [before, after] : mapping) if (handle.RefersTo(before)) return after;
+    return {};
+}
 
 enum class EEntityTag : std::uint32_t
 {
@@ -44,7 +102,7 @@ class CEntity
     virtual ~CEntity() = default;
 
     CGameWorld* GameWorld() const { return m_p_game_world; }
-    void SetGameWorld(CGameWorld* world) { m_p_game_world = world; }
+    SEntityHandle GetHandle() const;
     CGameContext* GameContext();
 
     const SEntityTypeInfo& GetEntityTypeInfo() const { return m_entity_type; }
@@ -68,10 +126,8 @@ class CEntity
     const bool& AllowSkipTick() const { return m_allow_skip_tick; }
     EEntityTickMode& TickMode() { return m_tick_mode; }
     const EEntityTickMode& TickMode() const { return m_tick_mode; }
-    int& Id() { return m_id; }
-    const int& Id() const { return m_id; }
-    std::uint64_t& Generation() { return m_generation; }
-    const std::uint64_t& Generation() const { return m_generation; }
+    int Id() const { return m_id; }
+    std::uint64_t Generation() const { return m_generation; }
     size_t& LiveIndex() { return m_live_index; }
     const size_t& LiveIndex() const { return m_live_index; }
     size_t& CleanupIndex() { return m_cleanup_index; }
@@ -119,10 +175,14 @@ class CEntity
     virtual bool CanPhysicallyCollideWith(const CEntity* other) const { return other != nullptr; }
     virtual bool IsCollisionPositionLocked() const { return false; }
     virtual bool CollidesWithWalls() const { return true; }
+    virtual EWallQuery WallCollisionMask() const { return EWallQuery::All; }
     virtual float WallCollisionRadius() const { return m_radius; }
     virtual float TickHorizon() const { return m_tick_horizon; }
     virtual bool IsVisible() const { return !IsDead(); }
     virtual void OnBeforeRemoved(EEntityRemovalReason) {}
+    virtual void CollectTransferDependencies(std::vector<SEntityHandle>&) const {}
+    virtual void RemapTransferredReferences(TEntityHandleRemap) noexcept {}
+    virtual void OnWorldTransferCommitted() {}
     void MarkForDestroy(EEntityRemovalReason reason = EEntityRemovalReason::Despawned);
     void CancelDestroy();
     EEntityRemovalReason RemovalReason() const { return m_removal_reason; }
@@ -135,6 +195,16 @@ class CEntity
     void SetNetworkType(std::uint8_t network_type) { m_entity_type.network_type = network_type; }
 
   private:
+    friend class CGameWorld;
+    friend class CWorldTransfer;
+
+    void SetGameWorld(CGameWorld* world) { m_p_game_world = world; }
+    void SetIdentity(int id, std::uint64_t generation)
+    {
+        m_id = id;
+        m_generation = generation;
+    }
+
     CGameWorld* m_p_game_world = nullptr;
     SEntityTypeInfo m_entity_type;
     EEntityRemovalReason m_removal_reason = EEntityRemovalReason::Despawned;
@@ -150,11 +220,11 @@ class CEntity
 
     int m_id = -1;
     std::uint64_t m_generation = 0;
-    size_t m_live_index = std::numeric_limits<size_t>::max();
-    size_t m_cleanup_index = std::numeric_limits<size_t>::max();
-    size_t m_always_tick_index = std::numeric_limits<size_t>::max();
-    size_t m_conditional_tick_index = std::numeric_limits<size_t>::max();
-    size_t m_large_spatial_index = std::numeric_limits<size_t>::max();
+    size_t m_live_index = (std::numeric_limits<size_t>::max)();
+    size_t m_cleanup_index = (std::numeric_limits<size_t>::max)();
+    size_t m_always_tick_index = (std::numeric_limits<size_t>::max)();
+    size_t m_conditional_tick_index = (std::numeric_limits<size_t>::max)();
+    size_t m_large_spatial_index = (std::numeric_limits<size_t>::max)();
     std::uint64_t m_active_tick_marker = 0;
     std::uint64_t m_collision_sync_marker = 0;
     bool m_is_marked_for_des = false;

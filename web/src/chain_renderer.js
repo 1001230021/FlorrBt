@@ -2,12 +2,19 @@ const CHAIN_PREFIX = "chain:";
 
 export function parseChainSnapshot(name) {
   const parts = String(name || "").split(":");
-  if (parts.length !== 8 || parts[0] !== "chain") return null;
+  if ((parts.length !== 8 && parts.length !== 9) || parts[0] !== "chain") return null;
   const values = parts.slice(1).map(Number);
   if (values.some((value) => !Number.isFinite(value))) return null;
   const [aId, aGeneration, bId, bGeneration, maxLength, integrity, tension] = values;
-  if (aId < 0 || bId < 0 || aGeneration <= 0 || bGeneration <= 0) return null;
-  return { aId, aGeneration, bId, bGeneration, maxLength, integrity, tension };
+  const elasticity = values.length >= 8 ? values[7] : -1;
+  if (!Number.isSafeInteger(aId) || !Number.isSafeInteger(bId) || aId < 0 || bId < 0 ||
+      aId > 0xffffffff || bId > 0xffffffff || !/^\d+$/.test(parts[2]) || !/^\d+$/.test(parts[4])) return null;
+  const aGenerationExact = BigInt(parts[2]), bGenerationExact = BigInt(parts[4]);
+  if (aGenerationExact <= 0n || bGenerationExact <= 0n ||
+      aGenerationExact > 0xffffffffffffffffn || bGenerationExact > 0xffffffffffffffffn) return null;
+  return { aId, aGeneration, bId, bGeneration, maxLength, integrity, tension, elasticity,
+    aGenerationKey: aGenerationExact.toString(16).padStart(16, "0"),
+    bGenerationKey: bGenerationExact.toString(16).padStart(16, "0") };
 }
 
 export function isChainSnapshot(name) {

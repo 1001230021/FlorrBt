@@ -5,6 +5,7 @@
 #include "../../Shared/math_types.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <random>
 #include <sstream>
 #include <string>
@@ -76,15 +77,9 @@ inline std::vector<SZoneMobEntry> ParseZoneMobEntries(std::string_view mobs)
         {
             std::string weight_text = TrimZoneMobToken(token.substr(separator + 1));
             token = TrimZoneMobToken(token.substr(0, separator));
-            try
-            {
-                weight = std::stof(weight_text);
-            } catch (...)
-            {
-                weight = 0.f;
-            }
+            if (!ParseFiniteFloatText(weight_text, weight)) weight = 0.f;
         }
-        if (token.empty() || weight <= 0.f) continue;
+        if (token.empty() || !std::isfinite(weight) || weight <= 0.f) continue;
 
         EMobType type = EMobType::None;
         if (TryParseZoneMobType(token, type)) result.push_back({ type, weight });

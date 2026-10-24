@@ -3,6 +3,7 @@
 #include "../HotReload/snapshot_archive.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <sstream>
 
 bool CControllerParams::Contains(std::string_view key) const
@@ -34,7 +35,7 @@ float CControllerParams::GetFloat(std::string_view key, float fallback) const
     std::stringstream stream(value);
     float parsed = fallback;
     stream >> parsed;
-    if (stream.fail() || !stream.eof()) return fallback;
+    if (stream.fail() || !stream.eof() || !std::isfinite(parsed)) return fallback;
     return parsed;
 }
 
@@ -106,7 +107,7 @@ bool ControllerParamValueLegal(EControllerParamType type, const std::string& val
         std::stringstream stream(value);
         double parsed = 0.0;
         stream >> parsed;
-        if (stream.fail() || !stream.eof()) return false;
+        if (stream.fail() || !stream.eof() || !std::isfinite(parsed)) return false;
         break;
     }
     case EControllerParamType::Bool: {

@@ -93,17 +93,22 @@ void CAntHelPvpController::OnPlayerEntityReady(CGameWorld& world, CPlayer& playe
     StripPlayerPetals(player);
 }
 
-void CAntHelPvpController::OnPlayerEnteredWorld(CGameWorld& world, CPlayer& player)
+void CAntHelPvpController::OnPlayerArrivalCommitted(CGameWorld& world, CPlayer& player)
 {
     (void)world;
     if (CEntity* entity = player.GetEntity()) entity->Team() = AssignTeam(player);
     StripPlayerPetals(player);
 }
 
-void CAntHelPvpController::OnPlayerLeftWorld(CGameWorld& world, CPlayer& player)
+void CAntHelPvpController::OnPlayerDepartureCommitted(CGameWorld& world, CPlayer& player, CEntity* departing)
 {
     (void)world;
-    if (LocksPetalLoadout()) player.RestoreSavedLoadout();
+    auto* departing_flower = dynamic_cast<CPlayerFlower*>(departing);
+    if (LocksPetalLoadout() && departing_flower) player.RestoreSavedLoadout(departing_flower);
+    // Match teams are local to this controller. Returning to a cooperative
+    // world/waiting room must not retain an enemy PvP team. A destination PvP
+    // controller will assign its own team in OnPlayerArrivalCommitted.
+    if (departing_flower) departing_flower->Team() = game_config::mob_player_flower_team;
     // Rejoining a started game counts as a mid-game join (spectator).
     m_player_teams.erase(player.GetId());
 }
@@ -213,7 +218,8 @@ bool CAntHelPvpController::RestoreSnapshot(const CSnapshotReader& reader, std::u
     m_spectator_team = std::max(1, reader.Int("spectator_team", kSpectatorTeam));
     m_lock_loadout = reader.Bool("lock_loadout", true);
     m_player_teams.clear();
-    const std::uint32_t count = reader.UInt32("player_teams_size", 0);
+    constexpr std::uint32_t max_restore_player_teams = 4096;
+    const std::uint32_t count = std::min(reader.UInt32("player_teams_size", 0), max_restore_player_teams);
     for (std::uint32_t i = 0; i < count; ++i)
     {
         const std::uint32_t player_id = reader.UInt32("player_team_id_" + std::to_string(i), 0);

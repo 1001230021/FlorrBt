@@ -5,6 +5,7 @@
 #include "../gamecontroller.h"
 #include "mob.h"
 #include "petals/petal_slot.h"
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -36,6 +37,10 @@ class CFlower : public CAttackableMob<SFlowerStats>
     void ClearPetals();
     void DestroyPetalEntities();
     void ReloadPetals();
+    bool ArePetalsSuppressed() const;
+    void RefreshPetalSuppression();
+    bool HasPendingPetalReload() const { return m_petals_suspended; }
+    void RestorePetalSuspension(bool suspended) { m_petals_suspended = suspended; }
     bool TryStartBurrowFromShovel();
 
     const SFlowerStats* GetBaseStats() const override { return &m_base_stats; }
@@ -82,9 +87,9 @@ class CFlower : public CAttackableMob<SFlowerStats>
     float GetStoredPetalRotationAngle() const { return m_petal_rotation_angle; }
     void RestoreFlowerRuntime(float shield, float mana, float petal_rotation_angle)
     {
-        m_shield = shield;
-        Mana() = std::max(0.f, mana);
-        m_petal_rotation_angle = petal_rotation_angle;
+        m_shield = std::isfinite(shield) ? std::max(0.f, shield) : 0.f;
+        Mana() = std::isfinite(mana) ? std::max(0.f, mana) : 0.f;
+        m_petal_rotation_angle = std::isfinite(petal_rotation_angle) ? petal_rotation_angle : 0.f;
         m_final_stats_dirty = true;
     }
     void RestoreSlotCount(int count) { SetPetalSlotCount(count); }
@@ -96,6 +101,7 @@ class CFlower : public CAttackableMob<SFlowerStats>
     int m_total_copies = 0;
 
   protected:
+    void OnEnvironmentChanged() override;
     void RefreshTargetRadiusFromFinalStats();
     void AdvanceRadiusTowardsTarget(float dt);
     void ClampShieldToMaxHealth();
@@ -117,6 +123,7 @@ class CFlower : public CAttackableMob<SFlowerStats>
     float m_target_radius = 0.f;
     bool m_final_stats_dirty = true;
     bool m_petal_state_dirty = true;
+    bool m_petals_suspended = false;
     std::uint64_t m_final_stats_revision = 0;
     std::uint64_t m_config_revision = game_config::GetConfigRevision();
 

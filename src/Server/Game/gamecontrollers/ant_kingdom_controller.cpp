@@ -81,6 +81,12 @@ void CAntKingdomController::OnActivate(CGameWorld& world)
     m_food_replenish_timer = std::max(1.f, game_config::eou_food_replenish_interval);
 }
 
+void CAntKingdomController::OnDeactivate(CGameWorld& world)
+{
+    m_wall_board.DetachWorld(world);
+    CMutableTerrainController::OnDeactivate(world);
+}
+
 void CAntKingdomController::InitializeSlotProxies()
 {
     // Skill cards disguised as vanilla petal slots for the client. The build
@@ -146,7 +152,7 @@ CEntity* CAntKingdomController::SpawnFoodEntity(CGameWorld& world, florrbt::Vect
     CEntity* entity = world.InsertEntity(std::move(food));
     if (!entity) return nullptr;
     entity->Team() = 0; // neutral: anybody may harvest
-    m_food_entities.emplace(entity->Id(), entity->Generation());
+    m_food_entities.insert(entity->GetHandle());
     return entity;
 }
 
@@ -173,9 +179,9 @@ int CAntKingdomController::SpawnColonyFood(CGameWorld& world, const CTeam& team,
             clear = m_wall_board.InBounds(row, col) && !m_wall_board.TileSolid(row, col);
         }
         if (!clear || !eou_has_line_of_sight(m_wall_board, team.HomePos(), pos)) continue;
-        for (const auto& [id, generation] : m_food_entities)
+        for (const SEntityHandle& food_ref : m_food_entities)
         {
-            const auto* food = world.GetEntity(id, generation);
+            const auto* food = world.ResolveEntity(food_ref);
             if (food && !food->IsMarkedForDes() && EouDistance(pos, food->Pos()) < radius * 2.f + 40.f)
             { clear = false; break; }
         }
@@ -186,8 +192,8 @@ int CAntKingdomController::SpawnColonyFood(CGameWorld& world, const CTeam& team,
 
 void CAntKingdomController::ReplenishFood(CGameWorld& world)
 {
-    std::erase_if(m_food_entities, [&world](const auto& entry) {
-        auto* food = dynamic_cast<CEouFoodMob*>(world.GetEntity(entry.first, entry.second));
+    std::erase_if(m_food_entities, [&world](const SEntityHandle& food_ref) {
+        auto* food = dynamic_cast<CEouFoodMob*>(world.ResolveEntity(food_ref));
         return !food || food->IsMarkedForDes() || food->IsDead() || food->RemainingFood() <= 0.f;
     });
     const int near_cap = std::clamp(game_config::eou_colony_food_count, 0, 8);
@@ -197,9 +203,9 @@ void CAntKingdomController::ReplenishFood(CGameWorld& world)
     {
         if (m_food_entities.size() >= total_cap) break;
         int nearby = 0;
-        for (const auto& [id, generation] : m_food_entities)
+        for (const SEntityHandle& food_ref : m_food_entities)
         {
-            const auto* food = world.GetEntity(id, generation);
+            const auto* food = world.ResolveEntity(food_ref);
             if (food && EouDistance(team.HomePos(), food->Pos()) <= std::max(512.f, game_config::default_horizon) &&
                 eou_has_line_of_sight(m_wall_board, team.HomePos(), food->Pos())) ++nearby;
         }
@@ -213,7 +219,7 @@ void CAntKingdomController::OnMobDefeated(CGameWorld& world, CMobBase& mob)
     // not run through the defeat path, so this only fires on real kills).
     for (auto& [team_id, team] : m_teams)
     {
-        if (!team.IsQueen(mob.Id(), mob.Generation())) continue;
+        if (!team.IsQueen(mob.GetHandle())) continue;
         OnQueenSlain(world, team_id);
         break;
     }
@@ -235,9 +241,7 @@ void CAntKingdomController::OnEntityRemoved(CGameWorld& world, CEntity& entity, 
         ReleaseCellContents(world, *cell);
         if (CTeam* team = FindTeam(cell->TeamId())) team->RemoveCell(world, *cell);
     }
-    if (const auto it = m_food_entities.find(entity.Id());
-        it != m_food_entities.end() && it->second == entity.Generation())
-        m_food_entities.erase(it);
+    m_food_entities.erase(entity.GetHandle());
     CAntHelPvpController::OnEntityRemoved(world, entity, reason);
 }
 
@@ -272,10 +276,10 @@ void CAntKingdomController::OnPlayerEntityReady(CGameWorld& world, CPlayer& play
     if (HasMatchTeam(player.GetId())) EquipPheromonePetals(flower);
 }
 
-void CAntKingdomController::OnPlayerEnteredWorld(CGameWorld& world, CPlayer& player)
+void CAntKingdomController::OnPlayerArrivalCommitted(CGameWorld& world, CPlayer& player)
 {
-    CMutableTerrainController::OnPlayerEnteredWorld(world, player);
-    CAntHelPvpController::OnPlayerEnteredWorld(world, player);
+    CMutableTerrainController::OnPlayerArrivalCommitted(world, player);
+    CAntHelPvpController::OnPlayerArrivalCommitted(world, player);
 
     // A match team gets its eou team (owning its pheromone groups).
     const int team_id = PlayerTeam(player.GetId());
@@ -308,10 +312,17 @@ void CAntKingdomController::OnPlayerEnteredWorld(CGameWorld& world, CPlayer& pla
                                     std::to_string(m_pheromone_group_count) + " pheromone groups, " +
                                     std::to_string(workers) + " workers and a queen");
     }
+    if (auto* entity = player.GetEntity(); entity && dynamic_cast<IEouMob*>(entity))
+        if (auto* team = FindTeam(team_id)) AdoptEouMob(world, *team, *entity);
     SendSystemMessage(world, player, "EOU: /colony = food/army status; /colony help = controls. Collect food, build nurseries, protect your queen.");
 }
 
-void CAntKingdomController::OnPlayerLeftWorld(CGameWorld& world, CPlayer& player)
+bool CAntKingdomController::WritePlayerScene(const CGameWorld& world, const CPlayer& player, IPlayerSceneWriter& writer) const
+{
+    return CMutableTerrainController::WritePlayerScene(world, player, writer) && m_wall_board.WritePlayerScene(writer);
+}
+
+void CAntKingdomController::OnPlayerDepartureCommitted(CGameWorld& world, CPlayer& player, CEntity* departing)
 {
     // Dissolve the player's team before the pvp base forgets the assignment.
     const int team_id = PlayerTeam(player.GetId());
@@ -324,7 +335,7 @@ void CAntKingdomController::OnPlayerLeftWorld(CGameWorld& world, CPlayer& player
         m_team_slot_proxies.erase(team_id);
         LOG_INFO("ant_kingdom", "team " + std::to_string(team_id) + " dissolved");
     }
-    CAntHelPvpController::OnPlayerLeftWorld(world, player);
+    CAntHelPvpController::OnPlayerDepartureCommitted(world, player, departing);
 }
 
 bool CAntKingdomController::HandlePlayerCommand(CGameWorld& world, CPlayer& player,
@@ -434,13 +445,13 @@ bool CAntKingdomController::HandleColonyCommand(CGameWorld& world, CPlayer& play
     int grown_eggs = 0;
     for (const SEouEntityHandle& handle : team->Cells().AllCells())
     {
-        auto* cell = dynamic_cast<CEouCellMob*>(world.GetEntity(handle.id, handle.generation));
+        auto* cell = dynamic_cast<CEouCellMob*>(world.ResolveEntity(handle));
         if (!cell || cell->IsMarkedForDes() || cell->IsDead()) continue;
         if (cell->CellType() == ECouCellType::Storage) ++storage_cells;
         else if (cell->EggType() == ToMobType(EModMobType::EouSoldier)) ++soldier_cells;
         else ++worker_cells;
         if (!cell->HasEgg()) continue;
-        auto* egg = dynamic_cast<CEouEggMob*>(world.GetEntity(cell->EggId(), cell->EggGeneration()));
+        auto* egg = dynamic_cast<CEouEggMob*>(world.ResolveEntity(cell->EggRef()));
         if (!egg || egg->IsMarkedForDes()) continue;
         ++eggs;
         if (egg->Grown()) ++grown_eggs;
@@ -636,17 +647,14 @@ bool CAntKingdomController::HandleMarkWallCommand(CGameWorld& world, CPlayer& pl
             SendSystemMessage(world, player, "mark_wall: usage /mark_wall or /mark_wall [x,y]");
             return true;
         }
-        const std::string inner = token.substr(1, token.size() - 2);
-        const size_t comma = inner.find(',');
-        if (comma == std::string::npos)
+        florrbt::Vector2f target;
+        if (!ParseWorldPoint(token, target))
         {
             SendSystemMessage(world, player, "mark_wall: usage /mark_wall or /mark_wall [x,y]");
             return true;
         }
-        const float x = std::stof(inner.substr(0, comma));
-        const float y = std::stof(inner.substr(comma + 1));
-        target_col = static_cast<int>(std::floor(x / m_tile_size));
-        target_row = static_cast<int>(std::floor(y / m_tile_size));
+        target_col = static_cast<int>(std::floor(target.x / m_tile_size));
+        target_row = static_cast<int>(std::floor(target.y / m_tile_size));
     }
     else
     {
@@ -710,15 +718,11 @@ bool CAntKingdomController::HandlePheromoneCommand(CGameWorld& world, CPlayer& p
             SendSystemMessage(world, player, "pheromone: usage /pheromone or /pheromone [x,y]");
             return true;
         }
-        const std::string inner = token.substr(1, token.size() - 2);
-        const size_t comma = inner.find(',');
-        if (comma == std::string::npos)
+        if (!ParseWorldPoint(token, target))
         {
             SendSystemMessage(world, player, "pheromone: usage /pheromone or /pheromone [x,y]");
             return true;
         }
-        target.x = std::stof(inner.substr(0, comma));
-        target.y = std::stof(inner.substr(comma + 1));
     }
     else
     {
@@ -880,7 +884,7 @@ void CAntKingdomController::SendSystemMessage(CGameWorld& world, CPlayer& player
     CGameContext* context = world.GameContext();
     if (!context) return;
 
-    CServer::SChatEntry entry;
+    SChatEntry entry;
     entry.flag = EChatFlag::Server;
     entry.player_id = 0;
     entry.target_player_id = static_cast<int>(player.GetId());
@@ -889,7 +893,7 @@ void CAntKingdomController::SendSystemMessage(CGameWorld& world, CPlayer& player
     entry.system_time = static_cast<uint32_t>(
         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
             .count());
-    context->Network().SendChatToPlayer(player, entry);
+    context->Extensions().Globals().Find<IChatService>()->SendTo(player, entry);
 }
 
 void CAntKingdomController::InsertWallsForTerrain(CGameWorld& world)
@@ -940,11 +944,12 @@ bool CAntKingdomController::RestoreSnapshot(const CSnapshotReader& reader, std::
         error = "Unsupported ant-kingdom controller snapshot version " + std::to_string(version);
         return false;
     }
-    m_wall_board.RestoreSnapshot(reader, version, error);
+    if (!m_wall_board.RestoreSnapshot(reader, version, error)) return false;
 
     m_teams.clear();
     m_team_build_type.clear();
-    const std::uint32_t count = reader.UInt32("eou_team_count", 0);
+    constexpr std::uint32_t max_restore_teams = 4096;
+    const std::uint32_t count = std::min(reader.UInt32("eou_team_count", 0), max_restore_teams);
     for (std::uint32_t i = 0; i < count; ++i)
     {
         const int team_id = reader.Int("eou_team_id_" + std::to_string(i), 0);
@@ -973,9 +978,20 @@ bool CAntKingdomController::RestoreSnapshot(const CSnapshotReader& reader, std::
     return true;
 }
 
-bool CAntKingdomController::ResolveReferences(CGameWorld& world, const IGameWorldResolver&, std::string& error)
+bool CAntKingdomController::ResolveReferences(CGameWorld& world, const IGameWorldResolver& resolver, std::string& error)
 {
-    (void)error;
+    if (!CMutableTerrainController::ResolveReferences(world, resolver, error)) return false;
+    m_wall_board.Reload(world);
+    for (auto& [team_id, team] : m_teams)
+    {
+        if (team.TeamId() != team_id)
+        {
+            error = "EOU team map key does not match the restored team id";
+            return false;
+        }
+        team.ResolveReferences(world);
+    }
+
     // The neutral food index holds {id, generation} handles that only make
     // sense against live entities, so it is deliberately not snapshotted:
     // after a restore we rebuild it by scanning the world once. Without this
@@ -983,9 +999,16 @@ bool CAntKingdomController::ResolveReferences(CGameWorld& world, const IGameWorl
     // food that actually survived.
     m_food_entities.clear();
     world.ForEachEntity([&](CEntity* entity) {
+        if (auto* egg = dynamic_cast<CEouEggMob*>(entity))
+        {
+            auto* cell = dynamic_cast<CEouCellMob*>(world.ResolveEntity(egg->CellRef()));
+            if (!cell || cell->IsMarkedForDes() || cell->IsDead() || cell->TeamId() != egg->TeamId() ||
+                !cell->EggRef().RefersTo(egg->GetHandle()) || !FindTeam(egg->TeamId()))
+                egg->MarkForDestroy(EEntityRemovalReason::Despawned);
+        }
         const auto* food = dynamic_cast<const CEouFoodMob*>(entity);
         if (!food || food->IsMarkedForDes() || food->IsDead()) return;
-        m_food_entities.emplace(entity->Id(), entity->Generation());
+        m_food_entities.insert(entity->GetHandle());
     });
     return true;
 }
@@ -997,7 +1020,7 @@ void CAntKingdomController::ReleaseCellContents(CGameWorld& world, CEouCellMob& 
 {
     if (cell.HasEgg())
     {
-        if (CEntity* egg = world.GetEntity(cell.EggId(), cell.EggGeneration()))
+        if (CEntity* egg = world.ResolveEntity(cell.EggRef()))
             egg->MarkForDestroy(EEntityRemovalReason::Despawned);
         cell.ClearEgg();
     }
@@ -1073,12 +1096,12 @@ CEntity* CAntKingdomController::SpawnOrStandbyEgg(CGameWorld& world, CEouCellMob
     const int team_id = team->TeamId();
     egg->SetHatchType(egg_type);
     egg->SetTeamId(team_id);
-    egg->SetBinding(cell.Id(), cell.Generation());
+    egg->SetBinding(cell.GetHandle());
 
     CEntity* entity = world.InsertEntity(std::move(egg_mob));
     if (!entity) return nullptr;
     entity->Team() = team_id;
-    if (auto* placed = dynamic_cast<CEouEggMob*>(entity)) cell.SetEgg(placed->Id(), placed->Generation());
+    if (auto* placed = dynamic_cast<CEouEggMob*>(entity)) cell.SetEgg(placed->GetHandle());
     return entity;
 }
 
@@ -1087,7 +1110,7 @@ void CAntKingdomController::TickTeamCells(CGameWorld& world, CTeam& team, float 
     const int team_id = team.TeamId();
     for (const SEouEntityHandle& handle : team.Cells().AllCells())
     {
-        CEntity* entity = world.GetEntity(handle.id, handle.generation);
+        CEntity* entity = world.ResolveEntity(handle);
         auto* cell = dynamic_cast<CEouCellMob*>(entity);
         if (!cell) continue;
 
@@ -1098,7 +1121,7 @@ void CAntKingdomController::TickTeamCells(CGameWorld& world, CTeam& team, float 
         // timer -> egg -> grow -> hatch for the food cost).
         if (cell->HasBoundAnt())
         {
-            CEntity* ant_entity = world.GetEntity(cell->BoundAntId(), cell->BoundAntGeneration());
+            CEntity* ant_entity = world.ResolveEntity(cell->BoundAntRef());
             auto* ant = dynamic_cast<CMobBase*>(ant_entity);
             if (ant && !ant->IsMarkedForDes() && !ant->IsDead()) continue;
             cell->ClearBoundAnt();
@@ -1108,7 +1131,7 @@ void CAntKingdomController::TickTeamCells(CGameWorld& world, CTeam& team, float 
         CEouEggMob* egg = nullptr;
         if (cell->HasEgg())
         {
-            CEntity* egg_entity = world.GetEntity(cell->EggId(), cell->EggGeneration());
+            CEntity* egg_entity = world.ResolveEntity(cell->EggRef());
             egg = dynamic_cast<CEouEggMob*>(egg_entity);
             if (!egg || egg->IsMarkedForDes())
             {
@@ -1123,7 +1146,7 @@ void CAntKingdomController::TickTeamCells(CGameWorld& world, CTeam& team, float 
             {
                 cell->ResetEggRetry();
                 CEntity* fresh = SpawnOrStandbyEgg(world, *cell, &team);
-                if (fresh) cell->SetEgg(fresh->Id(), fresh->Generation());
+                if (fresh) cell->SetEgg(fresh->GetHandle());
             }
             continue;
         }
@@ -1149,7 +1172,7 @@ void CAntKingdomController::TickTeamCells(CGameWorld& world, CTeam& team, float 
         // primary-group membership (which wires the path board). The tile
         // binds its ant: no new egg until this one dies.
         AdoptEouMob(world, team, *hatched);
-        cell->SetBoundAnt(hatched->Id(), hatched->Generation());
+        cell->SetBoundAnt(hatched->GetHandle());
         SendTeamMessage(world, team_id, soldier ? "soldier hatched" : "worker hatched");
         cell->ClearEgg();
         egg->MarkForDestroy(EEntityRemovalReason::Despawned);

@@ -11,6 +11,7 @@
 #include "gameworld.h"
 #include "talent.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 
@@ -37,23 +38,84 @@ CPlayer::CPlayer(sf::TcpSocket&& socket, uint32_t id, const std::string& name)
 {
 }
 
-void CPlayer::HandleOperate(const ClientOperate& op)
+bool CPlayer::HandleOperate(const ClientOperate& op)
 {
-    if (!m_authenticated) return;
+    if (!m_authenticated) return false;
 
     if (op.type == ClientOperate::Type::Equip)
     {
         if (op.slot_index.has_value() && op.petal_type.has_value() && op.rarity.has_value())
-            TryEquipPetal(*op.slot_index, *op.petal_type, *op.rarity);
-        return;
+            return TryEquipPetal(*op.slot_index, *op.petal_type, *op.rarity);
+        return false;
     }
     if (op.type == ClientOperate::Type::Unequip)
     {
-        if (op.slot_index.has_value()) TryUnequipPetal(*op.slot_index);
-        return;
+        return op.slot_index.has_value() && TryUnequipPetal(*op.slot_index);
     }
 
-    if (auto* controller = GetPlayerController(*this)) controller->PushOperate(op);
+    if (auto* controller = GetPlayerController(*this))
+    {
+        controller->PushOperate(op);
+        return true;
+    }
+    return false;
+}
+
+CPlayer::~CPlayer()
+{
+    CAccountDataStore::RemoveSandboxAccount(m_progress_account);
+}
+
+std::string CPlayer::ProgressKey(SWorldHandle world) const
+{
+    return "@sandbox:" + std::to_string(world.id) + ":" + std::to_string(world.generation) + ":" +
+        std::to_string(SessionGeneration()) + ":" + m_account_name;
+}
+
+bool CPlayer::RestoreIsolatedProgress(SWorldHandle world, const SPlayerAccount& state)
+{
+    if (!world.generation || !IsAuthenticated()) return false;
+    const auto key = ProgressKey(world);
+    if (!CAccountDataStore::RestoreSandboxAccount(key, state)) return false;
+    if (key != m_progress_account) CAccountDataStore::RemoveSandboxAccount(m_progress_account);
+    m_progress_account = key;
+    m_progress_world = world;
+    return true;
+}
+
+void CPlayer::RefreshScopedProgress(CPlayerFlower* flower)
+{
+    if (!flower || flower->IsMarkedForDes()) return;
+    const auto* old_stats = flower->GetFinalStats();
+    const float health_ratio = old_stats && old_stats->max_health > 0.f ?
+        std::clamp(flower->Health() / old_stats->max_health, 0.f, 1.f) : 1.f;
+    int level = 1; std::int64_t exp = 0;
+    if (CAccountDataStore::GetProgress(GetProgressAccountName(), level, exp))
+    { flower->m_level = std::max(1, level); flower->m_exp = std::max<std::int64_t>(0, exp); }
+    // Never trim the previous scope's slots through the normal persisted
+    // unequip path. Rebuild them without returning temporary cards.
+    RestoreSavedLoadout(flower);
+    flower->Health() = health_ratio * flower->GetFinalStats()->max_health;
+}
+
+bool CPlayer::SynchronizeGameplayScope(CGameWorld& world, CEntity* departing)
+{
+    const bool isolated = world.GetController() && world.GetController()->UsesIsolatedProgress();
+    const SWorldHandle scope{world.GetId(), world.GetInstanceGeneration()};
+    if ((!isolated && !HasIsolatedProgress()) ||
+        (isolated && HasIsolatedProgress() && m_progress_world == scope)) return true;
+    const std::string next = isolated ? ProgressKey(scope) : std::string{};
+    if (isolated && !CAccountDataStore::SandboxCloneAccount(next, m_account_name)) return false;
+    const bool leaving_isolated = HasIsolatedProgress();
+    CAccountDataStore::RemoveSandboxAccount(m_progress_account);
+    m_progress_account = next;
+    m_progress_world = isolated ? scope : SWorldHandle{};
+    LoadSavedTalents(false);
+    LoadCodex(CAccountDataStore::GetCodex(GetProgressAccountName()));
+    auto* current = dynamic_cast<CPlayerFlower*>(GetEntity());
+    if (leaving_isolated && departing != current) RefreshScopedProgress(dynamic_cast<CPlayerFlower*>(departing));
+    RefreshScopedProgress(current);
+    return true;
 }
 
 bool CPlayer::HandleScheduledOperate(const ClientOperate& op, std::uint32_t delay_ticks, std::uint32_t sequence)
@@ -99,18 +161,22 @@ void CPlayer::RestoreDisconnectedSession(const std::string& remote_address, floa
     m_send_offset = 0;
     m_receive_buffer.clear();
     m_connected = false;
-    m_timeout_left = std::max(timeout_left, game_config::timeout_protection_seconds);
+    m_timeout_left = std::isfinite(timeout_left)
+                         ? std::max(timeout_left, game_config::timeout_protection_seconds)
+                         : game_config::timeout_protection_seconds;
     m_remote_address = remote_address;
-    m_mute_timer = std::max(0.f, mute_timer);
+    m_mute_timer = std::isfinite(mute_timer) ? std::max(0.f, mute_timer) : 0.f;
     m_report_disabled = report_disabled;
     m_invalid_report_count = std::max(0, invalid_report_count);
-    m_second_chance_cooldown = std::max(0.f, second_chance_cooldown);
+    m_second_chance_cooldown =
+        std::isfinite(second_chance_cooldown) ? std::max(0.f, second_chance_cooldown) : 0.f;
     m_use_new_player_spawn = use_new_player_spawn;
     m_rcon_authorized = false;
 }
 
 void CPlayer::TickTimeout(float dt)
 {
+    if (!std::isfinite(dt) || dt < 0.f) return;
     if (m_mute_timer > 0.f) m_mute_timer = std::max(0.f, m_mute_timer - dt);
     if (m_second_chance_cooldown > 0.f) m_second_chance_cooldown = std::max(0.f, m_second_chance_cooldown - dt);
     if (m_connected || m_timeout_left <= 0.f) return;
@@ -119,7 +185,7 @@ void CPlayer::TickTimeout(float dt)
 
 void CPlayer::MuteFor(float seconds)
 {
-    if (seconds <= 0.f) return;
+    if (!std::isfinite(seconds) || seconds <= 0.f) return;
     m_mute_timer = std::max(m_mute_timer, seconds);
 }
 
@@ -182,8 +248,8 @@ void CPlayer::UnequipAllEquippedPetals()
         uint8_t old_type = static_cast<uint8_t>(slot.m_p_proto->m_type);
         uint8_t old_rarity = static_cast<uint8_t>(slot.m_stored_rarity);
         if (!flower->UnequipPetal(static_cast<int>(i))) continue;
-        CAccountDataStore::AddItem(m_account_name, old_type, old_rarity, 1);
-        CAccountDataStore::ClearSlot(m_account_name, static_cast<uint8_t>(i));
+        CAccountDataStore::AddItem(GetProgressAccountName(), old_type, old_rarity, 1);
+        CAccountDataStore::ClearSlot(GetProgressAccountName(), static_cast<uint8_t>(i));
     }
 }
 
@@ -196,7 +262,7 @@ void CPlayer::ApplySavedProgress()
 
     int level = 1;
     std::int64_t exp = 0;
-    if (!CAccountDataStore::GetProgress(m_account_name, level, exp)) return;
+    if (!CAccountDataStore::GetProgress(GetProgressAccountName(), level, exp)) return;
 
     flower->m_level = std::max(1, level);
     flower->m_exp = std::max<std::int64_t>(0, exp);
@@ -204,14 +270,14 @@ void CPlayer::ApplySavedProgress()
     if (const SFlowerStats* stats = flower->GetFinalStats()) flower->Health() = stats->max_health;
 }
 
-void CPlayer::LoadSavedSlots()
+void CPlayer::LoadSavedSlots(CFlower* target)
 {
     if (!m_authenticated) return;
 
-    auto* flower = dynamic_cast<CFlower*>(GetEntity());
+    auto* flower = target ? target : dynamic_cast<CFlower*>(GetEntity());
     if (!flower) return;
 
-    std::vector<SInventoryItem> saved_slots = CAccountDataStore::GetSlots(m_account_name);
+    std::vector<SInventoryItem> saved_slots = CAccountDataStore::GetSlots(GetProgressAccountName());
     auto& slots = flower->GetSlots();
     for (size_t i = 0; i < saved_slots.size() && i < slots.size(); ++i)
     {
@@ -225,11 +291,11 @@ void CPlayer::LoadSavedSlots()
     flower->RebuildFinalStats();
 }
 
-void CPlayer::RestoreSavedLoadout()
+void CPlayer::RestoreSavedLoadout(CPlayerFlower* target)
 {
     if (!m_authenticated) return;
 
-    auto* flower = dynamic_cast<CPlayerFlower*>(GetEntity());
+    auto* flower = target ? target : dynamic_cast<CPlayerFlower*>(GetEntity());
     if (!flower) return;
 
     // Controller-owned petals (and any stale runtime petals) must be removed
@@ -251,17 +317,17 @@ void CPlayer::RestoreSavedLoadout()
     // controller-owned petals (EOU pheromones), which must never be written
     // into the player's account while restoring a normal loadout.
     flower->SetPetalSlotCount(CountTalentSlots());
-    LoadSavedSlots();
+    LoadSavedSlots(flower);
 }
 
-void CPlayer::LoadSavedTalents()
+void CPlayer::LoadSavedTalents(bool refresh_effects)
 {
     if (!m_authenticated) return;
 
-    m_talent_points = CAccountDataStore::GetTalentPoints(m_account_name);
+    m_talent_points = CAccountDataStore::GetTalentPoints(GetProgressAccountName());
     m_talents.clear();
 
-    for (const SAccountTalent& saved : CAccountDataStore::GetTalents(m_account_name))
+    for (const SAccountTalent& saved : CAccountDataStore::GetTalents(GetProgressAccountName()))
     {
         ITalent* talent = FindBuiltinTalent(saved.id, saved.rarity, saved.rank);
         if (!talent) continue;
@@ -272,7 +338,7 @@ void CPlayer::LoadSavedTalents()
     }
 
     NormalizeTalentOrder();
-    RefreshTalentEffects();
+    if (refresh_effects) RefreshTalentEffects();
 }
 
 bool CPlayer::TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rarity)
@@ -283,6 +349,12 @@ bool CPlayer::TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rari
 
     auto* flower = dynamic_cast<CFlower*>(GetEntity());
     if (!flower) return false;
+    // A dead player flower is a corpse until the respawn path restores it.
+    // Reject loadout mutations here as well as in the network dispatcher so
+    // every caller (commands, tests and future controllers) observes the
+    // same invariant and cannot desynchronise the primary slots.
+    if (auto* player_flower = dynamic_cast<CPlayerFlower*>(flower); player_flower && player_flower->m_is_dead)
+        return false;
     IGameController* controller = nullptr;
     if (CGameWorld* world = flower->GameWorld()) controller = world->GetController();
     if (controller && (controller->LocksPetalLoadout() ||
@@ -315,19 +387,19 @@ bool CPlayer::TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rari
     // particular, EquipPetal() used to be void and could silently reject a
     // banned slot after this TakeItem(), permanently eating the new petal.
     CAccountDataStore::CSaveBatch save_batch;
-    if (!CAccountDataStore::TakeItem(m_account_name, petal_type, rarity, 1)) return false;
+    if (!CAccountDataStore::TakeItem(GetProgressAccountName(), petal_type, rarity, 1)) return false;
 
     if (!flower->EquipPetal(slot_index, proto, static_cast<ERarity>(rarity)))
     {
         // This is a defensive rollback for any future validation added to
         // CFlower::EquipPetal(). The preflight above handles the known failure
         // paths, but a failed operation must never consume inventory.
-        CAccountDataStore::AddItem(m_account_name, petal_type, rarity, 1);
+        CAccountDataStore::AddItem(GetProgressAccountName(), petal_type, rarity, 1);
         return false;
     }
 
-    if (replacing) CAccountDataStore::AddItem(m_account_name, old_type, old_rarity, 1);
-    CAccountDataStore::SetSlot(m_account_name, slot_index, petal_type, rarity);
+    if (replacing) CAccountDataStore::AddItem(GetProgressAccountName(), old_type, old_rarity, 1);
+    CAccountDataStore::SetSlot(GetProgressAccountName(), slot_index, petal_type, rarity);
     return true;
 }
 
@@ -337,6 +409,8 @@ bool CPlayer::TryUnequipPetal(uint8_t slot_index)
 
     auto* flower = dynamic_cast<CFlower*>(GetEntity());
     if (!flower) return false;
+    if (auto* player_flower = dynamic_cast<CPlayerFlower*>(flower); player_flower && player_flower->m_is_dead)
+        return false;
 
     auto& slots = flower->GetSlots();
     if (slot_index >= slots.size()) return false;
@@ -353,8 +427,8 @@ bool CPlayer::TryUnequipPetal(uint8_t slot_index)
     uint8_t old_rarity = static_cast<uint8_t>(slot.m_stored_rarity);
     CAccountDataStore::CSaveBatch save_batch;
     if (!flower->UnequipPetal(slot_index)) return false;
-    CAccountDataStore::AddItem(m_account_name, old_type, old_rarity, 1);
-    CAccountDataStore::ClearSlot(m_account_name, slot_index);
+    CAccountDataStore::AddItem(GetProgressAccountName(), old_type, old_rarity, 1);
+    CAccountDataStore::ClearSlot(GetProgressAccountName(), slot_index);
     return true;
 }
 
@@ -368,7 +442,7 @@ bool CPlayer::TryCraftPetal(uint8_t petal_type, uint8_t rarity, uint32_t count, 
 
     SCraftResult local_result;
     SCraftResult* craft_result = result ? result : &local_result;
-    if (!CAccountDataStore::CraftItem(m_account_name, petal_type, rarity, count, craft_result)) return false;
+    if (!CAccountDataStore::CraftItem(GetProgressAccountName(), petal_type, rarity, count, craft_result)) return false;
 
     if (craft_result->successes > 0 && craft_result->result_rarity != 0)
     {
@@ -393,7 +467,7 @@ bool CPlayer::ObtainPetalCard(uint8_t petal_type, uint8_t rarity, uint32_t count
     if (!IsKnownRarity(card_rarity)) return false;
 
     CAccountDataStore::CSaveBatch save_batch;
-    if (add_to_inventory) CAccountDataStore::AddItem(m_account_name, petal_type, rarity, count);
+    if (add_to_inventory) CAccountDataStore::AddItem(GetProgressAccountName(), petal_type, rarity, count);
 
     auto* flower = dynamic_cast<CPlayerFlower*>(GetEntity());
     std::int64_t per_card_exp = GetPetalCardExpForRarity(card_rarity);
@@ -473,7 +547,7 @@ void CPlayer::AddTalentPoints(int amount)
     if (amount == 0) return;
 
     m_talent_points = std::max(0, m_talent_points + amount);
-    if (m_authenticated) CAccountDataStore::SetTalentPoints(m_account_name, m_talent_points);
+    if (m_authenticated) CAccountDataStore::SetTalentPoints(GetProgressAccountName(), m_talent_points);
 }
 
 bool CPlayer::HasTalent(const ITalent* talent) const
@@ -485,6 +559,14 @@ bool CPlayer::HasTalent(const ITalent* talent) const
 
 void CPlayer::ApplyTalents(ETalentEvent event, STalentContext& ctx) const
 {
+    // Learned talents and inventory slot capacity are permanent information.
+    // Only stat contributions are suppressed; state/skill events still run.
+    if (event == ETalentEvent::RebuildFlowerStats || event == ETalentEvent::RebuildPetalStats)
+    {
+        const auto* actor = ctx.flower ? static_cast<const CMobBase*>(ctx.flower)
+                                      : dynamic_cast<const CMobBase*>(ctx.entity);
+        if (actor && !actor->AllowsStatModifiers()) return;
+    }
     for (ITalent* talent : m_talents)
     {
         if (talent) talent->Apply(event, ctx);
@@ -528,7 +610,10 @@ void CPlayer::RefreshTalentEffects(bool reload_petals)
     if (reload_petals) player_flower->ReloadPetals();
 }
 
-void CPlayer::SetSecondChanceCooldown(float cooldown) { m_second_chance_cooldown = std::max(0.f, cooldown); }
+void CPlayer::SetSecondChanceCooldown(float cooldown)
+{
+    m_second_chance_cooldown = std::isfinite(cooldown) ? std::max(0.f, cooldown) : 0.f;
+}
 
 bool CPlayer::ConsumeUseNewPlayerSpawn()
 {
@@ -539,21 +624,37 @@ bool CPlayer::ConsumeUseNewPlayerSpawn()
 
 void CPlayer::SetOwnedEntity(CEntity* entity)
 {
+    if (m_transition_active) return;
+    CommitOwnedEntity(entity);
+}
+
+void CPlayer::CommitOwnedEntity(CEntity* entity)
+{
     if (auto* old_flower = dynamic_cast<CFlower*>(GetEntity())) old_flower->MarkFinalStatsDirty();
 
-    if (!entity)
+    const SEntityHandle handle = entity ? entity->GetHandle() : SEntityHandle{};
+    if (!entity || !entity->GameWorld() || !handle.IsValid())
     {
         m_p_world = nullptr;
-        m_entity_id = -1;
-        m_entity_generation = 0;
+        m_entity_ref = {};
         return;
     }
 
     m_p_world = entity->GameWorld();
-    m_entity_id = entity->Id();
-    m_entity_generation = entity->Generation();
+    m_entity_ref = handle;
+    m_needs_respawn = false;
 
     if (auto* new_flower = dynamic_cast<CFlower*>(entity)) new_flower->MarkFinalStatsDirty();
+}
+
+void CPlayer::ClearOwnedEntityFromWorld(CGameWorld* world)
+{
+    if (!world || m_p_world != world) return;
+    m_needs_respawn = m_authenticated;
+    CEntity* old_entity = GetEntity();
+    if (auto* old_flower = dynamic_cast<CFlower*>(old_entity)) old_flower->MarkFinalStatsDirty();
+    m_p_world = nullptr;
+    m_entity_ref = {};
 }
 
 void CPlayer::Authenticate(const std::string& account_name)
@@ -573,7 +674,7 @@ void CPlayer::RecordCodexKill(uint8_t mob_type, uint8_t rarity)
     auto it = m_codex.find(key);
     if (it == m_codex.end()) m_codex[key] = 1;
     else it->second = std::min<uint32_t>(UINT32_MAX, it->second + 1);
-    CAccountDataStore::AddCodexKill(m_account_name, mob_type, rarity);
+    CAccountDataStore::AddCodexKill(GetProgressAccountName(), mob_type, rarity);
 }
 
 void CPlayer::LoadCodex(const std::vector<SAccountCodexEntry>& entries)
@@ -589,9 +690,8 @@ void CPlayer::LoadCodex(const std::vector<SAccountCodexEntry>& entries)
 
 CEntity* CPlayer::GetEntity() const
 {
-    if (!m_p_world || m_entity_id < 0) return nullptr;
-    if (m_entity_generation != 0) return m_p_world->GetEntity(m_entity_id, m_entity_generation);
-    return m_p_world->GetEntity(m_entity_id);
+    if (!m_p_world) return nullptr;
+    return m_p_world->ResolveEntity(m_entity_ref);
 }
 
 CGameContext* CPlayer::GameContext() const { return m_p_world ? m_p_world->GameContext() : nullptr; }
@@ -608,8 +708,8 @@ void CPlayer::SaveTalentState() const
         saved.push_back({ talent->m_id, talent->m_rarity, talent->m_rank });
     }
 
-    CAccountDataStore::SetTalentPoints(m_account_name, m_talent_points);
-    CAccountDataStore::SetTalents(m_account_name, saved);
+    CAccountDataStore::SetTalentPoints(GetProgressAccountName(), m_talent_points);
+    CAccountDataStore::SetTalents(GetProgressAccountName(), saved);
 }
 
 void CPlayer::NormalizeTalentOrder()

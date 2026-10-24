@@ -1,4 +1,4 @@
-#include "weather_diurnal_system.h"
+#include "weather_extension.h"
 #include "../../../Shared/game_config.h"
 #include <algorithm>
 #include <cctype>
@@ -88,13 +88,13 @@ bool TryParseWeatherType(std::string_view text, EWeatherType& weather)
     return false;
 }
 
-bool CWeatherDiurnalSystem::Init()
+bool CWeatherExtension::Init()
 {
     Reset();
     return true;
 }
 
-void CWeatherDiurnalSystem::Reset()
+void CWeatherExtension::Reset()
 {
     m_snapshot = {};
     m_snapshot.revision = 1;
@@ -112,7 +112,7 @@ void CWeatherDiurnalSystem::Reset()
     PublishDerivedState();
 }
 
-void CWeatherDiurnalSystem::Tick(float dt)
+void CWeatherExtension::Tick(float dt)
 {
     if (!std::isfinite(dt) || dt <= 0.f) return;
 
@@ -139,7 +139,7 @@ void CWeatherDiurnalSystem::Tick(float dt)
     PublishDerivedState();
 }
 
-void CWeatherDiurnalSystem::AdvanceMeteorology(double seconds)
+void CWeatherExtension::AdvanceMeteorology(double seconds)
 {
     if (m_meteorology_override)
     {
@@ -170,7 +170,7 @@ void CWeatherDiurnalSystem::AdvanceMeteorology(double seconds)
         m_snapshot.meteorology.wind_direction_degrees + static_cast<float>(seconds * 0.35));
 }
 
-void CWeatherDiurnalSystem::AdvanceTime(double seconds)
+void CWeatherExtension::AdvanceTime(double seconds)
 {
     const double day_duration = std::max(minimum_duration, m_day_duration_seconds);
     const double advanced_time = m_snapshot.time_of_day + seconds / day_duration;
@@ -180,7 +180,7 @@ void CWeatherDiurnalSystem::AdvanceTime(double seconds)
     m_snapshot.time_of_day = NormalizeTimeOfDay(advanced_time);
 }
 
-void CWeatherDiurnalSystem::AdvanceIntensity(double seconds)
+void CWeatherExtension::AdvanceIntensity(double seconds)
 {
     float targets[weather_type_count] = {};
     if (m_forced_weather && m_forced_intensity)
@@ -197,7 +197,7 @@ void CWeatherDiurnalSystem::AdvanceIntensity(double seconds)
         m_snapshot.weather_intensity[value] = Approach(m_snapshot.weather_intensity[value], targets[value], max_delta);
 }
 
-void CWeatherDiurnalSystem::DeriveIntensities(float out[weather_type_count]) const
+void CWeatherExtension::DeriveIntensities(float out[weather_type_count]) const
 {
     std::fill(out, out + weather_type_count, 0.f);
     const SMeteorology& value = m_snapshot.meteorology;
@@ -228,7 +228,7 @@ void CWeatherDiurnalSystem::DeriveIntensities(float out[weather_type_count]) con
     out[static_cast<int>(EWeatherType::Fog)] = fog;
 }
 
-void CWeatherDiurnalSystem::PublishDerivedState()
+void CWeatherExtension::PublishDerivedState()
 {
     m_snapshot.time_of_day = NormalizeTimeOfDay(m_snapshot.time_of_day);
     m_snapshot.phase = ResolveDiurnalPhase(m_snapshot.time_of_day);
@@ -247,12 +247,12 @@ void CWeatherDiurnalSystem::PublishDerivedState()
     }
 }
 
-SWeatherDiurnalPersistentState CWeatherDiurnalSystem::CaptureState() const
+SWeatherDiurnalPersistentState CWeatherExtension::CaptureState() const
 {
     return { m_snapshot, m_day_duration_seconds, m_forced_weather, m_forced_intensity, m_meteorology_override };
 }
 
-SWeatherDiurnalClientState CWeatherDiurnalSystem::GetClientState() const
+SWeatherDiurnalClientState CWeatherExtension::GetClientState() const
 {
     SWeatherDiurnalClientState state;
     state.time_of_day = m_snapshot.time_of_day;
@@ -262,7 +262,7 @@ SWeatherDiurnalClientState CWeatherDiurnalSystem::GetClientState() const
     return state;
 }
 
-bool CWeatherDiurnalSystem::RestoreState(const SWeatherDiurnalPersistentState& state, std::string& error)
+bool CWeatherExtension::RestoreState(const SWeatherDiurnalPersistentState& state, std::string& error)
 {
     const auto& snapshot = state.snapshot;
     if (!std::isfinite(snapshot.simulation_seconds) || snapshot.simulation_seconds < 0.0 ||
@@ -311,7 +311,7 @@ bool CWeatherDiurnalSystem::RestoreState(const SWeatherDiurnalPersistentState& s
     return true;
 }
 
-bool CWeatherDiurnalSystem::ForceWeather(EWeatherType weather, float intensity, std::string& error)
+bool CWeatherExtension::ForceWeather(EWeatherType weather, float intensity, std::string& error)
 {
     if (!IsKnownWeatherType(weather) || !std::isfinite(intensity) || intensity < 0.f || intensity > 1.f)
     {
@@ -331,7 +331,7 @@ bool CWeatherDiurnalSystem::ForceWeather(EWeatherType weather, float intensity, 
     return true;
 }
 
-bool CWeatherDiurnalSystem::SetMeteorologyOverride(const SMeteorology& meteorology, std::string& error)
+bool CWeatherExtension::SetMeteorologyOverride(const SMeteorology& meteorology, std::string& error)
 {
     if (!ValidMeteorology(meteorology))
     {
@@ -346,7 +346,7 @@ bool CWeatherDiurnalSystem::SetMeteorologyOverride(const SMeteorology& meteorolo
     return true;
 }
 
-bool CWeatherDiurnalSystem::ResumeDerivedWeather(std::string& error)
+bool CWeatherExtension::ResumeDerivedWeather(std::string& error)
 {
     if (!m_meteorology_override)
     {
@@ -359,7 +359,7 @@ bool CWeatherDiurnalSystem::ResumeDerivedWeather(std::string& error)
     return true;
 }
 
-bool CWeatherDiurnalSystem::ResumeAutomaticWeather(std::string& error)
+bool CWeatherExtension::ResumeAutomaticWeather(std::string& error)
 {
     m_forced_weather.reset();
     m_forced_intensity.reset();
@@ -369,7 +369,7 @@ bool CWeatherDiurnalSystem::ResumeAutomaticWeather(std::string& error)
     return true;
 }
 
-bool CWeatherDiurnalSystem::SetVirtualTime(double normalized_time, std::string& error)
+bool CWeatherExtension::SetVirtualTime(double normalized_time, std::string& error)
 {
     if (!std::isfinite(normalized_time))
     {

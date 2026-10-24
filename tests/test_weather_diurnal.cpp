@@ -1,5 +1,5 @@
 #include "test_framework.h"
-#include "Server/Game/systems/weather_diurnal_system.h"
+#include "Server/Game/extensions/weather_extension.h"
 #include "Shared/game_config.h"
 #include <limits>
 
@@ -7,14 +7,14 @@ namespace
 {
 constexpr double tolerance = 0.02;
 
-CWeatherDiurnalSystem MakeSystem()
+CWeatherExtension MakeSystem()
 {
-    CWeatherDiurnalSystem system;
+    CWeatherExtension system;
     CHECK(system.Init());
     return system;
 }
 
-SWeatherDiurnalSnapshot SettledSnapshot(CWeatherDiurnalSystem& system, const SMeteorology& meteorology,
+SWeatherDiurnalSnapshot SettledSnapshot(CWeatherExtension& system, const SMeteorology& meteorology,
                                         double settle_seconds)
 {
     std::string error;
@@ -37,7 +37,7 @@ SWeatherDiurnalPersistentState StateWithInvalidMeteorology()
 
 TEST(InitialStateMatchesConfig)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     const SWeatherDiurnalSnapshot snapshot = system.GetWeatherDiurnalSnapshot();
     CHECK_NEAR(snapshot.time_of_day, game_config::weather_diurnal_start_time, tolerance);
     CHECK(snapshot.day_index == 0);
@@ -50,7 +50,7 @@ TEST(InitialStateMatchesConfig)
 
 TEST(TimeAdvancesAtConfiguredRate)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     // One real hour is 1/24 of the six-hour virtual day.
     system.Tick(3600.f);
     const SWeatherDiurnalSnapshot snapshot = system.GetWeatherDiurnalSnapshot();
@@ -60,7 +60,7 @@ TEST(TimeAdvancesAtConfiguredRate)
 
 TEST(DayRollsOver)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     system.Tick(21600.f * 2.5f);
     const SWeatherDiurnalSnapshot snapshot = system.GetWeatherDiurnalSnapshot();
     CHECK(snapshot.day_index == 2);
@@ -69,7 +69,7 @@ TEST(DayRollsOver)
 
 TEST(DiurnalPhaseBoundaries)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     std::string error;
 
     CHECK(system.SetVirtualTime(0.25, error));
@@ -84,7 +84,7 @@ TEST(DiurnalPhaseBoundaries)
 
 TEST(DaylightPeaksAtNoonAndZeroAtMidnight)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     std::string error;
     CHECK(system.SetVirtualTime(0.5, error));
     CHECK_NEAR(system.GetWeatherDiurnalSnapshot().daylight, 1.f, 0.01);
@@ -94,7 +94,7 @@ TEST(DaylightPeaksAtNoonAndZeroAtMidnight)
 
 TEST(SetVirtualTimeNormalizes)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     std::string error;
     CHECK(system.SetVirtualTime(1.2, error));
     CHECK_NEAR(system.GetWeatherDiurnalSnapshot().time_of_day, 0.2, tolerance);
@@ -105,7 +105,7 @@ TEST(SetVirtualTimeNormalizes)
 
 TEST(ExtremeWindRainYieldsHighIntensity)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     const SMeteorology stormy_rain{ 0.98f, 180.f, 12.f, 30.f };
     const SWeatherDiurnalSnapshot snapshot = SettledSnapshot(system, stormy_rain, 30.0);
     CHECK(snapshot.Intensity(EWeatherType::Rain) > 0.9f);
@@ -113,7 +113,7 @@ TEST(ExtremeWindRainYieldsHighIntensity)
 
 TEST(HumidCalmColdYieldsFog)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     const SMeteorology foggy{ 0.92f, 180.f, 0.5f, 5.f };
     const SWeatherDiurnalSnapshot snapshot = SettledSnapshot(system, foggy, 30.0);
     CHECK(snapshot.Intensity(EWeatherType::Fog) > 0.85f);
@@ -121,7 +121,7 @@ TEST(HumidCalmColdYieldsFog)
 
 TEST(MildDryWarmYieldsClear)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     const SMeteorology clear_sky{ 0.20f, 180.f, 3.f, 25.f };
     const SWeatherDiurnalSnapshot snapshot = SettledSnapshot(system, clear_sky, 30.0);
     CHECK(snapshot.Intensity(EWeatherType::Clear) > 0.85f);
@@ -130,7 +130,7 @@ TEST(MildDryWarmYieldsClear)
 
 TEST(WeathersCanStack)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     // Humid, calm, cool: rain and fog and cloud all present at once.
     const SMeteorology stacked{ 0.90f, 90.f, 0.5f, 10.f };
     const SWeatherDiurnalSnapshot snapshot = SettledSnapshot(system, stacked, 30.0);
@@ -141,8 +141,8 @@ TEST(WeathersCanStack)
 
 TEST(IntensityRisesWithExtremeness)
 {
-    CWeatherDiurnalSystem mild = MakeSystem();
-    CWeatherDiurnalSystem extreme = MakeSystem();
+    CWeatherExtension mild = MakeSystem();
+    CWeatherExtension extreme = MakeSystem();
     const SMeteorology base{ 0.f, 90.f, 6.f, 10.f };
     SMeteorology mild_rain = base;
     mild_rain.humidity = 0.70f;
@@ -158,7 +158,7 @@ TEST(IntensityRisesWithExtremeness)
 
 TEST(ForceWeatherIsImmediate)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     std::string error;
     CHECK(system.ForceWeather(EWeatherType::Fog, 1.f, error));
     const SWeatherDiurnalSnapshot snapshot = system.GetWeatherDiurnalSnapshot();
@@ -168,7 +168,7 @@ TEST(ForceWeatherIsImmediate)
 
 TEST(ForceWeatherValidatesArguments)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     std::string error;
     CHECK(!system.ForceWeather(EWeatherType::Count, 1.f, error));
     CHECK(!system.ForceWeather(EWeatherType::Clear, -0.1f, error));
@@ -180,7 +180,7 @@ TEST(ForceWeatherValidatesArguments)
 
 TEST(ResumeAutomaticSmoothsBack)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     std::string error;
     CHECK(system.ForceWeather(EWeatherType::Rain, 1.f, error));
     CHECK(system.ResumeAutomaticWeather(error));
@@ -192,7 +192,7 @@ TEST(ResumeAutomaticSmoothsBack)
 
 TEST(IntensityTransitionsGradually)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     std::string error;
     CHECK(system.ForceWeather(EWeatherType::Fog, 1.f, error));
     CHECK(system.ResumeAutomaticWeather(error));
@@ -208,7 +208,7 @@ TEST(IntensityTransitionsGradually)
 
 TEST(CaptureRestoreRoundTrip)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     std::string error;
     const SMeteorology manual{ 0.85f, 200.f, 6.f, 18.f };
     CHECK(system.SetMeteorologyOverride(manual, error));
@@ -217,7 +217,7 @@ TEST(CaptureRestoreRoundTrip)
     CHECK(system.ForceWeather(EWeatherType::Cloudy, 0.8f, error));
 
     const SWeatherDiurnalPersistentState captured = system.CaptureState();
-    CWeatherDiurnalSystem restored = MakeSystem();
+    CWeatherExtension restored = MakeSystem();
     CHECK(restored.RestoreState(captured, error));
 
     const SWeatherDiurnalSnapshot expected = system.GetWeatherDiurnalSnapshot();
@@ -235,7 +235,7 @@ TEST(CaptureRestoreRoundTrip)
 
 TEST(RestoreRejectsInvalidState)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     std::string error;
     CHECK(!system.RestoreState(StateWithInvalidMeteorology(), error));
     CHECK(!error.empty());
@@ -253,7 +253,7 @@ TEST(RestoreRejectsInvalidState)
 
 TEST(ClientStateMatchesSnapshot)
 {
-    CWeatherDiurnalSystem system = MakeSystem();
+    CWeatherExtension system = MakeSystem();
     std::string error;
     CHECK(system.ForceWeather(EWeatherType::Cloudy, 1.f, error));
     const SWeatherDiurnalSnapshot snapshot = system.GetWeatherDiurnalSnapshot();

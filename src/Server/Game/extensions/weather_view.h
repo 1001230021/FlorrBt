@@ -1,6 +1,4 @@
 #pragma once
-
-#include "../../Module/module.h"
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -127,6 +125,20 @@ class IWeatherDiurnalView
   public:
     virtual ~IWeatherDiurnalView() = default;
     virtual SWeatherDiurnalSnapshot GetWeatherDiurnalSnapshot() const = 0;
+    virtual SWeatherDiurnalClientState GetClientState() const = 0;
+    virtual double DayDurationSeconds() const = 0;
+};
+
+class IWeatherCommands : public IWeatherDiurnalView
+{
+  public:
+    virtual bool ForceWeather(EWeatherType, float, std::string&) = 0;
+    virtual bool SetMeteorologyOverride(const SMeteorology&, std::string&) = 0;
+    virtual bool ResumeDerivedWeather(std::string&) = 0;
+    virtual bool ResumeAutomaticWeather(std::string&) = 0;
+    virtual bool SetVirtualTime(double, std::string&) = 0;
+    virtual bool IsWeatherForced() const = 0;
+    virtual bool HasMeteorologyOverride() const = 0;
 };
 
 struct SWeatherDiurnalPersistentState
@@ -136,41 +148,4 @@ struct SWeatherDiurnalPersistentState
     std::optional<EWeatherType> forced_weather;
     std::optional<float> forced_intensity;
     std::optional<SMeteorology> meteorology_override;
-};
-
-class CWeatherDiurnalSystem final : public IModule, public IWeatherDiurnalView
-{
-  public:
-    bool Init() override;
-    void Tick(float dt) override;
-    void ShutDown() override {}
-
-    SWeatherDiurnalSnapshot GetWeatherDiurnalSnapshot() const override { return m_snapshot; }
-    SWeatherDiurnalClientState GetClientState() const;
-    SWeatherDiurnalPersistentState CaptureState() const;
-    bool RestoreState(const SWeatherDiurnalPersistentState& state, std::string& error);
-    bool ForceWeather(EWeatherType weather, float intensity, std::string& error);
-    bool SetMeteorologyOverride(const SMeteorology& meteorology, std::string& error);
-    bool ResumeDerivedWeather(std::string& error);
-    bool ResumeAutomaticWeather(std::string& error);
-    bool SetVirtualTime(double normalized_time, std::string& error);
-    bool IsWeatherForced() const { return m_forced_weather.has_value(); }
-    bool HasMeteorologyOverride() const { return m_meteorology_override.has_value(); }
-    double DayDurationSeconds() const { return m_day_duration_seconds; }
-
-  private:
-    void Reset();
-    void AdvanceTime(double seconds);
-    void AdvanceMeteorology(double seconds);
-    void AdvanceIntensity(double seconds);
-    void DeriveIntensities(float out[weather_type_count]) const;
-    void PublishDerivedState();
-
-    SWeatherDiurnalSnapshot m_snapshot;
-    // Last intensities sent to clients, for change-quantized environment revision bumps.
-    float m_published_intensity[weather_type_count] = {};
-    std::optional<EWeatherType> m_forced_weather;
-    std::optional<float> m_forced_intensity;
-    std::optional<SMeteorology> m_meteorology_override;
-    double m_day_duration_seconds = 6.0 * 60.0 * 60.0;
 };

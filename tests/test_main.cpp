@@ -1,6 +1,6 @@
 #include "test_framework.h"
 
-int main()
+int main(int argc, char** argv)
 {
-    return test::RunAll();
+    return test::RunAll(argc > 1 ? argv[1] : "");
 }

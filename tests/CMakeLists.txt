@@ -17,11 +17,13 @@ add_executable(FlorrBt_Tests
     test_utf8_truncate.cpp
     test_circle_contact.cpp
     test_petal_spawn_rules.cpp
+    test_content_manifests.cpp
     test_server_safety.cpp
     test_combat_feedback.cpp
+    test_skill_result.cpp
     test_mob_radius.cpp
     test_dev_debug.cpp
-    ../src/Server/Game/systems/weather_diurnal_system.cpp
+    ../src/Server/Game/extensions/weather_extension.cpp
 )
 target_include_directories(FlorrBt_Tests PRIVATE .. ../src)
 

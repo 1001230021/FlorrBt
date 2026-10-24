@@ -12,14 +12,17 @@ import {
   PetalSlotVisualType,
   RarityNames,
   ServerType,
+  SkillResultCode,
   appendBytes,
   clamp,
+  isNewerUint32Sequence,
   isDropEntity,
   isPetalEntity,
   mobTypeName,
   packAuth,
   packChat,
   packChores,
+  packSkill,
   packCraft,
   packForge,
   packEquip,
@@ -27,6 +30,7 @@ import {
   packInputFrame,
   packSecondarySlot,
   packSnapshotAck,
+  sameEntityIncarnation,
   packStateRequest,
   packTalentRequest,
   packUnequip,
@@ -85,6 +89,12 @@ import {
 import { drawSpider, drawSpiderWeb, prepareSpiderSprites } from "./spider_sprite.js";
 import { drawCrab, prepareCrabSprites } from "./crab_sprite.js";
 import { drawJellyfish, prepareJellyfishSprites } from "./jellyfish_sprite.js";
+import { createSceneTerrainStream } from "./scene_terrain_stream.js";
+import {
+  drawFireflyLarva,
+  FireflyLarvaVisualRole,
+  prepareFireflyLarvaSprites,
+} from "./firefly_larva_sprite.js";
 import {
   drawSpriteImage,
   setSpriteHitTint,
@@ -128,6 +138,8 @@ import {
 } from "./client_config.js";
 import { createConsoleUi } from "./console_ui.js";
 import { createMapRenderer } from "./map_renderer.js";
+import { defaultPlayerLightRadius } from "./terrain_rules.js";
+import { sampleMinimapTransition } from "./minimap_transition.js";
 import { createMobileControls, mobileActionBindings } from "./mobile_controls.js";
 import { bindMobileViewport } from "./mobile_viewport.js";
 import { bindTouchLongPress } from "./touch_gestures.js";
@@ -180,6 +192,7 @@ import {
   fireAntEggType,
   fireflyType,
   magicFireflyType,
+  fireflyLarvaType,
   fireQueenAntType,
   hallucinogenicMushroomLiveVisualScale,
   flagAntennae,
@@ -192,6 +205,7 @@ import {
   flagSummoned,
   entityHasState,
   entityState,
+  entityVisualVariantFromFlags,
   flowerTextureVersion,
   hornetMissileType,
   hornetType,
@@ -1326,6 +1340,7 @@ function openConnection(wsUrl, automatic, generation) {
     return;
   }
   state.ws = ws;
+  state.receiveBuffer = new Uint8Array();
   ws.binaryType = "arraybuffer";
 
   ws.addEventListener("open", () => {
@@ -1371,6 +1386,7 @@ function openConnection(wsUrl, automatic, generation) {
     if (state.ws !== ws || generation !== connectionGeneration) return;
     notifyConnectionReset();
     state.ws = null;
+    state.receiveBuffer = new Uint8Array();
     state.connected = false;
     state.authenticated = false;
     state.emailBindingRequired = false;
@@ -1401,6 +1417,7 @@ function openConnection(wsUrl, automatic, generation) {
 }
 
 function closeSocket(sendDisconnect = true) {
+  state.receiveBuffer = new Uint8Array();
   reconnectArmed = false;
   resumingConnection = false;
   reconnectAttempt = 0;
@@ -1426,6 +1443,11 @@ function sendNeutralGameplayState({ includeInput = false } = {}) {
   if (!state.connected || !state.authenticated) return false;
   if (includeInput) sendBytes(packInput(0, 0));
   return sendBytes(packChores(false, false, false, false, false));
+}
+
+function requestControlledSkill(skillIndex) {
+  if (!state.connected || !state.authenticated || isOwnerDead()) return false;
+  return sendBytes(packSkill(skillIndex));
 }
 
 function sendAuth(mode = AuthMode.Login, { passwordOverride } = {}) {
@@ -1480,10 +1502,7 @@ function receiveBytes(bytes) {
         requestFullSnapshot();
         continue;
       }
-      if (
-        !latestSnapshot ||
-        (resolved.snapshotId || 0) >= (latestSnapshot.snapshotId || 0)
-      )
+      if (!latestSnapshot || isNewerUint32Sequence(resolved.snapshotId, latestSnapshot.snapshotId))
         latestSnapshot = resolved;
       continue;
     }
@@ -1510,6 +1529,24 @@ registerMessageHandler(ServerType.DebugTicket, (msg) => {
   msg.ticket = "";
 });
 
+registerMessageHandler(ServerType.SkillResult, (msg) => {
+  const params = { index: msg.skillIndex, count: msg.skillCount };
+  if (msg.resultCode === SkillResultCode.Success) {
+    addConsoleLine(t("commands.skill.success", params));
+    return;
+  }
+
+  const key =
+    msg.resultCode === SkillResultCode.NoControlledMob
+      ? "commands.skill.noControlledMob"
+      : msg.resultCode === SkillResultCode.NoSkills
+        ? "commands.skill.noSkills"
+        : msg.resultCode === SkillResultCode.InvalidIndex
+          ? "commands.skill.outOfRange"
+          : "commands.skill.unavailable";
+  addConsoleLine(t(key, params), "error");
+});
+
 registerMessageHandler(ServerType.Welcome, (msg) => {
   const previousOwner = state.entities.get(state.ownerEntityId);
   const previousOwnerWasDead =
@@ -1526,7 +1563,13 @@ registerMessageHandler(ServerType.Welcome, (msg) => {
   state.serverTickInterval =
     msg.tickRate > 0 ? 1 / msg.tickRate : serverFixedDt;
   resetOwnerPredictionTiming(state.serverTickInterval);
-  if (msg.mapName) loadMap(msg.mapName);
+  if (msg.mapName) {
+    const epoch = sceneTerrain.epoch;
+    loadMap(msg.mapName, { freshInstance: true }).then((map) => {
+      if (map) sceneTerrain.finish(epoch);
+      else if (epoch === sceneTerrain.epoch) state.ws?.close();
+    });
+  }
   state.weatherEnabled = msg.weatherEnabled !== false;
   setStatus(t("status.player", { id: msg.playerId }), true);
   return;
@@ -1679,7 +1722,8 @@ registerMessageHandler(ServerType.CodexDelta, (msg) => {
 });
 
 registerMessageHandler(ServerType.CodexLoot, (msg) => {
-  state.codexLoot = new Map();
+  // The scene fence resets the table; a complete table can span frames.
+  if (!state.codexLoot) state.codexLoot = new Map();
   for (const entry of msg.codexLootEntries || []) {
     const key = codexKey(entry.mobType, entry.mobRarity);
     if (!state.codexLoot.has(key)) state.codexLoot.set(key, []);
@@ -1700,64 +1744,24 @@ registerMessageHandler(ServerType.LightningChain, (msg) => {
 });
 
 registerMessageHandler(ServerType.TerrainWallRemove, (msg) => {
-  if (!state.map || !state.map.layers) {
-    if (pendingTerrainDeltas.length < pendingTerrainDeltaLimit)
-      pendingTerrainDeltas.push({
-        wallRemove: true,
-        wallRemoveMin: msg.wallRemoveMin,
-        wallRemoveMax: msg.wallRemoveMax,
-      });
-    return;
-  }
-  if (
-    ui.mapRenderer.applyWallRemove(
-      msg.wallRemoveMin,
-      msg.wallRemoveMax,
-    )
-  )
-    minimapCache = null;
+  sceneTerrain.accept({ wallRemove: true, wallRemoveMin: msg.wallRemoveMin, wallRemoveMax: msg.wallRemoveMax });
   return;
 });
 
 registerMessageHandler(ServerType.TerrainDelta, (msg) => {
   // The map loads asynchronously after Welcome: buffer deltas that arrive
   // early so the connect-time history replay is never dropped.
-  if (!state.map || !state.map.layers) {
-    if (pendingTerrainDeltas.length < pendingTerrainDeltaLimit)
-      pendingTerrainDeltas.push({
-        layer: msg.terrainLayer,
-        row: msg.terrainRow,
-        col: msg.terrainCol,
-        gid: msg.terrainGid,
-      });
-    return;
-  }
-  if (
-    ui.mapRenderer.applyTerrainDelta(
-      msg.terrainLayer,
-      msg.terrainRow,
-      msg.terrainCol,
-      msg.terrainGid,
-    )
-  ) {
-    minimapCache = null;
-    const map = state.map;
-    if (map?.tileWidth && map?.tileHeight) {
-      emitTerrainDust(
-        {
-          x: (msg.terrainCol + 0.5) * map.tileWidth,
-          y: (msg.terrainRow + 0.5) * map.tileHeight,
-        },
-        Math.max(map.tileWidth, map.tileHeight),
-      );
-    }
-  }
+  sceneTerrain.accept({ layer: msg.terrainLayer, row: msg.terrainRow, col: msg.terrainCol, gid: msg.terrainGid });
   return;
 });
 
 registerMessageHandler(ServerType.OwnerState, (msg) => {
   const locked = (msg.flags & 1) !== 0;
-  if (locked || locked !== state.ownerLoadoutLocked) {
+  // A death rejects loadout packets on the server. Any optimistic transaction
+  // created just before/during that state must be discarded before applying
+  // the authoritative owner state, otherwise the old primary/secondary view
+  // immediately wins again in makeDisplaySlotState().
+  if (locked || locked !== state.ownerLoadoutLocked || state.wasOwnerDead || isOwnerDead()) {
     clearSlotTransactions();
     clearDrag();
   }
@@ -1799,6 +1803,7 @@ registerMessageHandler(ServerType.CombatFeedback, msg => {
   let sourceChanged = false;
   for (const hit of msg.hits || []) {
     const entity = state.entities.get(hit.targetId);
+    if (entity && hit.targetGeneration && hit.targetGeneration !== entity.snapshot.entityGeneration) continue;
     if (entity && hit.kind !== 1 && !(entity.snapshot.flags & flagDead) &&
         now / 1000 >= (entity.hurtFlashReadyAt || 0)) {
       entity.hurtFlashAge = 0;
@@ -1844,13 +1849,15 @@ registerMessageHandler(ServerType.Chat, (msg) => {
 });
 
 function resetNetworkScene({ resetRunCollection = true } = {}) {
+  sceneTerrain.begin();
+  state.codex = new Map();
+  state.codexLoot = new Map();
   slotSwapMotion.cancelAll();
   pendingSnapshot = null;
   snapshotHistory.clear();
   snapshotResetRequested = false;
   ui.mysteryAudio.reset();
   clearSlotTransactions();
-  state.receiveBuffer = new Uint8Array();
   state.entities.clear();
   resetSpriteMotion();
   bossBarMotions.clear();
@@ -1926,11 +1933,8 @@ function queueSnapshot(msg) {
     requestFullSnapshot();
     return;
   }
-  if ((resolved.snapshotId || 0) <= (state.snapshotId || 0)) return;
-  if (
-    !pendingSnapshot ||
-    (resolved.snapshotId || 0) >= (pendingSnapshot.snapshotId || 0)
-  )
+  if (state.snapshotId >= 0 && !isNewerUint32Sequence(resolved.snapshotId, state.snapshotId)) return;
+  if (!pendingSnapshot || isNewerUint32Sequence(resolved.snapshotId, pendingSnapshot.snapshotId))
     pendingSnapshot = resolved;
 }
 
@@ -2337,13 +2341,7 @@ function clearSlotTransactions() {
   state.slotTransactions = [];
 }
 
-const pendingTerrainDeltas = [];
-const pendingTerrainDeltaLimit = 4096;
-
-function flushPendingTerrainDeltas() {
-  if (!state.map || !state.map.layers) return;
-  while (pendingTerrainDeltas.length) {
-    const delta = pendingTerrainDeltas.shift();
+const sceneTerrain = createSceneTerrainStream((delta) => {
     if (delta.wallRemove) {
       if (
         ui.mapRenderer.applyWallRemove(
@@ -2352,7 +2350,7 @@ function flushPendingTerrainDeltas() {
         )
       )
         minimapCache = null;
-      continue;
+      return;
     }
     if (
       ui.mapRenderer.applyTerrainDelta(delta.layer, delta.row, delta.col, delta.gid)
@@ -2369,13 +2367,10 @@ function flushPendingTerrainDeltas() {
         );
       }
     }
-  }
-}
+}, { onOverflow: () => state.ws?.close() });
 
 async function loadMap(mapName, options) {
-  const map = await ui.mapRenderer.loadMap(mapName, options);
-  flushPendingTerrainDeltas();
-  return map;
+  return ui.mapRenderer.loadMap(mapName, options);
 }
 
 function loadLoginMap() {
@@ -2461,7 +2456,7 @@ function updateViewRadius(now) {
 }
 
 function applySnapshot(msg) {
-  if ((msg.snapshotId || 0) <= (state.snapshotId || 0)) return false;
+  if (state.snapshotId >= 0 && !isNewerUint32Sequence(msg.snapshotId, state.snapshotId)) return false;
   const initialScene = state.snapshotId < 0;
   if (
     state.environment &&
@@ -2489,7 +2484,7 @@ function applySnapshot(msg) {
     state.serverTickReceivedAt = snapshotNowMs;
   }
   const previousOwnerEntityId = state.ownerEntityId;
-  const nextOwnerEntityId = msg.ownerEntityId || previousOwnerEntityId;
+  const nextOwnerEntityId = msg.ownerEntityId ?? previousOwnerEntityId;
   const previousOwner = state.entities.get(previousOwnerEntityId);
   const previousOwnerWasDead =
     !!previousOwner && (previousOwner.snapshot.flags & flagDead) !== 0;
@@ -2511,11 +2506,12 @@ function applySnapshot(msg) {
   for (const snap of msg.entities || []) {
     live.add(snap.entityId);
     let existing = state.entities.get(snap.entityId);
-    if (existing && existing.snapshot.entityType !== snap.entityType) {
+    if (existing && !sameEntityIncarnation(existing.snapshot, snap)) {
       // IDs are reused by the server. An old death pose/velocity must not be
       // inherited by a newly allocated, different entity in that slot.
       clearSpriteMotion(snap.entityId);
       clearLadybugPattern(snap.entityId);
+      healthTrails.delete(snap.entityId);
       existing = null;
     }
     if (existing) {
@@ -3010,6 +3006,10 @@ export function isOwnerDead() {
   return !!owner && (owner.snapshot.flags & flagDead) !== 0;
 }
 
+function loadoutEditingBlocked() {
+  return state.ownerLoadoutLocked || isOwnerDead();
+}
+
 function hasLivingOwner() {
   const owner = state.authenticated
     ? state.entities.get(state.ownerEntityId)
@@ -3021,6 +3021,9 @@ function updateDeathOverlay() {
   const dead = isOwnerDead();
   if (dead && !state.wasOwnerDead) {
     state.deathOverlayClosed = false;
+    clearSlotTransactions();
+    clearDrag();
+    scheduleInventoryUiRender();
     releaseInputHolds();
     state.localMoveInput = { x: 0, y: 0 };
     ui.mobileControls?.reset();
@@ -3192,7 +3195,7 @@ export function renderInventoryPanel(options = {}) {
   const forceInventory = !!options.forceInventory;
   hidePetalInfoTooltip();
   const display = makeDisplaySlotState();
-  if (state.ownerLoadoutLocked || primarySlots.children.length !== display.ownerSlots.length ||
+  if (loadoutEditingBlocked() || primarySlots.children.length !== display.ownerSlots.length ||
       secondarySlots.children.length !== display.secondarySlots.length) slotSwapMotion.cancelAll();
   renderSlotRow(
     primarySlots,
@@ -4277,7 +4280,7 @@ function makeSlotButton(
       beginDrag(event, button, kind, index, slot),
     );
     bindTouchLongPress(button, () => {
-      if (state.ownerLoadoutLocked) return;
+      if (loadoutEditingBlocked()) return;
       hidePetalInfoTooltip();
       ui.mobileControls?.showSlotActions({
         title: formatPetalItem(slot.petalType, slot.rarity),
@@ -4350,7 +4353,7 @@ function hasOwnerPetal(petalType, rarity = null) {
 }
 
 function equipFromInventory(item) {
-  if (state.ownerLoadoutLocked) return;
+  if (loadoutEditingBlocked()) return;
   if (!state.authenticated || !slotHasItem(item)) return;
   // Click-to-equip: fill use slots 0-9 first (smallest index first), then
   // secondary slots 0-9.
@@ -4371,7 +4374,7 @@ function equipFromInventory(item) {
 }
 
 function equipFromInventoryAt(index, item) {
-  if (state.ownerLoadoutLocked) return;
+  if (loadoutEditingBlocked()) return;
   if (!state.authenticated || !slotHasItem(item)) return;
   const ownerSlots = displayOwnerSlots();
   const secondarySlots = displaySecondarySlots();
@@ -4398,7 +4401,7 @@ function equipFromInventoryAt(index, item) {
 }
 
 function unequipSlot(index) {
-  if (state.ownerLoadoutLocked) return;
+  if (loadoutEditingBlocked()) return;
   const ownerSlots = displayOwnerSlots();
   const secondarySlots = displaySecondarySlots();
   let inventory = displayInventory();
@@ -4422,7 +4425,7 @@ function unequipSlot(index) {
 }
 
 function setSecondaryFromInventory(index, item) {
-  if (state.ownerLoadoutLocked) return;
+  if (loadoutEditingBlocked()) return;
   if (!state.authenticated || !slotHasItem(item)) return;
   const ownerSlots = displayOwnerSlots();
   const secondarySlots = displaySecondarySlots();
@@ -4449,7 +4452,7 @@ function setSecondaryFromInventory(index, item) {
 }
 
 function clearSecondarySlot(index) {
-  if (state.ownerLoadoutLocked) return;
+  if (loadoutEditingBlocked()) return;
   const ownerSlots = displayOwnerSlots();
   const secondarySlots = displaySecondarySlots();
   let inventory = displayInventory();
@@ -4483,7 +4486,7 @@ function animateAllSlotSwapFlight(slotCount) {
 }
 
 function quickSwapSlot(index) {
-  if (state.ownerLoadoutLocked) return;
+  if (loadoutEditingBlocked()) return;
   const now = performance.now();
   if (now - lastSlotSwapAt < 100) return;
   lastSlotSwapAt = now;
@@ -4545,7 +4548,7 @@ function quickSwapSlot(index) {
 }
 
 function quickSwapAllSlots() {
-  if (state.ownerLoadoutLocked) return;
+  if (loadoutEditingBlocked()) return;
   if (!state.authenticated) return;
   const display = makeDisplaySlotState();
   const slotCount = display.ownerSlots.length;
@@ -4600,7 +4603,7 @@ function quickSwapAllSlots() {
 }
 
 function saveActiveLoadoutPreset() {
-  if (state.ownerLoadoutLocked) return false;
+  if (loadoutEditingBlocked()) return false;
   if (!state.authenticated || !state.ownerStateLoaded) {
     addConsoleLine(t("commands.loadout.notReady"), "error");
     return false;
@@ -4622,7 +4625,7 @@ function saveActiveLoadoutPreset() {
 }
 
 function applyLoadoutPreset(index) {
-  if (state.ownerLoadoutLocked) return false;
+  if (loadoutEditingBlocked()) return false;
   if (
     !state.authenticated ||
     !state.ownerStateLoaded ||
@@ -4860,7 +4863,7 @@ function beginDrag(event, element, source, index, item) {
   // becomes a draggable ghost. Desktop dragging remains immediate.
   if (event.pointerType === "touch" && source !== "inventory") return;
   if (state.drag) return;
-  if (state.ownerLoadoutLocked) return;
+  if (loadoutEditingBlocked()) return;
   if (event.button !== 0 || !slotHasItem(item)) return;
   if (!state.authenticated && source !== "inventory") return;
   // Remember whether the backpack was open before this drag: a plain click
@@ -5008,7 +5011,7 @@ function highlightDropTarget(target) {
 }
 
 function performDrop(target, drag) {
-  if (state.ownerLoadoutLocked) return;
+  if (loadoutEditingBlocked()) return;
   if (!target) return;
 
   if (target.kind === "backpack") {
@@ -5894,7 +5897,8 @@ function drawEntityVisual(entity, options = {}) {
     const chain = parseChainSnapshot(snap.name);
     const first = chain ? state.entities.get(chain.aId) : null;
     const second = chain ? state.entities.get(chain.bId) : null;
-    if (chain && first?.snapshot && second?.snapshot) {
+    if (chain && first?.snapshot?.entityGeneration === chain.aGenerationKey &&
+        second?.snapshot?.entityGeneration === chain.bGenerationKey) {
       drawChain(
         ctx,
         { pos: worldToScreen(first.renderPos || first.snapshot.pos) },
@@ -6244,6 +6248,25 @@ function drawEntityVisual(entity, options = {}) {
       snap.entityType === magicFireflyType,
     );
     if (!entity.dying) drawMobFrame(snap, pos, radius);
+    ctx.restore();
+    return;
+  }
+
+  if (!isPetal && snap.entityType === fireflyLarvaType) {
+    const visualVariant = entityVisualVariantFromFlags(snap.flags);
+    drawFireflyLarva(
+      ctx,
+      pos,
+      radius * deathScale,
+      snap.entityId,
+      entity.renderAngle ?? snap.angle,
+      entity.motionBlend || 0,
+      animationTime,
+      visualVariant,
+      visualVariant === FireflyLarvaVisualRole.Head && (snap.flags & flagAttacking) !== 0,
+    );
+    if (!entity.dying && visualVariant === FireflyLarvaVisualRole.Head)
+      drawMobFrame(snap, pos, radius);
     ctx.restore();
     return;
   }
@@ -8684,42 +8707,29 @@ function drawMinimap(now = performance.now()) {
   const map = state.map;
   if (!map || !map.tileWidth || !map.tileHeight) {
     minimapHitRect = null;
+    minimapTransition = null;
     return;
   }
 
-  // Hit testing follows the target immediately, while the pixels crossfade
-  // between the two layouts. This keeps the minimap responsive during the
-  // transition instead of making the click target lag behind the icon.
-  minimapHitRect = minimapLayout(state.minimapMode);
-  if (minimapTransition) {
-    const progress = clamp(
-      (now - minimapTransition.startedAt) / minimapTransitionDurationMs,
-      0,
-      1,
-    );
-    const eased = progress * progress * (3 - 2 * progress);
-    if (progress >= 1) {
-      minimapTransition = null;
-      drawMinimapLayer(map, state.minimapMode, 1);
-    } else {
-      drawMinimapLayer(map, minimapTransition.from, 1 - eased);
-      drawMinimapLayer(map, minimapTransition.to, eased);
-    }
-    return;
-  }
-  drawMinimapLayer(map, state.minimapMode, 1);
+  const view = currentMinimapView(map, now);
+  minimapHitRect = view.layout;
+  drawMinimapLayer(map, view);
 }
 
-function drawMinimapLayer(map, mode, alpha) {
-  if (alpha <= 0) return;
-  const layout = minimapLayout(mode);
-  const bounds = minimapWorldBounds(map, mode);
+function currentMinimapView(map, now) {
+  if (minimapTransition?.map !== map) minimapTransition = null;
+  const target = { layout: minimapLayout(), bounds: minimapWorldBounds(map), detail: state.minimapMode === "full" ? 1 : 0 };
+  const { view, complete } = sampleMinimapTransition(minimapTransition, target, now, minimapTransitionDurationMs);
+  if (complete) minimapTransition = null;
+  return view;
+}
+
+function drawMinimapLayer(map, { layout, bounds, detail }) {
   const scale = layout.size / Math.max(bounds.width, bounds.height, 1);
   const s = getGameUiLayout().scale;
   const cache = getMinimapCache(map);
 
   ctx.save();
-  ctx.globalAlpha *= clamp(alpha, 0, 1);
   drawMinimapCard(layout, s);
   drawMinimapLabel(layout, s);
   ctx.beginPath();
@@ -8756,19 +8766,20 @@ function drawMinimapLayer(map, mode, alpha) {
 
     ctx.fillStyle = "#f17cab";
     ctx.strokeStyle = "rgba(45, 24, 38, 0.88)";
-    ctx.lineWidth = mode === "full" ? 1.5 * s : 1.8 * s;
+    ctx.lineWidth = (1.8 - 0.3 * detail) * s;
     ctx.beginPath();
     ctx.arc(
       teammateX,
       teammateY,
-      mode === "full" ? 3.5 * s : 4 * s,
+      (4 - 0.5 * detail) * s,
       0,
       Math.PI * 2,
     );
     ctx.fill();
     ctx.stroke();
 
-    if (mode === "full")
+    if (detail > 0) {
+      ctx.save(); ctx.globalAlpha *= detail;
       drawOutlinedText(
         teammate.snapshot.name || "Player",
         teammateX,
@@ -8781,6 +8792,8 @@ function drawMinimapLayer(map, mode, alpha) {
           baseline: "bottom",
         },
       );
+      ctx.restore();
+    }
   }
 
   // Portals: yellow minimap dots styled like the self/teammate dots.
@@ -8801,12 +8814,12 @@ function drawMinimapLayer(map, mode, alpha) {
 
     ctx.fillStyle = "#ffd84f";
     ctx.strokeStyle = "rgba(45, 24, 38, 0.88)";
-    ctx.lineWidth = mode === "full" ? 1.5 * s : 1.8 * s;
+    ctx.lineWidth = (1.8 - 0.3 * detail) * s;
     ctx.beginPath();
     ctx.arc(
       portalX,
       portalY,
-      mode === "full" ? 3.5 * s : 4 * s,
+      (4 - 0.5 * detail) * s,
       0,
       Math.PI * 2,
     );
@@ -8826,7 +8839,7 @@ function drawMinimapLayer(map, mode, alpha) {
   ) {
     ctx.fillStyle = "#ffd84f";
     ctx.beginPath();
-    ctx.arc(px, py, mode === "full" ? 3 * s : 4 * s, 0, Math.PI * 2);
+    ctx.arc(px, py, (4 - detail) * s, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -9182,14 +9195,12 @@ function rasterizeMinimapDifficulty(
 }
 
 function toggleMinimapMode() {
-  const from = state.minimapMode;
-  const to = from === "full" ? "local" : "full";
+  const now = performance.now();
+  const map = state.map;
+  const from = map ? currentMinimapView(map, now) : null;
+  const to = state.minimapMode === "full" ? "local" : "full";
   state.minimapMode = to;
-  minimapTransition = {
-    from,
-    to,
-    startedAt: performance.now(),
-  };
+  minimapTransition = from ? { from, map, startedAt: now } : null;
   requestRedraw();
 }
 
@@ -9561,10 +9572,15 @@ function drawMobLightMask(lightContext, darknessAlpha, now) {
     const worldPos = entity.renderPos || entity.snapshot?.pos;
     if (!worldPos) continue;
     const isFlower = isLightFlower(entity);
+    const isFireflyLarvaTail =
+      !isFlower &&
+      entity.snapshot?.entityType === fireflyLarvaType &&
+      entityVisualVariantFromFlags(entity.snapshot.flags) === FireflyLarvaVisualRole.Tail;
     const isFirefly =
       !isFlower &&
       (entity.snapshot?.entityType === fireflyType ||
-        entity.snapshot?.entityType === magicFireflyType);
+        entity.snapshot?.entityType === magicFireflyType ||
+        isFireflyLarvaTail);
     const isBulb =
       !isFlower &&
       !isFirefly &&
@@ -9587,7 +9603,7 @@ function drawMobLightMask(lightContext, darknessAlpha, now) {
       targetRadius: isBulb
         ? bulbDetectRaw
         : isFlower
-          ? tileWorld
+          ? defaultPlayerLightRadius(state.map)
           : tileWorld * (worldRadius / fireflyBaseRadius) * 0.5,
       innerRatio: isBulb ? flowerInnerRatio : isFlower ? flowerInnerRatio : fireflyInnerRatio,
       eraseAlpha: isBulb ? flowerEraseAlpha : isFlower ? flowerEraseAlpha : fireflyEraseAlpha,
@@ -9867,6 +9883,7 @@ export function drawScene(now = performance.now()) {
   mark?.("hurtFlash");
   drawParticlePass();
   burrowParticles.draw(ctx, scale, worldToScreen({ x: 0, y: 0 }));
+  ui.mapRenderer?.drawShortcutCover(now);
   if (state.weatherEnabled) {
     drawDiurnalLighting(now);
     drawWeatherEffects(now);
@@ -10650,6 +10667,7 @@ function scheduleBackgroundAssetWarmup() {
         prepareSpiderSprites(),
         prepareCrabSprites(),
         prepareJellyfishSprites(),
+        prepareFireflyLarvaSprites(),
         prepareGardenSprites(),
         prepareLadybugSprites(),
       ])
@@ -10713,6 +10731,7 @@ initClientCommands({
   bindings,
   onBindingsChanged: () => scheduleInventoryUiRender(),
   setViewZoomPercent,
+  requestSkill: requestControlledSkill,
   clearConsole: () => ui.consoleUi?.clear(),
   onClientConfigChanged: (name) => {
     if (name === "all" || name === "petal_label_max_font_px" || name === "petal_label_max_width_px")

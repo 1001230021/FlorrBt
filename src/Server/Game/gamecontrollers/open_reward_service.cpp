@@ -12,7 +12,7 @@
 #include "../gamecontext.h"
 #include "../gameworld.h"
 #include "../player.h"
-#include "opencontroller.h"
+#include "../extensions/extension_services.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -24,11 +24,29 @@
 
 namespace
 {
+std::vector<CPlayer*> SquadMembers(CGameWorld& world, CPlayer& player)
+{
+    const auto* squads = world.Extensions().Find<ISquadView>();
+    return squads ? squads->Members(player) : std::vector<CPlayer*>{&player};
+}
+std::uint32_t SquadRoot(CGameWorld& world, CPlayer& player)
+{
+    const auto* squads = world.Extensions().Find<ISquadView>();
+    return squads ? squads->RootId(player) : player.GetId();
+}
 struct lootable_player
 {
     CPlayer* player = nullptr;
     float damage = 0.f;
 };
+
+bool MatchesRewardScope(const CGameWorld& world, const CPlayer& player)
+{
+    const bool isolated = world.GetController() && world.GetController()->UsesIsolatedProgress();
+    return isolated ? player.HasIsolatedProgress() &&
+        player.ProgressWorld() == SWorldHandle{world.GetId(), world.GetInstanceGeneration()} :
+        !player.HasIsolatedProgress();
+}
 
 bool IsActivePlayer(const CGameContext* context, const CPlayer* player)
 {
@@ -50,7 +68,7 @@ bool DefeatRewardsSuppressed(CGameWorld& world, const CMobBase& mob)
     return context && owner && context->FindPlayerFromEntity(owner) != nullptr;
 }
 
-std::string MobName(const CMobBase& mob)
+std::string GetMobName(const CMobBase& mob)
 {
     const CMobPrototype* proto = FindMobPrototype(mob.GetMobType());
     return proto && !proto->m_name.empty() ? proto->m_name : std::string(GetMobTypeName(mob.GetMobType()));
@@ -120,20 +138,20 @@ EPetalType MagicVariantForDrop(EPetalType type)
     switch (type)
     {
     case EPetalType::Rose:
-        return EPetalType::Orb;
+        return ToPetalType(EModPetalType::Orb);
     case EPetalType::Leaf:
     case EPetalType::GoldenLeaf:
-        return EPetalType::MagicLeaf;
+        return ToPetalType(EModPetalType::MagicLeaf);
     case EPetalType::Bubble:
-        return EPetalType::MagicBubble;
+        return ToPetalType(EModPetalType::MagicBubble);
     case EPetalType::ThirdEye:
-        return EPetalType::MagicEye;
+        return ToPetalType(EModPetalType::MagicEye);
     case EPetalType::Missile:
-        return EPetalType::MagicMissile;
+        return ToPetalType(EModPetalType::MagicMissile);
     case EPetalType::Lightning:
-        return EPetalType::MagicLightning;
+        return ToPetalType(EModPetalType::MagicLightning);
     case EPetalType::Cactus:
-        return EPetalType::MagicCactus;
+        return ToPetalType(EModPetalType::MagicCactus);
     default:
         return EPetalType::None;
     }
@@ -148,7 +166,7 @@ ERarity HighestEquippedOrbRarity(const CPlayer& player)
     for (const CPetalSlot& slot : flower->GetSlots())
     {
         if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
-        if (slot.m_p_proto->m_type != EPetalType::Orb) continue;
+        if (slot.m_p_proto->m_type != ToPetalType(EModPetalType::Orb)) continue;
         if (GetRaritySortRank(slot.m_stored_rarity) > GetRaritySortRank(highest))
             highest = slot.m_stored_rarity;
     }
@@ -180,14 +198,14 @@ void LogSuperLootIssue(const CMobBase& mob, const std::string& reason)
                          std::to_string(TotalDamageRecorded(mob)) + " damage_sources=" + DamageSummary(mob));
 }
 
-std::vector<CPlayer*> FindDefeatCreditPlayers(COpenController& controller, CGameWorld& world, const CMobBase& mob)
+std::vector<CPlayer*> FindDefeatCreditPlayers(CGameWorld& world, const CMobBase& mob)
 {
     const CGameContext* context = const_cast<CMobBase&>(mob).GameContext();
     std::unordered_map<CPlayer*, float> damage_by_player;
     for (const CDamageData& damage_data : mob.GetDamageData())
     {
         CPlayer* contributor = damage_data.ResolvePlayer(context);
-        if (!contributor || damage_data.m_total_dmg <= 0.f) continue;
+        if (!contributor || !MatchesRewardScope(world, *contributor) || damage_data.m_total_dmg <= 0.f) continue;
         damage_by_player[contributor] += damage_data.m_total_dmg;
     }
     if (damage_by_player.empty()) return {};
@@ -212,7 +230,7 @@ std::vector<CPlayer*> FindDefeatCreditPlayers(COpenController& controller, CGame
     std::sort(contributors.begin(), contributors.end(), damage_order);
 
     CPlayer* top_player = contributors.front();
-    std::vector<CPlayer*> squad = controller.GetSquadPlayerList(world, *top_player);
+    std::vector<CPlayer*> squad = SquadMembers(world, *top_player);
     if (squad.size() <= 1) return { top_player };
     if (std::find(squad.begin(), squad.end(), top_player) == squad.end()) squad.push_back(top_player);
     std::sort(squad.begin(), squad.end(), damage_order);
@@ -233,7 +251,7 @@ std::string JoinGetPlayerNames(const std::vector<CPlayer*>& players)
     return result;
 }
 
-void ReportMobDefeat(COpenController& controller, CGameWorld& world, const CMobBase& mob)
+void ReportMobDefeat(CGameWorld& world, const CMobBase& mob)
 {
     CGameContext* context = world.GameContext();
     if (!context || !context->Events().ShouldReportRarity(mob.GetRarity(),
@@ -241,12 +259,12 @@ void ReportMobDefeat(COpenController& controller, CGameWorld& world, const CMobB
         return;
 
     std::string action = "has been defeated";
-    const std::string credited_players = JoinGetPlayerNames(FindDefeatCreditPlayers(controller, world, mob));
+    const std::string credited_players = JoinGetPlayerNames(FindDefeatCreditPlayers(world, mob));
     if (!credited_players.empty()) action += " by " + credited_players;
-    context->Events().ReportMob(action, mob.GetRarity(), MobName(mob));
+    context->Events().ReportMob(action, mob.GetRarity(), GetMobName(mob));
 }
 
-std::vector<lootable_player> FindLootablePlayers(COpenController& controller, CGameWorld& world, const CMobBase& mob)
+std::vector<lootable_player> FindLootablePlayers(CGameWorld& world, const CMobBase& mob)
 {
     const CGameContext* context = const_cast<CMobBase&>(mob).GameContext();
     const bool above_ultra = IsAboveRarity(mob.GetRarity(), ERarity::Ultra);
@@ -261,7 +279,7 @@ std::vector<lootable_player> FindLootablePlayers(COpenController& controller, CG
     for (const CDamageData& damage_data : mob.GetDamageData())
     {
         CPlayer* contributor = damage_data.ResolvePlayer(context);
-        if (!contributor || damage_data.m_total_dmg <= 0.f) continue;
+        if (!contributor || !MatchesRewardScope(world, *contributor) || damage_data.m_total_dmg <= 0.f) continue;
         total_damage += damage_data.m_total_dmg;
         if (!damage_by_player.contains(contributor)) contributors.push_back(contributor);
         damage_by_player[contributor] += damage_data.m_total_dmg;
@@ -269,8 +287,8 @@ std::vector<lootable_player> FindLootablePlayers(COpenController& controller, CG
 
     for (CPlayer* contributor : contributors)
     {
-        for (CPlayer* member : controller.GetSquadPlayerList(world, *contributor))
-            if (IsActivePlayer(context, member)) damage_by_player.try_emplace(member, 0.f);
+        for (CPlayer* member : SquadMembers(world, *contributor))
+            if (IsActivePlayer(context, member) && MatchesRewardScope(world, *member)) damage_by_player.try_emplace(member, 0.f);
     }
 
     const SMobStats* stats = mob.GetFinalStats();
@@ -284,7 +302,7 @@ std::vector<lootable_player> FindLootablePlayers(COpenController& controller, CG
 
     std::unordered_map<std::uint32_t, std::vector<lootable_player*>> squad_damage;
     for (lootable_player& candidate : candidates)
-        if (candidate.player) squad_damage[controller.GetSquadRootId(world, *candidate.player)].push_back(&candidate);
+        if (candidate.player) squad_damage[SquadRoot(world, *candidate.player)].push_back(&candidate);
 
     const float adjustment_range = std::max(0.f, game_config::open_squad_loot_damage_range);
     for (auto& [root_id, members] : squad_damage)
@@ -357,18 +375,18 @@ void COpenRewardService::OnMobSpawned(CGameWorld& world, CMobBase& mob)
     if (!context || !context->Events().ShouldReportRarity(mob.GetRarity(),
                                                           game_config::min_mob_spawn_report_rarity))
         return;
-    context->Events().ReportMobSpawn(world, "has spawned", mob.GetRarity(), MobName(mob));
+    context->Events().ReportMobSpawn(world, "has spawned", mob.GetRarity(), GetMobName(mob));
 }
 
-void COpenRewardService::OnMobDefeated(COpenController& controller, CGameWorld& world, CMobBase& mob)
+void COpenRewardService::OnMobDefeated(CGameWorld& world, CMobBase& mob)
 {
     if (mob.GetMobType() == EMobType::SummonedBeetle || mob.GetMobType() == EMobType::SummonedSoldierAnt ||
         DefeatRewardsSuppressed(world, mob))
         return;
 
-    ReportMobDefeat(controller, world, mob);
+    ReportMobDefeat(world, mob);
 
-    std::vector<lootable_player> lootable_players = FindLootablePlayers(controller, world, mob);
+    std::vector<lootable_player> lootable_players = FindLootablePlayers(world, mob);
     const bool log_loot_issues = IsAtLeastRarity(mob.GetRarity(), ERarity::Super);
     if (lootable_players.empty())
     {

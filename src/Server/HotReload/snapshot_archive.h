@@ -50,6 +50,7 @@ class CSnapshotReader
 {
   public:
     explicit CSnapshotReader(const json_t* object) : m_object(object) {}
+    const json_t* Object() const { return m_object; }
 
     bool IsValid() const { return json_is_object(m_object); }
     bool Has(std::string_view key) const;

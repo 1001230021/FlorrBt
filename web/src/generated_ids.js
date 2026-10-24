@@ -332,6 +332,7 @@ export const MOB_IDS = {
   crab: 41,
   jellyfish: 42,
   magic_firefly: 43,
+  firefly_larva: 44,
 };
 
 export const MOB_NAMES = [
@@ -379,6 +380,7 @@ export const MOB_NAMES = [
   "Crab",
   "Jellyfish",
   "MagicFirefly",
+  "FireflyLarva",
 ];
 
 export const STATE_IDS = {

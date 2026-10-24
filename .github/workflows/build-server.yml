@@ -39,6 +39,9 @@ jobs:
       - name: Check client dependency ratchet
         run: node tools/check_client_deps.mjs
 
+      - name: Check source repository hygiene
+        run: node tools/check_source_hygiene.mjs
+
   client-input-tests:
     name: Client input binding tests
     runs-on: ubuntu-latest
@@ -50,6 +53,15 @@ jobs:
       - name: Run input hold regression tests
         run: node tools/test_input_holds.mjs
 
+      - name: Check map movement and minimap transitions
+        run: |
+          node tools/test_minimap_transition.mjs
+          node tools/test_map_loading.mjs
+          node tools/test_shortcuts.mjs
+          node tools/test_render_pipeline.mjs
+          npm install --prefix build/render-qa --no-save @napi-rs/canvas@1.0.13
+          node tools/test_map_seams.mjs --pixels
+
       - name: Check analog motion and live slot values
         run: node tools/test_motion_and_slot_values.mjs
 
@@ -58,6 +70,16 @@ jobs:
 
       - name: Check flower rendering and combat feedback
         run: node tools/test_flower_feedback.mjs
+
+      - name: Check entity identity and generation protocol
+        run: node tools/test_snapshot_identity.mjs
+
+      - name: Check offline load/weather protocol tools
+        run: |
+          python3 -m unittest discover -s tests -p test_load_clients.py -v
+          node tools/test_weather_protocol.mjs
+          node tools/test_extensions_architecture.mjs
+          node tools/test_world_transactions.mjs
 
       - name: Check entity animation and UI regressions
         run: |
@@ -129,6 +151,7 @@ jobs:
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_SHARED_LIBS=OFF
+          -DFLORRBT_BUILD_RUNTIME_TESTS=ON
 
       - name: Configure Windows build
         if: runner.os == 'Windows'
@@ -136,11 +159,15 @@ jobs:
         run: |
           cmake -S . -B build -A x64 `
             -DBUILD_SHARED_LIBS=OFF `
+            -DFLORRBT_BUILD_RUNTIME_TESTS=ON `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static
 
-      - name: Build server
-        run: cmake --build build --config Release --target FlorrBt_Server --parallel
+      - name: Build server and regression tests
+        run: cmake --build build --config Release --target FlorrBt_Server FlorrBt_Tests FlorrBt_RuntimeTests --parallel
+
+      - name: Run headless server regressions
+        run: ctest --test-dir build -C Release --output-on-failure
 
       - name: Prepare artifact
         shell: pwsh
@@ -157,6 +184,7 @@ jobs:
             }
           }
           Copy-Item data package/FlorrBt_Server/data -Recurse
+          Copy-Item data/server.cfg.example package/FlorrBt_Server/data/server.cfg
 
       - name: Upload server artifact
         uses: actions/upload-artifact@v7

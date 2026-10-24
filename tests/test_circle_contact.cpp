@@ -198,3 +198,18 @@ TEST(SlowedSteeringCannotEraseOrRotateIncomingVelocity)
     CHECK(florrbt::StepVelocityTowards(pushed, {}, 100, 0) == pushed);
     CHECK(florrbt::StepVelocityTowards({ 3, 4 }, {}, 100, 1) == Vector2f{});
 }
+
+TEST(SteeringAndContactRecoverNonFiniteVelocity)
+{
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    Vector2f velocity{ nan, 2.f };
+    const Vector2f stepped = florrbt::StepVelocityTowards(velocity, { 8.f, 0.f }, 100.f, 0.1f);
+    CHECK(std::isfinite(stepped.x) && std::isfinite(stepped.y));
+    CHECK_NEAR(stepped.x, 8.f, 0.00001);
+    CHECK_NEAR(stepped.y, 0.f, 0.00001);
+
+    Vector2f lhs{}, rhs{ 9.f, 0.f }, lhs_velocity{ nan, 1.f }, rhs_velocity{};
+    CHECK(florrbt::ResolveCircleContact(lhs, lhs_velocity, 5.f, 1.f, rhs, rhs_velocity, 5.f, 1.f));
+    CHECK(std::isfinite(lhs_velocity.x) && std::isfinite(lhs_velocity.y));
+    CHECK(std::isfinite(rhs_velocity.x) && std::isfinite(rhs_velocity.y));
+}

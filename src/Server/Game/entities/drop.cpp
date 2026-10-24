@@ -44,6 +44,7 @@ CDrop::CDrop(CGameWorld* world, florrbt::Vector2f pos, PetalType type, ERarity r
             if (player && player->IsAuthenticated() && player->GetId() == static_cast<uint32_t>(m_owner_id))
             {
                 m_owner_account = player->GetAccountName();
+                m_owner_progress_account = player->GetProgressAccountName();
                 break;
             }
 }
@@ -122,7 +123,8 @@ void CDrop::Tick(float dt)
 bool CDrop::IsOwnedBy(const CPlayer& player) const
 {
     return m_owner_id == drop_owner_all || (player.IsAuthenticated() && !m_owner_account.empty() &&
-                                            m_owner_account == player.GetAccountName());
+        m_owner_account == player.GetAccountName() && (m_owner_progress_account.empty() ?
+            !player.HasIsolatedProgress() : m_owner_progress_account == player.GetProgressAccountName()));
 }
 
 bool CDrop::CanBePickedUpBy(const CPlayer& player) const
@@ -137,7 +139,7 @@ bool CDrop::PickUpTo(CPlayer& player)
 {
     if (!CanBePickedUpBy(player)) return false;
 
-    if (m_rarity == ERarity::Unique)
+    if (m_rarity == ERarity::Unique && !player.HasIsolatedProgress())
     {
         CServer* server = CServer::GetInstance();
         IUniquePetalRegistry* registry = server ? server->GetUniquePetalRegistry() : nullptr;
@@ -175,6 +177,7 @@ void CDrop::MergeNearbyDrops()
         if (other->m_timer <= 0.f || other->m_inertia_active || other->m_unable_picked_timer > 0.f) return;
         if ((m_owner_id == drop_owner_all) != (other->m_owner_id == drop_owner_all)) return;
         if (m_owner_id != drop_owner_all && (m_owner_account.empty() || m_owner_account != other->m_owner_account)) return;
+        if (m_owner_progress_account != other->m_owner_progress_account) return;
         if (other->Id() <= Id()) return;
 
         uint16_t max_stack = std::numeric_limits<uint16_t>::max();

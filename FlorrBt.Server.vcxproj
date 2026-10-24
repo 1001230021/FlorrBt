@@ -41,11 +41,8 @@
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
-  <PropertyGroup Label="UserMacros">
-    <!-- Override with /p:FLORRBT_MYSQL_ROOT=... when MySQL is installed elsewhere. -->
-    <MySqlRoot Condition="'$(FLORRBT_MYSQL_ROOT)' != ''">$(FLORRBT_MYSQL_ROOT)</MySqlRoot>
-    <MySqlRoot Condition="'$(MySqlRoot)' == ''">D:\库\mysql-8.4.6-winx64</MySqlRoot>
-  </PropertyGroup>
+  <PropertyGroup Label="UserMacros" />
+  <Import Project="tools\msbuild\dependencies.props" />
   <Import Project="tools\msbuild\isolated_outputs.props" />
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -55,12 +52,12 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>_DEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;FLORRBT_WITH_MYSQL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;$(MySqlRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;$(SfmlRoot)\include;$(MySqlRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>D:\库\SFML-3.1.0\lib;$(MySqlRoot)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(SfmlRoot)\lib;$(MySqlRoot)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>libmysql.lib;sfml-main-d.lib;sfml-graphics-d.lib;sfml-window-d.lib;sfml-network-d.lib;sfml-system-d.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
@@ -80,13 +77,13 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>NDEBUG;_CRT_SECURE_NO_WARNINGS;NOMINMAX;FLORRBT_WITH_MYSQL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;D:\库\SFML-3.1.0\include;$(MySqlRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;externals\argon2\include;externals\argon2\src;externals\jansson\src;externals\libtmj\include;externals\libtmj\src;$(SfmlRoot)\include;$(MySqlRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
-      <AdditionalLibraryDirectories>D:\库\SFML-3.1.0\lib;$(MySqlRoot)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(SfmlRoot)\lib;$(MySqlRoot)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>libmysql.lib;sfml-main.lib;sfml-graphics.lib;sfml-window.lib;sfml-network.lib;sfml-system.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
@@ -99,10 +96,19 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\Server\Auth\email_verification_service.h" />
-    <ClInclude Include="src\Server\Game\gamecontrollers\weather_diurnal_open_controller.h" />
-    <ClInclude Include="src\Server\Game\systems\weather_diurnal_system.h" />
+    <ClInclude Include="src\Server\Game\extension.h" />
+    <ClInclude Include="src\Server\Game\world_transition.h" />
+    <ClInclude Include="src\Server\Game\extensions\extension_runtime.h" />
+    <ClInclude Include="src\Server\Game\extensions\extension_services.h" />
+    <ClInclude Include="src\Server\Game\extensions\chat_extension.h" />
+    <ClInclude Include="src\Server\Game\extensions\squad_extension.h" />
+    <ClInclude Include="src\Server\Game\extensions\weather_snapshot.h" />
+    <ClInclude Include="src\Server\Game\extensions\weather_view.h" />
+    <ClInclude Include="src\Server\Game\extensions\weather_extension.h" />
     <ClInclude Include="src\Server\HotReload\hot_reload_snapshot.h" />
     <ClInclude Include="src\Server\HotReload\snapshot_archive.h" />
+    <ClInclude Include="src\Server\HotReload\mob_stats_snapshot.h" />
+    <ClInclude Include="src\Server\Game\controller_factory.h" />
     <ClInclude Include="src\Server\Game\controller.h" />
     <ClInclude Include="src\Server\Game\entities\blood_sacrifice_ritual.h" />
     <ClInclude Include="src\Server\Game\entities\drop.h" />
@@ -143,9 +149,12 @@
     <ClInclude Include="src\Server\Game\states\states.h" />
     <ClInclude Include="src\Server\Game\systems\player_lifecycle_service.h" />
     <ClInclude Include="src\Server\Game\systems\snapshot_service.h" />
+    <ClInclude Include="src\Server\Game\systems\environment_system.h" />
+    <ClInclude Include="src\Shared\terrain_rules.h" />
     <ClInclude Include="src\Server\Module\console_module.h" />
     <ClInclude Include="src\Server\Module\module.h" />
     <ClInclude Include="src\Server\Module\network_module.h" />
+    <ClInclude Include="src\Server\Module\network_rcon.h" />
     <ClInclude Include="src\Server\DevTools\dev_debug_service.h" />
     <ClInclude Include="src\Shared\dev_debug_protocol.h" />
     <ClInclude Include="src\Server\Module\server_gui_module.h" />
@@ -192,9 +201,13 @@
     <ClCompile Include="src\Server\Game\gamecontrollers\waitingcontroller.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\ant_kingdom_controller.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\eou_team.cpp" />
-    <ClCompile Include="src\Server\Game\gamecontrollers\weather_diurnal_open_controller.cpp" />
+    <ClCompile Include="src\Server\Game\extensions\extension_runtime.cpp" />
+    <ClCompile Include="src\Server\Game\extensions\chat_extension.cpp" />
+    <ClCompile Include="src\Server\Game\extensions\squad_extension.cpp" />
+    <ClCompile Include="src\Server\Game\extensions\weather_snapshot.cpp" />
     <ClCompile Include="src\Server\Game\gamecontrollers\world_controller_factory.cpp" />
     <ClCompile Include="src\Server\Game\gameworld.cpp" />
+    <ClCompile Include="src\Server\Game\world_transition.cpp" />
     <ClCompile Include="src\Server\Game\tile_board.cpp" />
     <ClCompile Include="src\Server\Game\wall_board.cpp" />
     <ClCompile Include="src\Server\Game\player.cpp" />
@@ -202,10 +215,12 @@
     <ClCompile Include="src\Server\Game\states\states.cpp" />
     <ClCompile Include="src\Server\Game\systems\player_lifecycle_service.cpp" />
     <ClCompile Include="src\Server\Game\systems\snapshot_service.cpp" />
-    <ClCompile Include="src\Server\Game\systems\weather_diurnal_system.cpp" />
+    <ClCompile Include="src\Server\Game\systems\environment_system.cpp" />
+    <ClCompile Include="src\Server\Game\extensions\weather_extension.cpp" />
     <ClCompile Include="src\Server\main.cpp" />
     <ClCompile Include="src\Server\Module\console_module.cpp" />
     <ClCompile Include="src\Server\Module\network_module.cpp" />
+    <ClCompile Include="src\Server\Module\network_rcon.cpp" />
     <ClCompile Include="src\Server\DevTools\dev_debug_service.cpp" />
     <ClCompile Include="src\Server\Module\server_gui_module.cpp" />
     <ClCompile Include="src\Server\Module\world_module.cpp" />

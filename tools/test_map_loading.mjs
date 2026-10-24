@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { createMapChunkCache } from "../web/src/map_chunk_cache.js";
+import { mapLayerRole, shortcutReveal } from "../web/src/terrain_rules.js";
+import { drawRasterImage } from "../web/src/map_raster_geometry.js";
 
 const source = readFileSync(new URL("../web/src/map_renderer.js", import.meta.url), "utf8")
   .replace(/^import[\s\S]*?from "[^"]+";\r?\n/gm, "").replace(/^export /gm, "");
@@ -19,6 +21,7 @@ class FakeImage {
 }
 const scope = {
   createMapChunkCache,
+  mapLayerRole, shortcutReveal, drawRasterImage,
   loadVisualImage: src => { const image = new FakeImage(); image.src = src; return image; },
   whenVisualReady: async image => image.complete && image.naturalWidth > 0,
   appState: {}, dom: { ctx: canvasContext },
@@ -63,6 +66,40 @@ assert.equal(state.mapLoadPromise, null);
 assert.deepEqual(loading, [true, false]);
 await renderer.loadMap("data/maps/garden.tmj");
 assert.equal(requests.length, 2, "short names and explicit paths must use the same cached map");
+
+renderer.applyTerrainDelta(0, 0, 0, 0);
+assert.equal(loaded.layers[0].tiles[0], 0);
+const freshRoom = await renderer.loadMap("garden", { freshInstance: true });
+assert.notEqual(freshRoom, loaded, "same asset in another room needs a fresh mutable instance");
+assert.equal(freshRoom.layers[0].tiles[0], 1, "previous room terrain must not leak into the new baseline");
+
+let releaseFirst;
+const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+let mapRequests = 0;
+const raceScope = { ...scope, fetch: async path => {
+  if (path === "/data/maps/garden.tmj" && ++mapRequests === 1) await firstGate;
+  return scope.fetch(path);
+} };
+const { createMapRenderer: createRaceRenderer } = vm.runInNewContext(`${source}\n;({createMapRenderer})`, raceScope);
+const raceState = newState();
+const raceRenderer = createRaceRenderer({ state: raceState, worldScale: () => 1, worldToScreen: p => p });
+const firstRoom = raceRenderer.loadMap("garden", { freshInstance: true });
+let timer;
+let secondRoom;
+try {
+  secondRoom = await Promise.race([
+    raceRenderer.loadMap("garden", { freshInstance: true }),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("new scene reused an obsolete in-flight load")), 2000); }),
+  ]);
+} finally {
+  clearTimeout(timer);
+  releaseFirst();
+}
+assert.ok(secondRoom);
+assert.equal(await firstRoom, null, "late old scene cannot overwrite the newer map");
+assert.equal(raceState.map, secondRoom);
+raceRenderer.dispose();
+console.log("PASS fresh same-asset terrain and superseded in-flight scene loads");
 
 assert.equal(await renderer.loadMap("missing"), null);
 assert.match(messages.at(-1).text, /status\.mapLoadFailed.*\/data\/maps\/missing\.tmj.*404/);

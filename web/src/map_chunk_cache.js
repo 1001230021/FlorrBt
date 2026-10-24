@@ -1,5 +1,6 @@
 import { sceneRasterBudget } from "./raster_budget.js";
 import { recordRenderPreparationCost } from "./render_timing.js";
+import { pixelCoverage, drawRasterImage } from "./map_raster_geometry.js";
 
 const gutter = 2;
 const chunkPixelLimit = 1024;
@@ -29,12 +30,13 @@ function expand(bounds, amount) {
     top: bounds.top - amount, bottom: bounds.bottom + amount };
 }
 
-// Each chunk is an opaque, complete stack of terrain layers. A grass chunk
-// can never cover a wall from the overview while that wall's job is pending.
+// A chunk is a complete stack within one render pass. Transparent passes are
+// drawn into their own surface and replace coverage instead of alpha-stacking
+// the overview, parent and child rasters of the same translucent pixels.
 export function createMapChunkCache({ map, state, worldScale, worldToScreen,
   createCanvas, drawTile, isActive, requestDraw, budget = sceneRasterBudget,
   clock = () => performance.now(), yieldWork = () => new Promise(resolve => setTimeout(resolve, 0)),
-  schedule = run => requestAnimationFrame(run) }) {
+  schedule = run => requestAnimationFrame(run), layers = map.layers, transparent = false }) {
   const entries = new Map();
   let wanted = new Map(), queue = [], busy = false, scheduled = false, disposed = false;
   let revision = 0, previousCamera = null, inFlight = null;
@@ -101,15 +103,17 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
     if (!context) return null;
     const valid = () => !disposed && isActive() && job.revision === revision && (warming || wanted.has(job.key));
     const fail = () => { canvas.width = canvas.height = 0; return null; };
-    context.fillStyle = map.backgroundColor || "#1ea761";
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    if (!transparent) {
+      context.fillStyle = map.backgroundColor || "#1ea761";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+    }
     const tw = map.tileWidth, th = map.tileHeight;
     const x0 = Math.floor((job.left - gutter / density) / tw);
     const y0 = Math.floor((job.top - gutter / density) / th);
     const x1 = Math.ceil((job.right + gutter / density) / tw);
     const y1 = Math.ceil((job.bottom + gutter / density) / th);
     let started = clock(), tiles = 0;
-    for (const layer of map.layers) {
+    for (const layer of layers) {
       if (layer.visible === false || !layer.tiles?.length || !(layer.width > 0 && layer.height > 0)) continue;
       context.globalAlpha = layer.opacity ?? 1;
       for (let y = y0; y < y1; y++) {
@@ -163,11 +167,15 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
   }
 
   function drawDirect(ctx, job, dpr) {
+    ctx.save();
     ctx.fillStyle = map.backgroundColor || "#1ea761";
     const from = worldToScreen({ x: job.left, y: job.top });
-    ctx.fillRect(from.x - 1, from.y - 1,
+    const to = worldToScreen({ x: job.right, y: job.bottom });
+    const coverage = pixelCoverage(from, to, dpr);
+    if (transparent) ctx.clearRect(coverage.x, coverage.y, coverage.width, coverage.height);
+    else ctx.fillRect(from.x - 1, from.y - 1,
       (job.right - job.left) * worldScale() + 2, (job.bottom - job.top) * worldScale() + 2);
-    for (const layer of map.layers) {
+    for (const layer of layers) {
       if (layer.visible === false || !layer.tiles?.length) continue;
       ctx.globalAlpha = layer.opacity ?? 1;
       for (let ty = Math.floor(job.top / map.tileHeight); ty < Math.ceil(job.bottom / map.tileHeight); ty++) {
@@ -177,12 +185,14 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
           if (!image?.complete || !image.naturalWidth || image.failed) continue;
           const a = worldToScreen({ x: tx * map.tileWidth, y: ty * map.tileHeight });
           const b = worldToScreen({ x: (tx + 1) * map.tileWidth, y: (ty + 1) * map.tileHeight });
-          const px = Math.round(a.x * dpr) / dpr, py = Math.round(a.y * dpr) / dpr;
-          drawTile(image, { x: px, y: py }, Math.round(b.x * dpr) / dpr - px,
-            Math.round(b.y * dpr) / dpr - py, raw, ctx);
+          const coverage = pixelCoverage(a, b, dpr);
+          ctx.save(); ctx.beginPath(); ctx.rect(coverage.x, coverage.y, coverage.width, coverage.height); ctx.clip();
+          drawTile(image, a, b.x - a.x, b.y - a.y, raw, ctx);
+          ctx.restore();
         }
       }
     }
+    ctx.restore();
   }
 
   function draw(ctx, now, prepare = true) {
@@ -197,11 +207,15 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
       budget.touch(entry);
       const from = worldToScreen({ x: entry.left, y: entry.top });
       const to = worldToScreen({ x: entry.right, y: entry.bottom });
-      const x = Math.round(from.x * dpr) / dpr, y = Math.round(from.y * dpr) / dpr;
-      const right = Math.round(to.x * dpr) / dpr, bottom = Math.round(to.y * dpr) / dpr;
-      if (right <= x || bottom <= y) return;
-      ctx.drawImage(entry.canvas, gutter, gutter, entry.pixelWidth, entry.pixelHeight,
-        x, y, right - x, bottom - y);
+      const coverage = pixelCoverage(from, to, dpr);
+      if (coverage.width <= 0 || coverage.height <= 0) return;
+      const pixelScale = worldScale() / entry.profile.density;
+      const padding = gutter * pixelScale;
+      ctx.save(); ctx.beginPath(); ctx.rect(coverage.x, coverage.y, coverage.width, coverage.height); ctx.clip();
+      if (transparent) ctx.clearRect(coverage.x, coverage.y, coverage.width, coverage.height);
+      drawRasterImage(ctx, entry.canvas, from.x - padding, from.y - padding,
+        entry.canvas.width * pixelScale, entry.canvas.height * pixelScale);
+      ctx.restore();
     };
     for (const job of wanted.values()) {
       if (!job.visible) continue;

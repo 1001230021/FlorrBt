@@ -21,8 +21,11 @@ export const flagAttacking = 1 << 0;
 export const flagDefending = 1 << 1;
 export const flagDead = 1 << 2;
 export const flagOwner = 1 << 3;
+export const flagVisualVariantShift = 4;
+export const flagVisualVariantMask = 0x70;
 export const flagAntennae = 1 << 7;
 export const flagSummoned = 1 << 8;
+export const flagShortcut = 1 << 9;
 export const flagAttached = 1 << 10;
 export const flagCarryingLeafPiece = flagAttached;
 export const flagSkillWindupShift = 12;
@@ -57,6 +60,10 @@ export function entityHasState(snap, stateType) {
 
 export function skillWindupIdFromFlags(flags) {
   return ((flags || 0) & flagSkillWindupMask) >>> flagSkillWindupShift;
+}
+
+export function entityVisualVariantFromFlags(flags) {
+  return ((flags || 0) & flagVisualVariantMask) >>> flagVisualVariantShift;
 }
 
 export const beetleType = MOB_IDS.beetle;
@@ -100,6 +107,7 @@ export const leafcutterSoldierType = MOB_IDS.leafcutter_soldier;
 export const titanType = MOB_IDS.titan;
 export const fireflyType = MOB_IDS.firefly;
 export const magicFireflyType = MOB_IDS.magic_firefly;
+export const fireflyLarvaType = MOB_IDS.firefly_larva;
 export const trapProjectileType = NETWORK_TRAP_PROJECTILE_ENTITY_TYPE;
 export const bloodSacrificeEffectType = NETWORK_BLOOD_SACRIFICE_ENTITY_TYPE;
 export const dandelionMissileType = NETWORK_DANDELION_MISSILE_ENTITY_TYPE;

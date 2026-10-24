@@ -194,7 +194,8 @@ class CJsonUniquePetalRegistry final : public IUniquePetalRegistry
                 for (const auto& player_ptr : network->GetPlayers())
                 {
                     CPlayer* player = player_ptr.get();
-                    if (!player || !player->IsAuthenticated() || player->GetAccountName() != mutation.account_name)
+                    if (!player || !player->IsAuthenticated() || player->HasIsolatedProgress() ||
+                        player->GetAccountName() != mutation.account_name)
                         continue;
 
                     if (auto* flower = dynamic_cast<CFlower*>(player->GetEntity()))

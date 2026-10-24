@@ -80,8 +80,9 @@ CSpiderWebZone::CSpiderWebZone(CGameWorld* world, florrbt::Vector2f pos, float r
               if (!state->IsValid()) return nullptr;
               return state;
           },
-          [owner_team = owner ? owner->Team() : 0, owner_id = owner ? owner->Id() : -1](CEntity* entity) -> bool {
-              if (!entity || entity->Id() == owner_id) return false;
+          [owner_team = owner ? owner->Team() : 0,
+           owner_ref = owner ? owner->GetHandle() : SEntityHandle{}](CEntity* entity) -> bool {
+              if (!entity || owner_ref.RefersTo(entity->GetHandle())) return false;
               if (dynamic_cast<CProjectile*>(entity)) return false;
               if (owner_team != 0 && CheckTeam(owner_team, entity->Team())) return false;
               return true;

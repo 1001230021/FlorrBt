@@ -2,9 +2,9 @@
 #include "../../Shared/tools.h"
 #include "../Module/network_module.h"
 
-CGameContext::CGameContext(CGameWorld& world, INetworkModule& network, IGameEventSink& events,
-                           IGameWorldResolver& worlds, IWeatherDiurnalView& weather_diurnal)
-    : m_world(world), m_network(network), m_events(events), m_worlds(worlds), m_weather_diurnal(weather_diurnal)
+CGameContext::CGameContext(INetworkModule& network, IGameEventSink& events,
+                           IGameWorldResolver& worlds, CExtensionRuntime& extensions)
+    : m_network(network), m_events(events), m_worlds(worlds), m_extensions(extensions)
 {
 }
 

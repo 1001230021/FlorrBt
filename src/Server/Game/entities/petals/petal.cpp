@@ -16,7 +16,7 @@ bool IsActiveSlotPetal(const CPetal* petal, const CFlower* flower)
 
     CGameWorld* world = const_cast<CFlower*>(flower)->GameWorld();
     if (!world || petal->Id() < 0) return false;
-    return world->GetEntity(petal->Id()) == petal && !petal->IsMarkedForDes();
+    return world->ResolveEntity(petal->GetHandle()) == petal && !petal->IsMarkedForDes();
 }
 
 const CPetalPrototype* GetRuntimeSlotPrototype(const CPetalSlot* slot, const CFlower* flower)
@@ -131,7 +131,7 @@ void CPetal::RefreshOrbitAnchor(CFlower* flower)
 {
     if (!flower)
     {
-        m_orbit_anchor = nullptr;
+        m_orbit_anchor_ref = {};
         return;
     }
 
@@ -139,11 +139,18 @@ void CPetal::RefreshOrbitAnchor(CFlower* flower)
     // live Moon when one exists, so generation and orbit math share one anchor.
     if (GetPetalType() == EPetalType::Moon)
     {
-        m_orbit_anchor = flower;
+        m_orbit_anchor_ref = flower->GetHandle();
         return;
     }
     CPetal* moon = flower->GetMoonPetal();
-    m_orbit_anchor = moon && moon != this ? static_cast<CEntity*>(moon) : static_cast<CEntity*>(flower);
+    CEntity* anchor = moon && moon != this ? static_cast<CEntity*>(moon) : static_cast<CEntity*>(flower);
+    m_orbit_anchor_ref = anchor ? anchor->GetHandle() : SEntityHandle{};
+}
+
+CEntity* CPetal::GetOrbitAnchor() const
+{
+    CGameWorld* world = const_cast<CPetal*>(this)->GameWorld();
+    return world ? world->ResolveEntity(m_orbit_anchor_ref) : nullptr;
 }
 
 void CPetal::OnBeforeRemoved(EEntityRemovalReason)
@@ -174,8 +181,7 @@ void CPetal::Tick(float dt)
         if (m_target_release_timer <= game_config::entity_collision_epsilon)
         {
             m_target_release_timer = 0.f;
-            m_target_release_id = -1;
-            m_target_release_generation = 0;
+            m_target_release_ref = {};
         }
     }
 
@@ -218,7 +224,7 @@ void CPetal::Tick(float dt)
 
     for (auto it = m_hit_credits.begin(); it != m_hit_credits.end();)
     {
-        CEntity* target = GameWorld() ? GameWorld()->GetEntity(it->first) : nullptr;
+        CEntity* target = GameWorld() ? GameWorld()->ResolveEntity(it->first) : nullptr;
         if (!target || target->IsMarkedForDes()) it = m_hit_credits.erase(it);
         else ++it;
     }
@@ -276,7 +282,7 @@ void CMoonPetal::Tick(float dt)
 void CBeetleEggPetal::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
 {
     CEntity* summon =
-        GameWorld() && m_summon_id >= 0 ? GameWorld()->GetEntity(m_summon_id, m_summon_generation) : nullptr;
+        GameWorld() ? GameWorld()->ResolveEntity(m_summon_ref) : nullptr;
     if (m_has_spawned_summon && summon && !summon->IsMarkedForDes())
     {
         summon->TakeDamage(dmg, attacker, damage_type);
@@ -289,10 +295,8 @@ void CBeetleEggPetal::TakeDamage(float dmg, CEntity* attacker, EDamageType damag
 
 void CLinkerPetal::OnChainBroken(CChainEntity&)
 {
-    m_chain_id = -1;
-    m_chain_generation = 0;
-    m_first_target_id = -1;
-    m_first_target_generation = 0;
+    m_chain_ref = {};
+    m_first_target_ref = {};
     m_saved_chain_health = 0.f;
     m_released_orbit_angle_offset = 0.f;
     m_charges_remaining = 2;
@@ -304,10 +308,8 @@ void CLinkerPetal::OnChainBroken(CChainEntity&)
 
 void CLinkerPetal::ResetMissingChain()
 {
-    m_chain_id = -1;
-    m_chain_generation = 0;
-    m_first_target_id = -1;
-    m_first_target_generation = 0;
+    m_chain_ref = {};
+    m_first_target_ref = {};
     m_saved_chain_health = 0.f;
     m_released_orbit_angle_offset = 0.f;
     m_charges_remaining = 0;
@@ -411,6 +413,8 @@ void CEouPheromonePetal::OnThrowStopped()
 
 void CPetalSlot::SpawnCopy(int copy_index, CFlower* flower)
 {
+    if (!flower || flower->ArePetalsSuppressed()) return;
+    NormalizeRuntimeState();
     const CPetalPrototype* runtime_proto = GetRuntimeSlotPrototype(this, flower);
     if (!flower || !m_p_proto || !m_p_proto->m_p_behavior || !runtime_proto || !runtime_proto->m_factory) return;
     if (copy_index < 0 || copy_index >= static_cast<int>(m_p_petals.size())) return;
@@ -478,9 +482,27 @@ void CPetalSlot::ClearPetal()
     m_runtime_type = EPetalType::None;
 }
 
+void CPetalSlot::NormalizeRuntimeState()
+{
+    const size_t copies = m_p_petals.size();
+    m_bonus_active.resize(copies, 0);
+    m_reload_timers.resize(copies, 0.f);
+    m_reload_durations.resize(copies, 0.f);
+    m_reload_ignore_multiplier.resize(copies, 0);
+    m_spawn_cost_paid.resize(copies, 0);
+
+    for (size_t i = 0; i < copies; ++i)
+    {
+        if (!std::isfinite(m_reload_timers[i]) || m_reload_timers[i] < 0.f) m_reload_timers[i] = 0.f;
+        if (!std::isfinite(m_reload_durations[i]) || m_reload_durations[i] < 0.f)
+            m_reload_durations[i] = m_reload_timers[i];
+        if (m_reload_durations[i] < m_reload_timers[i]) m_reload_durations[i] = m_reload_timers[i];
+    }
+}
+
 void CPetalSlot::KillCopy(int copy_index)
 {
-    if (copy_index < 0 || copy_index >= static_cast<int>(m_reload_timers.size())) return;
+    if (copy_index < 0 || copy_index >= static_cast<int>(m_p_petals.size())) return;
 
     CPetal* petal = m_p_petals[copy_index];
     if (petal) petal->Health() = 0.f;
@@ -488,6 +510,7 @@ void CPetalSlot::KillCopy(int copy_index)
 
 void CPetalSlot::StartReload(int copy_index, float duration)
 {
+    NormalizeRuntimeState();
     if (copy_index < 0 || copy_index >= static_cast<int>(m_reload_timers.size())) return;
 
     const float safe_duration = std::max(0.f, duration);
@@ -511,6 +534,8 @@ float CPetalSlot::GetLoadProgress(int copy_index) const
 void CPetalSlot::RefreshPetalState(CFlower* flower)
 {
     if (m_banned || !m_p_proto || !m_p_proto->m_p_behavior) return;
+
+    NormalizeRuntimeState();
 
     const CPetalPrototype* runtime_proto = GetRuntimeSlotPrototype(this, flower);
     EPetalType runtime_type = runtime_proto ? runtime_proto->m_type : EPetalType::None;
@@ -561,20 +586,20 @@ void CPetalSlot::RefreshPetalState(CFlower* flower)
         ApplySlotPetalStats(petal, petal_stats, flower, false);
     }
     if (copy_count_changed && flower) flower->MarkFinalStatsDirty();
+    NormalizeRuntimeState();
 }
 
 void CPetalSlot::Tick(float dt, CFlower* flower, bool state_refreshed)
 {
     if (m_banned || !m_p_proto || !m_p_proto->m_p_behavior || !flower) return;
+    if (flower->ArePetalsSuppressed()) return;
     if (!state_refreshed) RefreshPetalState(flower);
+    NormalizeRuntimeState();
 
     const CPetalPrototype* spawn_proto = GetRuntimeSlotPrototype(this, flower);
     const CPetalBehavior* spawn_behavior =
         spawn_proto && spawn_proto->m_p_behavior ? spawn_proto->m_p_behavior.get() : m_p_proto->m_p_behavior.get();
     const float spawn_mana_cost = std::max(0.f, spawn_behavior->GetSpawnManaCost(m_stored_rarity));
-    if (m_spawn_cost_paid.size() < m_reload_timers.size())
-        m_spawn_cost_paid.resize(m_reload_timers.size(), false);
-
     for (size_t i = 0; i < m_reload_timers.size(); ++i)
     {
         if (m_p_petals[i] == nullptr && spawn_mana_cost > 0.f && !m_spawn_cost_paid[i])
@@ -744,6 +769,7 @@ int CPetalSlot::GetCurrentCopyCount(const CFlower* flower) const
 
 void CPetalSlot::ApplyStatsTo(SFlowerStats& target, const CFlower* flower) const
 {
+    if (flower && !flower->AllowsStatModifiers()) return;
     if (!m_p_proto || !m_p_proto->m_p_behavior) return;
     if (!m_available || m_banned) return;
 
