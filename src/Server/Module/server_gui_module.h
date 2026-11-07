@@ -96,7 +96,8 @@ class IServerGuiModule : public IModule
     sf::FloatRect ScrollBarThumbRect() const;
 
     // 以下状态由界面线程独占。
-    sf::RenderWindow m_window;
+    // SFML 的默认窗口也会获取图形上下文；无界面运行时不能构造它。
+    std::optional<sf::RenderWindow> m_window;
     sf::Font m_font;
     std::vector<log_line> m_lines;
     CConsole& m_console;

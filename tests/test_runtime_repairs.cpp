@@ -3,6 +3,7 @@
 #include "Server/server.h"
 #include "Server/Module/world_module.h"
 #include "Server/Module/network_module.h"
+#include "Server/Module/server_gui_module.h"
 #include "Server/Game/gamecontext.h"
 #include "Server/Game/controller_factory.h"
 #include "Server/Game/talent.h"
@@ -630,6 +631,21 @@ TEST(ArchitectureCraftRejectionRepliesWithoutConsumingOrInventingReturns)
 TEST(ServerFailureExitCodesDistinguishStartupTickAndShutdownFromNormalStop)
 {
     CServerTestAccess::CheckFailureExitCodes();
+}
+
+TEST(ServerGuiDisabledStartsAndStopsWithoutADisplay)
+{
+    const bool was_enabled = game_config::gui_console_enabled;
+    game_config::gui_console_enabled = false;
+    {
+        CConsole console;
+        IServerGuiModule gui(console);
+        CHECK(gui.Init());
+        gui.Tick(0.05f);
+        gui.ShutDown();
+        gui.ShutDown();
+    }
+    game_config::gui_console_enabled = was_enabled;
 }
 
 TEST(SandboxReentryUsesFreshInventoryIdentityAndReloadPreservesIt)

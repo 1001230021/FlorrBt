@@ -391,6 +391,7 @@ void IServerGuiModule::ThreadLoop()
 {
     if (!OpenGui())
     {
+        CloseGui();
         m_thread_exited = true;
         return;
     }
@@ -419,12 +420,13 @@ void IServerGuiModule::ThreadLoop()
 
 bool IServerGuiModule::OpenGui()
 {
-    if (m_window.isOpen()) return true;
+    if (m_window && m_window->isOpen()) return true;
 
-    m_window.create(sf::VideoMode({ game_config::gui_console_window_width, game_config::gui_console_window_height }),
+    m_window.emplace();
+    m_window->create(sf::VideoMode({ game_config::gui_console_window_width, game_config::gui_console_window_height }),
                     "FlorrBt Server GUI Console");
-    m_window.setFramerateLimit(0);
-    m_window.setVerticalSyncEnabled(false);
+    m_window->setFramerateLimit(0);
+    m_window->setVerticalSyncEnabled(false);
 
     const float frame_rate = static_cast<float>(std::max(1u, game_config::gui_console_framerate_limit));
     m_render_accumulator = 1.f / frame_rate;
@@ -490,7 +492,7 @@ void IServerGuiModule::RefreshCompletionSnapshot()
 
 bool IServerGuiModule::ProcessEvents()
 {
-    while (const std::optional event = m_window.pollEvent())
+    while (const std::optional event = m_window->pollEvent())
     {
         if (event->is<sf::Event::Closed>())
         {
@@ -501,7 +503,7 @@ bool IServerGuiModule::ProcessEvents()
         {
             sf::FloatRect visibleArea({ 0.f, 0.f },
                                       { static_cast<float>(resized->size.x), static_cast<float>(resized->size.y) });
-            m_window.setView(sf::View(visibleArea));
+            m_window->setView(sf::View(visibleArea));
         }
 
         if (const auto* key = event->getIf<sf::Event::KeyPressed>())
@@ -575,7 +577,7 @@ bool IServerGuiModule::ProcessEvents()
         }
         if (const auto* mouse = event->getIf<sf::Event::MouseButtonPressed>())
         {
-            const float height = static_cast<float>(m_window.getSize().y);
+            const float height = static_cast<float>(m_window->getSize().y);
             const float input_top = height - game_config::gui_console_input_height - game_config::gui_console_padding;
             const sf::Vector2f mouse_position(static_cast<float>(mouse->position.x),
                                               static_cast<float>(mouse->position.y));
@@ -649,7 +651,11 @@ void IServerGuiModule::ShutDown() { StopGuiThread(); }
 
 void IServerGuiModule::CloseGui()
 {
-    if (m_window.isOpen()) m_window.close();
+    if (m_window)
+    {
+        m_window->close();
+        m_window.reset();
+    }
     m_render_accumulator = 0.f;
 }
 
@@ -788,9 +794,9 @@ void IServerGuiModule::ResetCompletion()
 
 void IServerGuiModule::Render()
 {
-    if (!m_window.isOpen()) return;
+    if (!m_window || !m_window->isOpen()) return;
 
-    sf::Vector2u size = m_window.getSize();
+    sf::Vector2u size = m_window->getSize();
     float width = static_cast<float>(size.x);
     float height = static_cast<float>(size.y);
     const sf::FloatRect output_rect = OutputRect();
@@ -809,9 +815,9 @@ void IServerGuiModule::Render()
     input_box.setOutlineColor(sf::Color(160, 176, 196));
     input_box.setOutlineThickness(game_config::gui_console_box_outline_thickness);
 
-    m_window.clear(sf::Color(238, 242, 247));
-    m_window.draw(output_box);
-    m_window.draw(input_box);
+    m_window->clear(sf::Color(238, 242, 247));
+    m_window->draw(output_box);
+    m_window->draw(input_box);
 
     float line_height = LineHeight();
     const size_t visible_count = VisibleLineCount();
@@ -832,12 +838,12 @@ void IServerGuiModule::Render()
                 { game_config::gui_console_padding * game_config::gui_console_selection_x_padding_multiplier,
                   y - game_config::gui_console_selection_y_offset });
             selection.setFillColor(sf::Color(202, 225, 255));
-            m_window.draw(selection);
+            m_window->draw(selection);
         }
 
         m_lines[i].render_text.setPosition(
             { game_config::gui_console_padding * game_config::gui_console_output_text_x_padding_multiplier, y });
-        m_window.draw(m_lines[i].render_text);
+        m_window->draw(m_lines[i].render_text);
         y += line_height;
     }
 
@@ -848,16 +854,16 @@ void IServerGuiModule::Render()
         sf::RectangleShape track(track_rect.size);
         track.setPosition(track_rect.position);
         track.setFillColor(sf::Color(224, 230, 238));
-        m_window.draw(track);
+        m_window->draw(track);
 
         sf::RectangleShape thumb(thumb_rect.size);
         thumb.setPosition(thumb_rect.position);
         thumb.setFillColor(m_is_dragging_scrollbar ? sf::Color(103, 132, 172) : sf::Color(135, 158, 190));
-        m_window.draw(thumb);
+        m_window->draw(thumb);
     }
 
     sf::Text prompt = CreatePromptText();
-    m_window.draw(prompt);
+    m_window->draw(prompt);
 
     if (HasInputSelection())
     {
@@ -872,8 +878,8 @@ void IServerGuiModule::Render()
                                                  game_config::gui_console_padding +
                                                  game_config::gui_console_input_text_y_offset });
         selection.setFillColor(sf::Color(190, 218, 255));
-        m_window.draw(selection);
-        m_window.draw(prompt);
+        m_window->draw(selection);
+        m_window->draw(prompt);
     }
 
     sf::RectangleShape cursor(
@@ -883,9 +889,9 @@ void IServerGuiModule::Render()
     cursor.setPosition({ CharacterX(prompt, m_cursor_index + prompt_prefix_size),
                          height - game_config::gui_console_input_height - game_config::gui_console_padding +
                              game_config::gui_console_input_text_y_offset });
-    m_window.draw(cursor);
+    m_window->draw(cursor);
 
-    m_window.display();
+    m_window->display();
 }
 
 void IServerGuiModule::MoveCursorToMouseX(float x)
@@ -1118,7 +1124,7 @@ size_t IServerGuiModule::MaxFirstVisibleLine() const
 
 sf::FloatRect IServerGuiModule::OutputRect() const
 {
-    const sf::Vector2u size = m_window.getSize();
+    const sf::Vector2u size = m_window->getSize();
     const float width = static_cast<float>(size.x);
     const float height = static_cast<float>(size.y);
     return { { game_config::gui_console_padding, game_config::gui_console_padding },
@@ -1156,7 +1162,7 @@ sf::Text IServerGuiModule::CreatePromptText() const
     sf::String prompt_text = FromUtf8("> ");
     prompt_text += m_input;
 
-    const float height = static_cast<float>(m_window.getSize().y);
+    const float height = static_cast<float>(m_window->getSize().y);
     sf::Text prompt(m_font, prompt_text, game_config::gui_console_character_size);
     prompt.setFillColor(sf::Color(34, 40, 48));
     prompt.setPosition({ game_config::gui_console_padding * game_config::gui_console_output_text_x_padding_multiplier,
