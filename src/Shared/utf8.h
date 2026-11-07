@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 #include <cstddef>
 #include <string_view>
@@ -26,7 +27,7 @@ inline bool IsValidUtf8(std::string_view text)
         }
 
         size_t extra = 0;
-        uint32_t code_point = 0;
+        std::uint32_t code_point = 0;
         if ((c & 0xE0) == 0xC0)
         {
             extra = 1;
