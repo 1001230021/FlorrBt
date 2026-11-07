@@ -24,8 +24,12 @@ const freePort = () => new Promise((resolvePort, reject) => {
 });
 const gamePort = await freePort(), webPort = await freePort();
 const secret = randomBytes(20).toString("hex");
+const mysqlPort = process.env.FLORRBT_QA_MYSQL_PORT ? Number(process.env.FLORRBT_QA_MYSQL_PORT) : 0;
+assert(Number.isInteger(mysqlPort) && mysqlPort >= 0 && mysqlPort <= 65535);
 await writeFile(resolve(temp, "data/server.cfg"), [
   `set port ${gamePort}`, "set account_backend json", "set email_enabled 0", "set gui_console 0",
+  ...(mysqlPort ? ['set account_backend mysql', 'set mysql_host 127.0.0.1', `set mysql_port ${mysqlPort}`,
+    'set mysql_user florrbt', 'set mysql_password', 'set mysql_database florrbt'] : []),
   `set rcon_password ${secret}`, "set garden_world_instances 1", "set ant_hel_world_instances 1",
   ...(process.argv.includes('--email-ui') ? ['set email_enabled 1', 'set email_username sender@example.test',
     'set email_password offline-mail-fixture', 'set email_smtp_host 127.0.0.1'] : []),
