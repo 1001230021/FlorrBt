@@ -1,32 +1,9 @@
-// Client input binding system.
-//
-// Every gameplay action the client can perform is a *builtin command*; keys
-// are only ever a way to run one. Bindings map an input key (keyboard keys
-// like "a" / "space" / "f1", mouse buttons like "mouse1" / "wheelup") to a
-// chain of those commands:
-//
-//   bind a left                     (device inferred from the key)
-//   bind keyboard a "move_toward 90" + attack
-//   bind space attack
-//   unbind a
-//   unbindall keyboard
-//
-// Bindings persist in localStorage and are loaded on every page load.
-//
-// Hold semantics: pressing a key runs its chain with phase "down", releasing
-// with phase "up". Continuous commands (move/attack/defend/modifiers) do NOT
-// accumulate deltas -- each one registers a *hold source* keyed by
-// device+key+slot, and the aggregate movement/attack state is recomputed from
-// the live set of held sources. That makes every transition idempotent: a
-// duplicated "down" changes nothing, an "up" for a source that was never held
-// is a no-op, and a keyup that never arrives (focus stolen, window switch,
-// dropped event) can be healed by releasing the source from anywhere. The old
-// signed-accumulator model turned a single dropped keyup into movement that
-// stuck forever.
+// 按键映射到内置命令链，绑定保存在本地存储。
+// 连续动作以设备、按键及命令槽组成独立按住来源，统一计算移动和攻防状态。
+// 重复按下幂等，释放不存在的来源无副作用；失焦可统一撤销，避免漏收松键后卡住。
 
 const BINDINGS_KEY = "florrbt.web.bindings";
 
-// Keys bound by default; users may override or remove them.
 export const defaultBindings = Object.freeze({
   keyboard: {
     a: ["left"],
@@ -70,10 +47,8 @@ export const defaultBindings = Object.freeze({
   },
 });
 
-// --------------------------------------------------------------- key naming
 
-// Canonical key names are lowercase. Aliases exist so `bind esc close` and
-// `bind escape close` mean the same thing.
+// 键名统一小写，别名规范化后共用绑定。
 const keyAliases = Object.freeze({
   " ": "space",
   spacebar: "space",
@@ -183,13 +158,11 @@ export function normalizeInputKey(key) {
   return keyAliases[lower] || lower;
 }
 
-// "mouse" for mouse buttons and the wheel, "keyboard" for everything else.
 export function deviceForInputKey(key) {
   const normalized = normalizeInputKey(key);
   return mouseKeyNames.includes(normalized) ? "mouse" : "keyboard";
 }
 
-// Every key name the console can offer for completion.
 export function inputKeyNames(device = "") {
   const normalized = String(device || "").toLowerCase();
   if (normalized === "mouse") return [...mouseKeyNames];
@@ -204,8 +177,7 @@ export function inputKeyNames(device = "") {
   return keys;
 }
 
-// Names a keyboard event can match, most specific first ("lshift" before
-// "shift"), so side-specific binds win when they exist.
+// 优先匹配左右区分键，再匹配通用键。
 export function inputKeyCandidates(event) {
   const code = String(event?.code || "");
   if (code === "Space") return ["space"];
@@ -225,7 +197,6 @@ export function inputKeyCandidates(event) {
   return [normalizeInputKey(event?.key)];
 }
 
-// The single name an event is reported as (debug/UI), ignoring side variants.
 export function inputKeyFromEvent(event) {
   const candidates = inputKeyCandidates(event);
   return candidates[candidates.length - 1] || "";
@@ -238,14 +209,8 @@ export function mouseKeyFromButton(button) {
   );
 }
 
-// ---------------------------------------------------------------- commands
 
-// `hold` marks a continuous command: it contributes to the aggregate input
-// state for as long as its key is down instead of firing once.
-//   hold: "move"          -> vector(args) contributes to the move vector
-//   hold: "attack"/"defend" -> sets the matching flag while held
-//   hold: "modifier"      -> exposes `modifier` to other commands while held
-// Everything else is one-shot and runs `run(ctx, args)` on press.
+// hold 命令在按住期间贡献移动、攻防或修饰键状态；其余命令只在按下时执行。
 const builtinCommands = {
   move_toward: {
     params: "<angle> [strength 0..1]",
@@ -446,9 +411,7 @@ export function builtinCommandHelp() {
   }));
 }
 
-// ------------------------------------------------------------- persistence
 
-// Merges stored bindings over the defaults (stored entries win).
 export function loadBindings() {
   let stored = {};
   try {
@@ -472,16 +435,14 @@ export function saveBindings(bindings) {
   try {
     localStorage.setItem(BINDINGS_KEY, JSON.stringify(bindings));
   } catch {
-    // Storage may be unavailable; bindings stay in memory for the session.
+    // 存储不可用时，本次会话仍保留内存绑定。
   }
 }
 
-// Drops every stored override and restores the shipped defaults in place.
 export function resetBindings(bindings) {
   try {
     localStorage.removeItem(BINDINGS_KEY);
   } catch {
-    // Nothing stored is fine; the in-memory tables below are what matter.
   }
   if (!bindings) return loadBindings();
   for (const device of ["keyboard", "mouse"]) {
@@ -494,8 +455,7 @@ export function resetBindings(bindings) {
 }
 
 export function commandsFor(bindings, device, key) {
-  // Touch controls use a fixed, action-labelled table without impersonating
-  // mouse/keyboard keys or sharing their hold-source identities.
+  // 触摸控件使用独立动作表和按住来源，不伪装成鼠标/键盘。
   const table = device === "touch" ? bindings.touch : device === "mouse" ? bindings.mouse : bindings.keyboard;
   return table?.[normalizeInputKey(key)] || [];
 }
@@ -533,12 +493,7 @@ export function unbindAll(bindings, device) {
   saveBindings(bindings);
 }
 
-// Parses the remainder of a `bind` command into { key, commands }.
-// Examples (args after the optional device token):
-//   ["a", "left"]                       -> { a, ["left"] }
-//   ["a", "move_toward", "90"]          -> { a, ["move_toward 90"] }
-//   ["a", "cmd1", "+", "cmd2"]          -> { a, ["cmd1", "cmd2"] }
-//   ["a", "move_toward", "90", "+", "attack"] -> { a, ["move_toward 90", "attack"] }
+// 将 bind 参数解析为按键和命令链，支持可选设备前缀及 + 分隔。
 export function parseBindArgs(args) {
   const tokens = Array.isArray(args) ? args.filter((token) => token !== "") : [];
   const key = normalizeInputKey(tokens[0] || "");
@@ -558,15 +513,11 @@ export function parseBindArgs(args) {
   return { key, commands };
 }
 
-// ------------------------------------------------------------- hold sources
 
-// sourceId -> { device, key, kind, modifier, vector, lastSeenAt, repeated }
 const activeHolds = new Map();
 const activeModifiers = new Set();
 
-// The game-side surface the builtin commands drive. Injected once at startup
-// so any module can release holds (settings, loading screen, respawn) without
-// threading a context through -- and so this module never imports game.js.
+// 启动时注入游戏操作接口，避免反向导入 game.js；各界面可统一撤销按住来源。
 let boundContext = null;
 
 export function initBindingContext(context) {
@@ -589,8 +540,7 @@ export function heldInputSources() {
   }));
 }
 
-// Recomputes the aggregate input state from the live hold set and pushes it
-// to the game context. Always absolute -- never a delta.
+// 从当前按住来源计算绝对输入状态，不累计增量。
 function applyHoldState() {
   let x = 0;
   let y = 0;
@@ -617,9 +567,7 @@ function applyHoldState() {
   boundContext.setDefending(defending);
 }
 
-// Releases hold sources and re-applies the aggregate. Called on focus loss,
-// tab hide, chat/panel focus steal, respawn -- anywhere a keyup might never
-// arrive. Safe to call at any time: releasing what is not held is a no-op.
+// 失焦、隐藏、打开面板或重生时撤销来源；重复释放无副作用。
 export function releaseInputHolds({ device = "", key = "" } = {}) {
   const wantedKey = key ? normalizeInputKey(key) : "";
   let changed = false;
@@ -629,16 +577,12 @@ export function releaseInputHolds({ device = "", key = "" } = {}) {
     activeHolds.delete(id);
     changed = true;
   }
-  // With no filter this doubles as a full reset, so always re-assert the
-  // neutral aggregate even when nothing was held.
+  // 无过滤器时始终提交中立输入，兼作完整重置。
   if (changed || (!device && !wantedKey)) applyHoldState();
   return changed;
 }
 
-// Auto-repeat safety net: a physically held key repeats every few tens of ms,
-// so once repeats have been observed for a source, silence means the release
-// was never delivered (window switch, RDP hiccup, swallowed event). Sources
-// that have not repeated yet are left alone -- repeat may simply be disabled.
+// 已观察到连发的按键若长期静默，按漏收松键处理；未连发来源保留，以兼容关闭连发。
 export function pruneStaleInputHolds(nowMs, timeoutMs = 1500) {
   const now = Number.isFinite(nowMs) ? nowMs : performance.now();
   let changed = false;
@@ -652,10 +596,7 @@ export function pruneStaleInputHolds(nowMs, timeoutMs = 1500) {
   return changed;
 }
 
-// Runs every command bound to a key for the given phase ("down" | "up").
-//
-// `key` may be a list of candidate names (e.g. ["lshift", "shift"]); the first
-// one with a binding wins. Returns the number of commands that took effect.
+// 按最具体的键名选首个绑定，执行对应按下/释放命令并返回生效数。
 export function executeBinding(
   bindings,
   device,
@@ -688,8 +629,7 @@ export function executeBinding(
     const name = (parts.shift() || "").toLowerCase();
     const command = builtinCommands[name];
     if (!command) continue;
-    // While a text field owns the keyboard only opt-in commands may run, so
-    // typing never fires gameplay actions -- but releases still go through.
+    // 文本框占用键盘时仅运行明确允许的命令，但始终处理释放。
     if (typing && phase === "down" && !command.whileTyping) continue;
 
     const id = holdSourceId(device, resolvedKey, slot);
@@ -697,7 +637,6 @@ export function executeBinding(
       if (phase === "down") {
         const existing = activeHolds.get(id);
         if (existing) {
-          // A repeat (or a duplicated press) only refreshes liveness.
           existing.lastSeenAt = timestamp;
           if (repeat) existing.repeated = true;
           executed += 1;
@@ -720,8 +659,7 @@ export function executeBinding(
         holdsChanged = true;
         executed += 1;
       } else {
-        // Releasing something that was never held is a no-op, but the key is
-        // still "handled" so the caller does not fall through to legacy paths.
+        // 不存在的来源也算已处理，避免继续落入旧输入路径。
         executed += 1;
       }
       continue;
@@ -734,7 +672,7 @@ export function executeBinding(
     try {
       if (command.run(ctx, parts) !== false) executed += 1;
     } catch {
-      // A misbehaving command must not break the input pipeline.
+      // 单个命令失败不能打断其他输入处理。
     }
   }
 

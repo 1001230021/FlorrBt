@@ -34,7 +34,7 @@ for (const input of ["keyboard", "toggle", "touch"]) {
     assert.equal(state.lastInput.attacking, attack, input);
     assert.equal(state.lastInput.defending, defend, input);
     assert.deepEqual(Array.from(packets.at(-1)), Array.from(packInputFrame(
-      state.inputSequence - 1, 1, 0, 0, attack, defend, false)), "both holds reach the wire");
+      state.inputSequence - 1, 0, 0, 0, attack, defend, false)), "both holds reach the wire without future-tick scheduling");
   }
 }
 state.attacking = state.defending = true;

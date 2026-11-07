@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { packAccountLinkRequest } from '../web/src/account_bindings.js';
+const require = createRequire(import.meta.url), { handleOAuthCallback } = require('./oauth_callback.js');
+let status, headers, body;
+const response = { writeHead(s, h) { status = s; headers = h; }, end(value) { body = value; } };
+assert(handleOAuthCallback({ url: '/oauth/callback/discord?code=%3Cscript%3E&state=nonce', method: 'GET' }, response));
+assert.equal(status, 200); assert(!body.includes('<script>')); assert(!body.includes('nonce'));
+assert.equal(headers['Cache-Control'], 'no-store'); assert.equal(headers['Referrer-Policy'], 'no-referrer');
+assert(headers['Content-Security-Policy'].includes("frame-ancestors 'none'"));
+assert(handleOAuthCallback({ url: '/oauth/callback/qq', method: 'POST' }, response)); assert.equal(status, 405);
+assert.equal(handleOAuthCallback({ url: '/oauth/callback/arbitrary', method: 'GET' }, response), false);
+const value = { request: 1, action: 'begin', provider: 'discord', password: 'fixture' };
+const packet = packAccountLinkRequest(value); assert.equal(packet[0], 252);
+assert.equal(new DataView(packet.buffer).getUint16(1, true), packet.length - 3);
+assert.deepEqual(JSON.parse(new TextDecoder().decode(packet.subarray(3))), value);
+assert.equal(packAccountLinkRequest({ code: 'x'.repeat(9000) }), null);
+console.log('PASS fixed callback routes, non-reflection, no-store/CSP, method rejection and bounded account-link requests');

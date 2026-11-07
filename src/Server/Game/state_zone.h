@@ -29,7 +29,7 @@ class CStateZone : public CEntity
         };
     }
 
-    void Tick(float dt) override;
+    void OnTickActions(float dt) override;
     void SetCenter(florrbt::Vector2f pos) { Pos() = pos; }
     bool CanCollide() const override { return false; }
     bool IsVisible() const override { return false; }

@@ -1,20 +1,5 @@
-// Craft-stage orbit animation (florr-style gamble spin).
-//
-// While a craft round-trips to the server the five staged cards orbit the
-// stage center in "rounds": every round lasts craftSpinRoundMs and spins the
-// formation craftSpinRevolutionsPerRound full turns at constant angular
-// velocity (after a short spin-up ramp). The suspense count is uniformly
-// chosen from 0..7, then halved to 0..3.5 effective rounds. Each round breathes inward then
-// outward along a smooth curve; cards remain upright. The spin waits until BOTH
-// the suspense round count has elapsed AND the server verdict arrived, then:
-//   - success: a fast convergence into the center, a square-particle
-//     burst in the crafted rarity's color, and the result card pops in;
-//   - failure: the ring expands and settles at home; consumed cards
-//     vanish in flight (unified card vanish) in a burst of their
-//     own rarity color.
-//
-// Cards stay upright while orbiting (florr cards do not self-rotate); the
-// only self-rotation happens on the return-home flight and the vanish pose.
+// 合成卡片保持正立并绕中心旋转，等待动画轮数和服务器结果同时完成。
+// 成功时快速汇聚并显示结果；失败时展开归位，消耗卡片按统一消失姿态退出。
 
 import { animatePetalCardVanish } from "./card_motion.js";
 
@@ -22,9 +7,7 @@ const TWO_PI = Math.PI * 2;
 
 const smoothStep = t => t * t * (3 - 2 * t);
 
-// Each 600ms cycle has a fast intake and a longer release. Endpoints have
-// zero radial velocity: unlike linear legs the radius no longer hits a wall
-// whenever it changes direction. Exposed for deterministic offline checks.
+// 每轮快速收拢、缓慢展开，端点径向速度为零，避免方向切换时突变。
 export function getCraftPulseRadius(phase, inner = 0.4) {
   const p = Math.max(0, Math.min(1, phase));
   const low = Math.max(0.28, Math.min(0.72, inner));
@@ -71,11 +54,9 @@ export function createCraftSpinController({
   let onTimeout = null;
   let lastFactor = 1;
 
-  const omega = (revolutionsPerRound * TWO_PI) / roundMs; // rad per ms
+  const omega = (revolutionsPerRound * TWO_PI) / roundMs; // 单位为弧度/毫秒。
 
-  // Spin-up ramp: u(t) is the "spin time" that drives both the angle and the
-  // round clock, easing in over rampMs then advancing 1:1 with wall time so
-  // the angular velocity stays constant afterwards.
+  // 起步使用缓动后的旋转时间，此后与实际时间等速推进。
   const spinTime = (t) =>
     rampMs <= 0 ? t : t <= rampMs ? (t * t) / (2 * rampMs) : t - rampMs / 2;
 
@@ -90,14 +71,12 @@ export function createCraftSpinController({
       const index = Number(button.dataset.craftSlot || 0);
       const stack = button.querySelector(".petal-stack");
       if (!stack) return;
-      // Layout coordinates do not inherit panel scale/entrance transforms.
-      // The button's CSS center is its left/top (translate(-50%,-50%)).
+      // 布局坐标不继承面板显示变换；按钮中心由 left/top 和居中平移确定。
       let hx = button.offsetLeft - stage.clientWidth / 2;
       let hy = button.offsetTop - stage.clientHeight / 2;
       const styles = globalThis.getComputedStyle?.(button);
       if (!Number.isFinite(hx)) hx = Number.parseFloat(styles?.getPropertyValue("--slot-x"));
       if (!Number.isFinite(hy)) hy = Number.parseFloat(styles?.getPropertyValue("--slot-y"));
-      // Last-resort fallback for nonstandard embedded layouts.
       if (!Number.isFinite(hx) || !Number.isFinite(hy)) {
         const stageRect = stage.getBoundingClientRect();
         const buttonRect = button.getBoundingClientRect();
@@ -126,12 +105,10 @@ export function createCraftSpinController({
     return result;
   };
 
-  // Shallow draws happen occasionally, but deep contractions are more common.
   const roundTarget = (k) => {
     let target = pullTargets.get(k);
     if (target === undefined) {
-      // Smaller radii are more common: x in [0, 1] is transformed so its
-      // density decreases as the radius multiplier grows.
+      // 对随机数变换，使较小半径更常见。
       target = 0.3 + 0.38 * (1 - Math.sqrt(Math.random()));
       pullTargets.set(k, target);
     }
@@ -184,7 +161,6 @@ export function createCraftSpinController({
     const phase = (u % roundMs) / roundMs;
 
     if (!finalSeg) {
-      // Regular suspense rounds until the verdict and the round budget land.
       if (u >= plannedRounds * roundMs && outcome) {
         const fromFactor = lastFactor;
         finalSeg = {
@@ -194,8 +170,7 @@ export function createCraftSpinController({
           durationMs: 120,
           startPositions: cards.map(card => ({ x: card.lastX, y: card.lastY })),
         };
-        // Reveal the exact-sized empty backing before the card leaves it.
-        // This prevents the ring from popping out during the last movement.
+        // 卡片离开前显示对应尺寸的空底板，避免末段运动闪现。
         for (const card of cards) card.button.classList.add("craft-card-fading");
       } else {
         const factor = radiusFactorAt(k, phase);
@@ -207,8 +182,6 @@ export function createCraftSpinController({
     }
 
     if (finalSeg.kind === "converge") {
-      // Success: snap into the center quickly instead of spending another
-      // full suspense round on the result reveal.
       const p = Math.min(1, (u - finalSeg.startU) / finalSeg.durationMs);
       const factor = finalSeg.fromFactor * (1 - easeOutCubic(p));
       const cardAlpha = 1 - easeOutCubic(p);
@@ -236,15 +209,12 @@ export function createCraftSpinController({
     }
 
     if (finalSeg.kind === "return") {
-      // Failure, phase b: fly home with a settling rotation; consumed cards
-      // vanish mid-flight in a burst of their own rarity color.
+      // 失败时曲线归位并轻微回转，消耗卡片在途中淡出并产生稀有度粒子。
       const returnMs = 360;
       const p = Math.min(1, (u - finalSeg.startU) / returnMs);
       const eased = easeOutCubic(p);
       cards.forEach((card, i) => {
         const from = finalSeg.startPositions[i];
-        // A curved return with a small settling roll, not an instantaneous
-        // 270-degree tilt at the first frame of the old return phase.
         const arc = Math.sin(p * Math.PI) * 12;
         const x = from.x + (card.homeX - from.x) * eased - Math.sin(card.homeAngle) * arc;
         const y = from.y + (card.homeY - from.y) * eased + Math.cos(card.homeAngle) * arc;
@@ -280,10 +250,7 @@ export function createCraftSpinController({
   return {
     isActive: () => active,
 
-    /**
-     * Start the suspense spin over the currently rendered staged cards.
-     * slotRarities: per-slot rarity (for failure particle colors).
-     */
+    /* 启动现有卡片的悬念旋转，slotRarities 用于失败粒子颜色。 */
     begin({ slotRarities, onWatchdogTimeout } = {}) {
       if (active) this.cancel();
       cards = collectCards(slotRarities);
@@ -294,7 +261,6 @@ export function createCraftSpinController({
       finalSeg = null;
       pullTargets = new Map();
       lastFactor = 1;
-      // Every integer in the configured range has the same probability.
       const span = Math.max(0, maxRounds - minRounds);
       plannedRounds =
         (minRounds + Math.floor(Math.random() * (span + 1))) * roundScale;
@@ -304,12 +270,11 @@ export function createCraftSpinController({
       for (const card of cards) {
         card.stack.classList.remove("craft-card-entering");
         card.button.classList.add("craft-orbiting");
-        // Apply the first orbit pose immediately so the animation is visible
-        // even when a fast server response arrives before the next paint.
+        // 立即设置第一帧轨道姿态，避免服务器快速响应时动画尚未显示。
         placeCard(card, 0, 1);
       }
       frame = requestFrame(step);
-      // A craft the server never answers must not spin forever.
+      // 服务器不回应时也不能无限旋转。
       watchdogTimer = setTimeout(() => {
         if (!active || outcome) return;
         restoreAll();
@@ -319,10 +284,7 @@ export function createCraftSpinController({
       return true;
     },
 
-    /**
-     * Deliver the server verdict. onFinished fires once the closing animation
-     * lands (immediately when the spin is not running).
-     */
+    /* 接收服务端结果，结束动画后调用 onFinished；未旋转时立即调用。 */
     resolve({ success, resultRarity, slotWillBeEmpty, slotLostCount, onFinished }) {
       if (!active) {
         onFinished?.();

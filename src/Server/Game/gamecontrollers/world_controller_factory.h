@@ -29,7 +29,7 @@ struct SMapDeclaration
     SWorldExtensionConfig extensions;
 };
 
-inline constexpr std::array<SMapDeclaration, 3> kMaps = {{
+inline const std::array<SMapDeclaration, 3> kMaps = {{
     { "data/maps/garden.tmj", world_controller_keys::open, {true, true, true} },
     { "data/maps/test.tmj", world_controller_keys::mutable_terrain, {true, false, false} },
     { "data/maps/ant_hel.tmj", world_controller_keys::open, {true, false, false} },
@@ -49,13 +49,12 @@ inline SWorldExtensionConfig ExtensionsForMap(std::string_view map_path)
     return {};
 }
 
-// Resolves a friendly controller name (used by `/create`) to a controller
-// key. Returns an empty view for unknown names.
+// 将 /create 使用的友好名称解析为控制器键，未知名称返回空。
 inline std::string_view ControllerKeyForName(std::string_view name)
 {
     if (name == "open" || name == "open_world") return world_controller_keys::open;
     if (name == "weather" || name == "weather_diurnal" || name == "weather_diurnal_open")
-        return "world_controller.weather_diurnal_open"; // legacy command blueprint, not a controller class
+        return "world_controller.weather_diurnal_open"; // 旧命令蓝图标识，无对应控制器类。
     if (name == "waiting" || name == "waiting_room") return world_controller_keys::waiting;
     if (name == "mutable_terrain" || name == "terrain" || name == "brush")
         return world_controller_keys::mutable_terrain;
@@ -69,13 +68,9 @@ inline std::string_view ControllerKeyForName(std::string_view name)
         return world_controller_keys::sandbox;
     return {};
 }
-} // namespace map_declarations
+}
 
-// Creates a world controller for `snapshot_key`. Construction-time overrides
-// (`params`) are applied by controllers that declare a ParamSchema; everything
-// else ignores them.
+// 按快照键创建玩法控制器，并由其参数模式处理构造覆盖值。
 std::unique_ptr<IGameController> CreateWorldController(std::string_view snapshot_key,
                                                        const CControllerParams& params = {});
-// Declared parameter schema of the controller type for `snapshot_key` (empty
-// when unknown or the controller declares none).
 std::vector<SControllerParamInfo> ControllerParamSchemaForKey(std::string_view snapshot_key);

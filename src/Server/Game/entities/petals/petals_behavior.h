@@ -99,8 +99,7 @@ inline float GetOrbitReach(const CPetal* owner, const CFlower* flower, bool incl
     const bool base_only = owner && UsesBaseAndDefenseReach(type);
     const bool ignores_bonus = owner && IgnoresReachBonus(type);
 
-    // Existing special petals still opt out of attack/Third-Eye reach, but
-    // every non-Heavy petal consumes the defensive reach reduction.
+    // 特殊花瓣可忽略攻击/Third Eye 延伸，但非 Heavy 花瓣都使用防御距离缩减。
     if (flower->m_attacking && !base_only && !ignores_bonus)
         reach += flower->GetFinalStats()->reach + game_config::default_petal_attack_offset;
     if (include_mode_offset && flower->m_defending && !heavy)
@@ -182,7 +181,7 @@ inline int GetPetalLayoutRank(const CPetal* owner, const CFlower* flower)
     for (const CPetal* candidate : slot.m_p_petals)
     {
         if (candidate == owner) break;
-        // Null entries are reloading copies and still reserve a position.
+        // 重载中的空副本仍保留布局位置。
         if (!candidate || behavior->CountsForPetalLayout(candidate)) ++rank;
     }
     return rank;
@@ -207,10 +206,7 @@ inline std::optional<florrbt::Vector2f> GetGlobalOrbitPosition(CPetal* owner, CF
         int layout_index = start_index;
         if (is_open)
         {
-            // Released auxiliary copies (hatched Eggs and completed
-            // Linkers) stay in the slot to own their summon/chain, but they
-            // must not leave a hole in the orbit. Null entries still count:
-            // a reloading copy continues to reserve its position.
+            // 已释放的 Egg/Linker 只维持附属物归属，不在轨道中留空位；重载中的空副本仍占位。
             layout_index += GetPetalLayoutRank(owner, flower);
         }
 
@@ -328,8 +324,7 @@ inline CEntity* GetCachedTarget(CPetal* owner, CFlower* flower, const florrbt::V
         ClearPetalTarget(owner);
         return nullptr;
     }
-    // Keep the last target identity during the short release window.  Some
-    // behaviors use it for the contact effect even though homing is disabled.
+    // 释放窗口保留最后目标身份，供接触效果使用。
     if (IsPetalTargetSuppressed(owner, target)) return nullptr;
     if (!filter(target) || !IsTargetInRange(center, range, target))
     {
@@ -449,11 +444,7 @@ inline florrbt::Vector2f EvaluateAttractionCurve(const florrbt::Vector2f& start,
            end_tangent * end_tangent_weight;
 }
 
-// Follow a moving target along a short cubic path.  The first derivative at
-// departure is the petal's live orbit velocity, so the path naturally bends
-// inward instead of teleporting onto a straight radial line.  Once the curve
-// is complete the petal tracks the target until normal contact handling
-// destroys it (or, for Yggdrasil, while it channels on the corpse).
+// 三次曲线保留出发时的轨道切向速度，完成后跟随目标；Yggdrasil 可继续对尸体引导。
 inline void AdvanceAttractionMotion(CPetal* owner, const CEntity* target, float duration, float dt,
                                     bool restart)
 {
@@ -553,10 +544,7 @@ inline florrbt::Vector2f GetTargetReturnVelocity(CPetal* owner, CFlower* flower,
     const float distance = Length(delta);
     if (distance <= game_config::entity_collision_epsilon) return {};
 
-    // The old target pull was only a weak linear tether.  Once a petal had
-    // touched a mob, target acceleration could therefore cancel it forever.
-    // Treat the return as a spring: farther from the orbit means a rapidly
-    // larger velocity, capped to a safe one-tick displacement.
+    // 回归牵引随偏离轨道的距离增强，并限制单帧位移，避免目标加速长期抵消回归力。
     const float reference = std::max({ 1.f, std::max(0.f, orbit_distance), owner->Radius() });
     const float ratio = std::clamp(distance / reference, 0.f, 8.f);
     const float gain = 1.f + std::max(0.f, game_config::default_petal_target_return_distance_gain) * ratio * ratio;
@@ -575,9 +563,7 @@ inline florrbt::Vector2f ConstrainTargetVelocity(const CPetal* owner, const CFlo
     const float target_speed = Length(target_velocity);
     if (target_speed > game_config::entity_collision_epsilon)
     {
-        // Homing speed is clamped to [1x, 2x] of the locked-target
-        // acceleration: the petal always closes at a controlled rate instead
-        // of scaling wildly with the flower's attraction range.
+        // 追踪速度限制在锁定目标加速度的 1 至 2 倍，不随吸引范围无界增长。
         const float base_velocity = GetLockedTargetAcceleration(flower, acceleration_multiplier, false);
         const float min_velocity = std::max(0.f, base_velocity);
         const float max_velocity = std::max(min_velocity, base_velocity * 2.f);
@@ -628,9 +614,7 @@ inline void MovePetalToOrbitAndAttract(CPetal* owner, CFlower* flower, float orb
                                                  global_pull_velocity, dt);
 }
 
-// Released auxiliary petals do not own a slot index in the flower layout, but
-// may still need the normal seek/return behavior.  This variant accepts their
-// remembered orbit point directly instead of asking the layout for one.
+// 释放的辅助花瓣使用记忆中的轨道点，不再向槽位布局索取位置。
 inline void MovePetalToOrbitPointAndAttract(CPetal* owner, CFlower* flower,
                                             const florrbt::Vector2f& orbit_point, float orbit_distance, float k,
                                             float dt, float acceleration_multiplier = 1.f)
@@ -675,7 +659,6 @@ inline void MovePetalToOrbitPointAndAttract(CPetal* owner, CFlower* flower,
                                            return_velocity(), dt);
 }
 
-// (Heavy petal movement fully restores the shared orbit/seek path below.)
 
 bool RegisterPetals(std::string& error);
 
@@ -717,8 +700,7 @@ class CBrushBehavior : public CPetalBehavior
 
     SFlowerStats GetStats(ERarity) const override { return EmptyFlowerStats(); }
 
-    // The brush is a slot-only petal (no live entity): the mutable-terrain
-    // controller drives the painting while the flower attacks.
+    // 画刷只占槽位，不生成实体；花朵攻击时由世界地形服务绘制。
     SPetalStats GetPetalStats(ERarity) const override
     {
         SPetalStats stats;
@@ -1340,7 +1322,7 @@ class CLightningBehavior : public CPetalBehavior
 
     void OnTick(CPetal* owner, ERarity rarity, CFlower* flower, float dt) override
     {
-        // Contact ended: release the accumulated chain once.
+        // 接触结束后只释放一次累计连锁。
         if (owner && owner->m_chain_target_ref.IsValid() && owner->m_chain_hit_count > 0)
         {
             CGameWorld* world = owner->GameWorld();
@@ -1369,15 +1351,14 @@ class CLightningBehavior : public CPetalBehavior
 
     void OnPetalHit(CPetal* owner, ERarity rarity, CEntity* target, float& damage) override
     {
-        // The hit deals its normal collision damage as-is; the chain is only
-        // booked here and fires when the contact session ends.
+        // 本次接触仍正常造成伤害，连锁在接触会话结束时才释放。
         if (!owner || !target || damage <= 0.f) return;
         if (!dynamic_cast<const CMobBase*>(target)) return;
         if (CheckTeam(owner->Team(), target->Team())) return;
 
         if (!owner->m_chain_target_ref.RefersTo(target->GetHandle()))
         {
-            // Switched target mid-swing: flush the previous session first.
+            // 中途换目标时先结算上一段接触。
             if (owner->m_chain_hit_count > 0) ReleaseChain(owner, rarity, owner->GetOwner());
             owner->m_chain_target_ref = target->GetHandle();
             owner->m_chain_hit_count = 1;
@@ -1401,8 +1382,7 @@ class CLightningBehavior : public CPetalBehavior
         if (count <= 0) return;
         if (!flower) return;
 
-        // The chain fires from the petal position even when the recorded
-        // target was one-shot: it arcs to whatever hostiles remain nearby.
+        // 目标已被秒杀时仍从花瓣位置向附近存活敌人释放连锁。
         owner->GameWorld()->ChainLightning(*owner, LightningChainDamage(rarity) * static_cast<float>(count),
                                            LightningChainBounces(rarity), flower);
     }
@@ -1623,7 +1603,7 @@ class CHeavyBehavior : public CPetalBehavior
                                    0.f, 1.f);
         const float scale = game_config::default_heavy_target_min_speed_scale +
                             (1.f - game_config::default_heavy_target_min_speed_scale) * t;
-        // Heavy pressure slows the target it hit, not the petal itself.
+        // Heavy 压制被命中的目标，不减慢花瓣自身。
         if (auto* mob = dynamic_cast<CMobBase*>(target)) mob->m_vel *= scale;
     }
 
@@ -1918,10 +1898,7 @@ class CSummonEggBehavior : public CPetalBehavior
 
         if (!egg->m_has_spawned_summon)
         {
-            // Broken Egg is the explicit hatch trigger. Each loaded copy
-            // enters the normal destruction path independently, so one copy
-            // produces exactly one summon and releases only its own layout
-            // position.
+            // Broken Egg 明确触发孵化，每个副本独立完成一次销毁和召唤，只释放自己的位置。
             if (flower->HasActivePetal(EPetalType::BrokenEgg))
             {
                 owner->Health() = 0.f;
@@ -1985,8 +1962,8 @@ class CSummonEggBehavior : public CPetalBehavior
             return;
         }
 
-        summon->Team() = flower->Team();
-        // Petal-created summons must never recursively generate loot, including summons owned by NPC flowers.
+        summon->SetTeam(flower->Team());
+        // 花瓣召唤物不再递归产出战利品，NPC 花朵的召唤也遵循此规则。
         summon->AddTag(EEntityTag::NoDefeatRewards);
         summon->SetController(std::make_unique<CSummonedMeleeController>(flower));
         CMobBase* raw_summon = dynamic_cast<CMobBase*>(flower->GameWorld()->InsertEntity(std::move(summon)));
@@ -2072,9 +2049,7 @@ inline float LinkerChainLength(ERarity rarity)
 {
     const float common = std::max(0.001f, game_config::default_linker_chain_length_common);
     const float primordial = std::max(0.001f, game_config::default_linker_chain_length_primordial);
-    // Petal value levels deliberately map Exotic back to Common. Keep chain
-    // length aligned with every other Linker stat instead of using display
-    // sort rank (where Exotic sits between Ultra and Super).
+    // Linker 链长使用数值稀有度等级，Exotic 按 Common 计算，不使用显示排序。
     const int level = std::clamp(GetLevel(rarity), 1, 10);
     const float t = static_cast<float>(level - 1) / 9.f;
     return std::exp(std::log(common) * (1.f - t) + std::log(primordial) * t);
@@ -2084,8 +2059,7 @@ inline float LinkerMass(ERarity rarity)
 {
     const int level = std::max(1, GetLevel(rarity));
     const double base_mass = std::max(0.001, static_cast<double>(game_config::default_linker_mass));
-    // Keep rarity monotonic even if a malformed runtime config supplies a
-    // multiplier below one. The double intermediate prevents early overflow.
+    // 倍率至少为一，保持稀有度单调；中间计算用 double 降低溢出风险。
     const double rarity_multiplier =
         std::max(1.0, static_cast<double>(game_config::default_linker_mass_rarity_multiplier));
     const double mass = base_mass * std::pow(rarity_multiplier, static_cast<double>(level - 1));
@@ -2134,8 +2108,7 @@ class CLinkerBehavior final : public CPetalBehavior
             first = flower->GameWorld()->ResolveEntity(owner->m_first_target_ref);
             if (first && !first->IsDead() && !first->IsMarkedForDes())
             {
-                // Never re-lock the endpoint already attached to this Linker;
-                // it must be free to seek a second mob or return to its orbit.
+                // 已连接端点不能再次作为目标，Linker 仍需寻找第二个目标或返回轨道。
                 SuppressPetalTarget(owner, first);
             }
             else first = nullptr;
@@ -2169,9 +2142,7 @@ class CLinkerBehavior final : public CPetalBehavior
             MovePetalToOrbitPointAndAttract(owner, flower, orbit_point, orbit_distance,
                                             game_config::default_petal_orbit_k, dt);
 
-            // The flower carries a small share of the released Linker's orbit
-            // error, while the Linker inherits a small share of flower motion.
-            // This is the soft counterpart of the LCS/LeafPiece constraint.
+            // 花朵和释放后的 Linker 分担轨道误差与移动，形成柔性牵引。
             const float coupling = std::clamp(game_config::default_linker_flower_coupling, 0.f, 1.f);
             const florrbt::Vector2f flower_velocity = flower->m_vel;
             owner->m_vel += flower_velocity * coupling;
@@ -2187,8 +2158,7 @@ class CLinkerBehavior final : public CPetalBehavior
             flower->m_vel += reaction;
         }
 
-        // Its visual connector continues to point at the first endpoint even
-        // while its translational movement seeks another target or the orbit.
+        // 视觉连接始终指向首个端点，位移仍可追逐另一目标或轨道。
         if (first)
         {
             const florrbt::Vector2f delta = first->Pos() - owner->Pos();
@@ -2243,9 +2213,7 @@ class CLinkerBehavior final : public CPetalBehavior
         auto* mob = dynamic_cast<CMobBase*>(target);
         if (!owner || !mob || !owner->GameWorld() || mob->IsDead() || mob->IsMarkedForDes()) return;
         if (owner->m_charges_remaining <= 0) return;
-        // Different Linkers may share an endpoint.  Only this Linker's own
-        // chain is forbidden from selecting the same endpoint twice (checked
-        // below with HasEndpoint when the second charge is consumed).
+        // 不同 Linker 可共享端点，同一条链不能重复连接自身端点。
         if (target == owner->GetOwner()) return;
 
         CGameWorld* world = owner->GameWorld();
@@ -2296,12 +2264,7 @@ class CLinkerBehavior final : public CPetalBehavior
         owner->m_charges_remaining = 0;
         owner->m_released_from_slot = true;
         owner->m_first_target_ref = first_target->GetHandle();
-        // The Linker is the lease owner of this chain.  Do not destroy it
-        // here: CPetal::OnBeforeRemoved() would notify the chain lease while
-        // the second hit is still being processed and immediately break the
-        // newly converted mob--mob chain.  Keep the slot entity alive but
-        // hidden; the chain callback will set its health to zero after the
-        // chain actually breaks, allowing the next slot tick to reload it.
+        // Linker 是链条租约持有者，第二次命中时只隐藏，不能立即销毁；实际断链回调再清生命并允许重载。
         owner->m_hidden = true;
         owner->m_vel = { 0.f, 0.f };
         owner->Health() = std::max(1.f, owner->m_final_petal_stats.health);
@@ -2377,10 +2340,7 @@ class CBubbleBehavior : public CPetalBehavior
         (void)dt;
         MovePetalToOrbit(owner, flower, orbit_distance, game_config::default_petal_orbit_k, true);
 
-        // Defense is sufficient; attacking at the same time must not suppress
-        // Bubble. It destroys the bubble only after its prep window (the petal's
-        // reload time, which shrinks as rarity rises). The speed boost is
-        // granted at the defend->destroy transition, right before removal.
+        // 防御即可触发 Bubble，同时攻击不应屏蔽它；准备完成后在防御转为销毁的瞬间给予加速。
         if (flower->m_defending && owner->m_lifetime >= BubbleReload(rarity))
         {
             ApplyBubbleBoost(owner, flower);
@@ -2394,8 +2354,7 @@ class CBubbleBehavior : public CPetalBehavior
 
     void OnPetalDestroyed(CPetal*, ERarity, CFlower*) override
     {
-        // The boost is applied at the defend->destroy transition in OnTick so
-        // accidental deaths (mob contact etc.) never trigger the launch.
+        // 加速只发生在主动防御转销毁时，意外碰撞死亡不触发发射。
     }
 
   private:
@@ -2636,10 +2595,7 @@ class CYuccaBehavior : public CPetalBehavior
     void OnPetalDestroyed(CPetal*, ERarity, CFlower*) override {}
 };
 
-// Magnet petal: a yucca-like opener that boosts the pick-up absorb range
-// while active (no bonus during preload/reload: AliveOnly). The bonus scales
-// linearly with rarity: Common would be 0, Mythic equals the magnetism
-// talent range.
+// Magnet 仅在加载完成后增加吸收范围，按稀有度线性增长。
 inline float MagnetAbsorbBonus(ERarity rarity)
 {
     return game_config::default_magnet_bonus_base *
@@ -2655,8 +2611,7 @@ class CMagnetBehavior : public CPetalBehavior
     SFlowerStats GetStats(ERarity rarity) const override
     {
         SFlowerStats stats = EmptyFlowerStats();
-        // Non-preload activation only: the bonus appears once the petal is
-        // fully ready (AliveOnly keeps it off during preload/reload).
+        // AliveOnly 使预加载和重载期间不提供加成。
         stats.max_absorb_range = MagnetAbsorbBonus(rarity);
         return stats;
     }
@@ -2671,7 +2626,7 @@ class CMagnetBehavior : public CPetalBehavior
         stats.copy = 1;
         stats.mass = game_config::default_magnet_mass;
         stats.radius = game_config::default_magnet_base_radius;
-        stats.stack = false; // non-stackable
+        stats.stack = false;
         return stats;
     }
 
@@ -3691,10 +3646,7 @@ class CLentilBehavior : public CPetalBehavior
         if (target)
         {
             SetPetalTarget(owner, target);
-            // A collision should be a brief attack contact, not a permanent
-            // homing lock.  Release at roughly half a tile and immediately
-            // use the distance-amplified return velocity so Lentil gets back
-            // to its orbit instead of being pinned to the mob.
+            // Lentil 接触后及时释放目标并增强回归速度，避免长期被钉在敌人身上。
             if (ReleasePetalTargetIfClose(owner, target))
             {
                 owner->m_vel = GetTargetReturnVelocity(owner, flower, orbit_distance,
@@ -3712,9 +3664,7 @@ class CLentilBehavior : public CPetalBehavior
             return;
         }
 
-        // Keep the last contact identity during the short release window;
-        // clearing it immediately would let the next search reacquire the
-        // same mob on the following tick.
+        // 释放窗口保留最后目标，防止下一帧立即重新锁定同一生物。
         if (owner->m_target_release_timer <= game_config::entity_collision_epsilon)
             ClearPetalTarget(owner);
     }
@@ -4363,11 +4313,7 @@ class CHoneyBehavior : public CPetalBehavior
     }
 };
 
-// Eou pheromone petal: same throwing behavior as honey, but collides with
-// nothing (keeps flying through everything) and, once a throw fully stops,
-// the petal reports its position to the bound pheromone group (stamped in
-// OnPetalSpawned: team = flower team, group = slot index). Multiple slots of
-// the same type stack so every pheromone group gets its own petal.
+// 信息素沿 Honey 式轨迹投掷且穿过所有碰撞，停止时报告给按团队和槽位绑定的分组。
 class CEouPheromoneBehavior : public CHoneyBehavior
 {
   public:
@@ -4379,9 +4325,7 @@ class CEouPheromoneBehavior : public CHoneyBehavior
         return stats;
     }
 
-    // Release modes: an attack throw guides the bound pheromone group (the
-    // resting point becomes the group target); a defend throw builds/destroys
-    // a cell at the resting point (see the ant-kingdom controller).
+    // 攻击投掷设置分组目标，防御投掷在落点建造或删除格子。
     void OnTick(CPetal* owner, ERarity, CFlower* flower, float dt) override
     {
         auto* thrown = dynamic_cast<CEouPheromonePetal*>(owner);
@@ -4395,7 +4339,7 @@ class CEouPheromoneBehavior : public CHoneyBehavior
         if (!pressed || thrown->m_input_latched || owner->m_lifetime < game_config::default_web_fire_cooldown) return;
         thrown->m_input_latched = true;
         const bool defend = !flower->m_attacking && flower->m_defending;
-        // Building is one action per press, not one toggle per petal/copy.
+        // 每次按下只执行一次建造，不按副本重复切换。
         if (defend && (thrown->m_group_id != 1 || owner->m_copy_index != 0)) return;
         const float flower_speed =
             flower->GetFinalStats() ? flower->GetFinalStats()->max_velocity : game_config::default_max_velocity;
@@ -4408,7 +4352,6 @@ class CEouPheromoneBehavior : public CHoneyBehavior
 
     void OnPetalHit(CPetal*, ERarity, CEntity*, float& damage) override
     {
-        // No collision: pass through everything without stopping.
         damage = 0.f;
     }
 
@@ -4459,8 +4402,7 @@ class CWaxBehavior : public CPetalBehavior
         if (!owner) return;
         owner->FacingAngle() = GetLimitedRng(-game_config::pi, game_config::pi);
         owner->HasFacing() = true;
-        // Give the initial slide the slot's own direction, not the flower's
-        // travel direction. Subsequent active/player pushing keeps its rules.
+        // 初始滑动采用槽位方向，之后再按主动推动和玩家交互规则运动。
         const auto target = GetGlobalOrbitPosition(owner, flower, GetOrbitDistance(owner, flower), true);
         if (target)
         {
@@ -4469,8 +4411,7 @@ class CWaxBehavior : public CPetalBehavior
             if (distance > game_config::entity_collision_epsilon)
             {
                 const float slide = std::min(distance, std::max(0.f, game_config::default_wax_spawn_slide_distance));
-                // A small initial nudge keeps the first flower contact from
-                // selecting the travel direction before the slot slide starts.
+                // 轻推先建立槽位滑动方向，避免首次花朵接触覆盖它。
                 const auto nudge = delta / distance * (slide * 0.25f);
                 const auto target_pos = owner->Pos() + nudge;
                 if (owner->GameWorld() && !owner->GameWorld()->SweptCircleBlockedByWall(owner->Pos(), target_pos, owner->Radius()))
@@ -5113,7 +5054,6 @@ class CYinYangBehavior : public CPetalBehavior
     void OnPetalDestroyed(CPetal*, ERarity, CFlower*) override {}
 };
 
-// ---- Native magic petal family -------------------------------------------------
 
 inline float MagicAttributeScale(ERarity rarity) { return GetPetalRarityScale(rarity); }
 
@@ -5139,10 +5079,7 @@ inline bool IsBaseManaProvider(EPetalType type)
     return type == ToPetalType(EModPetalType::Orb) || type == ToPetalType(EModPetalType::MagicLeaf);
 }
 
-// Orb and Magic Leaf establish the same base mana pool. Equipping more of
-// either type must not add another copy of that pool; when rarities differ,
-// the strongest equipped provider wins. Magic Cactus is deliberately not in
-// this group and therefore remains fully stackable.
+// Orb 与 Magic Leaf 共用基础法力池，取最高档提供者而不重复相加；Magic Cactus 独立叠加。
 inline bool IsSelectedBaseManaProviderSlot(const CPetalSlot* slot, const CFlower* flower)
 {
     if (!slot || !flower) return true;
@@ -5151,7 +5088,7 @@ inline bool IsSelectedBaseManaProviderSlot(const CPetalSlot* slot, const CFlower
     int selected_level = 0;
     for (const CPetalSlot& candidate : flower->GetSlots())
     {
-        if (!candidate.m_available || candidate.m_banned || !candidate.m_p_proto ||
+        if (!candidate.m_available || candidate.IsBanned() || !candidate.m_p_proto ||
             !IsBaseManaProvider(candidate.m_p_proto->m_type))
             continue;
 
@@ -5365,8 +5302,7 @@ class CMagicEyeBehavior final : public CPetalBehavior
         SPetalStats stats;
         stats.damage = 0.f;
         stats.health = 1.f;
-        // Magic Eye is a persistent face decoration. Its one-second trigger
-        // cooldown is behavior state, not a reload affected by reload buffs.
+        // Magic Eye 是持续面部装饰，触发冷却独立于花瓣重载加成。
         stats.reload = 0.f;
         stats.preload = 0.f;
         stats.copy = 1;
@@ -5380,8 +5316,7 @@ class CMagicEyeBehavior final : public CPetalBehavior
         auto* owner = dynamic_cast<CMagicEyePetal*>(raw_owner);
         if (!owner || !flower) return;
 
-        // Keep one invisible slot-owned driver for the active effect. It does
-        // not consume an orbit position, collide, or enter client snapshots.
+        // 保留一个隐藏的槽位驱动体负责主动效果，不占轨道、不碰撞、不进入客户端快照。
         owner->m_hidden = true;
         owner->Pos() = flower->Pos();
         owner->PrevPos() = flower->Pos();

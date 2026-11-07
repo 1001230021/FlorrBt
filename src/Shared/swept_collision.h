@@ -17,13 +17,8 @@ inline bool OverlapSweptBounds(const SweptCircleBounds& a, const SweptCircleBoun
 {
     return a.min.x <= b.max.x && b.min.x <= a.max.x && a.min.y <= b.max.y && b.min.y <= a.max.y;
 }
-template<class TEntries, class TVisitor> void VisitSweptCirclePairs(TEntries& entries, TVisitor visit)
+template<class TEntries, class TVisitor> void VisitPreparedSweptCirclePairs(const TEntries& entries, TVisitor visit)
 {
-    std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
-        return a.bounds.min.x == b.bounds.min.x ? a.id < b.id : a.bounds.min.x < b.bounds.min.x;
-    });
-    float max_x = -INFINITY;
-    for (auto& entry : entries) entry.prefix_max_x = max_x = std::max(max_x, entry.bounds.max.x);
     for (const auto& active : entries)
     {
         if (!active.active) continue;
@@ -33,5 +28,15 @@ template<class TEntries, class TVisitor> void VisitSweptCirclePairs(TEntries& en
             if (active.id != it->id && (!it->active || active.id < it->id) && OverlapSweptBounds(active.bounds, it->bounds))
                 visit(active, *it);
     }
+}
+
+template<class TEntries, class TVisitor> void VisitSweptCirclePairs(TEntries& entries, TVisitor visit)
+{
+    std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
+        return a.bounds.min.x == b.bounds.min.x ? a.id < b.id : a.bounds.min.x < b.bounds.min.x;
+    });
+    float max_x = -INFINITY;
+    for (auto& entry : entries) entry.prefix_max_x = max_x = std::max(max_x, entry.bounds.max.x);
+    VisitPreparedSweptCirclePairs(entries, visit);
 }
 }

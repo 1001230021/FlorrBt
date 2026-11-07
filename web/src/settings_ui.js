@@ -14,8 +14,7 @@ export class SettingsPanel extends UiPanel {
     this.list = list;
     this.list.setAttribute("role", "tabpanel");
     this.list.addEventListener("keydown", event => {
-      // Keep control activation/arrows from also becoming gameplay holds.
-      // Key releases still bubble to the shared input cleanup.
+      // 控件激活/方向键不传为玩法按住事件，释放仍交给统一清理。
       if (event.key !== "Escape" && event.key !== "F1") event.stopPropagation();
     });
     this.translate = translate;
@@ -81,7 +80,7 @@ export class SettingsPanel extends UiPanel {
     }
     const groups = {
       movement: "controls", "hold-attack": "controls", "hold-defense": "controls", movement_arrow: "controls",
-      "render-scale": "graphics", fullscreen: "graphics", damage_numbers: "graphics", screen_shake: "graphics", live_icons: "graphics",
+      "render-scale": "graphics", fullscreen: "graphics", damage_numbers: "graphics", screen_shake: "graphics", live_icons: "graphics", menu_petals: "graphics",
     };
     const fragment = document.createDocumentFragment();
     for (const definition of this.definitions) {

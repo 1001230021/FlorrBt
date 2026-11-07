@@ -1,8 +1,7 @@
 #pragma once
 #include <cstdint>
 
-// Runtime families are intentionally coarse. Projectile specializations live in
-// EProjectileType so every projectile can be selected with one family check.
+// 实体族采用粗分类；投射物细分由 EProjectileType 表示，便于统一筛选。
 enum class EEntityType : std::uint8_t
 {
     None = 0,
@@ -24,10 +23,8 @@ enum class EProjectileType : std::uint8_t
 };
 
 inline constexpr std::uint8_t server_petal_entity_type_offset = 100;
-// Ground drops use one family id. Their concrete petal id is carried in the
-// snapshot team byte (drops do not have team semantics). Keeping the subtype
-// separate removes the old `180 + petal_id` u8 ceiling without renumbering any
-// persisted petal ids.
+// 掉落物统一使用实体族 ID，具体花瓣 ID 放在无阵营语义的快照 team 字节中，
+// 解除旧 180 + petal_id 编码的上限，同时保留已有持久化 ID。
 inline constexpr std::uint8_t server_drop_entity_type = 91;
 inline constexpr std::uint8_t server_trap_projectile_entity_type = 93;
 inline constexpr std::uint8_t server_blood_sacrifice_entity_type = 94;

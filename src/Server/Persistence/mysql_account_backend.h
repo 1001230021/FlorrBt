@@ -4,40 +4,26 @@
 #include <string>
 #include <vector>
 
-// MySQL persistence backend for the account store (classic MySQL C API:
-// libmysql or MariaDB Connector/C). Connection parameters come from
-// game_config::mysql_* (server.cfg `set mysql_host ...`; the password may be
-// injected through the FLORRBT_MYSQL_PASSWORD environment variable).
-//
-// Threading model: the save worker reuses a thread-local connection; no
-// handle crosses threads. LoadAll runs on the server thread during
-// startup; PublishSnapshot runs on the account save worker thread and diffs
-// against the previously published state, so an idle server costs zero SQL
-// and a typical save only rewrites the accounts that actually changed.
-//
-// When the binary is built without FLORRBT_WITH_MYSQL every function fails
-// with a clear "built without MySQL support" error, so account_backend=mysql
-// configs surface the problem at startup instead of silently losing data.
+// MySQL 账号后端支持 libmysql 或 MariaDB Connector/C。
+// 配置来自 game_config::mysql_*，密码支持环境变量覆盖。
+// 启动线程加载，保存线程独占连接并按上次成功快照计算差异。
+// 未编译数据库支持时显式报错，不静默丢弃数据。
 namespace mysql_account_backend
 {
-// True when MySQL support was compiled in.
 bool Available();
 
-// Connects, creates the schema when missing, and seeds the change-detection
-// state. Call once at startup (or before a migration) from the loading thread.
+// 启动/迁移时连接并初始化缺失表及差异基线。
 bool Initialize(std::string* error);
 
-// Loads every persisted account plus the stored save generation.
-bool LoadAll(std::vector<SPlayerAccount>& accounts, std::uint64_t& generation, std::string* error);
+bool LoadAll(std::vector<SPlayerAccount>& accounts, std::uint64_t& generation, std::string* error,
+             bool* unique_ledger_initialized = nullptr);
 
-// Durably publishes a full account snapshot. Ephemeral "@sandbox:" accounts
-// are skipped (same rule as the JSON writer). Runs one transaction; on any
-// failure nothing is partially applied and the change-detection state keeps
-// marking the affected accounts dirty for the next attempt.
-bool PublishSnapshot(const std::vector<SPlayerAccount>& accounts, std::uint64_t generation, std::string* error);
-bool PublishSnapshot(const SAccountSnapshot& accounts, std::uint64_t generation, std::string* error);
+// 在单个事务中发布完整快照，跳过沙盒临时账号。
+// 失败后保留重试所需的脏状态；提交回应丢失时按不确定提交处理。
+bool PublishSnapshot(const std::vector<SPlayerAccount>& accounts, std::uint64_t generation, std::string* error,
+                     bool unique_ledger_initialized = true);
+bool PublishSnapshot(const SAccountSnapshot& accounts, std::uint64_t generation, std::string* error,
+                     bool unique_ledger_initialized = true);
 
-// Drops the cached change-detection state (used between migration runs and
-// by the store's ShutDown so a later Load starts fresh).
 void ResetPublishState();
-} // namespace mysql_account_backend
+}

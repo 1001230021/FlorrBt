@@ -1,8 +1,6 @@
 #include "flower.h"
 #include "../../HotReload/snapshot_archive.h"
 #include "../../Persistence/account_store.h"
-#include "../../Persistence/unique_petal_registry.h"
-#include "../../server.h"
 #include "../gamecontext.h"
 #include "../gameworld.h"
 #include "../player.h"
@@ -12,6 +10,7 @@
 #include "blood_sacrifice_ritual.h"
 #include "petals/petal.h"
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -67,15 +66,11 @@ std::int64_t GetRequiredPlayerExperience(int level)
     const long double base_exp = std::max(1.0L, static_cast<long double>(game_config::player_level_exp_base));
     const long double level_growth = std::max(1.0L, static_cast<long double>(game_config::player_level_exp_growth));
 
-    // Level 50 costs exactly what the legacy formula produced, so the
-    // (smaller, gentler) exponent is anchored by a bigger coefficient:
-    // cost(x) = cost_base * level_growth^(x-1) with
-    // cost_base chosen so cost(50) == base_exp * legacy_growth^49.
+    // 经验曲线以旧公式的 50 级成本为锚点，调整后续增长率时保持该点不变。
     const long double legacy_growth = std::max(1.0L, static_cast<long double>(game_config::player_level_exp_legacy_growth));
     const long double legacy_50 = base_exp * std::pow(legacy_growth, 49.0L);
     const long double cost_base = legacy_50 / std::pow(level_growth, 49.0L);
 
-    // cost(x) = 7/8 * cost_base * growth^(x-1) - 24
     const long double required =
         (cost_base * std::pow(level_growth, static_cast<long double>(safe_level - 1))) * (7.0L / 8.0L) - 24.0L;
     const long double max_exp = static_cast<long double>(std::numeric_limits<std::int64_t>::max());
@@ -96,7 +91,7 @@ int CalculateTalentPointsForLevel(int level)
     return gain;
 }
 
-} // namespace
+}
 
 CFlower::~CFlower()
 {
@@ -120,15 +115,16 @@ CMechaFlower::CMechaFlower(CGameWorld* pworld, florrbt::Vector2f pos, float r, E
         LoadPetalSlot(slot, cogwheel, rarity);
 }
 
-void CTitanFlower::Tick(float dt)
+void CTitanFlower::OnTickBegin(float dt)
 {
-    m_unique_refresh_timer -= std::max(0.f, dt);
-    if (m_unique_refresh_timer <= 0.f)
+    CFlower::OnTickBegin(dt);
+    if (!HasPlayerControlLease()) m_unique_refresh_timer -= std::max(0.f, dt);
+    if (!HasPlayerControlLease() && m_unique_refresh_timer <= 0.f)
     {
         RefreshUniqueLoadout();
+        RebuildFinalStats();
         m_unique_refresh_timer = std::max(1.f, game_config::titan_unique_refresh_seconds);
     }
-    CFlower::Tick(dt);
 }
 
 void CTitanFlower::CaptureRuntimeSnapshot(CSnapshotWriter& writer) const
@@ -139,33 +135,29 @@ void CTitanFlower::CaptureRuntimeSnapshot(CSnapshotWriter& writer) const
 bool CTitanFlower::RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error)
 {
     if (!CFlower::RestoreRuntimeSnapshot(reader, version, error)) return false;
-    if (reader.Has("forge_cooldown_timer"))
-    {
-        if (CServer* server = CServer::GetInstance())
-            server->MergeLegacyTitanForgeCooldownForRestore(reader.Float("forge_cooldown_timer"));
-    }
     m_unique_refresh_timer = std::max(0.f, reader.Float("unique_refresh_timer", m_unique_refresh_timer));
     return true;
 }
 
 void CTitanFlower::ReplaceForgedUniquePetal(EPetalType type)
 {
+    // 附身 Titan 的临时装备属于玩家进度作用域，释放控制权后才恢复自主库存。
+    if (HasPlayerControlLease()) { m_unique_refresh_timer = 0.f; return; }
     auto& slots = GetSlots();
     const auto forged_slot = std::find_if(slots.begin(), slots.end(), [type](const CPetalSlot& slot) {
         return slot.m_p_proto && slot.m_p_proto->m_type == type && slot.m_stored_rarity == ERarity::Unique;
     });
     if (forged_slot == slots.end()) return;
 
-    CServer* server = CServer::GetInstance();
-    IUniquePetalRegistry* registry = server ? server->GetUniquePetalRegistry() : nullptr;
-    if (!registry) return;
+    CGameContext* context = GameContext();
+    if (!context) return;
 
     std::vector<const CPetalPrototype*> candidates;
     candidates.reserve(GetPetalRegistry().size());
     for (const auto& [candidate_type, prototype] : GetPetalRegistry())
     {
         if (candidate_type == EPetalType::None || !prototype || !prototype->m_p_behavior ||
-            registry->FindOwner(candidate_type) || HasUniquePetal(candidate_type))
+            context->UniquePetals().IsUniquePetalOwned(candidate_type) || HasUniquePetal(candidate_type))
             continue;
         candidates.push_back(prototype);
     }
@@ -187,15 +179,14 @@ bool CTitanFlower::HasUniquePetal(EPetalType type) const
 
 void CTitanFlower::RefreshUniqueLoadout()
 {
-    CServer* server = CServer::GetInstance();
-    IUniquePetalRegistry* registry = server ? server->GetUniquePetalRegistry() : nullptr;
-    if (!registry) return;
+    CGameContext* context = GameContext();
+    if (!context) return;
 
     std::vector<const CPetalPrototype*> candidates;
     candidates.reserve(GetPetalRegistry().size());
     for (const auto& [type, prototype] : GetPetalRegistry())
     {
-        if (type == EPetalType::None || !prototype || !prototype->m_p_behavior || registry->FindOwner(type)) continue;
+        if (type == EPetalType::None || !prototype || !prototype->m_p_behavior || context->UniquePetals().IsUniquePetalOwned(type)) continue;
         candidates.push_back(prototype);
     }
 
@@ -209,7 +200,15 @@ void CTitanFlower::RefreshUniqueLoadout()
     }
 }
 
-void CFlower::Tick(float dt)
+void CFlower::CollectTickDependencies(std::vector<SEntityHandle>& output) const
+{
+    CAttackableMob<SFlowerStats>::CollectTickDependencies(output);
+    for (const auto& slot : m_slots)
+        for (const auto* petal : slot.m_p_petals)
+            if (petal && petal->GetOwner() == this && !petal->IsMarkedForDes()) output.push_back(petal->GetHandle());
+}
+
+void CFlower::OnTickBegin(float dt)
 {
     const std::uint64_t config_revision = game_config::GetConfigRevision();
     if (m_config_revision != config_revision)
@@ -218,9 +217,53 @@ void CFlower::Tick(float dt)
         MarkFinalStatsDirty();
     }
 
-    CAttackableMob<SFlowerStats>::Tick(dt);
+    CAttackableMob<SFlowerStats>::OnTickBegin(dt);
+    if (IsDead() || IsMarkedForDes()) { DestroyPetalEntities(); return; }
     if (m_final_stats_dirty) RebuildFinalStats();
+}
+
+void CFlower::OnTickMotion(float dt)
+{
     AdvanceRadiusTowardsTarget(dt);
+    CAttackableMob<SFlowerStats>::OnTickMotion(dt);
+}
+
+void CFlower::OnTickEnvironment(float dt)
+{
+    CAttackableMob<SFlowerStats>::OnTickEnvironment(dt);
+    if (IsDead() || IsMarkedForDes()) return;
+    if (m_final_stats_dirty) RebuildFinalStats();
+    RefreshNullificationState();
+    RefreshCorruptionState();
+}
+
+void CFlower::CommitActionView()
+{
+    CAttackableMob<SFlowerStats>::CommitActionView();
+    if (IsDead() || IsMarkedForDes()) { DestroyPetalEntities(); return; }
+    if (m_final_stats_dirty)
+    {
+        RebuildFinalStats();
+        RefreshNullificationState();
+        RefreshCorruptionState();
+    }
+    RefreshPetalSuppression();
+    for (auto& slot : m_slots)
+    {
+        if (slot.m_available && !slot.IsBanned()) continue;
+        for (auto*& petal : slot.m_p_petals)
+        {
+            if (petal) petal->MarkForDestroy(EEntityRemovalReason::OwnerRemoved);
+            petal = nullptr;
+        }
+        slot.m_start_copy_index = -1;
+    }
+}
+
+void CFlower::OnTickEffects(float dt)
+{
+    CAttackableMob<SFlowerStats>::OnTickEffects(dt);
+    if (IsDead() || IsMarkedForDes()) return;
     float health_regen = m_final_stats.health_regen;
     if (m_defending && !m_attacking) health_regen += m_final_stats.defense_health_regen;
     if (health_regen > 0.f && m_final_stats.max_health > 0.f && Health() > 0.f)
@@ -233,9 +276,10 @@ void CFlower::Tick(float dt)
     }
     if (m_final_stats.mana_regen > 0.f && m_final_stats.max_mana > 0.f && Health() > 0.f)
         RestoreMana(m_final_stats.mana_regen * std::max(0.f, m_final_stats.recovery_multiplier) * dt);
-    RefreshNullificationState();
-    RefreshCorruptionState();
+}
 
+void CFlower::OnTickActions(float dt)
+{
     RefreshPetalSuppression();
     if (ArePetalsSuppressed()) return;
 
@@ -244,7 +288,7 @@ void CFlower::Tick(float dt)
         m_petal_state_dirty = false;
         for (auto& slot : m_slots)
         {
-            if (slot.m_available && !slot.m_banned) slot.RefreshPetalState(this);
+            if (slot.m_available && !slot.IsBanned()) slot.RefreshPetalState(this);
         }
     }
 
@@ -253,7 +297,7 @@ void CFlower::Tick(float dt)
     int yinyang_bonus_count = 0;
     for (auto& slot : m_slots)
     {
-        if (!slot.m_available || slot.m_banned)
+        if (!slot.m_available || slot.IsBanned())
         {
             for (CPetal*& petal : slot.m_p_petals)
             {
@@ -294,7 +338,7 @@ void CFlower::Tick(float dt)
 
     for (auto& slot : m_slots)
     {
-        if (slot.m_available && !slot.m_banned) slot.Tick(dt, this, true);
+        if (slot.m_available && !slot.IsBanned()) slot.Tick(dt, this, true);
     }
 }
 void CFlower::Heal(float amount)
@@ -339,7 +383,7 @@ void CFlower::ClampShieldToMaxHealth()
     m_shield = std::clamp(m_shield, 0.f, std::max(0.f, shield_cap));
 }
 
-void CFlower::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
+void CFlower::OnTakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
 {
     if (ShouldBlockDiggingDamage(this, attacker, damage_type)) return;
 
@@ -363,7 +407,7 @@ void CFlower::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
     dmg -= absorbed;
     if (dmg <= 0.f) return;
 
-    CAttackableMob<SFlowerStats>::TakeDamage(dmg, attacker, damage_type);
+    CAttackableMob<SFlowerStats>::OnTakeDamage(dmg, attacker, damage_type);
 }
 
 void CFlower::ClearPetals()
@@ -417,11 +461,7 @@ void CFlower::ReloadPetals()
             if (slot.m_p_petals[i])
             {
                 CPetal* petal = slot.m_p_petals[i];
-                // Reloading a slot bypasses CPetalSlot::ClearPetal(). Make
-                // sure behavior-owned attachments (notably Egg summons) are
-                // cleared before the petal is replaced. Without this callback
-                // the egg's OnPetalDestroyed() sees an already spawned summon
-                // and deliberately keeps it alive.
+                // 替换花瓣前先清理行为附属物，尤其是 Egg 召唤物；此路径不会经过 ClearPetal。
                 petal->NotifyCleared();
                 petal->MarkForDestroy(EEntityRemovalReason::Replaced);
                 slot.m_p_petals[i] = nullptr;
@@ -438,8 +478,7 @@ void CFlower::ReloadPetals()
 
 bool CFlower::ArePetalsSuppressed() const
 {
-    // Digging is checked directly as well: a state can expire between the
-    // world phases, and its destructor may request a reload immediately.
+    // 直接读取挖掘状态，使来源撤销时能立即更新重载限制。
     return m_capabilities.Restricted(ECapabilityRestriction::Petals) || HasState<CDiggingState>();
 }
 
@@ -468,7 +507,7 @@ bool CFlower::TryStartBurrowFromShovel()
 
     for (auto& slot : m_slots)
     {
-        if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
+        if (!slot.m_available || slot.IsBanned() || !slot.m_p_proto) continue;
         if (slot.m_p_proto->m_type != EPetalType::Shovel) continue;
 
         for (size_t i = 0; i < slot.m_p_petals.size(); ++i)
@@ -496,7 +535,7 @@ CPetal* CFlower::GetMoonPetal() const
 {
     for (const auto& slot : m_slots)
     {
-        if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
+        if (!slot.m_available || slot.IsBanned() || !slot.m_p_proto) continue;
         if (slot.m_p_proto->m_type != EPetalType::Moon) continue;
 
         for (CPetal* petal : slot.m_p_petals)
@@ -552,7 +591,7 @@ bool CFlower::EquipPetal(int slot_index, const CPetalPrototype* proto, ERarity r
 {
     if (slot_index < 0 || slot_index >= static_cast<int>(m_slots.size())) return false;
     if (!m_slots[slot_index].m_available) return false;
-    if (m_slots[slot_index].m_banned) return false;
+    if (m_slots[slot_index].IsBanned()) return false;
     if (!proto || !proto->m_p_behavior) return false;
 
     m_slots[slot_index].SetPetal(proto, slot_index, rarity);
@@ -562,11 +601,44 @@ bool CFlower::EquipPetal(int slot_index, const CPetalPrototype* proto, ERarity r
     return true;
 }
 
+void CFlower::InstallPreparedLoadout(std::vector<std::optional<CPetalSlot>> prepared)
+{
+    assert(prepared.size() == m_slots.size());
+    // 槽位已完成校验和分配；先完成所有清理回调，再转移限制并重算互斥，因为回调可能撤销其他槽位的效果。
+    for (size_t i = 0; i < prepared.size(); ++i)
+        if (prepared[i]) m_slots[i].ClearPetal();
+    for (size_t i = 0; i < prepared.size(); ++i)
+        if (prepared[i])
+        {
+            prepared[i]->TakeRestrictionsFrom(m_slots[i]);
+            m_slots[i] = std::move(*prepared[i]);
+        }
+    for (const auto& slot : m_slots)
+        if (slot.m_p_proto) ApplyExclusivity(slot.m_p_proto->m_type);
+    MarkFinalStatsDirty();
+}
+
+void CFlower::InstallPreparedProgress(std::vector<CPetalSlot> prepared, int capacity)
+{
+    for (auto& slot : m_slots) slot.ClearPetal();
+    DestroyPetalEntities();
+    for (size_t i = 0; i < prepared.size() && i < m_slots.size(); ++i)
+    {
+        prepared[i].TakeRestrictionsFrom(m_slots[i]);
+        prepared[i].SetPolicyBan(false);
+    }
+    m_slots.swap(prepared);
+    m_petal_slot_capacity = std::max(0, capacity);
+    m_petal_num_max = static_cast<int>(m_slots.size());
+    for (const auto& slot : m_slots)
+        if (slot.m_p_proto) ApplyExclusivity(slot.m_p_proto->m_type);
+    MarkFinalStatsDirty();
+}
+
 void CFlower::RefreshTargetRadiusFromFinalStats()
 {
     m_target_radius = std::max(0.f, m_final_stats.radius);
-    // Runtime systems use the actual collision radius. The requested stat
-    // radius remains in m_target_radius until the next rebuild.
+    // 运行时使用真实碰撞半径，属性目标保存在 m_target_radius，并在运动阶段插值。
     m_final_stats.radius = std::max(0.f, Radius());
 }
 
@@ -592,7 +664,7 @@ void CFlower::LoadPetalSlot(int slot_index, const CPetalPrototype* proto, ERarit
 
     CPetalSlot& slot = m_slots[slot_index];
     slot.m_available = true;
-    slot.m_banned = false;
+    slot.SetPolicyBan(false);
     slot.SetPetal(proto, slot_index, rarity);
     if (!proto->m_p_behavior->GetPetalStats(rarity).stack) ApplyExclusivity(proto->m_type);
     MarkFinalStatsDirty();
@@ -648,11 +720,9 @@ bool CFlower::CanUnequipPetal(int slot_index) const
     const CPetalSlot& slot = m_slots[slot_index];
     if (!slot.m_p_proto) return false;
 
-    if (!slot.m_available || slot.m_banned) return true;
+    if (!slot.m_available || slot.IsBanned()) return true;
 
-    // Bandage undead states and corruption no longer pin their slot: the
-    // player may always swap or unequip them (undead stays applied until it
-    // expires or the flower respawns; corruption keeps draining while on).
+    // 绷带续命不锁定原槽位，卸装不撤销已经应用的独立状态。
     return true;
 }
 
@@ -719,13 +789,13 @@ void CFlower::RefreshNullificationState()
     ERarity best_rarity = ERarity::Null;
     for (const auto& slot : m_slots)
     {
-        if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
+        if (!slot.m_available || slot.IsBanned() || !slot.m_p_proto) continue;
         if (slot.m_p_proto->m_type != EPetalType::Nullification) continue;
         if (GetRarityValueRank(slot.m_stored_rarity) > GetRarityValueRank(best_rarity))
             best_rarity = slot.m_stored_rarity;
     }
 
-    // Some world controllers keep every player flower permanently nullified.
+    // 世界规则可以强制维持玩家花朵的无效化状态。
     if (best_rarity == ERarity::Null)
     {
         CGameWorld* world = GameWorld();
@@ -734,6 +804,7 @@ void CFlower::RefreshNullificationState()
     }
 
     auto states = FindStates<CNullificationState>();
+    std::erase_if(states, [](const auto* state) { return !state->IsRuleManaged(); });
     if (best_rarity == ERarity::Null)
     {
         for (auto* state : states)
@@ -743,7 +814,8 @@ void CFlower::RefreshNullificationState()
 
     if (states.empty())
     {
-        AddState(std::make_unique<CNullificationState>(this, endless, best_rarity));
+        auto state = std::make_unique<CNullificationState>(this, endless, best_rarity);
+        state->SetRuleManaged(true); AddState(std::move(state));
         return;
     }
 
@@ -768,13 +840,12 @@ static bool InsideCorruptionSpreadRange(const CFlower* self)
         if (in_range || !entity || entity == self || entity->IsMarkedForDes() || entity->IsDead()) return;
         const auto* flower = dynamic_cast<const CFlower*>(entity);
         if (!flower) return;
-        const auto* state = flower->FindFirstState<CCorruptionState>();
-        if (!state || !state->Spreads()) return;
-        const float radius = state->m_rarity == ERarity::Primordial
-                                 ? game_config::default_corruption_radius_primordial
-                                 : game_config::default_corruption_radius_above_ultra;
-        if (radius <= 0.f) return;
-        if (DistanceSq(self->Pos(), flower->Pos()) <= radius * radius) in_range = true;
+        flower->ForEachState<CCorruptionState>([&](const auto* state) {
+            if (!state->Spreads()) return;
+            const float radius = state->m_rarity == ERarity::Primordial
+                ? game_config::default_corruption_radius_primordial : game_config::default_corruption_radius_above_ultra;
+            if (radius > 0.f && DistanceSq(self->Pos(), flower->Pos()) <= radius * radius) in_range = true;
+        });
     });
     return in_range;
 }
@@ -784,19 +855,17 @@ void CFlower::RefreshCorruptionState()
     ERarity best_rarity = ERarity::Null;
     for (const auto& slot : m_slots)
     {
-        if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
+        if (!slot.m_available || slot.IsBanned() || !slot.m_p_proto) continue;
         if (slot.m_p_proto->m_type != EPetalType::Corruption) continue;
         if (GetRarityValueRank(slot.m_stored_rarity) > GetRarityValueRank(best_rarity))
             best_rarity = slot.m_stored_rarity;
     }
 
     auto states = FindStates<CCorruptionState>();
+    std::erase_if(states, [](const auto* state) { return !state->IsRuleManaged(); });
     if (best_rarity == ERarity::Null)
     {
-        // No corruption petal equipped: the state survives only while this
-        // flower stays inside another corruptor's spread radius. Unequipping
-        // or leaving the range ends the state and the destructor restores the
-        // original team.
+        // 无装备且离开传播范围时只撤销规则派生腐化，独立状态继续自身生命周期。
         if (!InsideCorruptionSpreadRange(this))
         {
             for (auto* state : states)
@@ -809,8 +878,10 @@ void CFlower::RefreshCorruptionState()
 
     if (states.empty())
     {
-        AddState(std::make_unique<CCorruptionState>(this, endless, best_rarity));
+        auto state = std::make_unique<CCorruptionState>(this, endless, best_rarity);
+        state->SetRuleManaged(true); AddState(std::move(state));
         states = FindStates<CCorruptionState>();
+        std::erase_if(states, [](const auto* state) { return !state->IsRuleManaged(); });
     } else
     {
         states.front()->m_rarity = best_rarity;
@@ -820,6 +891,7 @@ void CFlower::RefreshCorruptionState()
             RemoveState(states[i]);
         }
         states = FindStates<CCorruptionState>();
+        std::erase_if(states, [](const auto* state) { return !state->IsRuleManaged(); });
     }
 
     float radius = 0.f;
@@ -835,17 +907,35 @@ void CFlower::RefreshCorruptionState()
         if (!entity || entity == this || entity->IsMarkedForDes() || entity->IsDead()) return;
         auto* flower = dynamic_cast<CFlower*>(entity);
         if (!flower) return;
-        if (!flower->HasState<CCorruptionState>())
-            flower->AddState(std::make_unique<CCorruptionState>(flower, endless, best_rarity));
+        const auto states = flower->FindStates<CCorruptionState>();
+        if (std::none_of(states.begin(), states.end(), [](const auto* state) { return state->IsRuleManaged(); }))
+        {
+            auto state = std::make_unique<CCorruptionState>(flower, endless, best_rarity);
+            state->SetRuleManaged(true); flower->AddState(std::move(state));
+        }
     });
 }
 
 void CFlower::SetBanned(bool banned, int slot_index)
 {
     if (slot_index < 0 || slot_index >= static_cast<int>(m_slots.size())) return;
-    if (m_slots[slot_index].m_banned == banned) return;
-    m_slots[slot_index].m_banned = banned;
+    if (m_slots[slot_index].IsPolicyBanned() == banned) return;
+    m_slots[slot_index].SetPolicyBan(banned);
     MarkFinalStatsDirty();
+}
+
+void CFlower::SetSlotBanSource(std::uint64_t source, int slot_index, bool banned)
+{
+    if (slot_index < 0 || slot_index >= static_cast<int>(m_slots.size())) return;
+    const bool previous = m_slots[slot_index].IsBanned();
+    m_slots[slot_index].SetBanSource(source, banned);
+    if (previous != m_slots[slot_index].IsBanned()) MarkFinalStatsDirty();
+}
+
+void CFlower::RevokeStateEffects(std::uint64_t source)
+{
+    CMobBase::RevokeStateEffects(source);
+    for (size_t i = 0; i < m_slots.size(); ++i) SetSlotBanSource(source, static_cast<int>(i), false);
 }
 
 void CFlower::InitSlots()
@@ -857,6 +947,8 @@ void CFlower::InitSlots()
     {
         m_slots[i].m_slot_index = static_cast<int>(i);
     }
+    for (const auto* state : FindStates<CBanSlotState>())
+        SetSlotBanSource(state->EffectSourceId(), state->GetSlotIndex(), true);
 }
 
 void CFlower::SetPetalSlotCapacity(int capacity)
@@ -923,7 +1015,7 @@ bool CFlower::HasNonYinYangPetals() const
 {
     for (const auto& slot : m_slots)
     {
-        if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
+        if (!slot.m_available || slot.IsBanned() || !slot.m_p_proto) continue;
         if (slot.m_p_proto->m_type != EPetalType::YinYang && slot.GetCurrentCopyCount(this) > 0) return true;
     }
     return false;
@@ -933,7 +1025,7 @@ bool CFlower::HasActivePetal(EPetalType type, ERarity rarity) const
 {
     for (const auto& slot : m_slots)
     {
-        if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
+        if (!slot.m_available || slot.IsBanned() || !slot.m_p_proto) continue;
         if (slot.m_p_proto->m_type != type) continue;
         if (rarity == ERarity::Null || slot.m_stored_rarity == rarity) return true;
     }
@@ -957,6 +1049,8 @@ CPlayerFlower::CPlayerFlower(CGameWorld* pworld, florrbt::Vector2f pos, float r,
 
 void CPlayerFlower::RebuildFinalStats()
 {
+    // 死亡期间只保存下一次配装，尸体保留死亡瞬间的外观和属性。
+    if (m_is_dead) return;
     float old_max = m_final_stats.max_health;
 
     m_final_stats = BuildPlayerFlowerLevelStats(m_base_stats, m_level);
@@ -983,8 +1077,7 @@ void CPlayerFlower::RebuildFinalStats()
     RefreshTargetRadiusFromFinalStats();
     if (old_max > 0.f && new_max > 0.f && new_max != old_max) Health() = Health() * new_max / old_max;
     if (new_max > 0.f) Health() = std::clamp(Health(), 0.f, new_max);
-    // Capacity changes never scale or fill mana. Removing capacity only clips
-    // the amount that no longer fits.
+    // 容量变化不按比例补充法力，仅裁剪超出新上限的部分。
     Mana() = std::clamp(Mana(), 0.f, std::max(0.f, m_final_stats.max_mana));
     ClampShieldToMaxHealth();
     FinishFinalStatsRebuild();
@@ -993,8 +1086,7 @@ void CPlayerFlower::RebuildFinalStats()
 void CPlayerFlower::RefreshTalentSlotCount()
 {
     const IGameController* controller = GameWorld() ? GameWorld()->GetController() : nullptr;
-    // Room-owned cards and slot counts are never account inventory. In
-    // particular, shrinking them must not persist pheromones as removed loot.
+    // 玩法提供的卡片和槽位不是账号库存，缩减时不能把信息素等代理卡片持久化为战利品。
     if (controller && controller->LocksPetalLoadout()) return;
     int slot_count = std::clamp(game_config::mob_player_flower_initial_petal_slots, 0,
                                 std::max(0, game_config::mob_player_flower_max_petal_slots));
@@ -1018,13 +1110,13 @@ void CPlayerFlower::RefreshTalentSlotCount()
             slot.m_p_proto = nullptr;
             slot.m_stored_rarity = ERarity::Null;
             slot.m_available = true;
-            slot.m_banned = false;
+            slot.SetPolicyBan(false);
             changed = true;
 
             if (player && player->IsAuthenticated())
             {
-                CAccountDataStore::AddItem(player->GetProgressAccountName(), old_type, old_rarity, 1);
-                CAccountDataStore::ClearSlot(player->GetProgressAccountName(), static_cast<uint8_t>(i));
+                CAccountDataStore::AddItem(player->GetInventoryAccountName(), old_type, old_rarity, 1);
+                CAccountDataStore::ClearSlot(player->GetInventoryAccountName(), static_cast<uint8_t>(i));
             }
         }
     }
@@ -1064,7 +1156,7 @@ void CPlayerFlower::TakeExp(std::int64_t exp)
 
 std::int64_t CPlayerFlower::ExpRequired() const { return GetRequiredPlayerExperience(m_level); }
 
-void CPlayerFlower::Tick(float dt)
+void CPlayerFlower::OnTickActions(float dt)
 {
     if (m_is_dead)
     {
@@ -1074,14 +1166,14 @@ void CPlayerFlower::Tick(float dt)
         return;
     }
 
-    CFlower::Tick(dt);
+    CFlower::OnTickActions(dt);
 }
 
-void CPlayerFlower::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
+void CPlayerFlower::OnTakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
 {
     if (m_is_dead) return;
 
-    CFlower::TakeDamage(dmg, attacker, damage_type);
+    CFlower::OnTakeDamage(dmg, attacker, damage_type);
     if (IsMarkedForDes())
     {
         CGameContext* context = GameContext();
@@ -1110,7 +1202,7 @@ void CPlayerFlower::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_
             {
                 CancelDestroy();
                 Health() = std::max(1.f, Health());
-                AddState(std::make_unique<CInvincibleState>(this, invincible_time, GetRarity()));
+                AddState(std::make_unique<CInvincibleState>(this, invincible_time, GetRarity()), EStateApplyTiming::DamageProtection);
                 return;
             }
         }
@@ -1166,10 +1258,10 @@ bool CPlayerFlower::ReviveFromYggdrasil(float health_fraction)
     for (auto* undead : FindStates<CUndeadState>())
     {
         undead->CancelDeathOnDestroy();
-        RemoveState(undead);
+        RemoveState(undead, EStateApplyTiming::DamageProtection);
     }
     for (auto* corruption : FindStates<CCorruptionState>())
-        RemoveState(corruption);
+        RemoveState(corruption, EStateApplyTiming::DamageProtection);
     m_is_dead = false;
     CancelDestroy();
     RebuildFinalStats();
@@ -1178,7 +1270,7 @@ bool CPlayerFlower::ReviveFromYggdrasil(float health_fraction)
     m_vel = { 0.f, 0.f };
     m_attacking = false;
     m_defending = false;
-    AddState(std::make_unique<CInvincibleState>(this, 1.f, GetRarity()));
+    AddState(std::make_unique<CInvincibleState>(this, 1.f, GetRarity()), EStateApplyTiming::DamageProtection);
     return true;
 }
 
@@ -1203,8 +1295,8 @@ void CPlayerFlower::ConsumeCorruptionPetalsOnDeath()
         cleared = true;
         if (player && player->IsAuthenticated())
         {
-            if (should_unequip) CAccountDataStore::AddItem(player->GetProgressAccountName(), old_type, old_rarity, 1);
-            CAccountDataStore::ClearSlot(player->GetProgressAccountName(), static_cast<uint8_t>(i));
+            if (should_unequip) CAccountDataStore::AddItem(player->GetInventoryAccountName(), old_type, old_rarity, 1);
+            CAccountDataStore::ClearSlot(player->GetInventoryAccountName(), static_cast<uint8_t>(i));
         }
     }
 
@@ -1228,7 +1320,7 @@ bool CPlayerFlower::TryEnterUndeadFromBandage()
     for (size_t i = 0; i < slots.size(); ++i)
     {
         const CPetalSlot& slot = slots[i];
-        if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
+        if (!slot.m_available || slot.IsBanned() || !slot.m_p_proto) continue;
         if (slot.m_p_proto->m_type != EPetalType::Bandage) continue;
         if (GetRarityValueRank(slot.m_stored_rarity) > GetRarityValueRank(best_rarity))
         {
@@ -1243,8 +1335,8 @@ bool CPlayerFlower::TryEnterUndeadFromBandage()
     if (duration <= 0.f) return false;
 
     Health() = 1.f;
-    AddState(std::make_unique<CUndeadState>(this, duration, best_rarity, best_slot));
-    AddState(std::make_unique<CNoReviveState>(this, game_config::default_bandage_no_revive_duration, best_rarity));
+    AddState(std::make_unique<CUndeadState>(this, duration, best_rarity, best_slot), EStateApplyTiming::DamageProtection);
+    AddState(std::make_unique<CNoReviveState>(this, game_config::default_bandage_no_revive_duration, best_rarity), EStateApplyTiming::DamageProtection);
     return true;
 }
 
@@ -1262,7 +1354,7 @@ void CPlayerFlower::BeginBloodSacrifice()
     for (size_t i = 0; i < slots.size(); ++i)
     {
         CPetalSlot& slot = slots[i];
-        if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
+        if (!slot.m_available || slot.IsBanned() || !slot.m_p_proto) continue;
         if (slot.m_p_proto->m_type != EPetalType::BloodSacrifice) continue;
 
         for (const FlorrBtMap::Zone& zone : map->zones)
@@ -1330,5 +1422,5 @@ void CPlayerFlower::ClearBloodSacrificeSlot(int slot_index)
     CGameContext* context = GameContext();
     CPlayer* player = context ? context->FindPlayerFromEntity(this) : nullptr;
     if (player && player->IsAuthenticated())
-        CAccountDataStore::ClearSlot(player->GetProgressAccountName(), static_cast<uint8_t>(slot_index));
+        CAccountDataStore::ClearSlot(player->GetInventoryAccountName(), static_cast<uint8_t>(slot_index));
 }

@@ -1,5 +1,4 @@
-// Reusable rectangular mob/petal type picker. Rarity deliberately belongs
-// to the calling form and is never mixed into the type catalogue.
+// 类型选择器只处理类型，稀有度由调用表单管理。
 export function createDebugTypePicker({ host, getIcon, getName = entry => entry.name }) {
   let pending = null;
   const overlay = document.createElement("div"); overlay.className = "dev-picker-shade"; overlay.hidden = true;

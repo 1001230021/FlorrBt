@@ -20,9 +20,7 @@ struct MoonOrbitMotion
     Vector2f final_velocity{};
 };
 
-// The orbit is a kinematic component, not a tether to the spawn point.
-// Keep external impulses separately by subtracting the last orbit velocity.
-// Rebase on the actual position so wall/contact corrections never snap back.
+// 扣除上次轨道速度以保留外部冲量，并以实际位置重设轨道基点，避免碰撞修正后回弹。
 inline MoonOrbitMotion StepDriftingMoonOrbit(Vector2f position, Vector2f velocity, Vector2f& center,
                                              Vector2f& orbit_velocity, float& phase, float radius,
                                              float angular_speed, float slowdown_time, float dt)
@@ -40,9 +38,8 @@ inline MoonOrbitMotion StepDriftingMoonOrbit(Vector2f position, Vector2f velocit
     return { orbit_velocity + drift / dt, orbit_velocity + external_velocity * decay };
 }
 
-// Wax-priority resistance modifies *raw-mass-derived* mobility, not a fixed
-// 8/92 split. Locked mobs remain immovable. Active Wax uses ordinary mass
-// weights without the global mob-contact exponent.
+// Wax 阻力调整由原始质量推导的可移动权重；锁定生物仍不可移动。
+// 主动 Wax 使用普通质量权重，不应用生物接触的全局指数。
 inline CircleContactWeights ComputeWaxContactWeights(float wax_mass, float mob_mass, bool mob_locked,
                                                       float mass_exponent, bool wax_priority,
                                                       float priority_fraction)

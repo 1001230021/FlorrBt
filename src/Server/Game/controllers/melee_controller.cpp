@@ -6,7 +6,7 @@
 #include "../entities/petals/petal.h"
 #include "../entities/projectile.h"
 #include "../gameworld.h"
-#include "../../server.h"
+#include "../gamecontext.h"
 #include "../state_zone.h"
 #include "../states/states.h"
 #include <algorithm>
@@ -100,9 +100,7 @@ float TargetSearchQueryRange(CMobBase* mob, float edge_range)
 
 float EffectiveTargetSearchRange(const CMobBase* mob, float configured_range)
 {
-    // Hornet's horizon is the missile travel distance and must not double as
-    // its AI sight limit. Use a full-world entity walk instead of a giant
-    // spatial-grid radius, which would visit millions of empty cells.
+    // 黄蜂的 horizon 表示弹药射程，不作为 AI 视野上限；全域索敌遍历实体，避免扫描巨量空网格。
     return mob && mob->GetMobType() == EMobType::Hornet ? unlimited_target_search_range : configured_range;
 }
 
@@ -323,10 +321,7 @@ CEntity* FindClosestHoneyTarget(CMobBase* mob, float search_range, SEntityHandle
     return FirstVisibleMeleeTarget(mob, candidates);
 }
 
-// Flowers lit by a bulb are directly targetable by neutral mobs up to the
-// mob's own search range plus the bulb's radius bonus. Scanned with a wider
-// query, but only bulb flowers pass the per-flower range check, so non-bulb
-// flowers never leak into the neutral mob's target list.
+// 灯泡照亮的花朵可扩大中立生物的目标范围；扩大查询后仍逐花验证，普通花朵不能因此进入目标列表。
 CEntity* FindClosestBulbTarget(CMobBase* mob, float search_range, SEntityHandle ignored_ref = {},
                                SEntityHandle ignored_owner_ref = {})
 {
@@ -382,9 +377,7 @@ CEntity* FindClosestMeleeTarget(CMobBase* mob, float search_range, SEntityHandle
 
         if (IsValidHoneyTarget(mob, candidate, ignored_ref, ignored_owner_ref))
         {
-            // Even an unbounded Hornet only treats Honey as an attractor in
-            // the normal attraction radius. The dedicated Honey scan remains
-            // the high-priority path and can overwrite the current target.
+            // 黄蜂即使全域索敌，也只在正常范围内受 Honey 吸引；专用扫描可覆盖当前目标。
             if (unlimited_search)
             {
                 const float honey_range = std::max(0.f, game_config::default_honey_attract_range);
@@ -583,7 +576,7 @@ void FaceTarget(CMobBase* mob, const CEntity* target)
     mob->FacingAngle() = std::atan2(delta.y, delta.x);
     mob->HasFacing() = true;
 }
-} // namespace
+}
 
 void CMeleeController::CaptureSnapshot(CSnapshotWriter& writer) const
 {
@@ -942,10 +935,7 @@ void CMeleeController::LoseTarget(CMobBase* mob)
 
 CEntity* CMeleeController::ResolveTarget(CMobBase* mob)
 {
-    // An empty handle is the normal random-wander state, not a lost entity
-    // target. Clearing wander state here made every caller pick a fresh point
-    // on every tick, so mobs mostly rotated in place instead of committing to
-    // the selected destination.
+    // 空句柄表示正常游走，不能据此每帧重置随机目标，否则生物会原地反复转向。
     if (!m_target_ref.IsValid()) return nullptr;
 
     CGameWorld* world = mob ? mob->GameWorld() : nullptr;
@@ -1107,10 +1097,7 @@ void CMeleeController::MoveTowardsWanderTarget(CMobBase* mob, float dt)
 {
     if (!mob) return;
 
-    // An idle wander target is deliberately represented by the position at
-    // which the mob entered idle. Collision resolution can move the mob after
-    // that point, so chasing the stale coordinate creates visible back-and-
-    // forth twitching. Re-anchor idle movement every tick and only brake.
+    // 静止游走时以当前位置制动，避免碰撞位移后追逐旧坐标产生来回抖动。
     if (m_random_idle)
     {
         m_target_pos = mob->Pos();
@@ -1121,14 +1108,11 @@ void CMeleeController::MoveTowardsWanderTarget(CMobBase* mob, float dt)
     mob->MoveTowards(m_target_pos, dt, m_target_radius);
 }
 
-void CFireflyLarvaController::OnTick(CMobBase* mob, float dt)
+void CFireflyLarvaController::OnActions(CMobBase* mob, float dt)
 {
-    CMeleeController::OnTick(mob, dt);
     if (!mob || !mob->GameWorld() || mob->IsDead() || mob->IsMarkedForDes()) return;
 
-    // Deliberately do not mirror CanCastSkill or contact checks here. The
-    // controller supplies intent; the skill remains the sole authority over
-    // whether that intent is currently legal.
+    // 控制器只提交意图，技能统一判断接触、阵营、冷却与当前状态。
     if (auto* skill_caster = dynamic_cast<ISkillCasterMob*>(mob))
         skill_caster->TryCastSkill(0, ResolveTarget(mob));
 }
@@ -1281,10 +1265,14 @@ void CLeafcutterSoldierController::OnTick(CMobBase* mob, float dt)
     if (targeting_leaf_piece) SetLeafPieceTarget(target);
     else ClearLeafPieceTarget();
 
-    if (targeting_leaf_piece && !GetCarried(mob)) TryPickup(mob, target);
 }
 
-// ============ Summoned ============
+void CLeafcutterSoldierController::OnActions(CMobBase* mob, float)
+{
+    if (!mob || mob->IsDead() || mob->IsMarkedForDes() || GetCarried(mob)) return;
+    if (auto* target = ResolveLeafPieceTarget(mob)) TryPickup(mob, target);
+}
+
 void CMeleeController::OnWorldChanged(CMobBase* mob)
 {
     ClearTarget(); ResetWanderProgress();
@@ -1419,7 +1407,6 @@ void CSummonedMeleeController::OnTick(CMobBase* mob, float dt)
     }
 }
 
-// ============ Neutral ============
 
 void CNeutralMeleeController::OnTick(CMobBase* mob, float dt)
 {
@@ -1485,9 +1472,7 @@ void CNeutralMeleeController::OnDamaged(CMobBase* mob, CEntity* attacker)
     if (!mob || !attacker) return;
     if (IsUnavailableMeleeTarget(mob, attacker)) return;
 
-    // Damage should not make a neutral mob abandon a valid target every time
-    // another entity clips it. Keep the current target until it disappears;
-    // Honey remains the explicit high-priority override in OnTick.
+    // 受击时保留仍有效的目标；Honey 才是明确的高优先级覆盖来源。
     if (CEntity* current = ResolveTarget(mob))
     {
         if (current != attacker && !IsUnavailableMeleeTarget(mob, current)) return;
@@ -1533,11 +1518,10 @@ overmind_ban_profile OvermindBanProfile(ERarity rarity)
         return {};
     }
 }
-} // namespace
+}
 
-void CTermiteOvermindController::OnTick(CMobBase* mob, float dt)
+void CTermiteOvermindController::OnActions(CMobBase* mob, float dt)
 {
-    CNeutralMeleeController::OnTick(mob, dt);
     if (!mob || !mob->GameWorld() || mob->IsDead() || mob->IsMarkedForDes()) return;
 
     const overmind_ban_profile profile = OvermindBanProfile(mob->GetRarity());
@@ -1588,7 +1572,7 @@ void CTermiteOvermindController::ApplyBanSkill(CMobBase* mob, float duration) co
         for (size_t index = 0; index < slots.size(); ++index)
         {
             const CPetalSlot& slot = slots[index];
-            if (!slot.m_available || slot.m_banned) continue;
+            if (!slot.m_available || slot.IsBanned()) continue;
 
             bool has_ban_state = false;
             for (const auto& state : flower->GetStates())
@@ -1626,7 +1610,6 @@ bool CTermiteOvermindController::RestoreSnapshot(const CSnapshotReader& reader, 
     return true;
 }
 
-// ============ Random Wander ============
 
 void CRandomWanderController::OnTick(CMobBase* mob, float dt)
 {
@@ -1673,11 +1656,9 @@ void CRandomWanderController::OnTick(CMobBase* mob, float dt)
     MoveTowardsWanderTarget(mob, dt);
 }
 
-// ============ Queen Ant ============
 
-void CQueenAntController::OnTick(CMobBase* mob, float dt)
+void CQueenAntController::OnActions(CMobBase* mob, float dt)
 {
-    CMeleeController::OnTick(mob, dt);
     CEntity* target = ResolveTarget(mob);
     if (!mob || !target || target->IsMarkedForDes() || target->IsDead()) return;
 
@@ -1694,11 +1675,9 @@ void CQueenAntController::OnTick(CMobBase* mob, float dt)
     }
 }
 
-// ============ Spider ============
 
-void CSpiderController::OnTick(CMobBase* mob, float dt)
+void CSpiderController::OnActions(CMobBase* mob, float dt)
 {
-    CMeleeController::OnTick(mob, dt);
     if (!mob || !mob->GameWorld()) return;
     if (GetLevel(mob->GetRarity()) < GetLevel(ERarity::Legendary)) return;
     CEntity* target = ResolveTarget(mob);
@@ -1715,7 +1694,6 @@ void CSpiderController::OnTick(CMobBase* mob, float dt)
     mob->GameWorld()->InsertEntity(std::move(web));
 }
 
-// ============ Crab ============
 
 float CCrabController::OrbitDistance(const CEntity* target) const
 {
@@ -1763,9 +1741,7 @@ bool CCrabController::TryStartDashSkill(CMobBase* mob, const CEntity* target)
     auto* skill_caster = dynamic_cast<ISkillCasterMob*>(mob);
     if (!skill_caster || !skill_caster->CanCastSkill(0)) return false;
 
-    // The skill API receives a non-owning target for attacks.  A crab dash
-    // only needs a direction, so aim first and let the skill use that facing;
-    // this avoids manufacturing a mutable pointer from a const target.
+    // 冲刺只需要方向；先调整朝向再请求技能，避免为只读目标制造可修改指针。
     if (!target) return false;
     const florrbt::Vector2f dash_direction = NormalizeOrZero(target->Pos() - mob->Pos());
     if (LengthSq(dash_direction) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
@@ -1773,10 +1749,7 @@ bool CCrabController::TryStartDashSkill(CMobBase* mob, const CEntity* target)
     mob->FacingAngle() = std::atan2(dash_direction.y, dash_direction.x);
     mob->HasFacing() = true;
     if (!skill_caster->TryCastSkill(0, nullptr)) return false;
-    // The entity skill is the sole owner of dash execution and cooldown.  The
-    // controller only remembers that the low-health emergency dash was used.
-    // Keeping no parallel Dash/Recovery state prevents hot-reload and manual
-    // /skill requests from observing two conflicting state machines.
+    // 冲刺和恢复状态仅由生物技能持有；控制器只记录低血量冲刺是否已用，防止出现两套状态机。
     m_low_health_dash_used = true;
     return true;
 }
@@ -1813,8 +1786,7 @@ void CCrabController::OnTick(CMobBase* mob, float dt)
         m_state = EState::Search;
     }
 
-    // Honey is the highest-priority attractor and may replace Crab's current
-    // target as soon as the Honey scan finds a valid petal.
+    // Honey 扫描发现有效目标后可立即覆盖当前目标。
     if (TryAcquireHoneyTarget(mob, stats->horizon)) target = ResolveTarget(mob);
     if (!target && TryAcquireCrabTarget(mob, stats->horizon)) target = ResolveTarget(mob);
 
@@ -1835,19 +1807,6 @@ void CCrabController::OnTick(CMobBase* mob, float dt)
     m_target_radius = target->Radius();
 
     m_state_timer += dt;
-    const float health_fraction = stats->max_health > game_config::entity_collision_epsilon
-                                      ? mob->Health() / stats->max_health
-                                      : 1.f;
-    const bool low_health = health_fraction <= std::clamp(game_config::mob_crab_dash_low_health_fraction, 0.f, 1.f);
-    auto* skill_caster = dynamic_cast<ISkillCasterMob*>(mob);
-    const bool dash_ready = skill_caster && skill_caster->CanCastSkill(0);
-    if (m_state == EState::Strafe && dash_ready &&
-        (m_state_timer >= m_strafe_duration || (low_health && !m_low_health_dash_used)))
-    {
-        TryStartDashSkill(mob, target);
-        return;
-    }
-
     m_orbit_distance = OrbitDistance(target);
     const float orbit_speed = std::max(0.f, game_config::mob_crab_orbit_speed) * m_orbit_speed_scale;
     m_orbit_angle += m_orbit_direction * orbit_speed / std::max(m_orbit_distance, mob->Radius()) * dt;
@@ -1862,14 +1821,36 @@ void CCrabController::OnTick(CMobBase* mob, float dt)
         target->Pos() + florrbt::Vector2f{ std::cos(m_orbit_angle), std::sin(m_orbit_angle) } * orbit_radius;
     mob->MoveTowards(orbit_target, dt, -1.f);
 
-    // Strafing changes the velocity target, not the Crab's attention. Keep
-    // the body aimed at the locked player while its legs carry it sideways.
+    // 侧移只改变速度目标，身体仍朝向锁定对象。
     const florrbt::Vector2f look = target->Pos() - mob->Pos();
     if (LengthSq(look) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
     {
         mob->FacingAngle() = std::atan2(look.y, look.x);
         mob->HasFacing() = true;
     }
+}
+
+void CCrabController::OnActions(CMobBase* mob, float)
+{
+    if (!mob || !mob->GameWorld() || mob->IsDead() || mob->IsMarkedForDes()) return;
+    const auto* crab = dynamic_cast<const ICrabDashMob*>(mob);
+    if (crab && (crab->IsDashActive() || crab->IsDashRecovering())) return;
+    CEntity* target = ResolveTarget(mob);
+    const SMobStats* stats = mob->GetFinalStats();
+    if (!target || target->IsDead() || target->IsMarkedForDes() || !stats) return;
+    const float health_fraction = stats->max_health > game_config::entity_collision_epsilon
+                                      ? mob->Health() / stats->max_health
+                                      : 1.f;
+    const bool low_health = health_fraction <= std::clamp(game_config::mob_crab_dash_low_health_fraction, 0.f, 1.f);
+    auto* skill_caster = dynamic_cast<ISkillCasterMob*>(mob);
+    const bool dash_ready = skill_caster && skill_caster->CanCastSkill(0);
+    if (m_state == EState::Strafe && dash_ready &&
+        (m_state_timer >= m_strafe_duration || (low_health && !m_low_health_dash_used)))
+    {
+        TryStartDashSkill(mob, target);
+        return;
+    }
+
 }
 
 void CCrabController::CaptureSnapshot(CSnapshotWriter& writer) const
@@ -1892,10 +1873,7 @@ bool CCrabController::RestoreSnapshot(const CSnapshotReader& reader, std::uint32
 {
     if (!CMeleeController::RestoreSnapshot(reader, version, error)) return false;
     const int state = reader.Int("state", static_cast<int>(EState::Search));
-    // Runtime snapshots written by the old controller used 2/3 for the
-    // controller-owned Dash/Recovery states.  Those states are now owned by
-    // the Crab skill entity, so restore them as Search instead of reviving a
-    // dead second state machine.
+    // 旧快照中的 Dash/Recovery 编号 2/3 已迁入实体技能；控制器将它们恢复为 Search。
     m_state = state == static_cast<int>(EState::Strafe) ? EState::Strafe : EState::Search;
     m_state_timer = FiniteNonNegative(reader.Float("state_timer"));
     m_orbit_angle = FiniteOr(reader.Float("orbit_angle"), 0.f);
@@ -1917,7 +1895,6 @@ bool CCrabController::RestoreSnapshot(const CSnapshotReader& reader, std::uint32
     return true;
 }
 
-// ============ Hornet Ranged ============
 
 void CHornetRangedController::OnTick(CMobBase* mob, float dt)
 {
@@ -1980,6 +1957,13 @@ void CHornetRangedController::OnTick(CMobBase* mob, float dt)
     if (target_dist <= stop_distance) mob->MoveTowards(mob->Pos(), dt);
     else mob->MoveTowards(m_target_pos, dt, m_target_radius);
 
+}
+
+void CHornetRangedController::OnActions(CMobBase* mob, float)
+{
+    if (!mob || !mob->GameWorld() || mob->IsDead() || mob->IsMarkedForDes()) return;
+    CEntity* target = ResolveTarget(mob);
+    if (!target || target->IsDead() || target->IsMarkedForDes()) return;
     float missile_range = HornetMissileSpeed(mob->GetRarity()) * game_config::default_missile_lifetime;
     if (TargetEdgeDistanceSq(mob, target) <=
         missile_range * missile_range * game_config::mob_hornet_missile_close_range_squared_multiplier)
@@ -1988,22 +1972,17 @@ void CHornetRangedController::OnTick(CMobBase* mob, float dt)
     }
 }
 
-// ============ Jellyfish ============
 
-void CJellyfishController::OnTick(CMobBase* mob, float dt)
+void CJellyfishController::OnActions(CMobBase* mob, float dt)
 {
-    // Keep Hornet's target acquisition and slow ranged movement. Jellyfish do
-    // not fire a missile: their attack is an independent passive pulse.
-    CHornetRangedController::OnTick(mob, dt);
+    // 水母只执行独立的被动脉冲，不继承导弹动作。
     if (!mob || !mob->GameWorld() || mob->IsDead() || mob->IsMarkedForDes()) return;
 
     m_lightning_timer = std::max(0.f, m_lightning_timer - std::max(0.f, dt));
     if (m_lightning_timer > 0.f) return;
     m_lightning_timer = std::max(game_config::server_fixed_dt, game_config::mob_jellyfish_lightning_interval);
 
-    // The passive effect is deliberately independent of the Hornet target:
-    // every player in the lightning chain's range is eligible, including a
-    // player who is outside the Jellyfish's current aggro/vision target.
+    // 脉冲范围内的玩家均可被命中，不受当前仇恨目标限制。
     mob->GameWorld()->ChainLightning(
         *mob, JellyfishLightningDamage(mob->GetRarity()), JellyfishLightningBounces(mob->GetRarity()), mob,
         [](const CMobBase& candidate) { return dynamic_cast<const CPlayerFlower*>(&candidate) != nullptr; });
@@ -2023,7 +2002,6 @@ bool CJellyfishController::RestoreSnapshot(const CSnapshotReader& reader, std::u
     return true;
 }
 
-// ============ Mecha Flower Ranged ============
 
 void CMechaFlowerRangedController::OnTick(CMobBase* mob, float dt)
 {
@@ -2194,27 +2172,99 @@ bool CMechaFlowerRangedController::RestoreSnapshot(const CSnapshotReader& reader
     return true;
 }
 
-// ============ Special Hornet ============
 
-bool CHornetSkillActions::Tick(CMobBase* mob, float dt)
+void CHornetSkillActions::BeginTick(CMobBase* mob, float dt)
 {
-    if (!mob || !mob->GameWorld()) return false;
-    if (mob->IsDead() || mob->IsMarkedForDes()) { FinishCurrentAction(mob); return false; }
     TickCarried(mob, dt);
+    if (!mob || mob->IsDead() || mob->IsMarkedForDes()) FinishCurrentAction(mob);
+    if (m_state == EState::Skill3Charge && !GetCarried(mob)) FinishCurrentAction(mob);
+}
+
+bool CHornetSkillActions::TickMotion(CMobBase* mob, float dt)
+{
+    if (!mob || !mob->GameWorld() || mob->IsDead() || mob->IsMarkedForDes()) return false;
+    switch (m_state)
+    {
+    case EState::Skill1Windup:
+    case EState::Skill2Windup:
+        mob->m_vel *= game_config::mob_stop_damping;
+        return true;
+    case EState::Skill2Dash: {
+        // 按当前半径重建轨道，并消除外部位移造成的中心漂移。
+        m_skill2_orbit_radius = ComputeHornetSkill2OrbitRadius(*mob);
+        const SMobStats* stats = mob->GetFinalStats();
+        float speed = stats
+                          ? stats->max_velocity * game_config::mob_hornet_skill2_move_speed_multiplier
+                          : game_config::mob_hornet_max_velocity * game_config::mob_hornet_skill2_move_speed_multiplier;
+        speed *= GetMobMovementSpeedMultiplier(mob);
+        float angular_speed = HornetSkill2AngularSpeed(speed, m_skill2_orbit_radius);
+        float step = std::min(m_skill2_remaining_angle, angular_speed * dt);
+        florrbt::Vector2f current_radial = { std::cos(m_skill2_orbit_angle), std::sin(m_skill2_orbit_angle) };
+        florrbt::Vector2f expected_pos = m_skill2_orbit_center + current_radial * m_skill2_orbit_radius;
+        florrbt::Vector2f drift = mob->Pos() - expected_pos;
+        if (LengthSq(drift) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+            m_skill2_orbit_center += drift;
+
+        m_skill2_orbit_angle += m_skill2_orbit_dir * step;
+        m_skill2_remaining_angle = std::max(0.f, m_skill2_remaining_angle - step);
+
+        florrbt::Vector2f radial = { std::cos(m_skill2_orbit_angle), std::sin(m_skill2_orbit_angle) };
+        m_skill2_tangent_dir = { -radial.y * m_skill2_orbit_dir, radial.x * m_skill2_orbit_dir };
+        florrbt::Vector2f target_pos = m_skill2_orbit_center + radial * m_skill2_orbit_radius;
+        float safe_dt = std::max(game_config::entity_collision_epsilon, dt);
+        mob->m_vel = (target_pos - mob->Pos()) / safe_dt;
+        mob->FacingAngle() = std::atan2(m_skill2_tangent_dir.y, m_skill2_tangent_dir.x);
+        mob->HasFacing() = true;
+
+        return true;
+    }
+    case EState::Skill2Pause:
+        mob->m_vel = {};
+        return true;
+    case EState::Skill3Charge: return true;
+    default: return false;
+    }
+}
+
+void CHornetSkillActions::Constrain(CMobBase* mob)
+{
+    if (!mob || m_state != EState::Skill3Charge || mob->IsDead() || mob->IsMarkedForDes()) return;
+    auto* captured = dynamic_cast<CMobBase*>(GetCarried(mob));
+    if (!captured || captured->IsDead() || captured->IsMarkedForDes()) return;
+    florrbt::Vector2f mount_dir = { std::cos(mob->FacingAngle()), std::sin(mob->FacingAngle()) };
+    if (LengthSq(mount_dir) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+        mount_dir = { -m_skill3_launch_direction.x, -m_skill3_launch_direction.y };
+    else
+        mount_dir = NormalizeOrZero(mount_dir);
+    if (LengthSq(mount_dir) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
+        mount_dir = { 1.f, 0.f };
+
+    // 施法者背对目标，将捕获者固定在背部。
+    const florrbt::Vector2f back_dir = -mount_dir;
+    m_skill3_launch_pos = mob->Pos() + back_dir * (mob->Radius() * game_config::mob_hornet_missile_attach_offset);
+    captured->Pos() = m_skill3_launch_pos;
+    captured->PrevPos() = m_skill3_launch_pos;
+    captured->m_vel = { 0.f, 0.f };
+    captured->FacingAngle() = std::atan2(mount_dir.y, mount_dir.x);
+    captured->HasFacing() = true;
+}
+
+void CHornetSkillActions::TickActions(CMobBase* mob, float dt)
+{
+    if (!mob || !mob->GameWorld()) return;
+    if (mob->IsDead() || mob->IsMarkedForDes()) { FinishCurrentAction(mob); return; }
     switch (m_state)
     {
     case EState::Skill1Windup:
         m_state_timer = std::max(0.f, m_state_timer - dt);
-        mob->m_vel *= game_config::mob_stop_damping;
         if (m_state_timer <= 0.f)
         {
             PerformSkill1(mob);
             FinishCurrentAction(mob);
         }
-        return true;
+        return;
     case EState::Skill2Windup:
         m_state_timer = std::max(0.f, m_state_timer - dt);
-        mob->m_vel *= game_config::mob_stop_damping;
         if (m_state_timer <= 0.f)
         {
             const SMobStats* stats = mob->GetFinalStats();
@@ -2245,41 +2295,12 @@ bool CHornetSkillActions::Tick(CMobBase* mob, float dt)
             m_action_timer = m_state_timer;
             m_fire_timer = 0.f;
         }
-        return true;
+        return;
     case EState::Skill2Dash: {
-        // Recompute from the live body size, including a restored old orbit or
-        // a runtime config change. The drift correction below reanchors the
-        // center at the current position, so changing radius cannot teleport it.
-        m_skill2_orbit_radius = ComputeHornetSkill2OrbitRadius(*mob);
-        const SMobStats* stats = mob->GetFinalStats();
-        float speed = stats
-                          ? stats->max_velocity * game_config::mob_hornet_skill2_move_speed_multiplier
-                          : game_config::mob_hornet_max_velocity * game_config::mob_hornet_skill2_move_speed_multiplier;
-        speed *= GetMobMovementSpeedMultiplier(mob);
-        float angular_speed = HornetSkill2AngularSpeed(speed, m_skill2_orbit_radius);
-        float step = std::min(m_skill2_remaining_angle, angular_speed * dt);
-        florrbt::Vector2f current_radial = { std::cos(m_skill2_orbit_angle), std::sin(m_skill2_orbit_angle) };
-        florrbt::Vector2f expected_pos = m_skill2_orbit_center + current_radial * m_skill2_orbit_radius;
-        florrbt::Vector2f drift = mob->Pos() - expected_pos;
-        if (LengthSq(drift) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
-            m_skill2_orbit_center += drift;
-
-        florrbt::Vector2f origin = mob->Pos();
-        m_skill2_orbit_angle += m_skill2_orbit_dir * step;
-        m_skill2_remaining_angle = std::max(0.f, m_skill2_remaining_angle - step);
-
-        florrbt::Vector2f radial = { std::cos(m_skill2_orbit_angle), std::sin(m_skill2_orbit_angle) };
-        m_skill2_tangent_dir = { -radial.y * m_skill2_orbit_dir, radial.x * m_skill2_orbit_dir };
-        florrbt::Vector2f target_pos = m_skill2_orbit_center + radial * m_skill2_orbit_radius;
-        float safe_dt = std::max(game_config::entity_collision_epsilon, dt);
-        mob->m_vel = (target_pos - mob->Pos()) / safe_dt;
-        mob->FacingAngle() = std::atan2(m_skill2_tangent_dir.y, m_skill2_tangent_dir.x);
-        mob->HasFacing() = true;
-
         m_fire_timer -= dt;
         while (m_fire_timer <= 0.f && m_skill2_remaining_angle > 0.f)
         {
-            FireSkill2Missile(mob, origin);
+            FireSkill2Missile(mob, mob->Pos());
             m_fire_timer += std::max(game_config::server_fixed_dt, game_config::mob_hornet_skill2_missile_interval);
         }
 
@@ -2292,50 +2313,34 @@ bool CHornetSkillActions::Tick(CMobBase* mob, float dt)
             m_state_timer = std::max(0.f, m_state_timer - dt);
         }
     }
-        return true;
+        return;
     case EState::Skill2Pause:
         m_state_timer = std::max(0.f, m_state_timer - dt);
-        mob->m_vel = { 0.f, 0.f };
         if (m_state_timer <= 0.f) FinishCurrentAction(mob);
-        return true;
+        return;
     case EState::Skill3Charge: {
         CGameWorld* world = mob->GameWorld();
-CEntity* target = world ? world->ResolveEntity(m_skill3_target_ref) : nullptr;
+        CEntity* target = world ? world->ResolveEntity(m_skill3_target_ref) : nullptr;
         auto* captured = dynamic_cast<CMobBase*>(GetCarried(mob));
         if (!target || target->IsMarkedForDes() || target->IsDead())
         {
             FinishCurrentAction(mob);
-            return true;
+            return;
         }
         if (!captured || captured->IsMarkedForDes() || captured->IsDead())
         {
             FinishCurrentAction(mob);
-            return true;
+            return;
         }
         const SMobStats* mob_stats = mob->GetFinalStats();
         if (!mob_stats ||
             IsCurrentMeleeTargetUnavailable(mob, target, unlimited_target_search_range, dt, m_target_los_check_timer))
         {
             FinishCurrentAction(mob);
-            return true;
+            return;
         }
 
-        florrbt::Vector2f mount_dir = { std::cos(mob->FacingAngle()), std::sin(mob->FacingAngle()) };
-        if (LengthSq(mount_dir) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
-            mount_dir = { -m_skill3_launch_direction.x, -m_skill3_launch_direction.y };
-        else
-            mount_dir = NormalizeOrZero(mount_dir);
-        if (LengthSq(mount_dir) <= game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
-            mount_dir = { 1.f, 0.f };
-
-        // The caster faces away from the attack target, so the captured mob is held on its back.
-        const florrbt::Vector2f back_dir = -mount_dir;
-        m_skill3_launch_pos = mob->Pos() + back_dir * (mob->Radius() * game_config::mob_hornet_missile_attach_offset);
-        captured->Pos() = m_skill3_launch_pos;
-        captured->PrevPos() = m_skill3_launch_pos;
-        captured->m_vel = { 0.f, 0.f };
-        captured->FacingAngle() = std::atan2(mount_dir.y, mount_dir.x);
-        captured->HasFacing() = true;
+        const florrbt::Vector2f back_dir{-std::cos(mob->FacingAngle()), -std::sin(mob->FacingAngle())};
 
         m_state_timer = std::max(0.f, m_state_timer - dt);
         if (m_state_timer <= 0.f)
@@ -2353,25 +2358,25 @@ CEntity* target = world ? world->ResolveEntity(m_skill3_target_ref) : nullptr;
             FinishCurrentAction(mob);
         }
     }
-        return true;
+        return;
     case EState::Idle:
     default:
         break;
     }
 
-    return false;
+    return;
 }
 
 void CSpecialHornetController::OnTick(CMobBase* mob, float dt)
 {
     if (!mob || !mob->GameWorld() || mob->IsMovementControlledBySkill()) return;
-    if (auto* caster = dynamic_cast<ISkillCasterMob*>(mob); caster && caster->IsSkillBusy())
-    {
-        TickMovementAndTarget(mob, dt);
-        return;
-    }
-
     TickMovementAndTarget(mob, dt);
+}
+
+void CSpecialHornetController::OnActions(CMobBase* mob, float)
+{
+    if (!mob || !mob->GameWorld() || mob->IsDead() || mob->IsMarkedForDes() || mob->IsMovementControlledBySkill()) return;
+    if (auto* caster = dynamic_cast<ISkillCasterMob*>(mob); caster && caster->IsSkillBusy()) return;
 
     CEntity* target = ResolveTarget(mob);
     if (!target || target->IsMarkedForDes() || target->IsDead()) return;
@@ -2555,7 +2560,7 @@ void CHornetSkillActions::PerformSkill1(CMobBase* mob)
             florrbt::Vector2f pos = mob->Pos() + florrbt::Vector2f(std::cos(angle), std::sin(angle)) * distance;
             auto hornet = CreateMob(EMobType::Hornet, mob->GameWorld(), pos, rarity);
             if (!hornet) continue;
-            hornet->Team() = mob->Team();
+            hornet->SetTeam(mob->Team());
             if (mob->GameWorld()->CircleBlockedByWall(pos, hornet->WallCollisionRadius())) continue;
             mob->GameWorld()->InsertEntity(std::move(hornet));
             break;
@@ -2617,7 +2622,7 @@ bool CHornetSkillActions::FireSkill2Missile(CMobBase* mob, const florrbt::Vector
     auto missile =
         std::make_unique<CMissile>(mob->GameWorld(), pos, radius, rear_direction, HornetMissileSpeed(missile_rarity),
                                    damage, health, game_config::mob_hornet_skill2_missile_lifetime, mob);
-    missile->Team() = mob->Team();
+    missile->SetTeam(mob->Team());
     missile->Mass() = game_config::GetMobProjectileMassForLevel(GetLevel(missile_rarity));
     return mob->GameWorld()->InsertEntity(std::move(missile)) != nullptr;
 }
@@ -2800,7 +2805,6 @@ float CHornetSkillActions::HornetMissileHealth(ERarity rarity)
            game_config::GetMobHealthScaleForLevel(GetLevel(rarity));
 }
 
-// ============ Bumble Bee ============
 
 void CBumbleBeeController::PickTurnTimer()
 {
@@ -2823,7 +2827,7 @@ void CBumbleBeeController::SpawnPollen(CMobBase* mob) const
 
     auto pollen = std::make_unique<CPollenProjectile>(mob->GameWorld(), mob->Pos(), radius, damage, health,
                                                       game_config::mob_bumblebee_pollen_lifetime, mass, mob);
-    pollen->Team() = mob->Team();
+    pollen->SetTeam(mob->Team());
     mob->GameWorld()->InsertEntity(std::move(pollen));
 }
 
@@ -2904,6 +2908,11 @@ void CBumbleBeeController::OnTick(CMobBase* mob, float dt)
         mob->MoveTowards(target, dt);
     }
 
+}
+
+void CBumbleBeeController::OnActions(CMobBase* mob, float dt)
+{
+    if (!mob || !mob->GameWorld() || mob->IsDead() || mob->IsMarkedForDes()) return;
     m_pollen_timer += dt;
     float interval = std::max(game_config::server_fixed_dt, game_config::mob_bumblebee_pollen_interval);
     if (m_pollen_timer >= interval)
@@ -2913,9 +2922,9 @@ void CBumbleBeeController::OnTick(CMobBase* mob, float dt)
     }
 }
 
-void CFireflyController::OnTick(CMobBase* mob, float dt)
+void CFireflyController::OnActions(CMobBase* mob, float dt)
 {
-    CNeutralMeleeController::OnTick(mob, dt);
+    if (!mob || !mob->GameWorld() || mob->IsDead() || mob->IsMarkedForDes()) return;
 
     if (m_summoning_disabled) return;
     const ERarity rarity = mob->GetRarity();
@@ -2951,7 +2960,7 @@ bool CFireflyController::RestoreSnapshot(const CSnapshotReader& reader, std::uin
 void CFireflyController::TrySummonSkill(CMobBase* mob)
 {
     CEntity* target = ResolveTarget(mob);
-    if (!target) return; // Only release the skill with a target in view.
+    if (!target) return;
     CGameWorld* world = mob->GameWorld();
     if (!world) return;
 
@@ -2967,15 +2976,11 @@ void CFireflyController::TrySummonSkill(CMobBase* mob)
     if (summoned_type == EMobType::None || summoned_type == EMobType::PlayerFlower)
         summoned_type = EMobType::Firefly;
 
-    // Skill summons preserve the caster's exact rarity and are not natural
-    // spawns, so special-rarity resolution and server-wide ET/Unique
-    // occupancy rules do not alter them.
+    // 技能召唤保留施法者稀有度，不占自然刷新 ET/Unique 配额，也不执行自然稀有度替换。
     auto created = CreateMob(summoned_type, world, mob->Pos(), minion_rarity, false, false);
     if (!created) return;
 
-    // Build first so the separation uses the selected mob's real, rarity-
-    // scaled radius. Eternal+ Fireflies can be wider than the old fixed
-    // spawn range; passing min > max into a random distribution was invalid.
+    // 先构造生物再按真实半径计算间距，避免大体型使随机距离下限超过上限。
     const float separation = std::max(
         0.f, mob->Radius() + created->Radius() + game_config::entity_collision_epsilon);
     const float preferred_range =
@@ -3003,22 +3008,20 @@ void CFireflyController::TrySummonSkill(CMobBase* mob)
 
     CMobBase* raw_mob = dynamic_cast<CMobBase*>(world->InsertEntity(std::move(created)));
     if (!raw_mob) return;
-    raw_mob->Team() = mob->Team();
+    raw_mob->SetTeam(mob->Team());
     raw_mob->AddTag(EEntityTag::NoDefeatRewards);
     raw_mob->AddTag(EEntityTag::FireflySkillSummon);
 
     if (auto* controller = dynamic_cast<CFireflyController*>(raw_mob->GetController()))
     {
-        // A Firefly fallback may fight normally, but cannot recursively create
-        // another generation of habitat summons.
+        // 回退生成的萤火虫可战斗，但不能递归召唤下一代。
         controller->SetSummoningDisabled(true);
         controller->SetTarget(target);
     }
 
-    if (CServer::MeetsPetalReportRarity(raw_mob->GetRarity(), game_config::min_mob_spawn_report_rarity) &&
-        CServer::GetInstance())
-        CServer::GetInstance()->BroadcastMobReport("has been summoned", raw_mob->GetRarity(),
-                                                   GetMobTypeName(raw_mob->GetMobType()));
+    CGameContext* context = world->GameContext();
+    if (context && context->Events().ShouldReportRarity(raw_mob->GetRarity(), game_config::min_mob_spawn_report_rarity))
+        context->Events().ReportMob("has been summoned", raw_mob->GetRarity(), GetMobTypeName(raw_mob->GetMobType()));
 }
 
 int CFireflyController::CountNearbySummons(const CMobBase* mob, ERarity rarity) const

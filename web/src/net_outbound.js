@@ -1,17 +1,20 @@
 import { state } from "./app_context.js";
 
-// Outbound packet transport: the only place that touches the raw socket for
-// sending. Callers build packets with the pack* helpers from protocol.js.
+// 发送仅通过此模块访问底层连接，调用方使用协议打包函数。
 
 export function sendBytes(bytes) {
   if (!bytes || !state.ws || state.ws.readyState !== WebSocket.OPEN)
     return false;
-  state.ws.send(bytes);
-  return true;
+  try {
+    state.ws.send(bytes);
+    return true;
+  } catch (error) {
+    console.warn("WebSocket send failed", error);
+    return false;
+  }
 }
 
-// Concatenates packets into one socket write (frame boundaries stay intact:
-// each packet already carries its own framing).
+// 多个已封帧的数据拼为一次发送，保留各自帧边界。
 export function sendPacketBatch(...packets) {
   const parts = packets.filter((packet) => packet && packet.length > 0);
   if (parts.length === 0) return false;

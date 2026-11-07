@@ -22,7 +22,7 @@ float WebReferenceMass(const CEntity* owner)
     if (owner && owner->Mass() > game_config::entity_collision_epsilon) return owner->Mass();
     return std::max(game_config::entity_collision_epsilon, game_config::mob_player_flower_mass);
 }
-} // namespace
+}
 
 CStateZone::CStateZone(CGameWorld* world, florrbt::Vector2f pos, float radius, state_factory state, zone_filter filter,
                        SEntityTypeInfo entity_type)
@@ -30,7 +30,7 @@ CStateZone::CStateZone(CGameWorld* world, florrbt::Vector2f pos, float radius, s
 {
 }
 
-void CStateZone::Tick(float dt)
+void CStateZone::OnTickActions(float dt)
 {
     if (m_timer != endless)
     {
@@ -89,7 +89,7 @@ CSpiderWebZone::CSpiderWebZone(CGameWorld* world, florrbt::Vector2f pos, float r
           },
           MakeEntityType(EEntityType::StateZone, server_spider_web_entity_type))
 {
-    Team() = owner ? owner->Team() : 0;
+    SetTeam(owner ? owner->Team() : 0);
     Mass() = 0.f;
     Health() = 1.f;
     m_timer = lifetime;

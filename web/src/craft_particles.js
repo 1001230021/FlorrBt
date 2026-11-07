@@ -1,17 +1,10 @@
-// Square-particle layer for the craft stage (florr-style crafting sparks).
-//
-// A dedicated transparent canvas overlays the craft stage; bursts spawn small
-// rotating squares that fly outward, slow down and fade. The rAF loop only
-// runs while particles are alive, so an idle craft panel costs nothing.
+// 合成面板独立透明画布绘制方形粒子；仅有活跃粒子时运行动画循环。
 
 import { drawSquareParticle } from "./square_particles.js";
 
 const TWO_PI = Math.PI * 2;
 
-/**
- * Create the particle layer for `stageEl` (position: relative container).
- * burst() coordinates are stage-local CSS pixels.
- */
+/* 粒子画布附加到相对定位容器，爆发坐标为舞台内 CSS 像素。 */
 export function createCraftParticleLayer(stageEl) {
   let canvas = null;
   let ctx = null;
@@ -37,7 +30,7 @@ export function createCraftParticleLayer(stageEl) {
 
   const syncSize = () => {
     if (resizeNeeded) {
-      // Local layout pixels, not an animated ancestor's scaled bounding box.
+      // 使用本地布局像素，不使用祖先动画缩放后的包围盒。
       widthCss = Math.max(1, stageEl.clientWidth);
       heightCss = Math.max(1, stageEl.clientHeight);
       resizeNeeded = false;
@@ -89,11 +82,7 @@ export function createCraftParticleLayer(stageEl) {
   };
 
   return {
-    /**
-     * Spawn a square-particle burst at stage-local (x, y).
-     * options: count, color, speed (px/s), size (px), life (s), spread
-     * (radians of the emission arc; default full circle).
-     */
+    /* 生成方形粒子；速度为像素/秒、寿命为秒，发射角范围为弧度。 */
     burst(x, y, color, { count = 14, speed = 150, size = 7, life = 0.55, spread = TWO_PI, baseAngle = 0 } = {}) {
       if (!ensureCanvas()) return;
       resizeNeeded = true;

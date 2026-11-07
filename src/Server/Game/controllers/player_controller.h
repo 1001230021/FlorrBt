@@ -17,6 +17,7 @@ class CPlayerController : public IController
     static constexpr std::uint32_t MAX_INPUT_DELAY_TICKS = 8;
 
     void OnTick(CMobBase* mob, float dt) override;
+    void OnActions(CMobBase* mob, float dt) override;
     bool IsPlayerControlled() const override { return true; }
     std::string_view SnapshotKey() const override { return "controller.player"; }
     void CaptureSnapshot(CSnapshotWriter& writer) const override;
@@ -52,7 +53,9 @@ class CPlayerController : public IController
     florrbt::Vector2f m_move_dir = { 0.f, 0.f };
     florrbt::Vector2f m_aim_dir = { 1.f, 0.f };
     bool m_has_aim_dir = false;
+    bool m_manual_attack_held = false;
     std::array<SPendingOperate, INPUT_QUEUE_CAPACITY> m_pending_operates{};
+    std::optional<ClientOperate> m_skill_for_actions;
     std::uint64_t m_local_tick = 0;
     std::uint32_t m_last_sequence = 0;
     bool m_has_last_sequence = false;

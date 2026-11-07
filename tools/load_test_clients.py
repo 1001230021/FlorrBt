@@ -298,8 +298,8 @@ def process_frames(client: LoadClient) -> None:
             client.send_snapshot_ack(snapshot_id)
             continue
 
-        if payload[0] == 0x00 and len(payload) >= 8:
-            client.tick_rate = payload[7] or DEFAULT_TICK_RATE
+        if payload[0] == 0x00 and len(payload) >= 32 and len(payload) == 32 + payload[30]:
+            client.tick_rate = payload[17] or DEFAULT_TICK_RATE
             continue
 
         if len(payload) < 3 or payload[0] != AUTH_RESULT_TYPE:

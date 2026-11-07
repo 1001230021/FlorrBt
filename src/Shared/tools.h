@@ -5,6 +5,7 @@
 #include <cmath>
 #include <memory>
 #include <random>
+#include <string>
 #include <vector>
 
 class CEntity;
@@ -41,9 +42,7 @@ inline std::mt19937& GetRng()
 inline float GetLimitedRng(float start, float end)
 {
     std::uniform_real_distribution<float> dist(start, end);
-    // Keep every gameplay random draw on the same stream.  Hot-reload
-    // snapshots persist GetRng(); a second hidden engine here would make AI,
-    // movement and spawn decisions diverge after restore.
+    // 玩法共用快照保存的随机流，避免热重载后 AI、移动和刷怪随机序列分叉。
     return dist(GetRng());
 }
 
@@ -215,4 +214,15 @@ inline bool PlatformRandomBytes(uint8_t* buf, size_t len)
     close(fd);
     return true;
 #endif
+}
+
+// 用于区分计数器重启后的新实例，不作为鉴权凭据；仅在需要恢复身份时持久化。
+inline bool GenerateOpaqueId(std::string& value)
+{
+    uint8_t bytes[16];
+    if (!PlatformRandomBytes(bytes, sizeof(bytes))) return false;
+    constexpr char hex[] = "0123456789abcdef";
+    std::string result; result.reserve(32);
+    for (auto byte : bytes) { result += hex[byte >> 4]; result += hex[byte & 15]; }
+    value = std::move(result); return true;
 }

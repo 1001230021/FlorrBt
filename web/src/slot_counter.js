@@ -1,9 +1,7 @@
 import { PETAL_IDS } from "./generated_ids.js";
 import { PetalSlotVisualType, clamp } from "./protocol.js";
 
-// Match the actual card fills (assets/petals/0_0.svg through 0_10.svg).
-// The general rarity text palette is darker for several rarities, so it
-// would leave a visibly different-coloured tab on the card.
+// 角标填色匹配实际卡片底色，不使用较暗的通用稀有度文字色。
 const slotCounterColors = Object.freeze([
   "#7eef6d", "#ffe65d", "#4d52e3", "#861fde", "#de1f1f", "#1fdbde",
   "#ff2b75", "#2bffa3", "#eee", "#555", "#8a8a8a",
@@ -14,14 +12,10 @@ export function getSlotCounterColor(rarity) {
   return slotCounterColors[index] || slotCounterColors[0];
 }
 
-// Return null for an ordinary card; zero is a real displayed value. Side
-// slots have no live petals/charge state, so they must not reuse a primary
-// slot's counter merely because its type and rarity happen to match.
+// 普通卡返回空值，零计数仍需显示；副槽不因类型相同而借用主槽状态。
 export function getSlotCounter(slot, runtime, kind) {
   if (!slot?.petalType || !slot.rarity) return null;
-  // Older servers exposed Lightning's internal contact-hit accumulator as
-  // Counter. It is not a charge/resource and must not create a badge, even
-  // while connecting to a server that still sends that legacy payload.
+  // 旧服务器曾将闪电接触累计当作 Counter，该值不属于可展示资源。
   if (slot.petalType === PETAL_IDS.lightning) return null;
   const sameSlot = kind === "primary" && runtime?.petalType === slot.petalType && runtime?.rarity === slot.rarity;
   const counterType = slot.petalType === PETAL_IDS.battery || slot.petalType === PETAL_IDS.linker;
@@ -30,7 +24,7 @@ export function getSlotCounter(slot, runtime, kind) {
       total + (!runtime.banned && !copy.loading && Number.isFinite(copy.visual)
         ? Math.max(0, Math.floor(copy.visual)) : 0), 0);
   }
-  // Do not show a fabricated live count while awaiting this slot's snapshot.
+  // 尚无该槽快照时不编造实时计数。
   if (counterType) return kind === "secondary" ? 0 : undefined;
   return null;
 }

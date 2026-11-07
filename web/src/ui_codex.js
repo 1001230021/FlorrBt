@@ -66,11 +66,66 @@ import {
   toggleTalent,
   updateQuickActionButtons,
 } from "./ui_settings.js";
-import { runMotionPhase, setAnimatedVisibility } from "./ui_motion.js";
+import { setAnimatedVisibility } from "./ui_motion.js";
+import { transitionPanel } from "./panel_motion.js";
+import { assignVisualImage } from "./visual_assets.js";
+import { drawRock } from "./garden_mob_sprite.js";
+import { drawFlowerDisc, drawFlowerFace, drawTitanBody, getTitanCoreRadius, getFlowerPalette, stepFlowerFace } from "./flower_renderer.js";
 
 const { codexBtn, codexDetail, codexGrid, codexPanel } = dom;
 let detailContentKey = "";
 let detailLoot = null;
+let detailHideTimer = null;
+const proceduralIcons = new Map();
+
+function codexMobImage(mobType) {
+  const iconName = codexMobIcons[mobType];
+  if (iconName) return assetImage(`./assets/${iconName}`);
+  if (![rockType, dummyType, titanType].includes(mobType)) return null;
+  if (!proceduralIcons.has(mobType)) {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 128;
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+    // 直接复用场景绘制，避免图鉴另造一套外观。
+    if (mobType === rockType) drawRock(context, { x: 64, y: 64 }, 52, 16, 52);
+    else {
+      context.translate(64, 64);
+      const options = { titan: mobType === titanType, dummy: mobType === dummyType };
+      const palette = getFlowerPalette(options);
+      if (options.titan) drawTitanBody(context, 52, palette);
+      else drawFlowerDisc(context, 52, palette);
+      drawFlowerFace(context, options.titan ? getTitanCoreRadius(52) : 52,
+        stepFlowerFace(null, {}, 0), palette, options);
+    }
+    proceduralIcons.set(mobType, assetImage(canvas.toDataURL()));
+  }
+  return proceduralIcons.get(mobType);
+}
+
+function keepCodexDetail() {
+  clearTimeout(detailHideTimer);
+  detailHideTimer = null;
+}
+
+function scheduleHideCodexDetail() {
+  if (detailHideTimer === null) detailHideTimer = setTimeout(hideCodexDetail, 150);
+}
+
+export function bindCodexDetailEvents() {
+  codexPanel.addEventListener('pointermove', moveCodexDetail);
+  codexPanel.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'touch') moveCodexDetail(event);
+  });
+  codexPanel.addEventListener('pointerleave', scheduleHideCodexDetail);
+  codexDetail.addEventListener('pointerenter', keepCodexDetail);
+  codexDetail.addEventListener('pointerleave', scheduleHideCodexDetail);
+  codexGrid.addEventListener('scroll', hideCodexDetail);
+  window.addEventListener('resize', hideCodexDetail);
+  document.addEventListener('pointerdown', event => {
+    if (!codexPanel.contains(event.target) && !codexDetail.contains(event.target)) hideCodexDetail();
+  });
+}
 
 export const codexMobOrder = [
   beetleType, bandageBeetleType, normalLadybugType, mechaFlowerType, normalFlowerType,
@@ -85,9 +140,7 @@ export const codexMobOrder = [
   leafcutterSoldierType, titanType, fireflyType, magicFireflyType, fireflyLarvaType,
 ];
 
-// No column is carved out for the exotic rarity: like on the server, exotic
-// is the same tier as common, so common is the lowest column and exotic
-// kills are tallied into it.
+// Exotic 与 Common 同阶，击杀数合并到 Common 列。
 export const codexRarityOrder = rarityDisplayOrder.filter(
   (rarity) => rarity !== rarityExotic,
 );
@@ -99,8 +152,6 @@ export function codexKillCount(mobType, rarity) {
   return count;
 }
 
-// Bestiary descriptions live in the locale files (codex.descriptions.<slug>)
-// so they follow the display language like every other UI string.
 export function codexMobDescription(mobType) {
   const fallback = MobNames[mobType] || "Mob" + mobType;
   return t(`codex.descriptions.${translationSlug(fallback)}`, {}, {
@@ -117,12 +168,7 @@ export function toggleCodex(force) {
   const next = force !== undefined ? !!force : !state.codexOpen;
   if (next === state.codexOpen) return next;
   state.codexOpen = next;
-  codexPanel.classList.toggle("open", state.codexOpen);
-  codexPanel.setAttribute("aria-hidden", String(!state.codexOpen));
-  runMotionPhase(codexPanel, state.codexOpen ? "entering" : "exiting", {
-    classPrefix: "ui-panel",
-    duration: state.codexOpen ? 260 : 110,
-  });
+  transitionPanel(codexPanel, state.codexOpen);
   codexBtn?.setAttribute("aria-pressed", String(state.codexOpen));
   if (state.codexOpen) {
     toggleBackpack(false);
@@ -144,9 +190,7 @@ export function codexKilledMobTypes() {
 
 export function renderCodexPanel() {
   if (!state.codexOpen || !codexGrid) return;
-  // The scrollbar is managed by custom_scrollbar.js and also lives in this
-  // element. Only reconcile codex cells; removing the scrollbar leaves its
-  // registered observer attached to a detached, permanently invisible node.
+  // 只更新图鉴格子，保留滚动条及其观察者，避免留下脱离文档的节点。
   const previous = new Map(Array.from(codexGrid.children)
     .filter(cell => cell.classList.contains("codex-cell"))
     .map(cell => [cell.dataset.codexKey, cell]));
@@ -159,9 +203,7 @@ export function renderCodexPanel() {
     for (const cell of previous.values()) cell.remove();
     return;
   }
-  // x = rarity (exotic shares the common column; 11 columns total),
-  // y = mob type (alphabetical, top to bottom). Skip rows whose mob has no
-  // kills at all.
+  // 横轴稀有度共 11 列，纵轴按名称排列生物，跳过无击杀记录的行。
   for (const mobType of mobTypes) {
     let anyKill = false;
     for (const rarity of codexRarityOrder) {
@@ -178,33 +220,31 @@ export function renderCodexPanel() {
       previous.delete(key);
       if (!cell) cell = document.createElement("button");
       cell.dataset.codexKey = key;
+      cell.setAttribute('aria-label', `${mobTypeName(mobType)} · ${rarityName(rarity)}`);
       ordered.push(cell);
       if (cell.dataset.killCount === String(count)) continue;
       cell.dataset.killCount = String(count);
-      // Images stay mounted on kill updates so loading/hovering does not
-      // flash the gold placeholder through the rarity-coloured background.
+      // 更新数量时保留图片节点，避免背景闪现。
       if (count <= 0) cell.replaceChildren();
       cell.className = `codex-cell card-base${count > 0 ? "" : " empty"}`;
       cell.type = "button";
       cell.dataset.mobType = String(mobType);
       cell.dataset.rarity = String(rarity);
       if (count > 0) {
-        // Rarity backdrop + mob svg on top, like a petal card.
         const base = petalBaseImage(rarity);
         if (base && !cell.querySelector(".card-bg-layer")) {
           const baseLayer = document.createElement("img");
-          baseLayer.src = base.src;
+          assignVisualImage(baseLayer, base);
           baseLayer.className = "card-bg-layer";
           baseLayer.alt = "";
           baseLayer.draggable = false;
           cell.appendChild(baseLayer);
         }
-        const iconName = codexMobIcons[mobType];
-        if (iconName && !cell.querySelector(".card-icon-layer")) {
-          const image = assetImage(`./assets/${iconName}`);
+        if (!cell.querySelector(".card-icon-layer")) {
+          const image = codexMobImage(mobType);
           if (image) {
             const iconLayer = document.createElement("img");
-            iconLayer.src = image.src;
+            assignVisualImage(iconLayer, image);
             iconLayer.className = "card-icon-layer";
             iconLayer.alt = "";
             iconLayer.decoding = "async";
@@ -256,6 +296,8 @@ export const codexMobIcons = {
   [antEggMobType]: "ant_egg.svg",
   [fireAntEggType]: "fire_ant_egg.svg",
   [termiteEggType]: "termite_egg.svg",
+  [queenAntEggType]: "ant_egg.svg",
+  [queenFireAntEggType]: "fire_ant_egg.svg",
   [babyFireAntType]: "baby_fire_ant.svg",
   [workerFireAntType]: "worker_fire_ant.svg",
   [fireQueenAntType]: "fire_queen_ant.svg",
@@ -267,8 +309,6 @@ export const codexMobIcons = {
   [fireflyType]: "firefly.svg",
   [magicFireflyType]: "firefly_cyan.svg",
   [fireflyLarvaType]: "firefly_larva.svg",
-  // rock / dummy / titan / queen eggs have no dedicated icon; their cells
-  // keep the dark rarity backdrop and count only.
 };
 
 export function mobIconName(mobType) {
@@ -277,9 +317,13 @@ export function mobIconName(mobType) {
 }
 
 export function moveCodexDetail(event) {
+  if (event.target.closest('.codex-detail')) {
+    keepCodexDetail();
+    return;
+  }
   const cell = event.target.closest(".codex-cell");
   if (!cell || cell.classList.contains("empty")) {
-    hideCodexDetail();
+    scheduleHideCodexDetail();
     return;
   }
   const mobType = Number(cell.dataset.mobType);
@@ -291,11 +335,11 @@ export function moveCodexDetail(event) {
   }
 
   const loot = state.codexLoot.get(codexKey(mobType, rarity)) || null;
+  keepCodexDetail();
   const name = mobTypeName(mobType);
   const description = codexMobDescription(mobType);
   const contentKey = `${mobType}:${rarity}:${count}:${name}:${rarityName(rarity)}:${description}`;
-  // Moving the pointer over the same card only repositions the tooltip. The
-  // old handler rebuilt all drop cards on every pointermove (up to 120Hz).
+  // 同一卡片上移动只改提示位置，不重复重建全部掉落卡。
   if (contentKey !== detailContentKey || loot !== detailLoot) {
     detailContentKey = contentKey;
     detailLoot = loot;
@@ -317,7 +361,6 @@ export function moveCodexDetail(event) {
     codexDetail.appendChild(desc);
 
     if (loot?.length > 0) {
-      // Group drops by petal type; one card row + one aligned rate row each.
       const byPetal = new Map();
       for (const entry of loot) {
         if (!byPetal.has(entry.petalType)) byPetal.set(entry.petalType, []);
@@ -326,27 +369,20 @@ export function moveCodexDetail(event) {
       const lootSection = document.createElement("div");
       lootSection.className = "codex-loot";
       for (const entries of byPetal.values()) {
-        entries.sort((a, b) => a.dropRarity - b.dropRarity);
-        const columns = entries.length;
-        const cardRow = document.createElement("div");
-        cardRow.className = "codex-loot-row";
-        cardRow.style.gridTemplateColumns = `repeat(${columns}, 39px)`;
+        entries.sort((a, b) => rarityDisplayOrder.indexOf(a.dropRarity) - rarityDisplayOrder.indexOf(b.dropRarity));
+        const group = document.createElement("div");
+        group.className = "codex-loot-group";
         for (const entry of entries) {
-          cardRow.appendChild(
-            makePetalStack(entry.petalType, entry.dropRarity, 0),
-          );
-        }
-        lootSection.appendChild(cardRow);
-
-        const rateRow = document.createElement("div");
-        rateRow.className = "codex-loot-rate-row";
-        rateRow.style.gridTemplateColumns = `repeat(${columns}, 39px)`;
-        for (const entry of entries) {
+          const item = document.createElement("div");
+          item.className = "codex-loot-entry";
+          item.appendChild(makePetalStack(entry.petalType, entry.dropRarity, 0));
           const rate = document.createElement("span");
+          rate.className = "codex-loot-rate";
           rate.textContent = `${(entry.dropRate * 100).toFixed(1)}%`;
-          rateRow.appendChild(rate);
+          item.appendChild(rate);
+          group.appendChild(item);
         }
-        lootSection.appendChild(rateRow);
+        lootSection.appendChild(group);
       }
       codexDetail.appendChild(lootSection);
     }
@@ -354,7 +390,7 @@ export function moveCodexDetail(event) {
 
   setAnimatedVisibility(codexDetail, true, { duration: 140 });
   const rect = cell.getBoundingClientRect();
-  const detailWidth = Math.min(420, codexDetail.offsetWidth || 420);
+  const detailWidth = codexDetail.offsetWidth || 340;
   let x = rect.right + 8;
   if (x + detailWidth > window.innerWidth - 8) x = Math.max(8, rect.left - detailWidth - 8);
   let y = rect.top;
@@ -365,6 +401,7 @@ export function moveCodexDetail(event) {
 }
 
 export function hideCodexDetail() {
+  keepCodexDetail();
   setAnimatedVisibility(codexDetail, false, { duration: 120 });
 }
 

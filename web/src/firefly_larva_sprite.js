@@ -12,8 +12,7 @@ const LEG_COUNT = 6;
 const MANDIBLE_COUNT = 2;
 const MANDIBLE_GRAB_CLOSE_ANGLE = 0.1;
 const MANDIBLE_PARTS = Object.freeze([
-  // Authored root positions relative to the head crop center. Each half is
-  // rotated independently around the point where it enters the head shell.
+  // 根位置相对头部裁剪中心，两半各绕连接头壳的点转动。
   { pivot: { x: 1.7282888, y: -10.32056085 }, direction: -1 },
   { pivot: { x: -10.2343498, y: 2.18147485 }, direction: 1 },
 ]);
@@ -72,8 +71,7 @@ function sourceSegmentForVariant(variant) {
   if (variant === FireflyLarvaVisualRole.Head) return 1;
   if (variant === FireflyLarvaVisualRole.Thorax) return 2;
   if (variant === FireflyLarvaVisualRole.Tail) return 5;
-  // Interior variants carry their real root-to-tail index. Reuse the two
-  // authored middle shells without losing the depth order in the snapshot.
+  // 部件保留真实节序号，复用中段贴图时不改变快照深度顺序。
   return 3 + ((Math.max(2, Math.trunc(variant)) - 2) & 1);
 }
 
@@ -164,8 +162,7 @@ function drawMandibles(ctx, radius, entityId, motion, time, grabbing, worldScale
     5.2 + amount * 19.5,
     (entityId || 0) * 0.73,
   );
-  // Match the Soldier Ant's mirrored root rotation. Grabbing freezes the
-  // cycle at a slightly closed pose instead of deforming the artwork.
+  // 沿用兵蚁镜像根旋转，抓取时停在略闭合姿态，不拉伸贴图。
   const rotation = grabbing
     ? MANDIBLE_GRAB_CLOSE_ANGLE
     : Math.sin(phase) * amount * 0.22 * 0.35;

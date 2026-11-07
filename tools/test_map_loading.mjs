@@ -127,3 +127,19 @@ assert.equal(brokenState.mapLoadPromise, null);
 observer.dispose(); renderer.dispose();
 assert.equal(observerState.map, null); assert.equal(state.map, null);
 console.log("PASS failed terrain cannot publish, map/observer disposal releases retained resources");
+
+resources.set("/data/maps/grid.tmj", { ...mapFixture, width: 2, height: 2,
+  layers: [{ type: "tilelayer", name: "ground", width: 2, height: 2, data: [1, 1, 1, 1] }] });
+const gridState = newState();
+const gridRenderer = createMapRenderer({ state: gridState, worldScale: () => 1, worldToScreen: p => p });
+const grid = await gridRenderer.loadMap("grid");
+assert.ok(grid);
+for (const [row, col] of [[0, 2], [-1, 2], [0.5, 0], [2, 0], [0, -1]])
+  assert.equal(gridRenderer.applyTerrainDelta(0, row, col, 0), false, "invalid coordinates cannot wrap into another row");
+assert.deepEqual([...grid.layers[0].tiles], [1, 1, 1, 1]);
+assert.equal(gridRenderer.applyTerrainDelta(0, 1, 0, 0), true);
+assert.equal(grid.terrainRevision, 1);
+assert.equal(gridRenderer.applyTerrainDelta(0, 1, 0, 0), false);
+assert.equal(grid.terrainRevision, 1);
+gridRenderer.dispose();
+console.log("PASS terrain coordinate validation and successful-mutation revision");

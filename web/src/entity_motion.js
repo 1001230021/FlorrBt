@@ -20,7 +20,7 @@ export function getEntityAppearance(entity) {
   return {
     alpha: motion.from.alpha + (1 - motion.from.alpha) * settle,
     scale: motion.from.scale + (1 - motion.from.scale) * settle,
-    // Finish the partial turn rather than reversing direction on reappearance.
+    // 重新出现时完成当前旋转，不突然反向。
     rotation: motion.from.rotation + (motion.targetRotation - motion.from.rotation) * settle,
   };
 }
@@ -38,9 +38,7 @@ export function beginEntityExit(entity, now, { card = false, defeated = false, m
   entity.visualMotion = { kind: "exit", age: 0,
     duration: card ? 0.3 : mob ? clientRuntimeConfig.deathFadeDuration : defeated ? 0.24 : 0.16,
     from: { ...from }, card, defeated, mob };
-  // A retiring moving mob carries its last trajectory through the short
-  // fade. Cards keep their established in-place vanish; stale samples and
-  // teleports must never fling scenery across the screen.
+  // 生物淡出短暂延续最后轨迹；卡片原地消失，过时采样和传送不产生飞行动画。
   const velocity = entity.snapshotVelocity;
   const fresh = now - (entity.snapshotAt ?? now) < 0.2;
   if (!card && fresh && entity.renderPos && Number.isFinite(velocity?.x) && Number.isFinite(velocity?.y)) {
@@ -52,7 +50,7 @@ export function beginEntityExit(entity, now, { card = false, defeated = false, m
   }
   entity.dying = true;
   entity.deathAge = 0;
-  // Body parts stop receiving wall-clock motion when the entity retires.
+  // 离场后不再按墙钟时间推进部件运动。
   entity.retirementTime = now;
 }
 
@@ -66,7 +64,6 @@ export function resumeEntityAppearance(entity) {
   entity.retirementTime = null;
 }
 
-// Returns true only when an exiting entity is ready for visual retirement.
 export function stepEntityAppearance(entity, dt) {
   if (!Number.isFinite(dt) || dt < 0) return false;
   if (entity.dying) entity.deathAge = (entity.deathAge || 0) + dt;
@@ -90,9 +87,7 @@ export function getDropCardTilt(entityId, time) {
   return Math.sin(entityId * 2.39996 + time * 1.3) * 0.08;
 }
 
-// Restore the old 20Hz displacement response (0.16 deadzone / 1.25 ramp),
-// but derive that displacement from velocity so packet rate cannot change
-// stride strength. Dividing by body radius made giant mobs barely animate.
+// 由速度折算固定 20Hz 位移强度，避免包频率或身体尺寸改变步行动画。
 export function stepEntityGait(entity, dt, now, snapshotInterval = 0.05) {
   const age = Math.max(0, now - (entity.snapshotAt ?? now));
   const grace = Math.max(0.12, snapshotInterval * 2.5);

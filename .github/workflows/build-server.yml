@@ -68,11 +68,25 @@ jobs:
       - name: Check craft motion and talent tree models
         run: node tools/test_craft_talent_ui.mjs
 
+      - name: Check account recovery and economic request boundaries
+        run: |
+          node tools/test_auth_recovery.mjs
+          node tools/test_menu_inventory.mjs
+          node tools/test_menu_petal_motion.mjs
+          node tools/test_client_features.mjs
+          node tools/test_oauth_callback.mjs
+          node tools/test_economy_requests.mjs
+          node tools/test_boundary_contracts.mjs
+          node tools/test_architecture_obvious_fixes.mjs
+          node tools/test_engineering_contracts.mjs
+
       - name: Check flower rendering and combat feedback
         run: node tools/test_flower_feedback.mjs
 
       - name: Check entity identity and generation protocol
-        run: node tools/test_snapshot_identity.mjs
+        run: |
+          node tools/test_snapshot_identity.mjs
+          node tools/test_party_identity.mjs
 
       - name: Check offline load/weather protocol tools
         run: |
@@ -133,6 +147,7 @@ jobs:
             libmariadb-dev \
             libmbedtls-dev \
             libssh2-1-dev \
+            libssl-dev \
             libudev-dev \
             libxcursor-dev \
             libxi-dev \
@@ -164,7 +179,7 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows-static
 
       - name: Build server and regression tests
-        run: cmake --build build --config Release --target FlorrBt_Server FlorrBt_Tests FlorrBt_RuntimeTests --parallel
+        run: cmake --build build --config Release --target FlorrBt_Server FlorrBt_Tests FlorrBt_RuntimeTests FlorrBt_AccountTests FlorrBt_TransportTests --parallel
 
       - name: Run headless server regressions
         run: ctest --test-dir build -C Release --output-on-failure
@@ -174,9 +189,10 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force package/FlorrBt_Server | Out-Null
           Copy-Item "${{ matrix.executable }}" package/FlorrBt_Server/
+          Copy-Item build/curl-COPYING.txt package/FlorrBt_Server/
           # libmysql.dll loads the OpenSSL runtime DLLs dynamically on
           # Windows. Keep them beside the executable in downloadable builds.
-          $runtimeNames = @("libmysql.dll", "libssl-3-x64.dll", "libcrypto-3-x64.dll")
+          $runtimeNames = @("libmysql.dll", "libssl-3-x64.dll", "libcrypto-3-x64.dll", "libcurl.dll")
           foreach ($runtimeName in $runtimeNames) {
             $runtimePath = Join-Path "build/Release" $runtimeName
             if (Test-Path $runtimePath) {

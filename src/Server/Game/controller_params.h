@@ -16,23 +16,16 @@ enum class EControllerParamType : std::uint8_t
     String,
 };
 
-// Declared by each world controller for its construction-time parameters. The
-// waiting room exposes them through /setting: values are checked against the
-// type, run through the 审查函数 (`validate`), stored as overrides, and
-// applied when the controller is constructed for the game world.
+// 等待房间的构造参数：先校验单值，再校验参数组合，创建玩法时应用。
 struct SControllerParamInfo
 {
     std::string_view key;
     EControllerParamType type = EControllerParamType::String;
-    std::string_view config_default; // registered game_config name; "" = none
+    std::string_view config_default; // 配置项名称，空值表示无默认项
     std::string_view description;
-    // 审查函数: rejects illegal values before they are stored.
     bool (*validate)(const std::string& value) = nullptr;
 };
 
-// Generic key -> string parameter bag, decoupled from every concrete
-// controller type. Carries construction-time overrides from the waiting room
-// into a game world controller.
 class CControllerParams
 {
   public:
@@ -52,9 +45,7 @@ class CControllerParams
     std::unordered_map<std::string, std::string> m_values;
 };
 
-// Resolves a registered game_config default by name ("" when unregistered).
+// 返回已注册配置项的默认值，未注册时返回空字符串。
 std::string ResolveControllerParamDefault(std::string_view config_name);
-// Type-level legality check used by /setting before a value is stored.
 bool ControllerParamValueLegal(EControllerParamType type, const std::string& value);
-// Human-readable type name ("int", "float", "bool", "string").
 std::string_view ControllerParamTypeName(EControllerParamType type);

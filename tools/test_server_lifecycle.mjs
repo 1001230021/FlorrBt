@@ -24,12 +24,14 @@ const queue = ["void CPlayerController::PushOperate(", "bool CPlayerController::
   "bool CPlayerController::ScheduleOperate(", "bool CPlayerController::IsNewerSequence(",
   "void CPlayerController::MergeOperate(", "void CPlayerController::ClearPendingOperates(",
   "void CPlayerController::ResetOperate("];
-const queueTick = controller.slice(controller.indexOf("void CPlayerController::OnTick("), controller.indexOf("    // Input axes")) + "}\n";
+const queueTick = controller.slice(controller.indexOf("void CPlayerController::OnTick("), controller.indexOf("    const float input_length =")) + "}\n";
 const directory = path.join(root, "artifacts/test-server-lifecycle");
 mkdirSync(directory, { recursive: true });
 writeFileSync(path.join(directory, "checks.cpp"), `
 #include "Server/Game/controllers/player_controller.h"
 #include "Server/Persistence/account_store.h"
+#include "Server/Persistence/economy_codec.h"
+#include "Server/Persistence/account_identity_codec.h"
 #include "Shared/swept_collision.h"
 #include <cstdio>
 #include <cstdlib>
@@ -44,6 +46,7 @@ class ICrabDashMob { public: virtual ~ICrabDashMob()=default;
 class CMobBase : public CEntity { public: bool attack=false,defend=false; int team=0,move=0; int& Team(){return team;}
  bool IsMovementControlledBySkill()const{return false;} };
 void CPlayerController::CaptureSnapshot(CSnapshotWriter&) const {}
+void CPlayerController::OnActions(CMobBase*,float) {}
 bool CPlayerController::RestoreSnapshot(const CSnapshotReader&,std::uint32_t,std::string&) {return true;}
 void CPlayerController::ExecuteOperate(const ClientOperate& op,CMobBase* mob) {
  if(op.is_attacking) mob->attack=*op.is_attacking;
@@ -57,6 +60,8 @@ class CPlayer {
  bool IsAuthenticated() const {return authenticated;}
  const std::string& GetAccountName() const {return account;}
  bool HasIsolatedProgress() const {return !progress.empty();}
+ bool HasIsolatedInventory() const {return HasIsolatedProgress();}
+ const std::string& GetInventoryAccountName() const {return GetProgressAccountName();}
  const std::string& GetProgressAccountName() const {return progress.empty()?account:progress;}
  std::uint32_t GetId() const {return id;}
 };
@@ -73,7 +78,7 @@ struct Grid {std::vector<CEntity*> entities;
 class CGameWorld {public: Grid grid; Grid& GetSpatialGrid(){return grid;} };
 class CDrop : public CEntity {
  public: CGameWorld* world=nullptr; int id=0,m_owner_id=1;
- std::string m_owner_account,m_owner_progress_account; PetalType m_type=PetalType::Basic; ERarity m_rarity=ERarity::Common;
+ std::string m_owner_account,m_owner_inventory_account; PetalType m_type=PetalType::Basic; ERarity m_rarity=ERarity::Common;
  std::uint16_t m_stack_num=1; float m_timer=30,m_unable_picked_timer=0;
  bool removed=false,m_inertia_active=false;
  CGameWorld* GameWorld() const {return world;} int Id()const{return id;}
@@ -98,9 +103,6 @@ class CPetal : public CEntity {
 };
 ${extract(petals,"void CPetal::NotifyCleared(")}
 ${extract(petals,"void CPetal::OnBeforeRemoved(")}
-class CCorruptionState {public: CMobBase* m_p_owner=nullptr; int m_old_team=2; ~CCorruptionState();
- CMobBase* ResolveOwner()const{return m_p_owner;} };
-${extract(states,"CCorruptionState::~CCorruptionState(")}
 
 // Execute real SQL-generation/diff methods against a recording transaction
 // transport, including failure+retry. No libmysql or DB is loaded.
@@ -115,6 +117,7 @@ bool Query(CMysqlConnection&,const std::string& s,std::string* error){queries.pu
  if(!fail_on.empty()&&s.find(fail_on)!=std::string::npos){if(error)*error="injected";return false;}return true;}
 ${extract(mysql,"void AppendItemRows(")}
 ${extract(mysql,"bool WriteAccountRows(")}
+bool PublishSnapshot(const SAccountSnapshot&,std::uint64_t,std::string*,bool unique_ledger_initialized=true);
 ${extract(mysql,"bool PublishSnapshot(const SAccountSnapshot&")}
 bool issued(const char* text){for(const auto& q:queries)if(q.find(text)!=std::string::npos)return true;return false;}
 }
@@ -154,10 +157,10 @@ int main(){
  fresh.m_unable_picked_timer=0;fresh.m_inertia_active=true;old.MergeNearbyDrops();check(old.m_stack_num==1,"inertia blocks merge");
  fresh.m_inertia_active=false;old.MergeNearbyDrops();check(old.m_stack_num==6&&old.m_timer==30&&fresh.removed,"merged stack keeps later expiry");
  check(!old.CanBePickedUpBy(*context.players[0])&&old.CanBePickedUpBy(*returning),"drop owner remains A");
- old.m_owner_progress_account="@sandbox:test";returning->progress="@sandbox:test";
+ old.m_owner_inventory_account="@sandbox:test";returning->progress="@sandbox:test";
  check(old.CanBePickedUpBy(*returning),"temporary drop matches its progress scope");
  returning->progress.clear();check(!old.CanBePickedUpBy(*returning),"temporary drops cannot be claimed with formal progress");
- old.m_owner_progress_account.clear();
+ old.m_owner_inventory_account.clear();
  old.m_owner_account.clear();check(!old.CanBePickedUpBy(*returning),"unknown legacy private owner fails closed");
  // Sleeping owner: cleanup detaches actual pointers and runs callback once.
  CFlower flower; CPetal petal;petal.owner=&flower;flower.slots.resize(1);
@@ -165,8 +168,8 @@ int main(){
  petal.OnBeforeRemoved(EEntityRemovalReason::Despawned);petal.OnBeforeRemoved(EEntityRemovalReason::Despawned);
  check(!flower.slots[0].m_p_petals[0]&&flower.dirty&&flower.slots[0].reload==2,"sleeping slot detached and reloaded");
  check(prototype.m_p_behavior->clears==1,"clear callback exactly once");
- {CCorruptionState state;state.m_p_owner=&body;body.Team()=0;}check(body.Team()==2,"ordinary corruption restores base team");
- {CCorruptionState state;state.m_p_owner=&body;body.Team()=5;}check(body.Team()==5,"new team not overwritten");
+ // Source-aware team effects are covered against real entities and the
+ // production state lifecycle in SourcedCorruption*/SourcedEffects* tests.
  // A single inventory mutation must not rewrite talents/codex. Failed writes
  // retain old published state so the same snapshot remains dirty on retry.
  using namespace sqltest;
@@ -187,14 +190,41 @@ int main(){
  account.exp=42;snap={std::make_shared<const SPlayerAccount>(account)};queries.clear();
  check(PublishSnapshot(snap,5,&error)&&!issued("DELETE FROM account_"),"progress-only update leaves item/talent/codex tables alone");
  queries.clear();check(PublishSnapshot(SAccountSnapshot{},6,&error)&&issued("DELETE FROM accounts"),"full-snapshot removal kept");
+ // Both owners are replaced in one SQL transaction, deleting all previous
+ // claims before any inserts, even when the receiving account sorts first.
+ SPlayerAccount from,to;from.name="z-owner";to.name="a-getter";
+ from.unique_petals={{1,5}};g_published_accounts={{from.name,from},{to.name,to}};
+ from.unique_petals.clear();to.unique_petals={{1,5}};
+ SAccountSnapshot transferred{std::make_shared<const SPlayerAccount>(to),std::make_shared<const SPlayerAccount>(from)};
+ queries.clear();check(PublishSnapshot(transferred,7,&error),"Unique transfer committed");
+ size_t last_delete=0,first_insert=queries.size();
+ for(size_t i=0;i<queries.size();i++){
+  if(queries[i].find("DELETE FROM account_unique_petals")!=std::string::npos)last_delete=i;
+  if(queries[i].find("INSERT INTO account_unique_petals")!=std::string::npos)first_insert=std::min(first_insert,i);
+ }
+ check(first_insert<queries.size()&&last_delete<first_insert&&issued("unique_ledger_version"),"ledger shares ordered transaction");
+ // COMMIT can reach MySQL while its response is lost. A subsequent rollback
+ // snapshot cannot rely on the old change-detection cache in that situation.
+ SPlayerAccount uncertain;uncertain.name="uncertain-new";
+ fail_on="COMMIT";queries.clear();
+ check(!PublishSnapshot({std::make_shared<const SPlayerAccount>(uncertain)},8,&error),"lost commit response surfaced");
+ check(!g_publish_state_seeded,"uncertain commit invalidates diff baseline");
+ fail_on.clear();queries.clear();check(PublishSnapshot(transferred,9,&error),"recovery snapshot committed");
+ check(issued("INSERT INTO accounts")&&issued("DELETE FROM accounts WHERE name = 'uncertain-new'"),"recovery replaces rows and removes attempted creates");
  std::puts("PASS production input order/wrap/legacy, stable identities, drop timers, slot cleanup, teams, SQL diff/rollback/retry");
 }
 `, "utf8");
 writeFileSync(path.join(directory, "CMakeLists.txt"), `cmake_minimum_required(VERSION 3.20)
 project(ServerLifecycleChecks LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
-add_executable(ServerLifecycleChecks checks.cpp)
+add_executable(ServerLifecycleChecks checks.cpp
+  "${root.replaceAll("\\", "/")}/src/Server/Persistence/economy_codec.cpp"
+  "${root.replaceAll("\\", "/")}/src/Server/Persistence/account_identity_codec.cpp"
+  "${root.replaceAll("\\", "/")}/src/Engine/json_value.cpp")
 target_compile_definitions(ServerLifecycleChecks PRIVATE NOMINMAX)
+if(MSVC)
+  target_compile_options(ServerLifecycleChecks PRIVATE /utf-8)
+endif()
 target_include_directories(ServerLifecycleChecks PRIVATE "${root.replaceAll("\\", "/")}/src")
 enable_testing()
 add_test(NAME lifecycle COMMAND ServerLifecycleChecks)

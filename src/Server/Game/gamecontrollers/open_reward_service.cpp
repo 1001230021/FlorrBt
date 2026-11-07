@@ -3,7 +3,6 @@
 #include "../../../Engine/logger.h"
 #include "../../../Shared/drop_rate.h"
 #include "../../../Shared/game_config.h"
-#include "../../Module/network_module.h"
 #include "../controllers/melee_controller.h"
 #include "../entities/drop.h"
 #include "../entities/flower.h"
@@ -165,7 +164,7 @@ ERarity HighestEquippedOrbRarity(const CPlayer& player)
     ERarity highest = ERarity::Null;
     for (const CPetalSlot& slot : flower->GetSlots())
     {
-        if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
+        if (!slot.m_available || slot.IsBanned() || !slot.m_p_proto) continue;
         if (slot.m_p_proto->m_type != ToPetalType(EModPetalType::Orb)) continue;
         if (GetRaritySortRank(slot.m_stored_rarity) > GetRaritySortRank(highest))
             highest = slot.m_stored_rarity;
@@ -279,7 +278,8 @@ std::vector<lootable_player> FindLootablePlayers(CGameWorld& world, const CMobBa
     for (const CDamageData& damage_data : mob.GetDamageData())
     {
         CPlayer* contributor = damage_data.ResolvePlayer(context);
-        if (!contributor || !MatchesRewardScope(world, *contributor) || damage_data.m_total_dmg <= 0.f) continue;
+        if (!contributor || !MatchesRewardScope(world, *contributor) || !damage_data.MatchesInventoryScope(*contributor) ||
+            damage_data.m_total_dmg <= 0.f) continue;
         total_damage += damage_data.m_total_dmg;
         if (!damage_by_player.contains(contributor)) contributors.push_back(contributor);
         damage_by_player[contributor] += damage_data.m_total_dmg;
@@ -350,9 +350,7 @@ florrbt::Vector2f DropSpreadOffset(size_t index, size_t count)
     return { std::cos(angle) * radius, std::sin(angle) * radius };
 }
 
-// Unique mobs: repeated roll of the mob's Super-tier drop table (called
-// `unique_repeat_drop_rolls` times, default 25). Returns all rolled drops
-// concatenated; empty when the Super table is missing.
+// Unique 生物重复抽取 Super 掉落表；缺少该表时返回空结果。
 std::vector<SDropRate> RollUniqueSuperRepeatDrops(EMobType mob_type)
 {
     std::vector<SDropRate> result;
@@ -366,7 +364,7 @@ std::vector<SDropRate> RollUniqueSuperRepeatDrops(EMobType mob_type)
     }
     return result;
 }
-} // namespace
+}
 
 void COpenRewardService::OnMobSpawned(CGameWorld& world, CMobBase& mob)
 {
@@ -394,8 +392,6 @@ void COpenRewardService::OnMobDefeated(CGameWorld& world, CMobBase& mob)
         return;
     }
 
-    // Unique mobs drop their "repeat unique" table: N rolls of the mob's
-    // Super-tier drops (config unique_repeat_drop_rolls, default 25).
     const bool unique_mob = mob.GetRarity() == ERarity::Unique;
     const std::vector<SDropRate>& rates =
         unique_mob ? QueryDropRates(mob.GetMobType(), ERarity::Super)
@@ -416,9 +412,7 @@ void COpenRewardService::OnMobDefeated(CGameWorld& world, CMobBase& mob)
 
         std::vector<SDropRate> drops =
             unique_mob ? RollUniqueSuperRepeatDrops(mob.GetMobType()) : RollDrops(mob.GetMobType(), mob.GetRarity());
-        // Magic drops are personalized after this player's roll and before
-        // stacking/materialization. Nearby players therefore cannot lend an
-        // Orb to the recipient, and the equipped Orb is the rarity ceiling.
+        // 魔法掉落按接收者自身装备个性化，并以其 Orb 为稀有度上限，其他玩家的 Orb 不参与判定。
         ConvertDropsToMagicVariants(drops, *lootable.player);
         if (drops.empty())
         {
@@ -431,23 +425,20 @@ void COpenRewardService::OnMobDefeated(CGameWorld& world, CMobBase& mob)
             continue;
         }
 
-        // Bestiary: a drop roll counts as a kill entry, whether or not the
-        // drop is ever picked up.
+        // 参与掉落抽取即计入图鉴击杀，不要求最终拾取。
         const uint8_t mob_type = static_cast<uint8_t>(mob.GetMobType());
         const uint8_t mob_rarity = static_cast<uint8_t>(mob.GetRarity());
         lootable.player->RecordCodexKill(mob_type, mob_rarity);
         if (CGameContext* context = world.GameContext())
         {
-            auto* network = dynamic_cast<INetworkModule*>(&context->Network());
             const auto& codex = lootable.player->GetCodex();
             const uint32_t key = (static_cast<uint32_t>(mob_type) << 8) | static_cast<uint32_t>(mob_rarity);
             const auto count_it = codex.find(key);
-            if (network && count_it != codex.end())
-                network->SendCodexDelta(*lootable.player, mob_type, mob_rarity, count_it->second);
+            if (count_it != codex.end())
+                context->PlayerUpdates().SendCodexDelta(*lootable.player, mob_type, mob_rarity, count_it->second);
         }
 
-        // All repeat rolls are now complete. Stack only Unique-mob rewards,
-        // separately for each eligible player, before materializing any drop.
+        // 重复抽取结束后，按玩家分别合并 Unique 奖励，再生成实体。
         const auto stacks = florrbt::FinalizeDropStacks(drops, unique_mob);
         for (size_t i = 0; i < stacks.size(); ++i)
         {
@@ -457,8 +448,7 @@ void COpenRewardService::OnMobDefeated(CGameWorld& world, CMobBase& mob)
             auto entity = std::make_unique<CDrop>(&world, mob.Pos() + DropSpreadOffset(i, stacks.size()), drop.type,
                                                   drop.rarity, lootable.player->GetId(),
                                                   game_config::default_drop_lifetime, drop.count);
-            // Inertia: the drop glides from the dead mob's position (holding
-            // its velocity, decaying over 0.2s) to the final drop spot.
+            // 掉落物从死亡位置继承速度并逐步滑向最终落点。
             entity->BeginInertiaDrop(mob.Pos(), velocity, game_config::default_drop_inertia_delay);
             world.InsertEntity(std::move(entity));
         }

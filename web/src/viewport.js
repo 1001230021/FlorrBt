@@ -1,13 +1,9 @@
 import { dom, state } from "./app_context.js";
 
-// Pure viewport/render-scale plumbing: canvas backing size, device pixel
-// ratio resolution and the user's render-scale setting. No game imports —
-// safe to use from any layer (camera.js re-exports these for existing call
-// sites).
+// 独立管理画布尺寸、像素比与渲染比例，避免依赖游戏模块。
 const { canvas, ctx } = dom;
 
-// Highest allowed render scale: full native DPI on 4x displays, or up to 4x
-// supersampling on 1x displays for users who want it.
+// 最多四倍渲染比例，兼容高像素比及主动超采样。
 export const maxRenderScale = 4;
 export const minRenderScale = 0.75;
 
@@ -15,11 +11,7 @@ export function nativeDpr() {
   return Math.max(1, Math.min(maxRenderScale, window.devicePixelRatio || 1));
 }
 
-// The effective canvas scale honors the user's render-scale setting:
-// - "auto": native DPI, stepped down/up by the frame-budget controller
-//   (state.adaptiveDpr, 0 = untouched native).
-// - "native": always full native DPI, no adaptation.
-// - number: fixed scale, no adaptation.
+// auto 按帧预算调整原生像素比；native 固定原生比例；数值配置使用固定比例。
 export function resolveRenderScale() {
   const mode = state.renderScaleMode;
   if (typeof mode === "number" && Number.isFinite(mode) && mode > 0)

@@ -31,7 +31,7 @@ struct SSnapshotSectionCodec
     capture_callback capture;
     restore_callback restore;
     migration_callback migrate;
-    bool write = true; // false for import-only legacy sections
+    bool write = true; // 旧分节可只读不写。
 };
 
 bool RegisterSnapshotSection(SSnapshotSectionCodec codec, std::string* error = nullptr);

@@ -1,7 +1,4 @@
-// Low-resolution, block-preserving weather fog.
-// The fog is rendered to a tiny logical canvas and nearest-neighbour scaled
-// onto the game canvas. This gives a deliberate tile/block texture while
-// keeping the per-frame work bounded.
+// 天气雾在小画布生成后以最近邻放大，保留方块纹理并限制逐帧开销。
 
 const MIN_INTENSITY = 0.005;
 
@@ -35,8 +32,7 @@ export function createBlockFogField({ canvasFactory = null } = {}) {
   };
 
   const ensureSurface = (width, height) => {
-    // About 44 CSS pixels per block; cap the logical surface so fog never
-    // becomes a high-resolution particle layer on a 4K display.
+    // 每块约 44 CSS 像素，限制逻辑画布尺寸，避免 4K 下退化为高分辨率粒子层。
     const nextColumns = clamp(Math.ceil(width / 44), 18, 48);
     const nextRows = clamp(Math.ceil(height / 44), 14, 32);
     if (surface && nextColumns === columns && nextRows === rows) return true;
@@ -75,9 +71,7 @@ export function createBlockFogField({ canvasFactory = null } = {}) {
           const distanceFog = smoothstep((distance - revealRadius) / fadeRadius);
           if (distanceFog <= 0.001) continue;
 
-          // Stable variation keeps neighboring blocks from reading as a
-          // perfect checkerboard while preserving the intentionally hard block
-          // boundaries.
+          // 稳定变化避免规则棋盘感，同时保留硬边。
           const variation = 0.78 + hashCell(column, row) * 0.22;
           const alpha = clamp(
             amount * (0.015 + distanceFog * 0.24) * variation,

@@ -33,15 +33,14 @@ bool TryParseWeatherType(std::string_view text, EWeatherType& weather);
 
 struct SMeteorology
 {
-    float humidity = 0.45f;              // Relative humidity in [0, 1].
-    float wind_direction_degrees = 0.f; // Clockwise degrees in [0, 360).
-    float wind_speed = 2.f;              // Abstract world wind-speed units, non-negative.
+    float humidity = 0.45f;             // 相对湿度，范围 [0, 1]。
+    float wind_direction_degrees = 0.f; // 顺时针角度，范围 [0, 360)。
+    float wind_speed = 2.f;             // 世界单位表示的非负风速。
     float temperature_celsius = 20.f;
 };
 
 struct SWeatherDiurnalSnapshot
 {
-    // This clock advances by fixed server simulation dt; host wall-clock changes do not affect it.
     static constexpr double virtual_hours_per_day = 24.0;
     static constexpr double virtual_minutes_per_hour = 60.0;
     static constexpr double virtual_seconds_per_minute = 60.0;
@@ -49,16 +48,15 @@ struct SWeatherDiurnalSnapshot
     std::uint64_t revision = 0;
     std::uint64_t simulation_tick = 0;
     std::uint64_t day_index = 0;
-    // Elapsed server simulation time. It is deliberately independent of the host system clock.
+    // 按固定模拟步长推进，不受系统时钟调整影响。
     double simulation_seconds = 0.0;
-    double time_of_day = 0.0; // Normalized to [0, 1), where 0 is midnight and 0.5 is noon.
+    double time_of_day = 0.0; // 范围 [0, 1)，0 为午夜，0.5 为正午。
     float daylight = 0.f;
     EDiurnalPhase phase = EDiurnalPhase::Night;
-    // Per-weather-type intensity in [0, 1], indexed by EWeatherType. Weathers can be active at once;
-    // the more extreme the driving meteorology, the higher each intensity.
+    // 按 EWeatherType 索引，强度范围 [0, 1]，允许多种天气同时生效。
     float weather_intensity[weather_type_count] = {};
     SMeteorology meteorology;
-    // Changes only when a client-visible clock anchor or weather target changes.
+    // 仅客户端可见的时间锚点或天气目标变化时递增。
     std::uint64_t environment_revision = 0;
 
     float Intensity(EWeatherType weather) const

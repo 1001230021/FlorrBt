@@ -18,9 +18,7 @@ namespace
 constexpr int kDir8Row[8] = { 0, -1, 0, 1, -1, 1, 1, -1 };
 constexpr int kDir8Col[8] = { -1, 0, 1, 0, -1, -1, 1, 1 };
 
-// All cells along the Bresenham line from (r0,c0) to (r1,c1) - excluding the
-// endpoints - must be walkable. Endpoints are handled by the caller's
-// walkable() (start/goal cells are always passable).
+// Bresenham 线段途经格必须可通行，起终点由调用方单独判定。
 bool LineClear(int r0, int c0, int r1, int c1, const std::function<bool(int, int)>& walkable)
 {
     const int dr = std::abs(r1 - r0);
@@ -52,7 +50,7 @@ bool LineClear(int r0, int c0, int r1, int c1, const std::function<bool(int, int
     }
     return true;
 }
-} // namespace
+}
 
 bool eou_has_line_of_sight(const CTileBoard& board, florrbt::Vector2f from, florrbt::Vector2f to)
 {
@@ -63,13 +61,11 @@ bool eou_has_line_of_sight(const CTileBoard& board, florrbt::Vector2f from, flor
     const int c1 = static_cast<int>(std::floor(to.x / tile_size));
     const int r1 = static_cast<int>(std::floor(to.y / tile_size));
     if (r0 == r1 && c0 == c1) return true;
-    // The target wall cell is solid by definition: only the cells in between
-    // may block the view (endpoints excluded).
+    // 挖掘终点本身就是墙，视线仅检查中间格。
     const auto walkable = [&board](int row, int col) {
         return board.InBounds(row, col) ? !board.TileSolid(row, col) : false;
     };
-    // Traverse the actual world-space segment (not just the line between
-    // cell centres). Crossing a corner requires both neighbouring cells.
+    // 按实际世界坐标线段穿格，过角时要求两侧相邻格都可通行。
     const float dx = to.x - from.x;
     const float dy = to.y - from.y;
     const int sx = dx > 0.f ? 1 : -1;
@@ -114,8 +110,7 @@ std::optional<florrbt::Vector2f> CEouWorkerAnt::FindBestMarkedWall()
         const float dist = EouDistance(pos, center);
         if (dist > vision || dist >= best_dist) continue;
         if (!eou_has_line_of_sight(*m_board, pos, center)) continue;
-        // Only reachable targets: an unreachable wall would spin the worker
-        // (SetTarget keeps failing and the reroute keeps retrying).
+        // 仅选择可达目标，避免工蚁围绕不可达墙体反复重规划。
         if (eou_find_path(*m_board, pos, center).empty()) continue;
         best = center;
         best_dist = dist;
@@ -136,12 +131,10 @@ std::vector<florrbt::Vector2f> eou_find_path(const CTileBoard& board, florrbt::V
     const int goal_col = static_cast<int>(std::floor(goal.x / tile_size));
     const int goal_row = static_cast<int>(std::floor(goal.y / tile_size));
     if (!board.InBounds(start_row, start_col) || !board.InBounds(goal_row, goal_col)) return {};
-    // Most foraging routes stay within a cleared chamber. Avoid allocating
-    // board-sized BFS buffers for these routine trips.
+    // 已清空房间内优先直达，避免为短途采集分配整张地图的 BFS 缓冲。
     if (eou_has_line_of_sight(board, start, goal)) return { start, goal };
 
-    // The start and goal cells are always walkable even when marked solid
-    // (e.g. digging a wall tile).
+    // 起终点允许位于墙格内，例如挖掘墙体的目标格。
     const auto walkable = [&](int row, int col) {
         if (!board.InBounds(row, col)) return false;
         if ((row == start_row && col == start_col) || (row == goal_row && col == goal_col)) return true;
@@ -171,7 +164,7 @@ std::vector<florrbt::Vector2f> eou_find_path(const CTileBoard& board, florrbt::V
             const int nrow = row + kDir8Row[i];
             const int ncol = col + kDir8Col[i];
             if (!board.InBounds(nrow, ncol)) continue;
-            // No corner cutting through a diagonal gap.
+            // 禁止从对角狭缝穿角。
             if (kDir8Row[i] != 0 && kDir8Col[i] != 0)
                 if (!walkable(nrow, col) || !walkable(row, ncol)) continue;
             if (!walkable(nrow, ncol)) continue;
@@ -185,7 +178,6 @@ std::vector<florrbt::Vector2f> eou_find_path(const CTileBoard& board, florrbt::V
 
     if (prev[static_cast<size_t>(goal_cell)] == -1) return {};
 
-    // Rebuild the cell chain (goal -> start).
     std::vector<std::pair<int, int>> cells;
     cells.reserve(64);
     for (int cur = goal_cell; cur != start_cell; cur = prev[static_cast<size_t>(cur)])
@@ -195,10 +187,7 @@ std::vector<florrbt::Vector2f> eou_find_path(const CTileBoard& board, florrbt::V
     cells.emplace_back(start_row, start_col);
     std::reverse(cells.begin(), cells.end());
 
-    // Greedy visibility compression on the shortest path: from each kept
-    // waypoint, jump as far as possible to a later cell whose straight line
-    // is fully walkable (Bresenham-checked). The result is a minimum waypoint
-    // chain that is still guaranteed passable.
+    // 对最短路径贪心跳过可直达的中间点，压缩路径点数量并保留可通行性。
     std::vector<std::pair<int, int>> waypoints;
     waypoints.reserve(cells.size());
     waypoints.push_back(cells.front());
@@ -214,7 +203,7 @@ std::vector<florrbt::Vector2f> eou_find_path(const CTileBoard& board, florrbt::V
                 break;
             }
         }
-        if (next == current) next = current + 1; // unreachable safety
+        if (next == current) next = current + 1; // 保证路径索引向前推进。
         waypoints.push_back(cells[next]);
         current = next;
     }
@@ -226,8 +215,7 @@ std::vector<florrbt::Vector2f> eou_find_path(const CTileBoard& board, florrbt::V
         points.emplace_back((static_cast<float>(col) + 0.5f) * tile_size,
                             (static_cast<float>(row) + 0.5f) * tile_size);
     }
-    // Keep the last cell centre as a safe waypoint but finish at the actual
-    // food/home coordinate, which need not be in the centre of its tile.
+    // 保留末格中心作为安全路径点，最终落点使用食物或巢穴的实际坐标。
     points.push_back(goal);
     return points;
 }
@@ -236,7 +224,7 @@ std::vector<florrbt::Vector2f> eou_find_path(const CTileBoard& board, florrbt::V
 namespace
 {
 constexpr float kEouFoodSearchMaxRange = 320.f;
-} // namespace
+}
 
 CEOUMob<SMobStats>::SFoodTarget CEOUMob<SMobStats>::FindEouFoodTarget(CGameWorld* world)
 {
@@ -258,8 +246,7 @@ CEOUMob<SMobStats>::SFoodTarget CEOUMob<SMobStats>::FindEouFoodTarget(CGameWorld
     std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {
         return a.first != b.first ? a.first < b.first : a.second->Id() < b.second->Id();
     });
-    // Bound failed path searches. A corpse behind a sealed wall must not
-    // monopolise the worker or trigger a pathfind every frame.
+    // 限制失败寻路频率，避免封墙后的食物使工蚁每帧重复计算。
     const size_t attempts = std::min<size_t>(candidates.size(), 4);
     if (candidates.empty()) { m_food_search_cursor = 0; return result; }
     const size_t first = m_food_search_cursor % candidates.size();
@@ -277,8 +264,9 @@ CEOUMob<SMobStats>::SFoodTarget CEOUMob<SMobStats>::FindEouFoodTarget(CGameWorld
     return result;
 }
 
-void CEouSoldierAnt::Tick(float dt)
+void CEouSoldierAnt::OnTickIntent(float dt)
 {
+    if (IsPlayerControlled()) { CMob<SMobStats>::OnTickIntent(dt); return; }
     m_combat_scan_timer -= dt;
     CEntity* target = ResolveCombatTarget();
     if (m_combat_scan_timer <= 0.f)
@@ -289,8 +277,7 @@ void CEouSoldierAnt::Tick(float dt)
             ScanForEnemy();
             target = ResolveCombatTarget();
         }
-        // Blocked view: path through the tunnels on the scan cadence (the
-        // direct chase below takes over as soon as the line of sight clears).
+        // 隔墙时按扫描周期沿通道寻路，视线恢复后转为直接追击。
         if (target && m_board && !eou_has_line_of_sight(*m_board, Pos(), target->Pos()))
             SetTarget(target->Pos());
     }
@@ -301,20 +288,18 @@ void CEouSoldierAnt::Tick(float dt)
         m_target_pos = target->Pos();
         if (!m_board || eou_has_line_of_sight(*m_board, Pos(), m_target_pos))
         {
-            // Direct chase: bypass the waypoint walk; contact damage comes
-            // from the normal collision rules once the bodies touch.
+            // 直接追击绕过路径点，接触伤害仍由正常碰撞规则处理。
             ClearEouWaypoints();
-            CMob<SMobStats>::Tick(dt);
+            CMob<SMobStats>::OnTickIntent(dt);
             MoveTowards(m_target_pos, dt);
             return;
         }
-        // Path-following chase (waypoints refreshed on the scan cadence).
-        CEOUMob<SMobStats>::Tick(dt);
+        CEOUMob<SMobStats>::OnTickIntent(dt);
         return;
     }
 
     m_engaged = false;
-    CEOUMob<SMobStats>::Tick(dt);
+    CEOUMob<SMobStats>::OnTickIntent(dt);
 }
 
 CEntity* CEouSoldierAnt::ResolveCombatTarget()
@@ -351,8 +336,7 @@ void CEouSoldierAnt::ScanForEnemy()
     float best_dist = std::numeric_limits<float>::max();
     world->GetSpatialGrid().ForEachInRange(Pos(), aggro, [&](const CEntity* entity) {
         if (entity == this) return;
-        // Enemy bodies only: mobs and flowers share CMobBase; petals and
-        // projectiles do not. Team 0 is neutral (food, wild props).
+        // 仅追击敌方生物或花朵，不选花瓣、投射物和 team 0 的中立实体。
         const auto* mob = dynamic_cast<const CMobBase*>(entity);
         if (!mob || mob->IsMarkedForDes() || mob->IsDead()) return;
         const int team = mob->Team();
@@ -381,12 +365,10 @@ void CEouWorkerAnt::TickDig(float dt)
     if (!m_goal || !m_board) return;
     const float tile_size = m_board->TileSize();
     if (tile_size <= 0.f) return;
-    // The wall cell itself is solid, so the ant is stopped at its edge; "in
-    // range" therefore means roughly touching the wall, not standing on it.
+    // 墙格会挡住工蚁，因此挖掘范围按接近墙边判定，不能要求站到墙内。
     const float dig_range = tile_size * std::max(0.1f, game_config::eou_worker_dig_range_tiles);
     if (EouDistance(Pos(), *m_goal) > dig_range) return;
 
-    // Digging: hold position and chip away.
     m_vel *= std::max(0.f, 1.f - 4.f * dt);
     m_dig_progress += dt;
     if (m_dig_progress < std::max(0.1f, game_config::eou_worker_dig_time)) return;
@@ -394,7 +376,7 @@ void CEouWorkerAnt::TickDig(float dt)
     const florrbt::Vector2f goal = *m_goal;
     m_goal.reset();
     m_dig_progress = 0.f;
-    m_scan_timer = 0.f; // rescan right away: next flag, or fall back to foraging
+    m_scan_timer = 0.f; // 立即扫描下一个标记，无标记时恢复觅食。
 
     CGameWorld* world = this->GameWorld();
     auto* controller = world ? dynamic_cast<CAntKingdomController*>(world->GetController()) : nullptr;

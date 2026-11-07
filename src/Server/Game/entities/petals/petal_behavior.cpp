@@ -10,7 +10,6 @@ bool RegisterPetals(std::string& error)
     }
 
     RegisterPetalDefinition<EPetalType::Air, CAirBehavior>();
-    // Mod petals (controller content, ids from mod_petal_type.h).
     RegisterModPetalDefinition<EModPetalType::Brush, CBrushBehavior>();
     RegisterModPetalDefinition<EModPetalType::Eraser, CBrushBehavior>();
     RegisterPetalDefinition<EPetalType::AntEgg, CAntEggBehavior, CBeetleEggPetal>();

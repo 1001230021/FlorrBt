@@ -27,8 +27,9 @@ class IWorldModule;
 class IServerDataStore;
 class IUniquePetalRegistry;
 class CReportReviewService;
+class CAccountLinkService;
 
-class CServer : public IGameEventSink, public IGameWorldResolver
+class CServer : public IGameEventSink, public IGameWorldResolver, public IUniquePetalAccess
 {
   public:
     using TTitanForgeCooldowns = std::array<float, static_cast<std::size_t>(kPetalIdCapacity)>;
@@ -63,7 +64,7 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     CServer();
     ~CServer();
 
-    void Init();
+    bool Init();
     void Run();
     void ShutDown();
     void RequestStop() { m_running = false; }
@@ -72,7 +73,8 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     void SetReadyFilePath(std::filesystem::path path) { m_ready_file_path = std::move(path); }
     bool IsRunning() const { return m_running; }
     int GetExitCode() const { return m_exit_code; }
-    std::uint64_t GetTick() const { return m_tick; }
+    std::uint64_t GetTick() const override { return m_tick; }
+    const std::string& RuntimeIdentity() const { return m_runtime_identity; }
     float GetFixedDtSeconds() const { return m_fixed_dt_seconds; }
     const SPerformanceTelemetry& GetPerformanceTelemetry() const { return m_performance_telemetry; }
     void SetTickForRestore(std::uint64_t tick) { m_tick = tick; }
@@ -80,14 +82,18 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     CGameWorld* GetMainWorld() const override;
     CGameWorld* FindWorldById(std::uint32_t world_id) const override;
     bool DeferWorldTransfer(const SDeferredWorldTransfer&) override;
-    std::vector<CGameWorld*> GetWorlds() const;
+    std::vector<CGameWorld*> GetWorlds() const override;
+    CGameWorld* CreateRoomGameWorld(int room_code) override;
     IWorldModule* GetWorldModule() const { return m_p_world_module; }
-    std::vector<CGameWorld*> FindWorldsByMapName(const std::string& map_name) const;
+    std::vector<CGameWorld*> FindWorldsByMapName(const std::string& map_name) const override;
     CGameWorld* FindRandomWorldByMapName(const std::string& map_name) const;
     INetworkModule* GetNetworkModule() const { return m_p_network_module; }
     IServerDataStore* GetDataStore() const { return m_p_data_store.get(); }
     IUniquePetalRegistry* GetUniquePetalRegistry() const;
+    bool IsUniquePetalOwned(EPetalType type) const override;
+    bool ClaimUniquePetal(CPlayer&, EPetalType type) override;
     CExtensionRuntime& Extensions() const { return *m_extensions; }
+    CAccountLinkService& AccountLinks() const { return *m_account_links; }
     CReportReviewService& Reports() const { return *m_reports; }
     bool CanTitanForgePetal(EPetalType type) const;
     void StartTitanForgeCooldown(EPetalType type);
@@ -98,17 +104,20 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     static bool MeetsPetalReportRarity(ERarity rarity, int min_rarity);
     bool ShouldReportRarity(ERarity rarity, int minimum_rarity) const override;
     bool ReportMob(std::string_view action, ERarity rarity, std::string_view mob_name) override;
+    bool ReportPetal(std::string_view action, ERarity rarity, std::string_view petal_name, std::string_view player_name) override;
     bool ReportMobSpawn(CGameWorld& source_world, std::string_view action, ERarity rarity,
                         std::string_view mob_name) override;
     bool BroadcastPetalReport(std::string_view done, ERarity rarity, std::string_view petal_name,
                               std::string_view doer);
+    void PublishCommittedPetalReports();
     bool BroadcastMobReport(std::string_view action, ERarity rarity, std::string_view mob_name);
     bool BroadcastMobSpawnReport(CGameWorld& source_world, std::string_view action, ERarity rarity,
                                  std::string_view mob_name);
 
   private:
-    // Headless regression fixtures wire modules without opening sockets,
-    // loading production accounts, or starting the GUI.
+    std::string m_runtime_identity;
+    std::vector<std::pair<std::uint64_t, std::string>> m_pending_petal_reports;
+    // 离线测试装配模块，不开放端口、不加载正式账号、不启动界面。
     friend class CServerTestAccess;
     void ExecuteStartupCommands();
     void ExecuteStartupConfigCommands();
@@ -117,11 +126,15 @@ class CServer : public IGameEventSink, public IGameWorldResolver
     bool PublishReadyFile();
     void ProcessHotReloadRequest();
     void TickTitanForgeCooldowns(float dt);
+    void TickModules(float dt);
+    bool InitializeModules();
+    bool Fail(std::string_view stage, const std::string& message, int exit_code = 1);
     static CServer* s_p_instance;
     CConsole m_console;
     IWorldModule* m_p_world_module = nullptr;
     INetworkModule* m_p_network_module = nullptr;
     std::unique_ptr<CExtensionRuntime> m_extensions;
+    std::unique_ptr<CAccountLinkService> m_account_links;
     std::unique_ptr<CReportReviewService> m_reports;
     std::unique_ptr<IServerDataStore> m_p_data_store;
     std::unique_ptr<CGameContext> m_p_game_context;

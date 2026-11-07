@@ -10,8 +10,7 @@ class CPlayer;
 class CGameWorld;
 struct json_t;
 
-// Owns observer sockets, never CPlayers. All world/account operations run on
-// the server tick thread; the logger callback only fills a bounded queue.
+// 只拥有观察者连接；世界和账号操作留在主线程，日志回调只写有界队列。
 class CDevDebugService
 {
   public:
@@ -29,8 +28,6 @@ class CDevDebugService
     std::unique_ptr<Impl> m_impl;
 };
 
-// Shared by the graphical action and the server's inventory command. Only
-// available backpack quantities change; equipped slots/controller proxies
-// are deliberately not touched.
+// 图形操作与背包命令共用，只修改可用库存，不改已装备槽位或玩法代理卡片。
 bool EditDebugInventory(CServer& server, CPlayer& player, const std::string& operation,
                         std::uint8_t type, std::uint8_t rarity, std::uint32_t count, std::string& result);

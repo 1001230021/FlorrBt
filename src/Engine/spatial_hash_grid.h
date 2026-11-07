@@ -22,6 +22,7 @@ template <typename TObject, typename TId = int> class CSpatialHashGrid
 
     static constexpr float global_range = -1.0f;
     bool HasActiveQueries() const { return m_query_depth != 0; }
+    std::size_t TrackedCount() const { return m_tracked.size(); }
 
     CSpatialHashGrid(float cell_size, position_getter get_position, id_getter get_id, resolver resolve,
                      valid_filter is_valid)

@@ -11,6 +11,8 @@
 #include "../../Shared/rarity.h"
 #include "../../Shared/utf8.h"
 #include "../Game/controllers/player_controller.h"
+#include "../Game/extensions/player_feature_extensions.h"
+#include "../Auth/account_link_service.h"
 #include "../Game/entities/flower.h"
 #include "../Game/entities/petals/petal.h"
 #include "../Game/gamecontext.h"
@@ -49,6 +51,7 @@ class CAccountAuthWorker
         std::uint64_t request_id = 0;
         std::uint32_t player_id = 0;
         SAccountAuthWork work;
+        bool account_only = false;
     };
 
     struct SCompletion
@@ -58,6 +61,7 @@ class CAccountAuthWorker
         std::string account_name;
         bool register_mode = false;
         SAccountAuthResult result;
+        bool account_only = false;
     };
 
     ~CAccountAuthWorker() { ShutDown(); }
@@ -151,6 +155,7 @@ class CAccountAuthWorker
             completion.player_id = job.player_id;
             completion.account_name = job.work.account_name;
             completion.register_mode = job.work.register_mode;
+            completion.account_only = job.account_only;
             try
             {
                 completion.result = CAccountDataStore::ExecuteAuthentication(std::move(job.work));
@@ -421,7 +426,7 @@ std::string Trim(std::string_view text)
     return std::string(text.substr(begin, end - begin));
 }
 
-} // namespace
+}
 
 INetworkModule::INetworkModule(CServer& server)
     : m_server(server), m_dev_debug(std::make_unique<CDevDebugService>(server)) {}
@@ -452,8 +457,7 @@ bool INetworkModule::QueueSkillResult(CPlayer& player, ESkillRequestResult resul
 
 bool INetworkModule::AuthenticateRcon(CPlayer& player, const std::string& password, std::string& message)
 {
-    // This namespace cannot be a valid (<=32-byte) account name, so logging
-    // into an ordinary account can never clear a RCON brute-force lockout.
+    // 该前缀不可能是合法账号名，普通登录不能清除 RCON 的暴力尝试封锁。
     const std::string throttle_key(max_auth_name_size + 1, '\0');
     if (!player.IsAuthenticated() || !player.IsConnected() || game_config::rcon_password.empty())
     { message = "RCON is unavailable."; return false; }
@@ -562,16 +566,30 @@ bool INetworkModule::Init()
 
 void INetworkModule::Tick(float dt)
 {
+    BeginTick(dt);
+    EndTick(dt);
+}
+
+void INetworkModule::BeginTick(float dt)
+{
     for (const auto& player : m_players)
         if (player && player->IsRconAuthorized()) ValidateRconAuthorization(*player);
     ProcessEmailDeliveryResults();
     ProcessAuthenticationResults();
+    m_server.AccountLinks().Tick(*this, [this](CPlayer& target, const std::string& data) { return QueueAccountLinkPayload(target, data); });
     AcceptConnections();
     ClassifyPendingConnections();
     ProcessMessages();
     RetryPendingSceneSyncs();
     m_dev_debug->Tick(dt);
     DispatchAuthenticationRequests();
+}
+
+void INetworkModule::EndTick(float dt)
+{
+    ProcessEconomyReplies();
+    for (const auto& player : m_players) if (player && player->IsAuthenticated() && player->GetEntity()) QueueClientFeatures(*player);
+    m_server.PublishCommittedPetalReports();
     BroadcastEnvironmentIfChanged();
     if (CGameWorld* main = m_server.GetMainWorld())
         m_player_lifecycle_service.RespawnDeadControlledEntities(m_players, *main, *this);
@@ -597,8 +615,7 @@ void INetworkModule::Tick(float dt)
 
 void INetworkModule::SendSnapshots()
 {
-    // Publish squad membership maintenance on the game thread before any
-    // per-world snapshot workers read ISquadView.
+    // 快照线程读取队伍视图前，先在游戏线程维护成员关系。
     m_server.Extensions().RefreshAllWorlds();
     struct SSnapshotBuildItem
     {
@@ -658,7 +675,7 @@ void INetworkModule::SendSnapshots()
         }
 
         CGameWorld* world = owner->GameWorld();
-        if (!world) continue;
+        if (!world || world->IsRecovering()) continue;
         const size_t item_index = build_items.size();
         build_items.push_back({ player });
         auto group = std::find_if(world_groups.begin(), world_groups.end(),
@@ -703,8 +720,7 @@ void INetworkModule::SendSnapshots()
         CSnapshotService::SBuildResult& snapshot = item.snapshot;
         const size_t full_snapshot_size = snapshot.packed_size;
         size_t actual_snapshot_size = full_snapshot_size;
-        // Weather intensities ride along with every snapshot (main thread after
-        // the worker batch joined), so clients always have fresh weather.
+        // 天气强度由主线程在快照任务结束后写入每次快照。
         if (const IWeatherDiurnalView* system = m_server.Extensions().Globals().Find<IWeatherDiurnalView>())
         {
             const SWeatherDiurnalClientState environment = system->GetClientState();
@@ -736,8 +752,7 @@ void INetworkModule::SendSnapshots()
         {
             RecordQueuedSnapshot(snapshot.message, full_snapshot_size, actual_snapshot_size);
             RecordSentSnapshot(*player, std::move(history_entry));
-            // Feedback is queued on the game thread after all snapshot
-            // workers join. No socket I/O or shared mutation in workers.
+            // 任务汇合后在游戏线程排队反馈，工作线程不发送网络消息或修改共享状态。
             if (CEntity* owner = player->GetEntity(); owner && owner->GameWorld())
             {
                 ServerMessage feedback;
@@ -758,9 +773,7 @@ void INetworkModule::SendSnapshots()
             player->DetachSocket();
         }
     }
-    // UINT32_MAX is the wire sentinel for a full snapshot base and must never
-    // be emitted as a real snapshot id. Wrap directly from UINT32_MAX - 1 to
-    // zero so serial-number comparison remains unambiguous on both peers.
+    // UINT32_MAX 保留为全量快照标记；有效 ID 从 UINT32_MAX - 1 直接回绕到零。
     do
     {
         ++m_snapshot_id;
@@ -789,6 +802,7 @@ void INetworkModule::ShutDown()
     m_auth_failures.clear();
     if (m_email_verification_service) m_email_verification_service->ShutDown();
     if (m_auth_worker) m_auth_worker->ShutDown();
+    m_players_by_id.clear();
     m_players.clear();
     m_client_snapshot_states.clear();
     LOG_INFO("network", "Shut down");
@@ -877,15 +891,13 @@ void INetworkModule::ClassifyPendingConnections()
         }
         else if (!reject && bytes.size() <= game_config::network_max_receive_buffer_size)
         {
-            // Only this branch allocates a player ID. Its existing version,
-            // account login, reconnect and player-input parser stay intact.
             const int id = GetNewPlayerId();
             if (id > 0)
             {
                 auto player = std::make_unique<CPlayer>(std::move(pending.socket), id, "Pending" + std::to_string(id));
                 player->SetRemoteAddress(pending.remote); player->m_receive_buffer = std::move(bytes);
                 m_auth_deadlines.insert_or_assign(static_cast<std::uint32_t>(id), pending.deadline);
-                m_players.push_back(std::move(player));
+                if (!InsertPlayer(std::move(player))) throw std::logic_error("Duplicate allocated player ID");
                 LOG_INFO("network", "Game connection pending auth ID: " + std::to_string(id));
             }
             else LOG_WARN("network", "Rejecting game connection: player IDs exhausted");
@@ -1082,7 +1094,7 @@ void INetworkModule::ProcessAuthenticationResults()
                                         std::max(1, game_config::email_verification_ttl_seconds));
             m_pending_verified_logins.insert_or_assign(
                 player->GetId(), SPendingVerifiedLogin{ completion.account_name, trusted_ip_to_commit,
-                                                        completion.register_mode, expires_at });
+                                                        completion.register_mode, expires_at, completion.result, completion.account_only });
             m_auth_deadlines.insert_or_assign(
                 player->GetId(), expires_at + std::chrono::seconds(auth_verification_grace_seconds));
             QueueAuthResult(*player, EAuthResultCode::EmailBindingRequired,
@@ -1095,7 +1107,7 @@ void INetworkModule::ProcessAuthenticationResults()
         ClearPendingEmailAuthentication(player->GetId());
         EPlayerBufferResult result = ApplyAuthentication(
             *player, completion.account_name, completion.register_mode, EAuthResultCode::Authenticated, {},
-            trusted_ip_to_commit);
+            trusted_ip_to_commit, &completion.result, completion.account_only);
         if (result == EPlayerBufferResult::Continue) continue;
 
         for (size_t i = 0; i < m_players.size(); ++i)
@@ -1140,7 +1152,7 @@ void INetworkModule::DispatchAuthenticationRequests()
         std::string error;
         if (!CAccountDataStore::PrepareAuthentication(request->account_name, request->password, request->email,
                                                        player->GetRemoteAddress(), request->register_mode, work,
-                                                       &error))
+                                                       &error, request->recovery_device_id, request->recovery_token))
         {
             if (!request->register_mode) RecordLoginFailure(*player, request->account_name);
             QueueAuthResult(*player, EAuthResultCode::Failed, error.empty() ? "Auth failed" : error);
@@ -1155,6 +1167,7 @@ void INetworkModule::DispatchAuthenticationRequests()
         job.request_id = request->request_id;
         job.player_id = request->player_id;
         job.work = std::move(work);
+        job.account_only = request->account_only;
         if (!m_auth_worker || !m_auth_worker->Submit(std::move(job)))
         {
             m_active_auth_accounts.erase(account_name);
@@ -1367,8 +1380,7 @@ void INetworkModule::HandleSnapshotAck(CPlayer& player, const ClientSnapshotAck&
     }
 
     state.acked_snapshot_id = ack.snapshot_id;
-    // History is already ordered by send time. Erase by deque position rather
-    // than numeric id so cleanup remains correct across UINT32 wraparound.
+    // 历史按发送顺序排列，按位置删除可兼容 ID 回绕。
     state.history.erase(state.history.begin(), history_it);
 }
 
@@ -1493,7 +1505,8 @@ void INetworkModule::RecordQueuedSnapshot(const ServerMessage& msg, size_t full_
 
 void INetworkModule::ResetSnapshotState(CPlayer& player) { m_client_snapshot_states.erase(player.GetId()); }
 
-bool INetworkModule::QueueAuthResult(CPlayer& player, EAuthResultCode code, const std::string& message)
+bool INetworkModule::QueueAuthResult(CPlayer& player, EAuthResultCode code, const std::string& message,
+                                    const SAccountAuthResult* authentication)
 {
     ServerMessage msg;
     msg.type = ServerMessage::Type::AuthResult;
@@ -1501,18 +1514,31 @@ bool INetworkModule::QueueAuthResult(CPlayer& player, EAuthResultCode code, cons
     msg.auth_message = message;
     msg.email_policy = static_cast<EEmailPolicy>(game_config::GetEmailPolicy());
     msg.email_bound = false;
+    if (authentication && (code == EAuthResultCode::Authenticated || code == EAuthResultCode::EmailBound))
+    {
+        msg.auth_recovery_device_id = authentication->device_id;
+        msg.auth_recovery_token = authentication->recovery_token;
+        msg.auth_recovery_expires_at = static_cast<std::uint64_t>(authentication->recovery_credential.expires_at);
+    }
     if (player.IsAuthenticated())
     {
         SAccountEmailState email_state;
         if (CAccountDataStore::GetEmailState(player.GetAccountName(), email_state))
             msg.email_bound = email_state.verified;
     }
-    return QueueMessage(player, msg);
+    if (!QueueMessage(player, msg)) return false;
+    if (player.IsAuthenticated() && (code == EAuthResultCode::Authenticated || code == EAuthResultCode::EmailBound)) return QueueAccountLinks(player);
+    return true;
 }
 
 bool INetworkModule::QueueWelcome(CPlayer& player)
 {
     return QueuePlayerBaseline(player, true);
+}
+
+bool INetworkModule::QueuePlayerState(CPlayer& player)
+{
+    return QueuePlayerBaseline(player, false);
 }
 
 bool INetworkModule::QueuePlayerBaseline(CPlayer& player, bool full_scene)
@@ -1524,7 +1550,7 @@ bool INetworkModule::QueuePlayerBaseline(CPlayer& player, bool full_scene)
     m_pending_scene_syncs[player.GetId()] = {player.SessionGeneration(), full_scene};
     const CEntity* owner = player.GetEntity();
     const CGameWorld* player_world = owner ? owner->GameWorld() : nullptr;
-    if (!player.IsConnected() || !player_world || !owner || owner->IsMarkedForDes()) return false;
+    if (!player.IsConnected() || !player_world || player_world->IsRecovering() || !owner || owner->IsMarkedForDes()) return false;
     std::vector<std::uint8_t> staged;
     struct CSceneGuard
     {
@@ -1534,7 +1560,10 @@ bool INetworkModule::QueuePlayerBaseline(CPlayer& player, bool full_scene)
     m_scene_build_player = &player; m_scene_build_buffer = &staged; m_scene_build_failed = false;
     ServerMessage msg;
     msg.type = ServerMessage::Type::Welcome;
-    msg.player_id = static_cast<uint16_t>(player.GetId());
+    msg.player_id = player.GetId();
+    msg.player_session_generation = player.SessionGeneration();
+    msg.world_id = player_world->GetId();
+    msg.world_generation = player_world->GetInstanceGeneration();
     msg.tick_rate = static_cast<uint8_t>(std::round(1.f / game_config::server_fixed_dt));
 
     msg.owner_entity_id = static_cast<net_entity_id>(owner->Id());
@@ -1556,7 +1585,8 @@ bool INetworkModule::QueuePlayerBaseline(CPlayer& player, bool full_scene)
     }
     QueueCodexFull(player);
     if (full_scene) QueueCodexLoot(player);
-    m_server.Extensions().SyncSquadMetadata(player);
+    if (!m_server.Extensions().PublishPlayerState(player)) m_scene_build_failed = true;
+    if (!QueueClientFeatures(player, true)) m_scene_build_failed = true;
     QueueInventory(player);
     QueueOwnerStateUpdate(player);
     struct CWriter final : IPlayerSceneWriter
@@ -1568,6 +1598,7 @@ bool INetworkModule::QueuePlayerBaseline(CPlayer& player, bool full_scene)
         bool RemoveWall(florrbt::Vector2f min, florrbt::Vector2f max) override
         { return network.SendTerrainWallRemove(player, min, max); }
     } writer{*this, player};
+    if (full_scene && !player_world->Terrain().WritePlayerScene(writer)) m_scene_build_failed = true;
     if (const auto* controller = player_world->GetController(); full_scene && controller &&
         !controller->WritePlayerScene(*player_world, player, writer)) m_scene_build_failed = true;
     if (m_scene_build_failed)
@@ -1576,8 +1607,7 @@ bool INetworkModule::QueuePlayerBaseline(CPlayer& player, bool full_scene)
         player.DetachSocket();
         return false;
     }
-    // No partial Welcome/environment/terrain can escape this staging buffer.
-    // Preserve a partially sent old frame; TCP orders it before Welcome.
+    // 场景初始化完整组包后才入队；保留旧帧已发送部分，由 TCP 保证其先于 Welcome。
     DropQueuedSnapshots(player);
     const size_t limit = std::max(game_config::network_max_send_buffer_size, staged.size());
     if (PendingSendBytes(player) > limit - staged.size()) return false;
@@ -1630,8 +1660,7 @@ bool INetworkModule::QueueEnvironment(CPlayer& player)
 
 void INetworkModule::QueueCodexFull(CPlayer& player)
 {
-    // Full codex progress: every mob type x rarity combination, including
-    // zero-count entries, so the client renders the complete bestiary grid.
+    // 包含零进度项，供客户端绘制完整图鉴。
     ServerMessage msg;
     msg.type = ServerMessage::Type::CodexFull;
     const auto& codex = player.GetCodex();
@@ -1753,24 +1782,19 @@ void INetworkModule::BroadcastEnvironmentIfChanged()
 {
     const IWeatherDiurnalView* system = m_server.Extensions().Globals().Find<IWeatherDiurnalView>();
     if (!system) return;
-    // Time-of-day is extrapolated client-side from the anchor tick, and weather
-    // rides along with every snapshot. The Environment message is therefore only
-    // re-sent on connect (QueueEnvironment), when the day length changes, or when
-    // the virtual time jumps (e.g. the `weather time` command), so clients do not
-    // stay anchored to a stale time-of-day.
+    // 客户端由时间锚点外推，天气随快照同步；环境消息仅在连接、日长改变或时间跳变时重发。
     const SWeatherDiurnalSnapshot snapshot = system->GetWeatherDiurnalSnapshot();
     const float day_duration = static_cast<float>(system->DayDurationSeconds());
     const bool day_changed = day_duration != m_last_environment_day_duration;
     const double raw_jump = std::abs(snapshot.time_of_day - m_last_environment_time_of_day);
     const double time_jump = std::min(raw_jump, 1.0 - raw_jump);
-    // Natural advance is ~2e-6 per tick; a command jump is orders of magnitude larger.
+    // 自然推进约每帧 2e-6，远小于命令造成的时间跳变。
     const bool time_jumped = time_jump > 0.002;
     if (!day_changed && !time_jumped) return;
     m_last_environment_day_duration = day_duration;
     m_last_environment_time_of_day = snapshot.time_of_day;
 
-    // Queue only: the network thread owns socket sends, so flushing here would
-    // race with it and disconnect players on send failure.
+    // 此处只入队，发送由网络线程负责，避免并发发送导致误断线。
     for (const auto& player : m_players)
     {
         if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
@@ -1780,10 +1804,12 @@ void INetworkModule::BroadcastEnvironmentIfChanged()
 
 bool INetworkModule::QueueOwnerState(CPlayer& player)
 {
+    if (player.GetWorld() && player.GetWorld()->IsRecovering()) return false;
     ServerMessage msg;
     msg.type = ServerMessage::Type::OwnerState;
     msg.level = 1;
-    msg.flags = 0;
+    msg.flags = (player.HasNpcInventory() ? owner_state_npc_inventory : 0) |
+                (player.HasIsolatedInventory() ? owner_state_temporary_inventory : 0);
     msg.exp_progress_bps = 0;
     msg.talent_points = static_cast<uint16_t>(std::clamp(player.GetTalentPoints(), 0, static_cast<int>(UINT16_MAX)));
     for (const ITalent* talent : player.GetTalents())
@@ -1807,14 +1833,14 @@ bool INetworkModule::QueueOwnerState(CPlayer& player)
     {
         msg.owner_slots = CSnapshotService::BuildPrimarySlots(*flower);
         const IGameController* controller = flower->GameWorld() ? flower->GameWorld()->GetController() : nullptr;
-        if (controller && controller->LocksPetalLoadout()) msg.flags = owner_state_loadout_locked;
+        if (controller && controller->LocksPetalLoadout()) msg.flags = msg.flags.value_or(0) | owner_state_loadout_locked;
     }
+    else msg.flags = msg.flags.value_or(0) | owner_state_loadout_locked;
 
-    // Suppress the account's saved side slots only on the wire; never erase
-    // them or return temporary controller cards to persistent inventory.
+    // 只在协议输出隐藏保存的副槽；不清空存档，也不把控制器临时卡片放回正式背包。
     const bool locked = (msg.flags.value_or(0) & owner_state_loadout_locked) != 0;
     std::vector<SInventoryItem> secondary_slots = locked ? std::vector<SInventoryItem>{}
-        : CAccountDataStore::GetSecondarySlots(player.GetProgressAccountName());
+        : CAccountDataStore::GetSecondarySlots(player.GetInventoryAccountName());
     if (locked) msg.secondary_slots.resize(msg.owner_slots.size());
     msg.secondary_slots.reserve(secondary_slots.size());
     for (const SInventoryItem& item : secondary_slots)
@@ -1835,34 +1861,178 @@ bool INetworkModule::QueueOwnerState(CPlayer& player)
 
 bool INetworkModule::QueueOwnerStateUpdate(CPlayer& player) { return QueueOwnerState(player); }
 
-bool INetworkModule::QueueInventoryUpdate(CPlayer& player) { return QueueInventory(player); }
+bool INetworkModule::QueueInventoryUpdate(CPlayer& player)
+{
+    const auto fence = player.HasIsolatedInventory() ? 0 : CAccountDataStore::CurrentSaveFence();
+    for (auto& pending : m_economy_replies)
+        if (!pending.result.receipt.request_id && player.MatchesSession(pending.session))
+        {
+            pending.result.receipt.required_save_generation = std::max(fence, pending.result.receipt.required_save_generation);
+            pending.stage = 1; return true;
+        }
+    SPendingEconomyReply refresh{player.SessionRef(), player.GetInventoryAccountName(), {}, 1};
+    refresh.result.receipt.required_save_generation = fence;
+    m_economy_replies.push_back(std::move(refresh));
+    return true;
+}
 
 bool INetworkModule::QueueInventory(CPlayer& player)
 {
     ServerMessage msg;
     msg.type = ServerMessage::Type::Inventory;
-    msg.inventory = CAccountDataStore::GetInventory(player.GetProgressAccountName());
+    msg.inventory = CAccountDataStore::GetInventory(player.GetInventoryAccountName());
+    msg.inventory_scope = player.GetInventoryAccountName();
+    msg.inventory_actor_scope = InventoryActorScope(player);
+    CAccountDataStore::GetEconomyCounters(msg.inventory_scope, msg.inventory_revision, msg.inventory_last_request);
     return QueueMessage(player, msg);
 }
 
-bool INetworkModule::QueueCraftResult(CPlayer& player, const SCraftResult& result)
+std::string INetworkModule::InventoryActorScope(const CPlayer& player) const
 {
+    const auto* entity = player.GetEntity();
+    const auto* world = entity ? entity->GameWorld() : nullptr;
+    if (!world || world->IsRecovering() || entity->IsMarkedForDes() ||
+        (entity->IsDead() && !dynamic_cast<const CPlayerFlower*>(entity))) return {};
+    return m_server.RuntimeIdentity() + ":" + std::to_string(world->GetInstanceGeneration()) + ":" +
+        std::to_string(entity->Generation()) + ":" + std::to_string(entity->Id());
+}
+
+bool INetworkModule::QueueEconomyResult(CPlayer& player, const std::string& scope, const SEconomyDispatch& result)
+{
+    const auto& receipt = result.receipt;
     ServerMessage msg;
-    msg.type = ServerMessage::Type::CraftResult;
-    msg.craft_success = result.successes > 0;
-    msg.craft_petal_type = result.petal_type;
-    msg.craft_rarity = result.rarity;
-    msg.craft_consumed = result.consumed;
-    msg.craft_items = result.items;
+    msg.type = ServerMessage::Type::EconomyResult;
+    msg.inventory_scope = scope; msg.inventory_revision = receipt.result_revision;
+    msg.economy_request_id = receipt.request_id; msg.economy_operation = receipt.operation;
+    msg.economy_outcome = receipt.outcome; msg.economy_recorded = result.has_receipt;
+    msg.craft_success = receipt.craft.successes > 0; msg.craft_petal_type = receipt.craft.petal_type;
+    msg.craft_rarity = receipt.craft.rarity; msg.craft_consumed = receipt.craft.consumed;
+    msg.craft_items = receipt.craft.items;
     return QueueMessage(player, msg);
 }
+
+void INetworkModule::ProcessEconomyReplies()
+{
+    for (auto it = m_economy_replies.begin(); it != m_economy_replies.end();)
+    {
+        auto found = std::find_if(m_players.begin(), m_players.end(), [&](const auto& p) { return p && p->MatchesSession(it->session); });
+        if (found == m_players.end()) { it = m_economy_replies.erase(it); continue; }
+        auto& player = **found;
+        if (!CAccountDataStore::EconomyReceiptCommitted(it->result.receipt)) { ++it; continue; }
+        if (it->stage == 0 && QueueEconomyResult(player, it->scope, it->result)) ++it->stage;
+        if (it->stage == 1 && QueueInventory(player)) ++it->stage;
+        if (it->stage == 2 && QueueOwnerState(player)) ++it->stage;
+        if (it->stage == 3) it = m_economy_replies.erase(it);
+        else ++it;
+    }
+}
+
+void INetworkModule::HandleEconomyRequest(CPlayer& player, const ClientEconomyRequest& request)
+{
+    if (!player.IsAuthenticated()) return;
+    const auto session = player.SessionRef();
+    const auto fingerprint = request.Fingerprint();
+    if (std::any_of(m_economy_replies.begin(), m_economy_replies.end(), [&](const auto& reply) {
+        return player.MatchesSession(reply.session) && reply.scope == request.context.inventory_scope &&
+               reply.result.receipt.request_id == request.context.request_id &&
+               reply.result.receipt.fingerprint == fingerprint;
+    })) return;
+    if (std::count_if(m_economy_replies.begin(), m_economy_replies.end(), [&](const auto& reply) {
+        return player.MatchesSession(reply.session);
+    }) >= 32) return; // 接收下一帧前由接收循环施加背压。
+
+    std::vector<std::string> other_accounts;
+    if (request.operation == EEconomyOperation::Forge)
+        if (const auto* owner = CAccountDataStore::FindUniqueOwner(static_cast<EPetalType>(request.petal_type)))
+            other_accounts.push_back(owner->owner);
+    std::function<void()> install_loadout;
+    SUniquePetalExchangeResult exchange;
+    CTitanFlower* titan = nullptr;
+    CAccountDataStore::CSaveBatch batch;
+    // 先预留结果节点，再执行事务。
+    m_economy_replies.push_back({session, request.context.inventory_scope, {}, 0});
+    auto& pending = m_economy_replies.back();
+    try
+    {
+        pending.result = CAccountDataStore::ExecuteEconomyRequest(player.GetInventoryAccountName(), request.context,
+            request.operation, fingerprint, [&](SCraftResult& craft) {
+                craft.petal_type = request.petal_type; craft.rarity = request.rarity;
+                if (player.GetWorld() && player.GetWorld()->IsRecovering()) return EEconomyOutcome::Forbidden;
+                if (request.operation == EEconomyOperation::Loadout || request.operation == EEconomyOperation::Forge)
+                    if (request.context.actor_scope.empty() || request.context.actor_scope != InventoryActorScope(player))
+                        return EEconomyOutcome::Forbidden;
+                if (request.operation == EEconomyOperation::Loadout)
+                {
+                    if (!m_server.Extensions().CanUseFeature(player, "inventory", feature_access::edit)) return EEconomyOutcome::Forbidden;
+                    auto* feature = m_server.Extensions().Globals().Find<IInventoryFeature>();
+                    return feature ? feature->Apply(player, request.primary, request.secondary, &install_loadout) : EEconomyOutcome::Forbidden;
+                }
+                if (!FindPetalPrototype(static_cast<EPetalType>(request.petal_type))) return EEconomyOutcome::Invalid;
+                if (request.operation == EEconomyOperation::Craft)
+                {
+                    auto* feature = m_server.Extensions().Globals().Find<ICraftFeature>();
+                    const auto outcome = feature ? feature->Craft(player, request.petal_type, request.rarity, request.count, craft) : EEconomyOutcome::Forbidden;
+                    craft.petal_type = request.petal_type; craft.rarity = request.rarity;
+                    return outcome;
+                }
+                if (!m_server.Extensions().CanUseFeature(player, "craft", feature_access::forge)) return EEconomyOutcome::Forbidden;
+                if (player.HasIsolatedInventory()) return EEconomyOutcome::Forbidden;
+                if (request.count != 5 || request.rarity != static_cast<uint8_t>(ERarity::Super)) return EEconomyOutcome::Invalid;
+                auto* entity = player.GetEntity();
+                if (!entity || entity->IsDead()) return EEconomyOutcome::Forbidden;
+                titan = dynamic_cast<CTitanFlower*>(entity->GameWorld()->FindClosestEntityByEdge(entity->Pos(),
+                    game_config::titan_forge_range, [](const CEntity* candidate) {
+                        const auto* value = dynamic_cast<const CTitanFlower*>(candidate);
+                        return value && !value->IsMarkedForDes() && !value->IsDead();
+                    }));
+                const auto type = static_cast<EPetalType>(request.petal_type);
+                if (!titan || !m_server.CanTitanForgePetal(type)) return EEconomyOutcome::Forbidden;
+                if (!CAccountDataStore::HasItem(player.GetInventoryAccountName(), request.petal_type, request.rarity, 5))
+                    return EEconomyOutcome::InsufficientItems;
+                if (!CAccountDataStore::ExchangeUniquePetal(player.GetAccountName(), 5, request.petal_type, &exchange))
+                    return EEconomyOutcome::InsufficientItems;
+                craft.changed = true; craft.consumed = 5; craft.attempts = craft.successes = 1;
+                craft.result_rarity = static_cast<uint8_t>(ERarity::Unique);
+                craft.items = {{request.petal_type, craft.result_rarity, 1}};
+                return EEconomyOutcome::Completed;
+            }, other_accounts);
+    }
+    catch (...) { m_economy_replies.pop_back(); throw; }
+    // 不可回滚后，运行时副作用只执行一次。
+    if (!pending.result.newly_executed) return;
+    if (install_loadout) install_loadout();
+    const auto& craft = pending.result.receipt.craft;
+    if (request.operation == EEconomyOperation::Craft && craft.successes)
+    {
+        player.ObtainPetalCard(craft.petal_type, craft.result_rarity, craft.successes, false);
+        const auto rarity = static_cast<ERarity>(craft.result_rarity);
+        if (!player.HasIsolatedInventory() && CServer::MeetsPetalReportRarity(rarity, game_config::min_craft_report_rarity))
+            m_server.BroadcastPetalReport("crafted", rarity, GetPetalTypeName(request.petal_type), player.GetName());
+    }
+    if (request.operation == EEconomyOperation::Forge)
+    {
+        for (const auto& mutation : exchange.account_mutations)
+            for (const auto& affected : m_players)
+                if (affected && affected->GetInventoryAccountName() == mutation.account_name)
+                {
+                    if (auto* flower = dynamic_cast<CFlower*>(affected->GetEntity()))
+                        for (auto index : mutation.cleared_primary_slots) flower->ForceUnequipPetal(index);
+                    QueueInventoryUpdate(*affected);
+                }
+        titan->ReplaceForgedUniquePetal(static_cast<EPetalType>(request.petal_type));
+        m_server.StartTitanForgeCooldown(static_cast<EPetalType>(request.petal_type));
+        m_server.BroadcastPetalReport("forged", ERarity::Unique, GetPetalTypeName(request.petal_type), player.GetName());
+    }
+}
+
 
 bool INetworkModule::QueueChat(CPlayer& player, const SChatEntry& chat)
 {
     ServerMessage msg;
     msg.type = ServerMessage::Type::Chat;
     msg.chat.flag = chat.flag;
-    msg.chat.player_id = static_cast<uint16_t>(std::min<uint32_t>(chat.player_id, UINT16_MAX));
+    msg.chat.player_id = chat.player_id;
+    msg.chat.session_generation = chat.sender_session.generation;
     msg.chat.time = chat.system_time;
     msg.chat.player_name = chat.player_name;
     msg.chat.message = chat.message;
@@ -1873,6 +2043,13 @@ bool INetworkModule::DeliverChat(CPlayer& player, const SChatEntry& chat)
 {
     if (!player.IsConnected() || !player.IsAuthenticated()) return false;
     return QueueChat(player, chat);
+}
+
+bool INetworkModule::DeliverParty(CPlayer& player, const SPartyState& state)
+{
+    if (!player.IsConnected() || !player.IsAuthenticated()) return false;
+    ServerMessage message; message.type = ServerMessage::Type::PartyState; message.party = state;
+    return QueueMessage(player, message);
 }
 
 INetworkModule::EProxyHeaderResult INetworkModule::ResolveTrustedProxyHeader(CPlayer& player)
@@ -1940,10 +2117,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
 
     while (player.m_receive_buffer.size() >= 1)
     {
-        // Version gate: the first packet from a client must be the wire version
-        // triple. Old clients (or anything else) are rejected deterministically
-        // before any other packet is parsed, so protocol changes can never be
-        // misparsed by a stale client.
+        // 首包必须是协议版本；在解析其他消息前拒绝不兼容客户端。
         if (!player.IsAuthenticated() && !player.IsVersionVerified())
         {
             if (player.m_receive_buffer[0] == client_version_packet_type)
@@ -1977,6 +2151,16 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
             return EPlayerBufferResult::RequestedDisconnect;
         }
 
+        if (player.m_receive_buffer[0] == client_account_link_packet_type)
+        {
+            if (player.m_receive_buffer.size() < 3) return flush_slot_state();
+            const size_t size = player.m_receive_buffer[1] | (size_t(player.m_receive_buffer[2]) << 8);
+            if (!size || size > 8192 || !player.IsAuthenticated()) return EPlayerBufferResult::RequestedDisconnect;
+            if (player.m_receive_buffer.size() < size + 3) return flush_slot_state();
+            std::string payload(reinterpret_cast<const char*>(player.m_receive_buffer.data() + 3), size);
+            player.m_receive_buffer.erase(player.m_receive_buffer.begin(), player.m_receive_buffer.begin() + size + 3);
+            HandleAccountLinkRequest(player, payload); continue;
+        }
         if (ClientAuthRequest::IsPacketStart(player.m_receive_buffer[0]))
         {
             size_t packet_size =
@@ -2024,83 +2208,18 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
             continue;
         }
 
-        if (ClientSecondarySlotRequest::IsPacketStart(player.m_receive_buffer[0]))
+        if (ClientEconomyRequest::IsPacketStart(player.m_receive_buffer[0]))
         {
-            size_t packet_size = ClientSecondarySlotRequest::GetPacketSize(player.m_receive_buffer.data(),
-                                                                           player.m_receive_buffer.size());
-            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
-
+            if (std::count_if(m_economy_replies.begin(), m_economy_replies.end(), [&](const auto& reply) {
+                return player.MatchesSession(reply.session);
+            }) >= 32) return flush_slot_state();
+            const auto packet_size = ClientEconomyRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
+            if (!packet_size || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
             bool ok = false;
-            ClientSecondarySlotRequest request =
-                ClientSecondarySlotRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
-            player.m_receive_buffer.erase(player.m_receive_buffer.begin(),
-                                          player.m_receive_buffer.begin() + packet_size);
-            if (!player.IsAuthenticated())
-            {
-                QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
-                return EPlayerBufferResult::RequestedDisconnect;
-            }
-            if (ok)
-            {
-                HandleSecondarySlotRequest(player, request);
-                queue_slot_state = true;
-            } else
-            {
-                LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " sent a malformed slot packet");
-                return EPlayerBufferResult::RequestedDisconnect;
-            }
-            continue;
-        }
-
-        if (ClientCraftRequest::IsPacketStart(player.m_receive_buffer[0]))
-        {
-            size_t packet_size =
-                ClientCraftRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
-            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
-
-            bool ok = false;
-            ClientCraftRequest request = ClientCraftRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
-            player.m_receive_buffer.erase(player.m_receive_buffer.begin(),
-                                          player.m_receive_buffer.begin() + packet_size);
-            if (!player.IsAuthenticated())
-            {
-                QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
-                return EPlayerBufferResult::RequestedDisconnect;
-            }
-            if (ok)
-            {
-                HandleCraftRequest(player, request);
-            } else
-            {
-                LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " sent a malformed craft packet");
-                return EPlayerBufferResult::RequestedDisconnect;
-            }
-            continue;
-        }
-
-        if (ClientForgeRequest::IsPacketStart(player.m_receive_buffer[0]))
-        {
-            size_t packet_size =
-                ClientForgeRequest::GetPacketSize(player.m_receive_buffer.data(), player.m_receive_buffer.size());
-            if (packet_size == 0 || player.m_receive_buffer.size() < packet_size) return flush_slot_state();
-
-            bool ok = false;
-            ClientForgeRequest request = ClientForgeRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
-            player.m_receive_buffer.erase(player.m_receive_buffer.begin(),
-                                          player.m_receive_buffer.begin() + packet_size);
-            if (!player.IsAuthenticated())
-            {
-                QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
-                return EPlayerBufferResult::RequestedDisconnect;
-            }
-            if (ok)
-            {
-                HandleForgeRequest(player, request);
-            } else
-            {
-                LOG_WARN("network", "Player " + std::to_string(player.GetId()) + " sent a malformed forge packet");
-                return EPlayerBufferResult::RequestedDisconnect;
-            }
+            const auto request = ClientEconomyRequest::parse(player.m_receive_buffer.data(), packet_size, &ok);
+            if (!ok || !player.IsAuthenticated()) return EPlayerBufferResult::RequestedDisconnect;
+            player.m_receive_buffer.erase(player.m_receive_buffer.begin(), player.m_receive_buffer.begin() + packet_size);
+            HandleEconomyRequest(player, request);
             continue;
         }
 
@@ -2204,9 +2323,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                 return EPlayerBufferResult::RequestedDisconnect;
             }
 
-            // Skill requests use the same ownership and death gate as normal
-            // player operations. The controller performs the final caster,
-            // index and cooldown validation on the game tick.
+            // 技能请求沿用普通操作的归属及死亡校验；控制器在模拟帧内校验施法者、技能序号及冷却。
             auto* flower = dynamic_cast<CPlayerFlower*>(player.GetEntity());
             if (flower && flower->m_is_dead)
             {
@@ -2230,8 +2347,8 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
                 QueueAuthResult(player, EAuthResultCode::Failed, "Please login first");
                 return EPlayerBufferResult::RequestedDisconnect;
             }
-            QueueInventory(player);
-            QueueOwnerState(player);
+            if (!QueueInventory(player) || (player.GetEntity() && !QueueOwnerState(player)))
+                return EPlayerBufferResult::RequestedDisconnect;
             queue_slot_state = false;
             if (!FlushSendBuffer(player)) return EPlayerBufferResult::RequestedDisconnect;
             continue;
@@ -2243,7 +2360,12 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
             return EPlayerBufferResult::RequestedDisconnect;
         }
 
+        // 专用/保留字节不得落入旧两位操作码解析，避免将 0xfb 误判为断线。
+        if (player.m_receive_buffer[0] >= 0xf0) return EPlayerBufferResult::RequestedDisconnect;
         uint8_t type = player.m_receive_buffer[0] & client_type_mask;
+        if (type == static_cast<uint8_t>(ClientOperate::Type::Equip) ||
+            type == static_cast<uint8_t>(ClientOperate::Type::Unequip))
+            return EPlayerBufferResult::RequestedDisconnect;
         size_t packet_size = (type == static_cast<uint8_t>(ClientOperate::Type::Input) ||
                               type == static_cast<uint8_t>(ClientOperate::Type::Equip))
                                  ? client_extended_packet_size
@@ -2254,17 +2376,22 @@ INetworkModule::EPlayerBufferResult INetworkModule::ProcessPlayerBuffer(CPlayer&
         if (op.type != ClientOperate::Type::Unknown)
         {
             bool op_queues_slot_state = IsSlotOperate(op);
-            if (op.disconnect.value_or(false)) return EPlayerBufferResult::RequestedDisconnect;
+            if (op.disconnect.value_or(false))
+            {
+                if (player.IsAuthenticated() && !player.RecoveryDeviceId().empty())
+                    CAccountDataStore::RevokeRecoveryCredential(player.GetAccountName(), player.RecoveryDeviceId());
+                player.SetRecoveryDeviceId({});
+                return EPlayerBufferResult::RequestedDisconnect;
+            }
             else if (op.agree.value_or(false))
             {
                 auto* flower = dynamic_cast<CPlayerFlower*>(player.GetEntity());
-                if (!player.GetEntity() || (flower && flower->m_is_dead))
+                if ((!player.GetEntity() && (player.HasOwnedEntity() || player.NeedsRespawn())) ||
+                    (flower && flower->m_is_dead))
                 {
-                    CGameWorld* respawn_world = player.GetEntity() ? player.GetEntity()->GameWorld() : nullptr;
+                    CGameWorld* respawn_world = player.GetWorld();
                     if (!respawn_world) respawn_world = m_server.GetMainWorld();
-                    if (respawn_world && m_player_lifecycle_service.SpawnPlayer(player, *respawn_world,
-                                                               EPlayerSpawnReason::Respawn))
-                        m_player_lifecycle_service.NotifyPlayerWorldChanged(player, *this);
+                    if (respawn_world) m_player_lifecycle_service.RespawnPlayer(player, *respawn_world, *this);
                 } else player.HandleOperate(op);
             } else
             {
@@ -2290,6 +2417,13 @@ void INetworkModule::HandleChatRequest(CPlayer& player, const ClientChatRequest&
     }
     if (HandleRconCommand(m_server, *this, player, request.message)) return;
 
+    if (player.GetWorld() && player.GetWorld()->IsRecovering() && !request.message.empty() && request.message.front() == '/')
+    {
+        if (auto* chat = m_server.Extensions().Globals().Find<IChatService>())
+            chat->SendSystem(player, "房间正在恢复，暂不能执行玩法命令。");
+        return;
+    }
+
     CEntity* entity = player.GetEntity();
     if (!entity || entity->IsMarkedForDes()) return;
 
@@ -2302,124 +2436,13 @@ void INetworkModule::HandleChatRequest(CPlayer& player, const ClientChatRequest&
     m_server.Extensions().Globals().Find<IChatService>()->HandleMessage(player, request.flag, request.message);
 }
 
-void INetworkModule::HandleSecondarySlotRequest(CPlayer& player, const ClientSecondarySlotRequest& request)
-{
-    if (request.slot_index >= game_config::default_flower_petal_num_max) return;
-
-    CEntity* entity = player.GetEntity();
-    CGameWorld* world = entity ? entity->GameWorld() : nullptr;
-    IGameController* controller = world ? world->GetController() : nullptr;
-    if (controller && controller->LocksPetalLoadout()) return;
-
-    const std::vector<SInventoryItem> current_slots =
-        CAccountDataStore::GetSecondarySlots(player.GetProgressAccountName());
-    if (request.slot_index < current_slots.size())
-    {
-        const SInventoryItem& old_item = current_slots[request.slot_index];
-        if (old_item.petal_type != 0 && old_item.rarity != 0 && controller &&
-            !controller->CanUnequipPetalType(static_cast<EPetalType>(old_item.petal_type)))
-            return;
-    }
-
-    if (request.petal_type == 0 || request.rarity == 0)
-    {
-        CAccountDataStore::ClearSecondarySlot(player.GetProgressAccountName(), request.slot_index);
-        return;
-    }
-
-    const EPetalType requested_type = static_cast<EPetalType>(request.petal_type);
-    if (!IsKnownPetalTypeId(request.petal_type) || !IsKnownRarity(static_cast<ERarity>(request.rarity))) return;
-    const CPetalPrototype* proto = FindPetalPrototype(requested_type);
-    if (!proto || !proto->m_p_behavior) return;
-    if (controller && !controller->CanEquipPetalType(requested_type)) return;
-
-    CAccountDataStore::SetSecondarySlot(player.GetProgressAccountName(), request.slot_index, request.petal_type,
-                                        request.rarity);
-}
-
-void INetworkModule::HandleCraftRequest(CPlayer& player, const ClientCraftRequest& request)
-{
-    SCraftResult result;
-    if (player.TryCraftPetal(request.petal_type, request.rarity, request.count, &result))
-    {
-        QueueCraftResult(player, result);
-        QueueInventory(player);
-        QueueOwnerStateUpdate(player);
-    }
-}
-
-void INetworkModule::HandleForgeRequest(CPlayer& player, const ClientForgeRequest& request)
-{
-    // Global unique ownership must never consume or award temporary items.
-    if (player.HasIsolatedProgress()) return;
-    constexpr uint32_t forge_cost = 5;
-    constexpr uint8_t super_rarity = static_cast<uint8_t>(ERarity::Super);
-
-    SCraftResult result;
-    result.petal_type = request.petal_type;
-    result.rarity = request.rarity;
-    result.consumed = forge_cost;
-
-    const bool valid_request = IsKnownPetalTypeId(request.petal_type) && request.rarity == super_rarity &&
-                               request.count == forge_cost;
-    if (valid_request) result.items.push_back({ request.petal_type, super_rarity, forge_cost });
-
-    auto reject = [&]() { QueueCraftResult(player, result); };
-    if (!valid_request)
-    {
-        reject();
-        return;
-    }
-
-    CEntity* player_entity = player.GetEntity();
-    CGameWorld* world = player_entity ? player_entity->GameWorld() : nullptr;
-    if (!player_entity || !world || player_entity->IsMarkedForDes() || player_entity->IsDead())
-    {
-        reject();
-        return;
-    }
-
-    auto* forge_titan = dynamic_cast<CTitanFlower*>(world->FindClosestEntityByEdge(
-        player_entity->Pos(), game_config::titan_forge_range, [](const CEntity* candidate) {
-            const auto* titan = dynamic_cast<const CTitanFlower*>(candidate);
-            return titan && !titan->IsMarkedForDes() && !titan->IsDead();
-        }));
-    const EPetalType petal_type = static_cast<EPetalType>(request.petal_type);
-    if (!forge_titan || !m_server.CanTitanForgePetal(petal_type) ||
-        !CAccountDataStore::HasItem(player.GetProgressAccountName(), request.petal_type, super_rarity, forge_cost))
-    {
-        reject();
-        return;
-    }
-
-    IUniquePetalRegistry* registry = m_server.GetUniquePetalRegistry();
-    if (!registry || !registry->GetUnique(petal_type, forge_cost, player.GetAccountName()))
-    {
-        reject();
-        return;
-    }
-
-    forge_titan->ReplaceForgedUniquePetal(petal_type);
-    m_server.StartTitanForgeCooldown(petal_type);
-
-    result.changed = true;
-    result.successes = 1;
-    result.result_rarity = static_cast<uint8_t>(ERarity::Unique);
-    result.items = { { request.petal_type, result.result_rarity, 1 } };
-    QueueCraftResult(player, result);
-}
 
 void INetworkModule::HandleTalentRequest(CPlayer& player, const ClientTalentRequest& request)
 {
+    if (player.GetWorld() && player.GetWorld()->IsRecovering()) return;
     bool changed = false;
-    for (const STalentPacketItem& item : request.talents)
-    {
-        ERarity rarity = static_cast<ERarity>(item.rarity);
-        int rank = static_cast<int>(item.rank);
-        if (request.action == ClientTalentAction::Remove)
-            changed = player.RemoveTalent(item.id, rarity, rank) || changed;
-        else changed = player.AddTalent(item.id, rarity, rank) || changed;
-    }
+    if (m_server.Extensions().CanUseFeature(player, "talent", feature_access::edit))
+        if (auto* feature = m_server.Extensions().Globals().Find<ITalentFeature>()) changed = feature->Apply(player, request);
 
     QueueOwnerState(player);
     if (changed) QueueInventory(player);
@@ -2427,6 +2450,18 @@ void INetworkModule::HandleTalentRequest(CPlayer& player, const ClientTalentRequ
 
 INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& player, const ClientAuthRequest& request)
 {
+    if (request.mode == ClientAuthRequest::Mode::EnterGame)
+    {
+        if (!player.IsAuthenticated() || player.GetAccountName() != request.name || player.GetEntity())
+        {
+            QueueAuthResult(player, EAuthResultCode::Failed, "Login before entering the game");
+            return EPlayerBufferResult::Continue;
+        }
+        return ApplyAuthentication(player, player.GetAccountName(), player.GetUseNewPlayerSpawn());
+    }
+    const bool account_only = request.mode == ClientAuthRequest::Mode::AccountLogin ||
+                              request.mode == ClientAuthRequest::Mode::AccountRegister;
+    const bool login_mode = request.mode == ClientAuthRequest::Mode::Login || request.mode == ClientAuthRequest::Mode::AccountLogin;
     const bool binding_request = request.mode == ClientAuthRequest::Mode::RequestBindingCode ||
                                  request.mode == ClientAuthRequest::Mode::ConfirmBinding;
     if (player.IsAuthenticated() && !binding_request)
@@ -2458,14 +2493,13 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
         QueueAuthResult(player, EAuthResultCode::Failed, "Name is banned");
         return EPlayerBufferResult::Continue;
     }
-    if (request.mode == ClientAuthRequest::Mode::Login && IsLoginRateLimited(player, request.name))
+    if (login_mode && IsLoginRateLimited(player, request.name))
     {
         QueueAuthResult(player, EAuthResultCode::Failed, "Too many login attempts; try again later");
         return EPlayerBufferResult::Continue;
     }
 
-    const bool queues_authentication = request.mode == ClientAuthRequest::Mode::Login ||
-                                       request.mode == ClientAuthRequest::Mode::Register;
+    const bool queues_authentication = login_mode || request.mode == ClientAuthRequest::Mode::Register || account_only;
     if (queues_authentication && m_player_auth_requests.size() >= auth_queue_limit)
     {
         QueueAuthResult(player, EAuthResultCode::Failed, "Authentication service is busy");
@@ -2549,13 +2583,15 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
 
         const std::string account_name = pending_login->second.account_name;
         const std::string trusted_ip_to_commit = pending_login->second.trusted_ip_to_commit;
+        const auto authentication = pending_login->second.authentication;
         const bool register_mode = pending_login->second.register_mode;
+        const bool pending_account_only = pending_login->second.account_only;
         ClearPendingEmailAuthentication(player.GetId());
         return ApplyAuthentication(player, account_name, register_mode, EAuthResultCode::EmailBound, "Email bound",
-                                   trusted_ip_to_commit);
+                                   trusted_ip_to_commit, &authentication, pending_account_only);
     }
 
-    const bool register_mode = request.mode == ClientAuthRequest::Mode::Register;
+    const bool register_mode = request.mode == ClientAuthRequest::Mode::Register || request.mode == ClientAuthRequest::Mode::AccountRegister;
     if (register_mode)
     {
         if (m_active_auth_accounts.contains(request.name))
@@ -2573,7 +2609,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
                             error.empty() ? "Invalid registration request" : error);
             return EPlayerBufferResult::Continue;
         }
-    } else if (request.mode != ClientAuthRequest::Mode::Login)
+    } else if (!login_mode)
     {
         QueueAuthResult(player, EAuthResultCode::Failed, "Unsupported authentication mode");
         return EPlayerBufferResult::Continue;
@@ -2586,7 +2622,10 @@ INetworkModule::EPlayerBufferResult INetworkModule::HandleAuthRequest(CPlayer& p
     pending.account_name = request.name;
     pending.password = request.password;
     pending.email = request.email;
+    pending.recovery_device_id = request.recovery_device_id;
+    pending.recovery_token = request.recovery_token;
     pending.register_mode = register_mode;
+    pending.account_only = account_only;
     m_player_auth_requests.emplace(pending.player_id, pending.request_id);
     m_pending_auth_requests.push_back(std::move(pending));
     return EPlayerBufferResult::Continue;
@@ -2597,7 +2636,8 @@ INetworkModule::EPlayerBufferResult INetworkModule::ApplyAuthentication(CPlayer&
                                                                         bool register_mode,
                                                                         EAuthResultCode result_code,
                                                                         const std::string& result_message,
-                                                                        const std::string& trusted_ip_to_commit)
+                                                                        const std::string& trusted_ip_to_commit,
+                                                                        const SAccountAuthResult* authentication, bool account_only)
 {
     for (const auto& existing_player : m_players)
     {
@@ -2612,6 +2652,18 @@ INetworkModule::EPlayerBufferResult INetworkModule::ApplyAuthentication(CPlayer&
     }
 
     auto commit_trusted_ip = [&](CPlayer& response_player) {
+        if (authentication)
+        {
+            std::string credential_error;
+            if (!CAccountDataStore::CommitRecoveryCredential(*authentication, &credential_error))
+            {
+                QueueAuthResult(response_player, EAuthResultCode::Failed, "Failed to commit recovery credential");
+                FlushSendBuffer(response_player);
+                return false;
+            }
+            response_player.SetRecoveryDeviceId(authentication->device_id);
+        }
+        else if (player.IsAuthenticated()) response_player.SetRecoveryDeviceId(player.RecoveryDeviceId());
         if (trusted_ip_to_commit.empty()) return true;
         std::string error;
         if (CAccountDataStore::CommitTrustedIp(account_name, trusted_ip_to_commit, &error)) return true;
@@ -2622,6 +2674,19 @@ INetworkModule::EPlayerBufferResult INetworkModule::ApplyAuthentication(CPlayer&
                                  (error.empty() ? std::string{} : ": " + error));
         return false;
     };
+
+    if (account_only)
+    {
+        // 登录后的 CPlayer 持有账号和背包，显式入场前不生成身体。
+        if (!commit_trusted_ip(player)) return EPlayerBufferResult::RequestedDisconnect;
+        player.Authenticate(account_name);
+        player.SetUseNewPlayerSpawn(register_mode);
+        m_auth_deadlines.erase(player.GetId());
+        if (!QueueAuthResult(player, result_code, result_message.empty() ? "Logged in" : result_message, authentication) ||
+            !QueueInventory(player))
+            return EPlayerBufferResult::RequestedDisconnect;
+        return EPlayerBufferResult::Continue;
+    }
 
     if (CPlayer* reconnect_player = FindReconnectablePlayer(account_name, &player))
     {
@@ -2644,7 +2709,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ApplyAuthentication(CPlayer&
         }
         m_auth_deadlines.erase(player.GetId());
         QueueAuthResult(*reconnect_player, result_code,
-                        result_message.empty() ? "Reconnected" : result_message);
+                        result_message.empty() ? "Reconnected" : result_message, authentication);
         m_player_lifecycle_service.NotifyPlayerLogin(*reconnect_player, *this);
         if (!FlushSendBuffer(*reconnect_player))
         {
@@ -2670,7 +2735,7 @@ INetworkModule::EPlayerBufferResult INetworkModule::ApplyAuthentication(CPlayer&
 
     m_auth_deadlines.erase(player.GetId());
     QueueAuthResult(player, result_code,
-                    result_message.empty() ? (register_mode ? "Registered" : "Logged in") : result_message);
+                    result_message.empty() ? (register_mode ? "Registered" : "Logged in") : result_message, authentication);
     m_player_lifecycle_service.NotifyPlayerLogin(player, *this);
     if (!FlushSendBuffer(player))
     {
@@ -2683,15 +2748,26 @@ INetworkModule::EPlayerBufferResult INetworkModule::ApplyAuthentication(CPlayer&
 
 CPlayer* INetworkModule::FindPlayerById(uint32_t player_id) const
 {
-    for (const auto& player : m_players)
-    {
-        if (player && player->GetId() == player_id) return player.get();
-    }
-    return nullptr;
+    const auto found = m_players_by_id.find(player_id);
+    return found == m_players_by_id.end() ? nullptr : found->second;
+}
+
+bool INetworkModule::InsertPlayer(std::unique_ptr<CPlayer> player)
+{
+    if (!player || m_players_by_id.contains(player->GetId())) return false;
+    // 先完成所有可能抛异常的分配，再将唯一所有权移入容器。
+    if (m_players.size() == m_players.capacity())
+        m_players.reserve(std::max<size_t>(8, m_players.size() * 2));
+    m_players_by_id.emplace(player->GetId(), player.get());
+    m_players.push_back(std::move(player));
+    return true;
 }
 
 void INetworkModule::ClearPlayersForRestore()
 {
+    m_server.AccountLinks().ShutDown();
+    m_feature_states.clear();
+    m_economy_replies.clear();
     for (const auto& player : m_players)
         if (player && player->IsTransitionActive()) throw std::logic_error("Cannot replace sessions during a transition");
     m_server.Reports().CancelPending();
@@ -2709,6 +2785,7 @@ void INetworkModule::ClearPlayersForRestore()
     m_proxy_header_pending.clear();
     m_auth_deadlines.clear();
     m_auth_failures.clear();
+    m_players_by_id.clear();
     m_players.clear();
     m_client_snapshot_states.clear();
     m_free_player_ids.clear();
@@ -2727,20 +2804,19 @@ bool INetworkModule::InsertRestoredPlayer(std::unique_ptr<CPlayer> player)
             if (existing && existing->GetEntity() == entity) return false;
     }
     m_free_player_ids.erase(static_cast<int>(player->GetId()));
-    m_players.push_back(std::move(player));
-    return true;
+    return InsertPlayer(std::move(player));
 }
 
 void INetworkModule::FinalizePlayerRestore()
 {
     m_free_player_ids.clear();
-    // Sparse restored IDs do not require materializing every unused ID below
-    // the maximum. Find free low IDs lazily when a connection needs one.
+    // 恢复的 ID 可以稀疏；按需寻找较小空闲 ID，不展开整个空洞区间。
     m_next_player_id = 1;
 }
 
 bool INetworkModule::KickPlayer(uint32_t player_id, const std::string& reason)
 {
+    if (CAccountDataStore::IsEconomyOperationActive()) return false;
     for (size_t i = 0; i < m_players.size(); ++i)
     {
         if (!m_players[i] || m_players[i]->GetId() != player_id) continue;
@@ -2815,9 +2891,13 @@ void INetworkModule::NotifyPlayerWorldChanged(CPlayer& player)
 
 void INetworkModule::NotifyPlayerRulesChanged(CPlayer& player)
 {
-    // A controller change is not a new world/map instance. Keep the scene
-    // and reliably refresh the affected owner/inventory/codex state only.
-    QueuePlayerBaseline(player, false);
+    // 更换控制器不创建新场景，只可靠刷新归属、背包及图鉴。
+    NotifyPlayerStateChanged(player);
+}
+
+void INetworkModule::NotifyPlayerStateChanged(CPlayer& player)
+{
+    QueuePlayerState(player);
 }
 
 CPlayer* INetworkModule::FindReconnectablePlayer(const std::string& account_name, const CPlayer* pending_player) const
@@ -2900,12 +2980,28 @@ void INetworkModule::DropPlayer(size_t index, const std::string& reason)
     if (player.IsAuthenticated() && player_world)
         if (IGameController* controller = player_world->GetController())
             controller->OnPlayerDepartureCommitted(*player_world, player, entity);
-    // The leave hook may have flushed the old controlled entity already.
+    // 离开钩子可能已经清除了旧受控实体。
     entity = player.GetEntity();
     if (auto* flower = dynamic_cast<CPlayerFlower*>(entity))
         flower->PrepareRespawnDestroy(EEntityRemovalReason::Despawned);
+    else if (auto* mob = dynamic_cast<CMobBase*>(entity))
+    {
+        std::unique_ptr<IController> autonomous;
+        try
+        {
+            if (!mob->IsMarkedForDes() && !mob->IsDead())
+                if (const auto* prototype = FindMobPrototype(mob->GetMobType()); prototype && prototype->m_controller_factory)
+                    autonomous = prototype->m_controller_factory(mob->GetRarity());
+        }
+        catch (const std::exception& exception) { LOG_ERROR("network", "NPC control release preparation failed: " + std::string(exception.what())); }
+        player.ResetControlledMob(); player.SetOwnedEntity(nullptr);
+        mob->ReleasePlayerControl(std::move(autonomous));
+    }
     else if (entity) entity->MarkForDestroy(EEntityRemovalReason::Despawned);
     FreePlayerId(player.GetId());
+    m_players_by_id.erase(player.GetId());
+    m_server.AccountLinks().CancelSession(player.SessionRef());
+    m_feature_states.erase(player.GetId());
     m_players.erase(m_players.begin() + index);
 }
 

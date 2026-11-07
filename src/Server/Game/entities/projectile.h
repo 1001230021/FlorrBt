@@ -28,7 +28,7 @@ class CProjectile : public CEntity
         if (owner) owner->AddTag(EEntityTag::ClearOwnedEntitiesOnDestroy);
     }
 
-    void Tick(float dt) override
+    void OnTickMotion(float dt) override
     {
         if (LengthSq(m_vel) > game_config::entity_collision_epsilon * game_config::entity_collision_epsilon)
         {
@@ -47,8 +47,7 @@ class CProjectile : public CEntity
         return other && !CheckTeam(Team(), other->Team());
     }
 
-    // The owner is resolved through the world each time.  Keeping a raw owner
-    // pointer here made projectiles dereference freed entities after cleanup.
+    // 每次通过完整句柄解析宿主，避免清理后解引用已释放实体。
     SEntityHandle m_owner_ref;
     florrbt::Vector2f m_vel = { 0.0f, 0.0f };
 };
@@ -61,7 +60,9 @@ class CMissile : public CProjectile
              SEntityTypeInfo entity_type =
                  MakeProjectileEntityType(EProjectileType::Missile, server_missile_entity_type));
 
-    void Tick(float dt) override;
+    void OnTickBegin(float dt) override;
+    void OnTickMotion(float dt) override;
+    void OnTickEffects(float dt) override;
     bool ApplyHit(CEntity* target);
     void AttachToOwner();
     bool RefreshAttachedTransform();
@@ -79,6 +80,7 @@ class CMissile : public CProjectile
     virtual float AttachedOffsetMultiplier() const;
 
     bool m_attached_to_owner = false;
+    bool m_attached_at_frame_start = false;
 };
 
 class CDandelionMissile : public CMissile
@@ -107,7 +109,9 @@ class CPollenProjectile : public CProjectile
                       SEntityTypeInfo entity_type =
                           MakeProjectileEntityType(EProjectileType::Pollen, server_pollen_entity_type));
 
-    void Tick(float dt) override;
+    void OnTickBegin(float dt) override;
+    void OnTickMotion(float dt) override;
+    void OnTickEffects(float dt) override;
     bool ApplyHit(CEntity* target);
 
     float m_damage = 0.f;
@@ -126,7 +130,8 @@ class CTrapProjectile final : public CPollenProjectile
                     float damage, float health, float lifetime, float mass, float deceleration_time, ERarity rarity,
                     CEntity* owner = nullptr);
 
-    void Tick(float dt) override;
+    void OnTickMotion(float dt) override;
+    void OnTickEffects(float dt) override;
     ERarity GetRarity() const { return m_rarity; }
 
     florrbt::Vector2f m_initial_velocity = { 0.f, 0.f };

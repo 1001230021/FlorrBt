@@ -15,8 +15,9 @@
     <link rel="stylesheet" href="./mobile.css" />
     <link rel="stylesheet" href="./layout.css" />
     <link rel="stylesheet" href="./dev_debug.css" />
+    <link rel="stylesheet" href="./ui_theme.css" />
   </head>
-  <body>
+  <body class="florr-ui">
     <canvas
       id="game"
       aria-label="FlorrBt game"
@@ -35,6 +36,7 @@
 
     <main id="authPanel" class="auth-panel ui">
       <h1>FlorrBt <small id="appVersion" class="auth-version">v1.0</small></h1>
+      <div id="authFormHome"><div id="authFields">
       <label>
         <span data-i18n="ui.auth.socket">Socket</span>
         <input
@@ -79,6 +81,9 @@
       <p id="authStatus" class="auth-status">
         Disconnected
       </p>
+      </div></div>
+      <button id="startGameBtn" class="hidden" type="button" data-i18n="ui.auth.startGame">Start game</button>
+      <p id="startStatus" class="auth-status hidden" role="status" aria-live="polite"></p>
     </main>
 
     <img
@@ -87,6 +92,31 @@
       alt="抵制不良遊戲，拒絕盜版遊戲。注意自我保護，謹防受騙上當。適度遊戲益腦，沉迷遊戲傷身。合理安排時間，享受健康生活。《健康遊戲忠告》"
       draggable="false"
     />
+
+    <section id="accountPanel" class="game-panel account-panel ui" aria-labelledby="accountTitle" aria-hidden="true" inert>
+      <div class="panel-title">
+        <button id="accountBackBtn" class="account-back hidden" type="button" aria-label="Back" data-i18n-aria-label="ui.accountLinks.back">‹</button>
+        <span id="accountTitle" data-i18n="ui.auth.account">Account</span>
+        <button id="accountCloseBtn" class="panel-close" type="button" aria-label="Close" data-i18n-aria-label="ui.auth.close">×</button>
+      </div>
+      <div id="accountDetails" class="account-details hidden">
+        <div id="accountOverview" class="account-overview">
+          <span data-i18n="ui.auth.signedInAs">Signed in as</span>
+          <strong id="accountDisplayName"></strong>
+          <button id="accountBindingsBtn" class="account-navigation" type="button" aria-controls="accountBindings" aria-expanded="false"><span data-i18n="ui.accountLinks.manage">Linked accounts</span><span aria-hidden="true">›</span></button>
+          <button id="logoutBtn" type="button" data-i18n="ui.auth.logout">Log out</button>
+        </div>
+        <section id="accountBindings" class="account-bindings hidden" aria-label="Account bindings" data-i18n-aria-label="ui.accountLinks.title" inert>
+          <div id="accountBindingList"></div>
+          <label id="accountBindingPasswordRow" class="hidden">
+            <span data-i18n="ui.accountLinks.password">Game account password</span>
+            <input id="accountBindingPassword" class="ui-text-input" type="password" autocomplete="current-password" maxlength="64" />
+          </label>
+          <p id="accountBindingStatus" class="auth-status" role="status" aria-live="polite"></p>
+        </section>
+      </div>
+      <div id="accountFormHost"></div>
+    </section>
 
     <section
       id="emailBindingPanel"
@@ -244,6 +274,13 @@
       class="top-left-actions ui hidden"
       aria-label="Top left actions"
     >
+      <button id="accountBtn" class="top-action top-action-account" type="button"
+        title="Account" aria-label="Account" aria-pressed="false" aria-controls="accountPanel"
+        data-i18n-title="ui.auth.account" data-i18n-aria-label="ui.auth.account">
+        <svg class="account-icon" viewBox="0 0 40 40" aria-hidden="true" focusable="false">
+          <path fill="currentColor" d="M20 5c-5 0-7 3.8-7 8.5 0 3.2 1.4 6.5 3.7 8.2v2C10.3 25 8 28.8 8 34h24c0-5.2-2.3-9-8.7-10.3v-2c2.3-1.7 3.7-5 3.7-8.2C27 8.8 25 5 20 5z"/>
+        </svg>
+      </button>
       <button
         id="topSettingsBtn"
         class="top-action top-action-settings"
@@ -414,7 +451,7 @@
       data-drop-kind="backpack"
     >
       <div class="panel-title">
-        <span data-i18n="ui.inventory.title">Inventory</span>
+        <span id="inventoryTitle" data-i18n="ui.inventory.title">Inventory</span>
         <button
           id="backpackCloseBtn"
           class="panel-close"

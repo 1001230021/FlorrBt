@@ -19,6 +19,7 @@ add_executable(FlorrBt_Tests
     test_petal_spawn_rules.cpp
     test_content_manifests.cpp
     test_server_safety.cpp
+    test_source_effects.cpp
     test_combat_feedback.cpp
     test_skill_result.cpp
     test_mob_radius.cpp

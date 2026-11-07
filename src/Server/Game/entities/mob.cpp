@@ -9,6 +9,7 @@
 #include "../states/states.h"
 #include "drop.h"
 #include "projectile.h"
+#include "petals/petal.h"
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -44,7 +45,7 @@ SEntityHandle MultiSegmentRootHandle(const CEntity* entity)
     if (const auto* body = dynamic_cast<const IMultiSegmentBodyMob*>(mob)) return body->RootHandle();
     return {};
 }
-} // namespace
+}
 
 CMobBase* ResolveMultiSegmentRoot(const CGameWorld* world, const SEntityHandle& root_ref)
 {
@@ -118,9 +119,7 @@ void DetachMultiSegmentBody(CMobBase& body, const SEntityHandle& root_ref, int s
     auto* root_contract = dynamic_cast<IMultiSegmentRootMob*>(root);
     if (!root_contract) return;
     root_contract->DetachSegment(body.GetHandle(), segment_index);
-    // A hard-constrained chain is one compound mob. If a body disappears for
-    // any reason other than the root's own cleanup, retire the root as well so
-    // later segments never survive as an orphaned partial chain.
+    // 硬约束多节体作为整体存续；部件异常消失时一并回收根，避免残留半条链。
     if (UsesMultiSegmentChainConstraint(*root) && !root->IsMarkedForDes())
         root->MarkForDestroy(EEntityRemovalReason::OwnerRemoved);
 }
@@ -139,8 +138,7 @@ void AssembleMultiSegmentMob(CMobBase& root)
     const int segment_count = prototype ? prototype->ResolveSegmentCount(root.GetRarity()) : 0;
     if (!prototype || segment_count <= 0 || !prototype->m_segment_type_factory)
     {
-        // A root marker without a registered body layout is a valid empty
-        // layout, not an instruction to retry every tick.
+        // 未声明体节布局的根视为空布局，不逐帧重复装配。
         root_contract->SetSegmentAssemblyState(EMultiSegmentAssemblyState::Complete);
         return;
     }
@@ -181,7 +179,7 @@ void AssembleMultiSegmentMob(CMobBase& root)
             return;
         }
 
-        segment->Team() = root.Team();
+        segment->SetTeam(root.Team());
         body_contract->SetRootReference(root.GetHandle(), index);
         CEntity* inserted = root.GameWorld()->InsertEntity(std::move(segment));
         if (!inserted || !root_contract->AttachSegment(inserted->GetHandle(), index))
@@ -220,10 +218,7 @@ void ResolveMultiSegmentReferences(CGameWorld& world)
         if (dynamic_cast<IMultiSegmentBodyMob*>(mob)) bodies.push_back(mob);
     });
 
-    // First discard root references that do not point to the expected body.
-    // Snapshots can legitimately contain a root whose body was marked for
-    // removal immediately before capture; that should prune the stale link,
-    // not make the whole world restore fail.
+    // 先剔除不再对应有效体节的根引用，允许捕获前刚被移除的体节自然退出。
     for (CMobBase* root : roots)
     {
         auto* root_contract = dynamic_cast<IMultiSegmentRootMob*>(root);
@@ -241,8 +236,7 @@ void ResolveMultiSegmentReferences(CGameWorld& world)
         }
     }
 
-    // Then rebuild the reverse direction from bodies.  A body with a missing
-    // root is destroyed safely; it never keeps a dangling raw pointer.
+    // 再从体节重建反向关系；找不到根的体节安全移除。
     for (CMobBase* body_mob : bodies)
     {
         auto* body = dynamic_cast<IMultiSegmentBodyMob*>(body_mob);
@@ -261,9 +255,7 @@ void ResolveMultiSegmentReferences(CGameWorld& world)
         }
     }
 
-    // Canonicalise the forward body links from the validated root list. A
-    // snapshot may contain a stale next handle if the next body was removed
-    // immediately before capture; rebuilding here closes that dangling edge.
+    // 按已验证的根列表重建前向链接，清除捕获前移除体节留下的旧边。
     for (CMobBase* root : roots)
     {
         auto* root_contract = dynamic_cast<IMultiSegmentRootMob*>(root);
@@ -281,9 +273,7 @@ void ResolveMultiSegmentReferences(CGameWorld& world)
         }
     }
 
-    // Old snapshots have no multi-segment fields.  In that case a declared
-    // root is restored as NotStarted and can be assembled exactly once here.
-    // New snapshots carry Complete/Failed and therefore are never duplicated.
+    // 旧快照缺少多节字段时仅补装一次；新快照的 Complete/Failed 状态禁止重复装配。
     for (CMobBase* root : roots)
     {
         auto* root_contract = dynamic_cast<IMultiSegmentRootMob*>(root);
@@ -311,10 +301,7 @@ void ConstrainMultiSegmentChain(CMobBase& root, float dt)
 
     for (const SMobSegmentReference& reference : references)
     {
-        // The root list owns the body entities, while each body records the
-        // next edge in the actual chain. Requiring both views to agree makes
-        // the next handle part of the runtime invariant instead of passive
-        // snapshot metadata, and closes cycles/cross-root links safely.
+        // 根列表与体节的下一节点必须一致，避免环和跨根连接。
         if (reference.index != expected_index || !linked_segment.RefersTo(reference.entity_ref)) break;
         CMobBase* follower = ResolveMultiSegmentBody(root.GameWorld(), reference.entity_ref);
         auto* body = follower ? dynamic_cast<IMultiSegmentBodyMob*>(follower) : nullptr;
@@ -352,6 +339,12 @@ CPlayer* CDamageData::ResolvePlayer(const CGameContext* context) const
     return nullptr;
 }
 
+bool CDamageData::MatchesInventoryScope(const CPlayer& player) const
+{
+    const auto& scope = m_inventory_account.empty() ? (m_progress_account.empty() ? m_account_name : m_progress_account) : m_inventory_account;
+    return player.IsAuthenticated() && scope == player.GetInventoryAccountName();
+}
+
 void CMobBase::ClearTeamOverrideStates()
 {
     for (auto* state : FindStates<CCorruptionState>()) RemoveState(state);
@@ -366,7 +359,7 @@ CMobBase::~CMobBase()
 void CMobBase::ClearStatesForRestore()
 {
     for (auto& state : m_states)
-        if (state) state->DetachOwner();
+        if (state) { RevokeStateEffects(state->EffectSourceId()); state->DetachOwner(); }
     m_states.clear();
     m_movement_target_states.clear();
 }
@@ -417,7 +410,7 @@ bool IsUndeadDamageSource(CEntity* entity)
 
     return false;
 }
-} // namespace
+}
 
 bool ShouldBlockDiggingDamage(CMobBase* receiver, CEntity* attacker, EDamageType dmg_type)
 {
@@ -425,16 +418,44 @@ bool ShouldBlockDiggingDamage(CMobBase* receiver, CEntity* attacker, EDamageType
            !IsDiggingEntity(attacker);
 }
 
-void CMobBase::AddState(std::unique_ptr<CState> state)
+void CMobBase::AddState(std::unique_ptr<CState> state, EStateApplyTiming timing)
+{
+    if (!state) return;
+    if (timing == EStateApplyTiming::EventBoundary && GameWorld() && GameWorld()->CombatEvents().QueueAddition(*this, state)) return;
+    AddStateImmediate(std::move(state));
+}
+
+void CMobBase::AddStateImmediate(std::unique_ptr<CState> state)
 {
     if (!state) return;
     CState* raw = state.get();
-    // A state may be assembled by a helper before it is attached. Bind the
-    // lifetime token at the ownership boundary so its resolver never relies
-    // on the caller having passed the same mob twice.
+    // 先准备存储，再仲裁替换与发布来源，避免分配失败时已移除了旧状态。
+    if (m_states.size() == m_states.capacity()) m_states.reserve(std::max<size_t>(4, m_states.capacity() * 2));
+    if (raw->AffectsMovementTarget() && m_movement_target_states.size() == m_movement_target_states.capacity())
+        m_movement_target_states.reserve(std::max<size_t>(4, m_movement_target_states.capacity() * 2));
     raw->RebindOwner(this);
+    if (!raw->PrepareAttachment(*this)) return;
     m_states.push_back(std::move(state));
     if (raw->AffectsMovementTarget()) m_movement_target_states.push_back(raw);
+    raw->AttachToOwner(*this);
+    if (GameWorld()) GameWorld()->CombatEvents().StateChanged(*this);
+}
+
+bool CMobBase::DeferStateMutation(std::function<void(CMobBase&)> mutation)
+{
+    return GameWorld() && GameWorld()->CombatEvents().QueueMutation(*this, std::move(mutation));
+}
+
+CState* CMobBase::FindStateBySource(std::uint64_t source) const
+{
+    for (const auto& state : m_states) if (state && state->EffectSourceId() == source) return state.get();
+    return nullptr;
+}
+
+void CMobBase::CommitActionView()
+{
+    if (GameWorld() && (m_environment_sample_world != GameWorld()->GetInstanceGeneration() || m_environment_sample_position != Pos()))
+        SynchronizeEnvironmentAfterDisplacement();
 }
 
 void CMobBase::UnregisterMovementTargetState(CState* state)
@@ -453,32 +474,83 @@ florrbt::Vector2f CMobBase::ApplyMovementTargetStates(const florrbt::Vector2f& t
     return result;
 }
 
+void CMobBase::CollectTickDependencies(std::vector<SEntityHandle>& output) const
+{
+    CEntity::CollectTickDependencies(output);
+    if (const auto* pickup = GetPickupController())
+        if (const auto* carried = pickup->GetCarried(this)) output.push_back(carried->GetHandle());
+}
+
+void CMobBase::OnTickBegin(float)
+{
+    BeginStateTick();
+    SynchronizeEnvironment();
+}
+
+void CMobBase::OnTickIntent(float dt)
+{
+    if (m_p_controller && !IsDead() && !IsMarkedForDes()) m_p_controller->OnTick(this, dt);
+}
+
+void CMobBase::OnTickMotion(float dt)
+{
+    if (IsDead() || IsMarkedForDes()) return;
+    if (IsCollisionPositionLocked()) { m_vel = {}; return; }
+    IntegrateMovement(dt);
+}
+
+void CMobBase::OnTickEnvironment(float) { SynchronizeEnvironmentAfterDisplacement(); }
+
+void CMobBase::OnTickEffects(float dt)
+{
+    if (!IsMarkedForDes()) TickStates(dt);
+}
+
+void CMobBase::OnTickActionRequests(float dt)
+{
+    if (m_p_controller && !IsDead() && !IsMarkedForDes()) m_p_controller->OnActions(this, dt);
+}
+
+void CMobBase::BeginStateTick()
+{
+    // 到期来源在意图生成前撤销；析构回调可能同时移除其他状态，因此每次重新定位。
+    for (;;)
+    {
+        const auto expired = std::find_if(m_states.begin(), m_states.end(), [](const auto& state) {
+            return !state || (state->m_timer != endless && state->m_timer <= 0.f);
+        });
+        if (expired == m_states.end()) break;
+        if (!*expired) m_states.erase(expired);
+        else RemoveState(expired->get());
+    }
+    m_frame_states.clear();
+    m_frame_states.reserve(m_states.size());
+    for (const auto& state : m_states)
+        m_frame_states.push_back({state->EffectSourceId(), state->m_timer, state->CaptureContinuousEffect()});
+    m_state_tick_prepared = true;
+}
+
 void CMobBase::TickStates(float dt)
 {
-    for (size_t index = 0; index < m_states.size();)
+    EnsureStateTickPrepared();
+    struct SReset { bool& prepared; ~SReset() { prepared = false; } } reset{m_state_tick_prepared};
+    if (!std::isfinite(dt) || dt < 0.f || IsDead()) return;
+    for (const auto& frame : m_frame_states)
     {
-        CState* state = m_states[index].get();
-        if (!state)
+        const auto found = std::find_if(m_states.begin(), m_states.end(), [&frame](const auto& state) {
+            return state && state->EffectSourceId() == frame.source;
+        });
+        // 本帧新增状态不补算整帧时间；有限状态也不能越过零后碰巧变成 endless(-1)。
+        const float elapsed = frame.remaining == endless ? dt : std::min(dt, std::max(0.f, frame.remaining));
+        if (frame.effect)
         {
-            m_states.erase(m_states.begin() + static_cast<std::ptrdiff_t>(index));
-            continue;
+            if (found != m_states.end() && (*found)->m_timer != endless)
+                (*found)->m_timer = std::max(0.f, (*found)->m_timer - elapsed);
+            CEntity* applier = GameWorld() ? GameWorld()->ResolveEntity(frame.effect->applier) : nullptr;
+            TakeDamage(frame.effect->damage_per_second * elapsed, applier, frame.effect->damage_type);
         }
-
-        state->Tick(dt);
+        else if (found != m_states.end()) (*found)->Tick(elapsed);
         if (IsDead()) return;
-        if (index >= m_states.size() || m_states[index].get() != state) continue;
-
-        if (state->m_timer != endless && state->m_timer <= 0.0f)
-        {
-            UnregisterMovementTargetState(state);
-            std::unique_ptr<CState> expired = std::move(m_states[index]);
-            m_states.erase(m_states.begin() + static_cast<std::ptrdiff_t>(index));
-            expired.reset();
-            if (IsDead()) return;
-        } else
-        {
-            ++index;
-        }
     }
 }
 
@@ -517,7 +589,7 @@ void CMobBase::ApplyDamageDirect(float dmg, CEntity* attacker, EDamageType damag
     {
         auto it = std::find_if(m_damage_data.begin(), m_damage_data.end(),
                                [player](const CDamageData& data) {
-                                   return data.m_account_name == player->GetAccountName() &&
+                               return data.m_account_name == player->GetAccountName() && data.MatchesInventoryScope(*player) &&
                                        (data.m_progress_account == player->GetProgressAccountName() ||
                                         (data.m_progress_account.empty() && !player->HasIsolatedProgress()));
                                });
@@ -526,12 +598,14 @@ void CMobBase::ApplyDamageDirect(float dmg, CEntity* attacker, EDamageType damag
             CDamageData data;
             data.m_account_name = player->GetAccountName();
             data.m_progress_account = player->GetProgressAccountName();
+            data.m_inventory_account = player->GetInventoryAccountName();
             data.m_total_dmg = dmg;
             data.ResetTimer();
             m_damage_data.push_back(data);
         } else
         {
             it->m_progress_account = player->GetProgressAccountName();
+            it->m_inventory_account = player->GetInventoryAccountName();
             it->m_total_dmg += dmg;
             it->ResetTimer();
         }
@@ -645,9 +719,7 @@ void CMobBase::MoveTowards(const florrbt::Vector2f& target_pos, float dt, float 
     float speed_multiplier = GetMobMovementSpeedMultiplier(this);
     if (!std::isfinite(speed_multiplier)) speed_multiplier = 0.f;
     float max_velocity = MultiplyFiniteNonNegative(stats->max_velocity, speed_multiplier);
-    // Movement modifiers change the requested maximum speed only. The mob's
-    // own acceleration remains its base stat, so a slow does not also make it
-    // turn or brake sluggishly.
+    // 移动修正只影响目标速度，保留原加速度，使减速不额外拖慢转向与制动。
     const float acceleration = std::isfinite(stats->acceleration) ? std::max(0.f, stats->acceleration) : 0.f;
 
     florrbt::Vector2f delta = effective_target_pos - Pos();
@@ -684,8 +756,7 @@ void CMobBase::MoveTowards(const florrbt::Vector2f& target_pos, float dt, float 
         }
 
         florrbt::Vector2f forward(std::cos(FacingAngle()), std::sin(FacingAngle()));
-        // Facing limits the desired drive direction, not the actual velocity.
-        // Snapping m_vel to forward erased sideways/backwards crowd impulses.
+        // 朝向只约束驱动方向，不能抹掉外部推挤产生的侧向或反向速度。
         m_vel = florrbt::StepVelocityTowards(m_vel, forward * max_velocity, acceleration, dt);
         return;
     }
@@ -701,18 +772,29 @@ void CMobBase::MoveTowards(const florrbt::Vector2f& target_pos, float dt, float 
     m_vel = florrbt::StepVelocityTowards(m_vel, desired_vel, acceleration, dt);
 }
 
-bool CMobBase::RemoveState(CState* state)
+bool CMobBase::RemoveState(CState* state, EStateApplyTiming timing)
 {
     if (!state) return false;
+    const auto found = std::find_if(m_states.begin(), m_states.end(), [state](const auto& owned) { return owned.get() == state; });
+    if (found == m_states.end()) return false;
+    const auto source = state->EffectSourceId();
+    if (timing == EStateApplyTiming::EventBoundary && GameWorld() && GameWorld()->CombatEvents().QueueRemoval(*this, source)) return true;
+    return RemoveStateImmediate(source);
+}
 
+bool CMobBase::RemoveStateImmediate(std::uint64_t source)
+{
     for (auto it = m_states.begin(); it != m_states.end(); ++it)
     {
-        if (it->get() == state)
+        if (*it && (*it)->EffectSourceId() == source)
         {
+            CState* state = it->get();
+            RevokeStateEffects(state->EffectSourceId());
             UnregisterMovementTargetState(state);
             std::unique_ptr<CState> removed = std::move(*it);
             m_states.erase(it);
             removed.reset();
+            if (GameWorld()) GameWorld()->CombatEvents().StateChanged(*this);
             return true;
         }
     }
@@ -743,23 +825,108 @@ CPickupController* CMobBase::GetPickupController()
 
 void CMobBase::SetController(std::unique_ptr<IController> controller)
 {
-    // Controller-owned carry state cannot outlive the controller. Mob-owned
-    // skills (Hornet) deliberately survive possession and are not dropped here.
+    // 控制器销毁时释放其携带关系；黄蜂等由生物持有的技能可跨附身保留。
     if (auto* pickup = dynamic_cast<CPickupController*>(m_p_controller.get())) pickup->DropCarried(this);
+    m_suspended_controller.reset();
+    m_control_return_equipment.reset();
+    m_has_control_lease = false;
     m_p_controller = std::move(controller);
     if (Id() >= 0) SynchronizeEnvironment();
+}
+
+std::unique_ptr<SControlEquipment> CMobBase::CaptureControlEquipment() const
+{
+    const auto* flower = dynamic_cast<const CFlower*>(this);
+    if (!flower || dynamic_cast<const CPlayerFlower*>(flower)) return {};
+    auto result = std::make_unique<SControlEquipment>();
+    result->capacity = flower->GetPetalSlotCapacity();
+    for (const auto& slot : flower->GetSlots())
+        result->slots.push_back({slot.m_p_proto ? static_cast<uint8_t>(slot.m_p_proto->m_type) : uint8_t{0},
+            static_cast<uint8_t>(slot.m_stored_rarity), slot.m_available, slot.IsPolicyBanned()});
+    return result;
+}
+
+void CMobBase::AcquirePlayerControl(std::unique_ptr<IController> controller, std::unique_ptr<SControlEquipment> equipment)
+{
+    if (!controller || !controller->IsPlayerControlled()) return;
+    if (auto* pickup = dynamic_cast<CPickupController*>(m_p_controller.get())) pickup->DropCarried(this);
+    auto previous = std::move(m_p_controller);
+    const int team = BaseTeam();
+    SetController(std::move(controller));
+    if (previous && !previous->IsPlayerControlled()) m_suspended_controller = std::move(previous);
+    m_control_return_equipment = std::move(equipment);
+    m_has_control_lease = true;
+    m_control_return_team = team;
+}
+
+void CMobBase::ReleasePlayerControl(std::unique_ptr<IController> default_ai)
+{
+    if (IsMarkedForDes()) return;
+    if (IsDead()) { MarkForDestroy(EEntityRemovalReason::Defeated); return; }
+    const auto* body = dynamic_cast<const IMultiSegmentBodyMob*>(this);
+    const auto* root = body ? ResolveMultiSegmentRoot(GameWorld(), body->RootHandle()) : nullptr;
+    const auto* assembly = dynamic_cast<const IMultiSegmentRootMob*>(root);
+    const bool attached_part = assembly && std::any_of(assembly->GetSegmentReferences().begin(), assembly->GetSegmentReferences().end(),
+        [&](const auto& part) { return part.index == body->SegmentIndex() && part.entity_ref.RefersTo(GetHandle()); });
+    if ((!default_ai || default_ai->IsPlayerControlled()) && !attached_part)
+    {
+        // 无自主 AI 的身体按非击杀原因移除，不触发经验或掉落。
+        AddTag(EEntityTag::NoDefeatRewards);
+        MarkForDestroy(EEntityRemovalReason::Replaced);
+        SetController(nullptr);
+        return;
+    }
+    const bool leased = m_has_control_lease;
+    const int team = m_control_return_team;
+    auto equipment = std::move(m_control_return_equipment);
+    auto resumed = m_suspended_controller ? std::move(m_suspended_controller) : std::move(default_ai);
+    // 兼容旧存档中的单体节附身：恢复跟随根的状态，不能因没有独立 AI 而拆掉体节。
+    if (attached_part && resumed && resumed->IsPlayerControlled()) resumed.reset();
+    SetController(std::move(resumed));
+    if (leased) SetTeam(team);
+    if (auto* flower = dynamic_cast<CFlower*>(this); flower && equipment)
+    {
+        flower->DestroyPetalEntities();
+        for (size_t i = 0; i < flower->GetSlots().size(); ++i) flower->ForceUnequipPetal(static_cast<int>(i));
+        flower->SetPetalSlotCapacity(equipment->capacity);
+        flower->SetPetalSlotCount(static_cast<int>(equipment->slots.size()));
+        for (size_t i = 0; i < equipment->slots.size(); ++i)
+        {
+            const auto& slot = equipment->slots[i];
+            if (slot.type) flower->LoadPetalSlot(static_cast<int>(i), FindPetalPrototype(static_cast<EPetalType>(slot.type)), static_cast<ERarity>(slot.rarity));
+        }
+        for (size_t i = 0; i < equipment->slots.size(); ++i)
+        {
+            flower->GetSlots()[i].m_available = equipment->slots[i].available;
+            flower->SetBanned(equipment->slots[i].policy_banned, static_cast<int>(i));
+        }
+        flower->MarkFinalStatsDirty(); flower->RebuildFinalStats();
+    }
+    if (m_p_controller) m_p_controller->OnWorldChanged(this);
+}
+
+bool CMobBase::RestorePlayerControlLease(bool active, int team, std::unique_ptr<IController> controller, std::string& error,
+                                        std::unique_ptr<SControlEquipment> equipment)
+{
+    if ((active && !IsPlayerControlled()) || (controller && (!active || controller->IsPlayerControlled())))
+    {
+        error = "Invalid suspended AI/player control lease";
+        return false;
+    }
+    m_has_control_lease = active;
+    m_control_return_team = team;
+    m_suspended_controller = std::move(controller);
+    m_control_return_equipment = std::move(equipment);
+    return true;
 }
 
 void CMobBase::IntegrateMovement(float dt)
 {
     const auto start = Pos();
     Pos() += m_vel * dt;
-    // Resolve ordinary blockers before detecting shortcut entry. Otherwise
-    // a proposed movement through a solid wall could discard loaded petals
-    // even though the authoritative wall pass later rejects that movement.
+    // 先处理实墙再判断密道接触，避免被墙拒绝的路径误清空已加载花瓣。
     if (IsPlayerControlled() && GameWorld() && GameWorld()->IsTicking())
         GameWorld()->ConstrainControlledMotion(*this, start);
-    SynchronizeEnvironment(start);
 }
 
 void CMobBase::SynchronizeEnvironment(std::optional<florrbt::Vector2f> movement_start)

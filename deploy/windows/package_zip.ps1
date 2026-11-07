@@ -1,9 +1,11 @@
-param(
+﻿param(
     [ValidateSet("Release", "Debug")]
     [string]$Configuration = "Release",
     [string]$OutputZip = "",
     [switch]$IncludePdb,
     [string]$MySqlRoot = "",
+    [string]$SfmlRoot = "",
+    [string]$BuildDirectory = "",
     [switch]$BundleMySqlServer
 )
 
@@ -17,8 +19,12 @@ if ($VersionText -notmatch 'inline\s+constexpr\s+std::string_view\s+version\s*=\
     throw "Could not read the application version from $VersionHeader"
 }
 $AppVersion = $Matches[1]
+if ($AppVersion -notmatch '^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$') { throw "Invalid application version" }
 $PackageName = "FlorrBtHotReload-v$AppVersion"
-$StageRoot = Join-Path $ArtifactsDir $PackageName
+$StageRoot = [IO.Path]::GetFullPath((Join-Path $ArtifactsDir ("package-staging\" + $PackageName + "-" + [guid]::NewGuid().ToString("N"))))
+if (-not $StageRoot.StartsWith(([IO.Path]::GetFullPath($ArtifactsDir) + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Package staging must stay inside artifacts"
+}
 if (-not $OutputZip) {
     $OutputZip = Join-Path $ArtifactsDir "$PackageName.zip"
 }
@@ -37,6 +43,21 @@ function Copy-File([string]$Source, [string]$Destination) {
     }
     New-Item -ItemType Directory -Force -Path (Split-Path $Destination -Parent) | Out-Null
     Copy-Item -LiteralPath $Source -Destination $Destination -Force
+}
+
+# 只复制将进入源码仓库的文件，不能把本机账号、密钥、日志或技能链接装进发布包。
+function Copy-ProjectFiles([string]$Directory) {
+    $files = & git -C $RepoRoot -c core.quotepath=false ls-files --cached --others --exclude-standard -- $Directory
+    if ($LASTEXITCODE -ne 0) { throw "Cannot obtain package source file list" }
+    foreach ($relative in $files | Select-Object -Unique) {
+        if ($relative -match '(?i)(?:^|/)(?:node_modules|__pycache__|hot_reload|logs|\.agents|\.claude|\.mirasim)(?:/|$)|\.(?:log|pyc|dmp)$|(?:^|/)\.env(?:$|\.(?!example$))|^data/(?:accounts\.json(?!\.example$)|unique_petals\.json$|server\.cfg$)|^deploy/windows/account_links\.ps1$|^deploy/windows-web/web\.env\.ps1$') { continue }
+        $source = Join-Path $RepoRoot $relative
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { continue }
+        if ((Get-Item -LiteralPath $source -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Cannot package a source link: $relative" }
+        $destination = [IO.Path]::GetFullPath((Join-Path $StageRoot $relative))
+        if (-not $destination.StartsWith(($StageRoot + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) { throw "Invalid package path: $relative" }
+        Copy-File $source $destination
+    }
 }
 
 function Resolve-MySqlDistribution([string]$RequestedRoot) {
@@ -148,23 +169,44 @@ function Write-TextFile([string]$Path, [string]$Text) {
 }
 
 New-Item -ItemType Directory -Force -Path $ArtifactsDir | Out-Null
-if (Test-Path $StageRoot) {
-    Remove-Item -LiteralPath $StageRoot -Recurse -Force
-}
 New-Item -ItemType Directory -Force -Path $StageRoot | Out-Null
 
-$BuildDir = Join-Path $RepoRoot "x64\$Configuration"
+$BuildDir = if ($BuildDirectory) { (Resolve-Path -LiteralPath $BuildDirectory).Path } else { Join-Path $RepoRoot "x64\$Configuration" }
 $RuntimeDir = Join-Path $StageRoot "x64\$Configuration"
 $ServerExe = Join-Path $BuildDir "FlorrBt.Server.exe"
 $LauncherExe = Join-Path $BuildDir "FlorrBt.Launcher.exe"
 Copy-File $ServerExe (Join-Path $RuntimeDir "FlorrBt.Server.exe")
 Copy-File $LauncherExe (Join-Path $RuntimeDir "FlorrBt.Launcher.exe")
+Copy-File (Join-Path $BuildDir "libcurl.dll") (Join-Path $RuntimeDir "libcurl.dll")
+Copy-File (Join-Path $BuildDir "curl-COPYING.txt") (Join-Path $RuntimeDir "curl-COPYING.txt")
 $NodeExe = Find-NodeRuntime
 Copy-File $NodeExe (Join-Path $StageRoot "runtime\node.exe")
-
-Get-ChildItem $BuildDir -Filter "sfml*.dll" -File -ErrorAction SilentlyContinue | ForEach-Object {
-    Copy-File $_.FullName (Join-Path $RuntimeDir $_.Name)
+$nodeVersion = (& $NodeExe --version).Trim()
+if ($LASTEXITCODE -ne 0 -or $nodeVersion -notmatch '^v\d+\.\d+\.\d+$') { throw "Cannot identify bundled Node.js version" }
+$nodeLicense = Join-Path $BuildDir "node-$nodeVersion-LICENSE.txt"
+if (-not (Test-Path -LiteralPath $nodeLicense -PathType Leaf)) {
+    $licenseResponse = Invoke-RestMethod -Uri "https://api.github.com/repos/nodejs/node/contents/LICENSE?ref=$nodeVersion" -TimeoutSec 30
+    if ($licenseResponse.encoding -ne "base64") { throw "Cannot read the Node.js license" }
+    [IO.File]::WriteAllBytes($nodeLicense, [Convert]::FromBase64String($licenseResponse.content))
 }
+Copy-File $nodeLicense (Join-Path $StageRoot "runtime\LICENSE.node.txt")
+
+$sfmlRoots = @($SfmlRoot, $env:FLORRBT_SFML_ROOT, (Join-Path $RepoRoot "dependencies\SFML")) | Where-Object { $_ }
+foreach ($component in @("graphics", "window", "network", "system")) {
+    $suffix = if ($Configuration -eq "Debug") { "-d" } else { "" }
+    $name = "sfml-$component$suffix-3.dll"
+    $source = Join-Path $BuildDir $name
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+        $source = $sfmlRoots | ForEach-Object { Join-Path $_ "bin\$name" } |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    }
+    if (-not $source) { throw "Missing $name; pass -SfmlRoot <SDK directory>" }
+    Copy-File $source (Join-Path $RuntimeDir $name)
+}
+$sfmlLicense = @((Join-Path $BuildDir "SFML-LICENSE.md")) + @($sfmlRoots | ForEach-Object { Join-Path $_ "license.md" })
+$sfmlLicense = $sfmlLicense | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+if (-not $sfmlLicense) { throw "Missing SFML license; pass -SfmlRoot <SDK directory>" }
+Copy-File $sfmlLicense (Join-Path $RuntimeDir "SFML-LICENSE.md")
 
 # Keep the MySQL client and the OpenSSL DLLs it loads together in the
 # self-contained package.  New builds place these beside the executable; the
@@ -206,24 +248,7 @@ if ($IncludePdb) {
     }
 }
 
-Copy-Dir (Join-Path $RepoRoot "web") (Join-Path $StageRoot "web")
-Copy-Dir (Join-Path $RepoRoot "data") (Join-Path $StageRoot "data")
-Copy-Dir (Join-Path $RepoRoot "tools") (Join-Path $StageRoot "tools")
-Copy-Dir (Join-Path $RepoRoot "deploy\windows") (Join-Path $StageRoot "deploy\windows")
-Copy-Dir (Join-Path $RepoRoot "deploy\windows-web") (Join-Path $StageRoot "deploy\windows-web")
-$HotReloadData = Join-Path $StageRoot "data\hot_reload"
-if (Test-Path $HotReloadData) {
-    Remove-Item -LiteralPath $HotReloadData -Recurse -Force
-}
-New-Item -ItemType Directory -Force -Path $HotReloadData | Out-Null
-Get-ChildItem -LiteralPath $StageRoot -Directory -Recurse -Force -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -eq "__pycache__" } |
-    Remove-Item -Recurse -Force
-Get-ChildItem -LiteralPath $StageRoot -File -Recurse -Force -Filter "*.pyc" -ErrorAction SilentlyContinue |
-    Remove-Item -Force
-Get-ChildItem -LiteralPath $StageRoot -Filter "*.log" -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-    Remove-Item -LiteralPath $_.FullName -Force
-}
+foreach ($directory in @("web", "data", "tools", "deploy/windows", "deploy/windows-web")) { Copy-ProjectFiles $directory }
 
 $StartAll = @'
 @echo off
@@ -350,10 +375,38 @@ Hot reload:
 Packaged configuration: $Configuration
 Version: $AppVersion
 Packaged at: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+
+Upgrade: extract into a new directory. Back up and preserve the existing mysql data,
+data/server.cfg, account files and local OAuth/web configuration before switching.
+This archive includes no production accounts, database or local secrets.
+Discord/QQ login remains disabled until the provider settings are configured.
 "@
 Write-TextFile (Join-Path $StageRoot "README_DEPLOY.txt") $Readme
 
+$releaseNotes = Join-Path $RepoRoot "docs\release-v$AppVersion.md"
+if (Test-Path -LiteralPath $releaseNotes -PathType Leaf) {
+    Copy-File $releaseNotes (Join-Path $StageRoot "RELEASE_NOTES.md")
+}
+$sourceCommit = (& git -C $RepoRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0) { throw "Cannot determine source revision" }
+$sourceDirty = [bool](& git -C $RepoRoot status --porcelain)
+$manifest = [ordered]@{
+    version = $AppVersion
+    configuration = $Configuration
+    sourceCommit = $sourceCommit
+    sourceDirty = $sourceDirty
+    packagedAtUtc = [DateTime]::UtcNow.ToString("o")
+    bundledNode = $nodeVersion
+    bundledMySqlServer = [bool]$BundleMySqlServer
+    serverSha256 = (Get-FileHash -LiteralPath (Join-Path $RuntimeDir "FlorrBt.Server.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
+    launcherSha256 = (Get-FileHash -LiteralPath (Join-Path $RuntimeDir "FlorrBt.Launcher.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+Write-TextFile (Join-Path $StageRoot "PACKAGE_MANIFEST.json") ($manifest | ConvertTo-Json)
+
 if (Test-Path $OutputZip) {
+    if (-not (Test-Path -LiteralPath $OutputZip -PathType Leaf) -or [IO.Path]::GetExtension($OutputZip) -ne '.zip') {
+        throw "OutputZip must name a zip file"
+    }
     Remove-Item -LiteralPath $OutputZip -Force
 }
 
@@ -361,4 +414,5 @@ Get-ChildItem -LiteralPath $StageRoot -Force | Compress-Archive -DestinationPath
 
 $zipInfo = Get-Item $OutputZip
 Write-Host "Created: $($zipInfo.FullName)"
+Write-Host "Staging: $StageRoot"
 Write-Host "Size: $([math]::Round($zipInfo.Length / 1MB, 2)) MB"

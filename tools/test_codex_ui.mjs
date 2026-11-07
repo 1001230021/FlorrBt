@@ -37,19 +37,23 @@ function element(tag = "div") {
   return node;
 }
 const dom = Object.fromEntries(["codexBtn", "codexDetail", "codexGrid", "codexPanel"].map(key => [key, element()]));
+dom.codexDetail.className = 'codex-detail';
 const scrollbar = element();
 scrollbar.className = "custom-scrollbar";
 dom.codexGrid.appendChild(scrollbar);
 const state = { authenticated: true, codexOpen: true, codex: new Map(), codexLoot: new Map() };
 let language = "en";
 const scope = {
+  setTimeout, clearTimeout,
   ...ids, dom, state, document: { createElement: element }, window: { innerWidth: 1920, innerHeight: 1080 },
   MobNames: {}, mobTypeName: type => `${language} Mob ${type}`, rarityName: rarity => `R${rarity}`,
   rarityColor: () => "#ffff00", translationSlug: name => name.toLowerCase(), t: key => key,
   assetImage: src => ({ src, complete: false }), petalBaseImage: rarity => ({ src: `rarity_${rarity}.svg` }),
+  assignVisualImage(target, resource) { target.visualResource = resource; target.src = resource.src; },
   makePetalStack: () => element(), formatShortCount: String,
   toggleBackpack() {}, toggleCraft() {}, toggleSettings() {}, toggleTalent() {}, updateQuickActionButtons() {},
-  runMotionPhase() {}, setAnimatedVisibility: (el, visible) => el.classList.toggle("hidden", !visible),
+  transitionPanel(el, visible) { el.classList.toggle("open", visible); el.setAttribute("aria-hidden", String(!visible)); },
+  setAnimatedVisibility: (el, visible) => el.classList.toggle("hidden", !visible),
 };
 const source = readFileSync(new URL("../web/src/ui_codex.js", import.meta.url), "utf8")
   .replace(/^import[\s\S]*?from "[^"]+";\r?\n/gm, "").replace(/^export /gm, "");
@@ -90,6 +94,19 @@ for (let i = 0; i < 30; i++) codex.moveCodexDetail({ target: cell });
 assert.equal(dom.codexDetail.replacements, rebuilds, "pointer movement must not rebuild loot cards");
 language = "zh"; codex.moveCodexDetail({ target: cell });
 assert.equal(dom.codexDetail.replacements, rebuilds + 1);
+codex.moveCodexDetail({ target: dom.codexPanel });
+codex.moveCodexDetail({ target: dom.codexDetail });
+await new Promise(resolve => setTimeout(resolve, 200));
+assert(!dom.codexDetail.classList.contains('hidden'), '浮窗里的鼠标事件会冒泡到面板，不能触发延迟关闭');
+const drops = Array.from({ length: 11 }, (_, index) => ({ petalType: 4, dropRarity: index + 1, dropRate: .01 * (index + 1) }));
+state.codexLoot.set(key, drops);
+codex.moveCodexDetail({ target: cell });
+const lootGroup = dom.codexDetail.children.find(el => el.className === 'codex-loot').children[0];
+assert.equal(lootGroup.children.length, drops.length);
+for (const item of lootGroup.children) {
+  assert.equal(item.children.length, 2, '卡片和概率一起换行，不能分成两个独立的网格');
+  assert.match(item.children[1].textContent, /^\d+\.\d%$/);
+}
 codex.toggleCodex(false);
 assert.ok(dom.codexDetail.classList.contains("hidden"));
 state.codex.clear(); state.codexOpen = true; codex.renderCodexPanel();

@@ -1,7 +1,7 @@
 // Structural ratchet: old feature ownership must not creep back into the
 // controller/server/network after the extension migration.
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -18,6 +18,14 @@ assert.doesNotMatch(report, /dynamic_cast<COpenController|m_squad_|BuildSquadMet
 assert.match(read('src/Server/Game/systems/snapshot_service.cpp'), /Find<ISquadView>/);
 assert.match(read('src/Server/Game/extensions/squad_extension.h'), /Members\(const CPlayer&\) const/);
 assert.match(read('src/Server/Game/extensions/extension_runtime.h'), /vector<std::unique_ptr<CExtension>>/);
+// 玩法只依赖能力接口，账本只返回事务结果。
+for (const file of readdirSync(path.join(root, 'src/Server/Game'), { recursive: true })) {
+  if (!/\.(cpp|h)$/.test(file)) continue;
+  const source = read(path.join('src/Server/Game', file));
+  assert.doesNotMatch(source, /CServer::GetInstance|#include\s+"[^"\n]*(?:network_module|server)\.h"/, file);
+}
+assert.doesNotMatch(read('src/Server/Persistence/unique_petal_registry.cpp'), /Game\/|Module\/|CServer|QueueInventory/);
+assert.doesNotMatch(read('src/Server/Game/extensions/party_extension.cpp'), /dynamic_cast<IPartyDelivery/);
 for (const old of [
   'src/Server/Game/gamecontrollers/weather_diurnal_open_controller.h',
   'src/Server/Game/gamecontrollers/weather_diurnal_open_controller.cpp',

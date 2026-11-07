@@ -226,6 +226,10 @@ TEST(EntityIdentityRoundTripsWithoutTruncationOrGenerationLoss)
     if (parsed.entities.size() != 2) return;
     CHECK(parsed.entities[0].entity_id == 65537);
     CHECK(parsed.entities[0].generation == first.generation);
+    CHECK_NEAR(parsed.entities[0].pos.x, first.pos.x, 0.001f);
+    CHECK_NEAR(parsed.entities[0].pos.y, first.pos.y, 0.001f);
+    CHECK_NEAR(parsed.entities[1].pos.x, second.pos.x, 0.001f);
+    CHECK_NEAR(parsed.entities[1].pos.y, second.pos.y, 0.001f);
     CHECK(parsed.entities[1].entity_id == 1);
     CHECK(parsed.entities[1].generation == 99);
     CHECK(parsed.removed_entity_ids == message.removed_entity_ids);

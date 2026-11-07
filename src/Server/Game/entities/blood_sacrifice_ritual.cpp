@@ -1,7 +1,7 @@
 #include "blood_sacrifice_ritual.h"
 #include "../../../Engine/logger.h"
 #include "../../../Shared/game_config.h"
-#include "../../server.h"
+#include "../gamecontext.h"
 #include "../gameworld.h"
 #include "mob.h"
 #include <algorithm>
@@ -36,7 +36,7 @@ float BloodSacrificeFadeDuration(ERarity rarity)
                                progress;
     return std::max(game_config::blood_sacrifice_min_phase_duration, duration);
 }
-} // namespace
+}
 
 CBloodSacrificeRitual::CBloodSacrificeRitual(CGameWorld* world, florrbt::Vector2f pos, EMobType mob_type, ERarity rarity,
                                              float timer)
@@ -48,7 +48,7 @@ CBloodSacrificeRitual::CBloodSacrificeRitual(CGameWorld* world, florrbt::Vector2
 {
     Health() = 1.f;
     Mass() = 0.f;
-    Team() = 0;
+    SetTeam(0);
 }
 
 float CBloodSacrificeRitual::EffectProgress() const
@@ -67,7 +67,7 @@ float CBloodSacrificeRitual::EffectProgress() const
     return std::clamp(spawn_progress + fade_progress * (1.f - spawn_progress), 0.f, 1.f);
 }
 
-void CBloodSacrificeRitual::Tick(float dt)
+void CBloodSacrificeRitual::OnTickActions(float dt)
 {
     if (IsMarkedForDes()) return;
 
@@ -95,14 +95,14 @@ void CBloodSacrificeRitual::Tick(float dt)
             {
                 spawned = true;
                 spawned_id = raw_mob->Id();
-                if (CServer::MeetsPetalReportRarity(raw_mob->GetRarity(), game_config::min_mob_spawn_report_rarity))
+                CGameContext* context = GameContext();
+                if (context && context->Events().ShouldReportRarity(raw_mob->GetRarity(), game_config::min_mob_spawn_report_rarity))
                 {
                     const CMobPrototype* proto = FindMobPrototype(raw_mob->GetMobType());
                     const std::string mob_name = proto && !proto->m_name.empty()
                                                      ? proto->m_name
                                                      : std::string(GetMobTypeName(raw_mob->GetMobType()));
-                    if (CServer* server = CServer::GetInstance())
-                        server->BroadcastMobReport("has been summoned", raw_mob->GetRarity(), mob_name);
+                    context->Events().ReportMob("has been summoned", raw_mob->GetRarity(), mob_name);
                 }
             }
         }

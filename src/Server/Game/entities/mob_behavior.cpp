@@ -1,4 +1,4 @@
-#include "../../Module/network_module.h"
+#include "../extensions/extension_runtime.h"
 #include "../../../Shared/circle_contact.h"
 #include "../controllers/melee_controller.h"
 #include "../controllers/pickup_controller.h"
@@ -56,9 +56,7 @@ SEntityHandle RestoreRuntimeHandle(const CSnapshotReader& reader, std::string_vi
     handle.world_id = reader.UInt32(base + "_world_id");
     handle.world_instance_generation = reader.UInt64(base + "_world_instance_generation");
 
-    // Older runtime snapshots only stored id (or id + generation). Resolve an
-    // id-only entry once against the restored world so it cannot remain an
-    // unsafe reference after the world has reused an id.
+    // 旧快照仅存 ID 时，在恢复世界中解析一次并补足代数，避免 ID 重用后误指新实体。
     const bool has_world_identity = reader.Has(base + "_world_id") && reader.Has(base + "_world_instance_generation");
     if (world && handle.IsValid() && !has_world_identity)
     {
@@ -239,21 +237,18 @@ std::string FormatDummyNumber(float value)
     return text;
 }
 
-void SendDummyDamageReport(uint32_t player_id, float total_damage, float dps)
+void SendDummyDamageReport(CGameContext* context, const SPlayerSessionRef& session, float total_damage, float dps)
 {
-    auto* server = CServer::GetInstance();
-    if (!server) return;
-
-    INetworkModule* network = server->GetNetworkModule();
-    if (!network) return;
-
-    CPlayer* player = network->FindPlayerById(player_id);
-    if (!player || !player->IsAuthenticated()) return;
+    if (!context) return;
+    CPlayer* player = context->PlayerDirectory().FindPlayerById(session.id);
+    if (!player || !player->IsAuthenticated() || !player->MatchesSession(session)) return;
+    auto* service = context->Extensions().Globals().Find<IChatService>();
+    if (!service) return;
 
     std::string message = "Dummy total dmg: " + FormatDummyNumber(total_damage) + " | DPS: " + FormatDummyNumber(dps);
-const SChatEntry chat = server->Extensions().Globals().Find<IChatService>()->Submit(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Dummy", message,
+    const SChatEntry chat = service->Submit(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Dummy", message,
                                                      static_cast<int>(player->GetId()));
-    if (!chat.message.empty()) server->Extensions().Globals().Find<IChatService>()->SendTo(*player, chat);
+    if (!chat.message.empty()) service->SendTo(*player, chat);
 }
 
 float DummyInitialReportDelay(const CEntity* attacker)
@@ -264,7 +259,7 @@ float DummyInitialReportDelay(const CEntity* attacker)
 
     for (const CPetalSlot& slot : flower->GetSlots())
     {
-        if (!slot.m_available || slot.m_banned) continue;
+        if (!slot.m_available || slot.IsBanned()) continue;
         for (const CPetal* petal : slot.m_p_petals)
         {
             if (!petal || petal->m_hidden || petal->IsMarkedForDes() || petal->Health() <= 0.f) continue;
@@ -408,7 +403,7 @@ class CBandageBeetleMob : public CBasicMob
   public:
     using CBasicMob::CBasicMob;
 
-    void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
+    void OnTakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {
         if (dmg_type == EDamageType::Normal) dmg = std::max(0.f, dmg - m_base_stats.armor);
         if (dmg <= 0.f) return;
@@ -419,7 +414,7 @@ class CBandageBeetleMob : public CBasicMob
         {
             CancelDestroy();
             Health() = std::max(game_config::mob_bandage_min_revive_health, Health());
-            AddState(std::make_unique<CUndeadState>(this, GetBandageUndeadDuration(GetRarity()), GetRarity(), -1));
+            AddState(std::make_unique<CUndeadState>(this, GetBandageUndeadDuration(GetRarity()), GetRarity(), -1), EStateApplyTiming::DamageProtection);
         }
     }
 };
@@ -453,7 +448,6 @@ class CBeeMob : public CBasicMob
     float m_wave_timer = 0.f;
 };
 
-// Firefly: bee-style wave flight, retaliates with chain lightning when damaged.
 class CFireflyMob : public CBasicMob, public ILightningBoostSource
 {
   public:
@@ -477,15 +471,14 @@ class CFireflyMob : public CBasicMob, public ILightningBoostSource
         return true;
     }
 
-    void Tick(float dt) override
+    void OnTickActions(float dt) override
     {
-        CBasicMob::Tick(dt);
+        CBasicMob::OnTickActions(dt);
         if (m_lightning_cooldown > 0.f) m_lightning_cooldown = std::max(0.f, m_lightning_cooldown - dt);
         if (m_active_lightning_cooldown > 0.f) m_active_lightning_cooldown = std::max(0.f, m_active_lightning_cooldown - dt);
         if (IsSuperPlus() && m_active_lightning_cooldown <= 0.f) TryFireActiveLightning();
     }
 
-    // Bee flight: wavy approach toward the target (shared with the bee).
     void MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius = -1.f) override
     {
         MoveTowards(target_pos, dt, target_radius, 0.f);
@@ -497,17 +490,15 @@ class CFireflyMob : public CBasicMob, public ILightningBoostSource
         MoveTowardsWithWave(target_pos, dt, target_radius, full_speed_distance, m_wave_timer);
     }
 
-    void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
+    void OnTakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {
         const bool was_alive = !IsDead();
-        CBasicMob::TakeDamage(dmg, attacker, dmg_type);
+        CBasicMob::OnTakeDamage(dmg, attacker, dmg_type);
         if (!was_alive || IsDead() || IsMarkedForDes()) return;
         if (dmg <= 0.f || m_lightning_cooldown > 0.f) return;
         if (!GameWorld()) return;
 
-        // Super- retaliation is selective: only mob attackers trigger it
-        // (players can whack a low firefly for free). Super and Super+ accept
-        // any attacker; Super+ additionally attacks on its own in Tick.
+        // 低于 Super 仅反击怪物；Super 反击任意攻击者，更高档位还会主动攻击。
         if (GetRaritySortRank(GetRarity()) < GetRaritySortRank(ERarity::Super) && !IsMobAttacker(attacker)) return;
 
         FireChainLightning();
@@ -534,14 +525,11 @@ class CFireflyMob : public CBasicMob, public ILightningBoostSource
 
     bool ShouldUseMagicLightning() const
     {
-        // Every Magic Firefly attack uses the blue magic chain.  This applies
-        // to both retaliatory and active attacks, at every rarity; ordinary
-        // Fireflies continue to use the normal chain in FireChainLightning.
+        // 魔法萤火虫的反击和主动攻击均使用蓝色魔法连锁。
         return GetMobType() == EMobType::MagicFirefly;
     }
 
-    // Super+ only: fires chain lightning at the nearest hostile target inside
-    // lightning range, without needing to be hit first.
+    // 高于 Super 时主动攻击连锁范围内最近的敌人。
     void TryFireActiveLightning()
     {
         m_active_lightning_cooldown = game_config::mob_firefly_active_lightning_interval_seconds;
@@ -573,7 +561,7 @@ class CFireflyMob : public CBasicMob, public ILightningBoostSource
 
     static float FireflyLightningDamage(ERarity rarity)
     {
-        // Lightning damage triples per rarity step (Common 13, Unusual 39, ...).
+        // 闪电伤害每提升一档乘三。
         return game_config::mob_firefly_lightning_damage *
                std::pow(3.f, static_cast<float>(GetRaritySortRank(rarity) - 1.f));
     }
@@ -622,44 +610,35 @@ class CFireflyLarvaHeadMob final : public CMultiSegmentHeadMob<SMobStats>,
   public:
     using CMultiSegmentHeadMob<SMobStats>::CMultiSegmentHeadMob;
 
-    void Tick(float dt) override
+    void CollectTickDependencies(std::vector<SEntityHandle>& output) const override
     {
-        CMultiSegmentHeadMob<SMobStats>::Tick(dt);
-        if (IsDead() || IsMarkedForDes() || !GameWorld())
-        {
-            ReleaseGrab();
-            return;
-        }
+        CMultiSegmentHeadMob<SMobStats>::CollectTickDependencies(output);
+        if (m_grabbed_target_ref.IsValid()) output.push_back(m_grabbed_target_ref);
+    }
 
-        if (!m_grabbed_target_ref.IsValid())
-        {
-            m_attacking = false;
-            return;
-        }
-
-        CEntity* target = ResolveGrabbedTarget();
-        if (!target || !IsGrabWithinBreakDistance(*target))
-        {
-            ReleaseGrab();
-            return;
-        }
-
-        m_attacking = true;
-        HoldGrabbedTarget(*target, dt);
+    void OnTickActions(float dt) override
+    {
+        auto* target = RefreshGrabTarget();
+        if (!target) return;
         m_poison_refresh_timer -= std::max(0.f, dt);
         if (m_poison_refresh_timer <= 0.f)
         {
             const float refresh = std::max(game_config::server_fixed_dt,
                                            game_config::mob_firefly_larva_grab_poison_refresh_seconds);
             m_poison_refresh_timer = refresh;
-            auto* target_mob = dynamic_cast<CMobBase*>(target);
             auto poison = std::make_unique<CPoisonState>(
-                target_mob, refresh * 1.5f,
+                target, refresh * 1.5f,
                 ScaleFireflyLarvaDamage(game_config::mob_firefly_larva_poison_damage_per_second, GetRarity(),
                                         game_config::mob_firefly_larva_poison_damage_rarity_scale),
                 GetRarity(), this);
-            if (poison->IsValid()) target_mob->AddState(std::move(poison));
+            if (poison->IsValid()) target->AddState(std::move(poison));
         }
+    }
+
+    void OnTickConstraints(float dt) override
+    {
+        CMultiSegmentHeadMob<SMobStats>::OnTickConstraints(dt);
+        if (auto* target = RefreshGrabTarget()) HoldGrabbedTarget(*target, dt);
     }
 
     bool IsAttacking() const override { return m_attacking; }
@@ -682,9 +661,7 @@ class CFireflyLarvaHeadMob final : public CMultiSegmentHeadMob<SMobStats>,
     {
         if (!CanCastSkill(skill_index)) return false;
 
-        // A stale or overextended handle must not block a fresh cast. Clearing
-        // it here keeps the skill valid even when invoked before this mob's
-        // maintenance Tick (for example by its controller or /skill).
+        // 施法前清除失效或过远的旧抓取目标，不能等待维护阶段才解锁技能。
         if (m_grabbed_target_ref.IsValid()) ReleaseGrab();
 
         CEntity* selected = FindGrabTarget(target);
@@ -778,6 +755,15 @@ class CFireflyLarvaHeadMob final : public CMultiSegmentHeadMob<SMobStats>,
         return best;
     }
 
+    CMobBase* RefreshGrabTarget()
+    {
+        auto* target = dynamic_cast<CMobBase*>(ResolveGrabbedTarget());
+        if (IsDead() || IsMarkedForDes() || !target || !IsGrabWithinBreakDistance(*target))
+        { ReleaseGrab(); return nullptr; }
+        m_attacking = true;
+        return target;
+    }
+
     void HoldGrabbedTarget(CEntity& target, float dt)
     {
         const florrbt::Vector2f forward{ std::cos(FacingAngle()), std::sin(FacingAngle()) };
@@ -834,15 +820,13 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
     void OnBeforeRemoved(EEntityRemovalReason) override { m_skill_actions.Cancel(this); }
     void OnWorldTransferCommitted() override
     {
-        // Orbit centers, grab targets and queued shots belong to the source
-        // world. Keep cooldowns, but do not replay those actions at arrival.
+        // 轨道、抓取目标和排队发射属于原世界；迁入只保留冷却，不重放旧动作。
         m_skill_actions.Cancel(this);
         m_skill_tick_owns_movement = false;
         m_attack_windup_timer = 0.f;
         m_attack_target_ref = {};
         m_has_attack_direction = false;
-        // Attached ammunition is part of the transfer graph. Its identity
-        // was remapped at commit; do not consume or reload it a second time.
+        // 已装填弹药随结构迁移并完成身份映射，不再次消耗或补满。
     }
     void RemapTransferredReferences(TEntityHandleRemap mapping) noexcept override
     {
@@ -890,18 +874,37 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
         return true;
     }
 
-    void Tick(float dt) override
+    void OnTickActions(float dt) override
     {
         m_attack_timer = std::max(0.f, m_attack_timer - dt);
         m_attack_recovery_timer = std::max(0.f, m_attack_recovery_timer - dt);
-        m_skill_tick_owns_movement = m_skill_actions.Tick(this, dt);
+        m_skill_actions.TickActions(this, dt);
         if (m_attack_windup_timer > 0.f)
         {
             m_attack_windup_timer -= dt;
             if (m_attack_windup_timer <= 0.f) FireQueuedAttack();
         }
-        CSkillCasterBasicMob::Tick(dt);
+        CSkillCasterBasicMob::OnTickActions(dt);
         UpdateLoadedMissile(dt);
+    }
+
+    void OnTickBegin(float dt) override
+    {
+        CSkillCasterBasicMob::OnTickBegin(dt);
+        m_skill_tick_owns_movement = false;
+        m_skill_actions.BeginTick(this, dt);
+    }
+
+    void OnTickMotion(float dt) override
+    {
+        m_skill_tick_owns_movement = m_skill_actions.TickMotion(this, dt);
+        CSkillCasterBasicMob::OnTickMotion(dt);
+    }
+
+    void OnTickConstraints(float dt) override
+    {
+        CSkillCasterBasicMob::OnTickConstraints(dt);
+        m_skill_actions.Constrain(this);
     }
 
     bool IsFacingLocked() const override
@@ -1058,7 +1061,7 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
         auto missile = std::make_unique<CMissile>(GameWorld(), LoadedMissilePosition(), missile_radius,
                                                   LoadedMissileDirection(), 0.f, missile_damage, missile_health,
                                                   game_config::default_missile_lifetime, this);
-        missile->Team() = Team();
+        missile->SetTeam(Team());
         missile->Mass() = game_config::GetMobProjectileMassForLevel(level);
         missile->AttachToOwner();
 
@@ -1121,7 +1124,7 @@ class CHornetMob : public CSkillCasterBasicMob, public IHornetMob
             Pos() + rear_direction * (Radius() * game_config::mob_hornet_rear_spawn_radius_multiplier);
         missile->Pos() = spawn_pos;
         missile->PrevPos() = spawn_pos;
-        missile->Team() = Team();
+        missile->SetTeam(Team());
         if (!missile->Fire(rear_direction, missile_speed, game_config::default_missile_lifetime))
         {
             clear_queued_attack();
@@ -1189,7 +1192,7 @@ class CCrabMob final : public CSkillCasterBasicMob, public ICrabDashMob
         return true;
     }
 
-    void Tick(float dt) override
+    void OnTickMotion(float dt) override
     {
         dt = FiniteNonNegative(dt);
         m_dash_skill_cooldown = std::max(0.f, m_dash_skill_cooldown - dt);
@@ -1197,10 +1200,7 @@ class CCrabMob final : public CSkillCasterBasicMob, public ICrabDashMob
         const SMobStats* stats = GetFinalStats();
         if (m_dash_skill_active && stats)
         {
-            // Dash is a multiplier of the Crab's actual configured maximum
-            // speed, not a second hard-coded movement speed.  This keeps the
-            // skill correct when a server tunes Crab speed or applies a
-            // rarity/status-specific movement multiplier.
+            // 冲刺速度由当前配置最大速度和状态倍率决定。
             const float base_speed = std::isfinite(stats->max_velocity) && stats->max_velocity > 0.f
                                          ? stats->max_velocity
                                          : game_config::mob_crab_max_velocity;
@@ -1226,7 +1226,7 @@ class CCrabMob final : public CSkillCasterBasicMob, public ICrabDashMob
         {
             m_vel = florrbt::StepVelocityTowards(m_vel, {}, stats->acceleration, dt);
         }
-        CSkillCasterBasicMob::Tick(dt);
+        CSkillCasterBasicMob::OnTickMotion(dt);
     }
 
     int GetSkillCount() const override { return 1; }
@@ -1357,18 +1357,22 @@ class CDandelionMob : public CAttackableBasicMob
         return true;
     }
 
-    void Tick(float dt) override
+    void OnTickActions(float dt) override
     {
-        CAttackableBasicMob::Tick(dt);
-        m_vel *= game_config::mob_stop_damping;
-        if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = { 0.f, 0.f };
         UpdateMissiles(dt);
     }
 
-    void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
+    void OnTickMotion(float dt) override
+    {
+        CAttackableBasicMob::OnTickMotion(dt);
+        m_vel *= game_config::mob_stop_damping;
+        if (LengthSq(m_vel) <= game_config::mob_stop_velocity_epsilon) m_vel = { 0.f, 0.f };
+    }
+
+    void OnTakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {
         float old_health = Health();
-        CAttackableBasicMob::TakeDamage(dmg, attacker, dmg_type);
+        CAttackableBasicMob::OnTakeDamage(dmg, attacker, dmg_type);
         if (old_health > Health() && old_health > 0.f) TryAttack(attacker);
     }
 
@@ -1395,7 +1399,7 @@ class CDandelionMob : public CAttackableBasicMob
     {
         if (reason == EEntityRemovalReason::Defeated)
         {
-            // Killed: fire every loaded missile at once.
+            // 击杀时一次发射全部已装填弹药。
             if (!m_spawned_initial_missiles)
             {
                 SpawnInitialMissiles();
@@ -1406,8 +1410,7 @@ class CDandelionMob : public CAttackableBasicMob
             }
         } else
         {
-            // Countdown/other removals: destroy the loaded missiles together
-            // with the dandelion instead of firing them.
+            // 其他移除原因只销毁弹药，不触发死亡发射。
             for (int index = 0; index < missile_capacity; ++index)
             {
                 CDandelionMissile* missile = FindMissile(index);
@@ -1491,7 +1494,7 @@ class CDandelionMob : public CAttackableBasicMob
             florrbt::Vector2f pos = Pos() + direction * (Radius() * game_config::mob_dandelion_missile_attach_offset);
             auto missile = std::make_unique<CDandelionMissile>(world, pos, radius, attach_angle, damage, health,
                                                                lifetime, GetRarity(), this);
-            missile->Team() = Team();
+            missile->SetTeam(Team());
             missile->Mass() = game_config::GetMobProjectileMassForLevel(GetLevel(GetRarity()));
             missile->AttachToOwner();
 
@@ -1549,7 +1552,7 @@ class CDandelionMob : public CAttackableBasicMob
             else direction /= len;
 
             missile->PrevPos() = missile->Pos();
-            missile->Team() = Team();
+            missile->SetTeam(Team());
             if (!missile->Fire(direction, game_config::mob_dandelion_missile_speed,
                                game_config::mob_dandelion_missile_lifetime))
             {
@@ -1592,9 +1595,17 @@ class CAntEggMob : public CBasicMob
         return true;
     }
 
-    void Tick(float dt) override
+    void OnTickBegin(float dt) override
     {
+        CBasicMob::OnTickBegin(dt);
         InitializeByType();
+    }
+
+    void OnTickIntent(float dt) override
+    { if (IsPlayerControlled()) CBasicMob::OnTickIntent(dt); }
+
+    void OnTickActions(float dt) override
+    {
         if (m_auto_hatch_timer >= 0.f)
         {
             m_auto_hatch_timer -= dt;
@@ -1606,16 +1617,19 @@ class CAntEggMob : public CBasicMob
             }
         }
 
-        Pos() += m_vel * dt;
-        m_vel *=
-            std::pow(game_config::mob_stop_damping, std::max(0.f, dt) * game_config::mob_stop_damping_ticks_per_second);
-        TickStates(dt);
     }
 
-    void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
+    void OnTickMotion(float dt) override
+    {
+        CBasicMob::OnTickMotion(dt);
+        m_vel *=
+            std::pow(game_config::mob_stop_damping, std::max(0.f, dt) * game_config::mob_stop_damping_ticks_per_second);
+    }
+
+    void OnTakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {
         bool was_dead = IsMarkedForDes() || IsDead();
-        CBasicMob::TakeDamage(dmg, attacker, dmg_type);
+        CBasicMob::OnTakeDamage(dmg, attacker, dmg_type);
         if (was_dead || !IsMarkedForDes()) return;
 
         EMobType hatch_type = NaturalDeathHatchType();
@@ -1680,7 +1694,7 @@ class CAntEggMob : public CBasicMob
         auto* mob = spawned ? dynamic_cast<CMobBase*>(spawned.get()) : nullptr;
         if (!mob) return;
 
-        mob->Team() = Team();
+        mob->SetTeam(Team());
         mob->FacingAngle() = FacingAngle();
         mob->HasFacing() = HasFacing();
         if (preserve_owner)
@@ -1725,7 +1739,7 @@ class CQueenAntMob : public CAttackableBasicMob
         return true;
     }
 
-    void Tick(float dt) override
+    void OnTickActions(float dt) override
     {
         m_attack_timer = std::max(0.f, m_attack_timer - dt);
         m_attack_recovery_timer = std::max(0.f, m_attack_recovery_timer - dt);
@@ -1740,11 +1754,16 @@ class CQueenAntMob : public CAttackableBasicMob
         if (paused)
         {
             m_vel = { 0.f, 0.f };
-            TickStates(dt);
             return;
         }
 
-        CAttackableBasicMob::Tick(dt);
+        CAttackableBasicMob::OnTickActions(dt);
+    }
+
+    void OnTickIntent(float dt) override
+    {
+        CAttackableBasicMob::OnTickIntent(dt);
+        if (m_attack_windup_timer > 0.f || m_attack_recovery_timer > 0.f) m_vel = {};
     }
 
     bool IsFacingLocked() const override { return m_attack_windup_timer > 0.f || m_attack_recovery_timer > 0.f; }
@@ -1791,7 +1810,7 @@ class CQueenAntMob : public CAttackableBasicMob
         auto* egg = spawned ? dynamic_cast<CMobBase*>(spawned.get()) : nullptr;
         if (egg)
         {
-            egg->Team() = Team();
+            egg->SetTeam(Team());
             egg->FacingAngle() = FacingAngle();
             egg->HasFacing() = true;
             auto controller = std::make_unique<CSummonedMeleeController>(this);
@@ -1875,16 +1894,20 @@ class CAntHoleMob : public CBasicMob
         return true;
     }
 
-    void Tick(float dt) override
+    void OnTickIntent(float dt) override
     {
-        m_vel = { 0.f, 0.f };
-        TickStates(dt);
+        if (IsPlayerControlled()) CBasicMob::OnTickIntent(dt);
+        m_vel = {};
+    }
+
+    void OnTickActions(float dt) override
+    {
         ReleaseQueuedSpawns(dt);
         if (m_pending_death_cleanup && m_spawn_index >= m_spawn_queue.size())
             MarkForDestroy(EEntityRemovalReason::Defeated);
     }
 
-    void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
+    void OnTakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {
         if (m_pending_death_cleanup) return;
         if (dmg_type == EDamageType::Normal) dmg = std::max(0.f, dmg - m_base_stats.armor);
@@ -2080,7 +2103,7 @@ class CAntHoleMob : public CBasicMob
         auto mob = CreateMob(queued.type, GameWorld(), spawn_pos, queued.rarity);
         if (!mob) return;
 
-        mob->Team() = Team();
+        mob->SetTeam(Team());
         if (auto* spawned = dynamic_cast<CMobBase*>(mob.get()))
             spawned->m_vel =
                 dir * std::max(game_config::mob_ant_hole_spawn_velocity_min,
@@ -2116,19 +2139,19 @@ class CRockMob : public CAttackableBasicMob
         return true;
     }
 
-    void Tick(float dt) override
+    void OnTickActions(float dt) override
     {
-        CAttackableBasicMob::Tick(dt);
+        CAttackableBasicMob::OnTickActions(dt);
         m_attack_cooldown_timer = std::max(0.f, m_attack_cooldown_timer - dt);
         m_attack_flash_timer = std::max(0.f, m_attack_flash_timer - dt);
         m_attacking = m_attack_flash_timer > 0.f;
         m_defending = false;
     }
 
-    void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
+    void OnTakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {
         float old_health = Health();
-        CAttackableBasicMob::TakeDamage(dmg, attacker, dmg_type);
+        CAttackableBasicMob::OnTakeDamage(dmg, attacker, dmg_type);
         if (old_health > Health() && old_health > 0.f) TryAttack(attacker);
     }
 
@@ -2350,7 +2373,7 @@ class CRockMob : public CAttackableBasicMob
 
             auto rock = CreateMob(EMobType::Rock, world, pos, rarity);
             if (!rock) continue;
-            rock->Team() = Team();
+            rock->SetTeam(Team());
             if (world->CircleBlockedByWall(pos, rock->WallCollisionRadius())) continue;
 
             return world->InsertEntity(std::move(rock)) != nullptr;
@@ -2396,21 +2419,20 @@ class CBubbleMob : public CAttackableBasicMob
         return true;
     }
 
-    void Tick(float dt) override
+    void OnTickActions(float dt) override
     {
-        CAttackableBasicMob::Tick(dt);
+        CAttackableBasicMob::OnTickActions(dt);
         m_attack_cooldown_timer = std::max(0.f, m_attack_cooldown_timer - dt);
         m_attack_flash_timer = std::max(0.f, m_attack_flash_timer - dt);
         m_attacking = m_attack_flash_timer > 0.f;
         m_defending = false;
     }
 
-    // Super and above (inclusive) retaliate by trying to split off a smaller
-    // bubble whenever they get hurt.
-    void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
+    // Super 及以上受伤时尝试分裂较低档位的 Bubble。
+    void OnTakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {
         float old_health = Health();
-        CAttackableBasicMob::TakeDamage(dmg, attacker, dmg_type);
+        CAttackableBasicMob::OnTakeDamage(dmg, attacker, dmg_type);
         if (old_health > Health() && old_health > 0.f && IsAtLeastRarity(GetRarity(), ERarity::Super))
             TryAttack(attacker);
     }
@@ -2432,9 +2454,7 @@ class CBubbleMob : public CAttackableBasicMob
         CGameWorld* world = GameWorld();
         if (!world) return false;
 
-        // Rarity minus two, clamped to at least Common. Primordial summons
-        // Super instead: Unique and Eternal count as the same tier, so the
-        // tier right below Primordial is Super.
+        // 召唤降低两档并至少为 Common；Primordial 特例召唤 Super，Unique 与 Eternal 视作同档。
         ERarity child_rarity;
         if (GetRarity() == ERarity::Primordial)
             child_rarity = ERarity::Super;
@@ -2453,7 +2473,7 @@ class CBubbleMob : public CAttackableBasicMob
 
             auto bubble = CreateMob(EMobType::Bubble, world, pos, child_rarity);
             if (!bubble) continue;
-            bubble->Team() = Team();
+            bubble->SetTeam(Team());
             if (world->CircleBlockedByWall(pos, bubble->WallCollisionRadius())) continue;
             return world->InsertEntity(std::move(bubble)) != nullptr;
         }
@@ -2471,12 +2491,13 @@ class CDummyMob : public CBasicMob
               const SMobStats& stats)
         : CBasicMob(pworld, pos, r, mob_type, rarity, stats), m_anchor_pos(pos)
     {
-        // Training dummies must never be retired by the inactivity sweep,
-        // regardless of player rarity (view range) or distance.
+        // 训练木桩不参与远距离闲置回收。
         TickMode() = EEntityTickMode::Always;
         Mass() = std::numeric_limits<float>::max();
         Health() = DummyMaxHealth();
     }
+
+    std::uint32_t RuntimeSnapshotVersion() const override { return 2; }
 
     void CaptureRuntimeSnapshot(CSnapshotWriter& writer) const override
     {
@@ -2486,7 +2507,9 @@ class CDummyMob : public CBasicMob
         {
             CJsonOwner value = MakeJsonObject();
             CSnapshotWriter value_writer(value.get());
-            value_writer.Field("player_id", report.player_id);
+            value_writer.Field("player_id", report.session.id);
+            value_writer.UInt64("session_generation", report.session.generation);
+            value_writer.Field("account", report.session.account);
             value_writer.Field("total_damage", report.total_damage);
             value_writer.Field("elapsed_time", report.elapsed_time);
             value_writer.Field("idle_time", report.idle_time);
@@ -2511,28 +2534,43 @@ class CDummyMob : public CBasicMob
         {
             CSnapshotReader value(json_array_get(reports, i));
             SDummyDamageReport report;
-            report.player_id = value.UInt32("player_id");
+            // 旧统计缺少会话身份，不能推测其归属。
+            if (!value.Has("session_generation")) continue;
+            report.session = {value.UInt32("player_id"), value.UInt64("session_generation"), value.String("account")};
             report.total_damage = value.Float("total_damage");
             report.elapsed_time = value.Float("elapsed_time");
             report.idle_time = value.Float("idle_time");
             report.report_timer = value.Float("report_timer");
             report.pending = value.Bool("pending");
-            m_reports.push_back(report);
+            if (!report.session.id || !report.session.generation || report.session.generation == UINT64_MAX ||
+                report.session.account.empty() || !std::isfinite(report.total_damage) || report.total_damage < 0.f ||
+                !std::isfinite(report.elapsed_time) || report.elapsed_time < 0.f ||
+                !std::isfinite(report.idle_time) || report.idle_time < 0.f ||
+                !std::isfinite(report.report_timer) || report.report_timer < 0.f)
+            { error = "木桩统计身份或数值无效"; return false; }
+            m_reports.push_back(std::move(report));
         }
         return true;
     }
 
-    void Tick(float dt) override
+    void OnTickIntent(float dt) override
+    { if (IsPlayerControlled()) CBasicMob::OnTickIntent(dt); }
+
+    void OnTickMotion(float) override
     {
         Pos() = m_anchor_pos;
         PrevPos() = m_anchor_pos;
         m_vel = { 0.f, 0.f };
         Health() = DummyMaxHealth();
-        TickStates(dt);
+    }
+
+    void OnTickEffects(float dt) override
+    {
+        CBasicMob::OnTickEffects(dt);
         TickDamageReports(dt);
     }
 
-    void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
+    void OnTakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {
         if (dmg_type == EDamageType::Normal) dmg = std::max(0.f, dmg - m_base_stats.armor);
         if (dmg <= 0.f) return;
@@ -2544,7 +2582,7 @@ class CDummyMob : public CBasicMob
         CPlayer* player = context ? context->FindPlayerFromEntity(attacker) : nullptr;
         if (player && player->IsAuthenticated())
         {
-            SDummyDamageReport& report = GetReport(player->GetId(), attacker);
+            SDummyDamageReport& report = GetReport(player->SessionRef(), attacker);
             if (report.idle_time > game_config::mob_dummy_damage_session_timeout)
             {
                 report.total_damage = 0.f;
@@ -2567,7 +2605,7 @@ class CDummyMob : public CBasicMob
   private:
     struct SDummyDamageReport
     {
-        uint32_t player_id = 0;
+        SPlayerSessionRef session;
         float total_damage = 0.f;
         float elapsed_time = 0.f;
         float idle_time = 0.f;
@@ -2581,14 +2619,14 @@ class CDummyMob : public CBasicMob
         return stats ? std::max(1.f, stats->max_health) : game_config::mob_dummy_max_health;
     }
 
-    SDummyDamageReport& GetReport(uint32_t player_id, const CEntity* attacker)
+    SDummyDamageReport& GetReport(const SPlayerSessionRef& session, const CEntity* attacker)
     {
         auto it = std::find_if(m_reports.begin(), m_reports.end(),
-                               [player_id](const SDummyDamageReport& report) { return report.player_id == player_id; });
+                               [&session](const SDummyDamageReport& report) { return report.session == session; });
         if (it != m_reports.end()) return *it;
 
         SDummyDamageReport report;
-        report.player_id = player_id;
+        report.session = session;
         report.report_timer = DummyInitialReportDelay(attacker);
         m_reports.push_back(report);
         return m_reports.back();
@@ -2604,7 +2642,7 @@ class CDummyMob : public CBasicMob
             if (!report.pending || report.report_timer > 0.f) continue;
 
             const float elapsed = std::max(game_config::server_fixed_dt, report.elapsed_time);
-            SendDummyDamageReport(report.player_id, report.total_damage, report.total_damage / elapsed);
+            SendDummyDamageReport(GameContext(), report.session, report.total_damage, report.total_damage / elapsed);
             report.pending = false;
             report.report_timer = game_config::mob_dummy_damage_report_interval;
         }
@@ -2626,9 +2664,9 @@ class CLeafPieceMob : public CBasicMob
   public:
     using CBasicMob::CBasicMob;
 
-    void Tick(float dt) override
+    void OnTickEffects(float dt) override
     {
-        CBasicMob::Tick(dt);
+        CBasicMob::OnTickEffects(dt);
         if (IsMarkedForDes() || Health() <= 0.f) return;
 
         const SMobStats* stats = GetFinalStats();
@@ -2646,14 +2684,14 @@ class CLeafcutterSoldierMob : public CBasicMob
   public:
     using CBasicMob::CBasicMob;
 
-    void Tick(float dt) override
+    void OnTickConstraints(float dt) override
     {
-        CBasicMob::Tick(dt);
+        CBasicMob::OnTickConstraints(dt);
         auto* pickup = GetPickupController();
         if (pickup) pickup->SyncCarriedTransform(this);
     }
 };
-} // namespace
+}
 
 bool RegisterMobs(std::string& error)
 {
@@ -2747,9 +2785,7 @@ bool RegisterMobs(std::string& error)
     }
 
     {
-        // Magic Firefly shares every stat, movement rule, summon condition,
-        // summon limit, and summon rarity with the ordinary Firefly. Only the
-        // summoned mob type differs: its skill creates Magic Fireflies.
+        // 魔法变体沿用普通萤火虫的属性与召唤限制，仅替换召唤类型。
         CMobPrototype proto;
         proto.m_team = game_config::mob_firefly_team;
         proto.m_base_stats.max_health = game_config::mob_firefly_max_health;
@@ -2789,17 +2825,15 @@ bool RegisterMobs(std::string& error)
         proto.m_controller_factory = [](ERarity) { return std::make_unique<CFireflyLarvaController>(); };
         proto.m_segment_count_factory = [](ERarity rarity) {
             const float rank = GetRaritySortRank(rarity);
-            if (rank <= GetRaritySortRank(ERarity::Epic)) return 3; // four total, including the head
-            if (rank < GetRaritySortRank(ERarity::Super)) return 4; // five total through Ultra/Exotic
-            return 5;                                               // six total for Super+
+            if (rank <= GetRaritySortRank(ERarity::Epic)) return 3; // 含头部共四节。
+            if (rank < GetRaritySortRank(ERarity::Super)) return 4; // 含头部共五节。
+            return 5; // 含头部共六节。
         };
           proto.m_segment_type_factory = [](int) { return ToMobType(EModMobType::FireflyLarvaBody); };
           proto.m_segment_visual_variant_factory = [](int index, int body_count) -> std::uint8_t {
               if (index <= 0) return static_cast<std::uint8_t>(EFireflyLarvaVisualVariant::Head);
               if (index >= body_count) return static_cast<std::uint8_t>(EFireflyLarvaVisualVariant::Tail);
-              // Interior values retain the actual root-to-tail order. The
-              // client maps them to alternating authored body crops while
-              // using the same value to render the chain back-to-front.
+              // 体节变体保留实际顺序，客户端据此选择交替贴图并从尾到头绘制。
               return static_cast<std::uint8_t>(std::clamp(
                   index, static_cast<int>(EFireflyLarvaVisualVariant::Thorax),
                   static_cast<int>(EFireflyLarvaVisualVariant::Tail) - 1));
@@ -2874,7 +2908,7 @@ bool RegisterMobs(std::string& error)
         proto.m_stats_factory = [base_stats = proto.m_base_stats](ERarity rarity) {
             return ScaleMobStats(base_stats, rarity);
         };
-        // Dandelions should stay passive, while their radius and mass still participate in physics.
+        // 蒲公英保持被动，但半径与质量仍参与物理。
         RegisterMobPrototype<EMobType::Dandelion, CDandelionMob>(std::move(proto));
     }
 
@@ -2940,7 +2974,7 @@ bool RegisterMobs(std::string& error)
                                           game_config::mob_bubble_radius_random_max);
             return ScaleMobStats(stats, rarity);
         };
-        // Obstacle mob: same controller as rock, super+ retaliate on damage.
+        // 障碍生物沿用岩石控制器，Super 及以上受击反击。
         proto.m_controller_factory = [](ERarity) { return std::make_unique<CRockAttackOnDamagedController>(); };
         RegisterMobPrototype<EMobType::Bubble, CBubbleMob>(std::move(proto));
     }
@@ -3602,7 +3636,6 @@ bool RegisterMobs(std::string& error)
 bool RegisterEouMobs(std::string& error)
 {
     {
-        // EOU worker ant: vanilla worker ant as visual proxy.
         CMobPrototype proto;
         proto.m_team = game_config::mob_worker_ant_team;
         proto.m_base_stats.max_health = game_config::mob_worker_ant_max_health;
@@ -3624,8 +3657,7 @@ bool RegisterEouMobs(std::string& error)
         }
     }
     {
-        // EOU neutral food/corpse: visually proxied as a leaf piece
-        // on the wire until the client gets a dedicated proxy.
+        // EOU 食物和尸体暂以 LeafPiece 作为视觉代理。
         CMobPrototype proto;
         proto.m_team = 0;
         proto.m_base_stats.max_health = game_config::eou_food_mob_max_health;
@@ -3647,7 +3679,6 @@ bool RegisterEouMobs(std::string& error)
         }
     }
     {
-        // EOU cell (storage/hatchery): visually an ant hole for now.
         CMobPrototype proto;
         proto.m_team = 0;
         proto.m_base_stats.max_health = game_config::eou_food_mob_max_health;
@@ -3669,7 +3700,6 @@ bool RegisterEouMobs(std::string& error)
         }
     }
     {
-        // EOU egg: visually an ant egg.
         CMobPrototype proto;
         proto.m_team = 0;
         proto.m_base_stats.max_health = game_config::eou_food_mob_max_health;
@@ -3691,8 +3721,7 @@ bool RegisterEouMobs(std::string& error)
         }
     }
     {
-        // EOU queen: visually the vanilla queen ant. Stationary; her
-        // death loses the match for her team.
+        // EOU 蚁后固定不动，死亡触发团队判负。
         CMobPrototype proto;
         proto.m_team = 0;
         proto.m_base_stats.max_health = game_config::eou_queen_max_health;
@@ -3714,9 +3743,7 @@ bool RegisterEouMobs(std::string& error)
         }
     }
     {
-        // EOU soldier ant: vanilla soldier ant as visual proxy. Hatched from
-        // soldier hatchery cells; combat stats follow the eou_soldier_*
-        // configs.
+        // EOU 兵蚁由孵化格产生，使用 SoldierAnt 视觉与独立战斗配置。
         CMobPrototype proto;
         proto.m_team = game_config::mob_soldier_ant_team;
         proto.m_base_stats.max_health = game_config::eou_soldier_max_health;

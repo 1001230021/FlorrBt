@@ -1,12 +1,7 @@
 import { drawSpriteImage } from "./sprite_raster_cache.js";
 import { prepareSvgImage, whenVisualReady } from "./visual_assets.js";
 
-// Moon art is sourced from the card SVG, but its three visual scales are
-// intentionally independent in world rendering:
-//   - body radius follows rarity;
-//   - crater texture stays at the Mythic reference size;
-//   - rim width stays constant in world units (and therefore changes only
-//     with camera zoom, not rarity).
+// Moon 身体按稀有度缩放，陨坑保持 Mythic 参考大小，边缘宽度固定世界单位。
 export const moonSvgGeometry = Object.freeze({
   source: "./assets/petals/moon.svg",
   viewBoxSize: 110,
@@ -15,8 +10,7 @@ export const moonSvgGeometry = Object.freeze({
   baseRadiusUnits: 20,
   radiusStepUnits: 10,
   textureReferenceLevel: 6,
-  // The Common SVG's rim thickness carried into every rarity. Expressing it
-  // against the Mythic reference lets us recover screen width from zoom.
+  // 边缘厚度以 Mythic 参考换算屏幕宽度，只随相机缩放。
   rimWidthAtReferenceRatio: 0.042,
 });
 
@@ -93,8 +87,7 @@ function extractMoonTexture(svgText) {
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
   const root = doc.documentElement;
   if (!root || root.tagName.toLowerCase() !== "svg") return svgText;
-  // The first path is the dark outer body and the second is the inner base.
-  // Every following path is SVG-authored crater/highlight texture.
+  // 前两条路径分别为外轮廓和内底色，后续为陨坑/高光纹理。
   Array.from(root.querySelectorAll("path")).slice(0, 2).forEach((node) => node.remove());
   return new XMLSerializer().serializeToString(root);
 }

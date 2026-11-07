@@ -10,7 +10,6 @@ export const TalentId = Object.freeze({
   SecondChance: 9,
   SlotNum: 10,
   Regen: 11,
-  // Compatibility alias for older client scripts and saved UI state.
   Medic: 11,
   Reach: 12,
   Magnetism: 13,

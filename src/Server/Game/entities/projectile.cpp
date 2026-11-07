@@ -19,7 +19,7 @@ bool ApplyLifetimeHealthDecay(float dt, float lifetime, float base_health, float
                                          std::max(0.f, previous_fraction - current_fraction));
     return age >= lifetime;
 }
-} // namespace
+}
 
 CEntity* CProjectile::GetOwner() const
 {
@@ -33,7 +33,7 @@ CMissile::CMissile(CGameWorld* world, florrbt::Vector2f pos, float radius, florr
     : CProjectile(world ? world : (owner ? owner->GameWorld() : nullptr), pos, radius, owner, entity_type),
       m_damage(std::max(0.f, damage)), m_lifetime(std::max(0.f, lifetime))
 {
-    if (owner) Team() = owner->Team();
+    if (owner) SetTeam(owner->Team());
     AllowSkipTick() = false;
     Health() = std::max(0.f, health);
     m_decay_base_health = Health();
@@ -55,7 +55,24 @@ CMissile::CMissile(CGameWorld* world, florrbt::Vector2f pos, float radius, florr
         MarkForDestroy(EEntityRemovalReason::Expired);
 }
 
-void CMissile::Tick(float dt)
+void CMissile::OnTickBegin(float)
+{
+    m_attached_at_frame_start = m_attached_to_owner;
+    if (Health() <= 0.f) MarkForDestroy(EEntityRemovalReason::Defeated);
+    else if (!m_attached_to_owner && m_age >= m_lifetime) MarkForDestroy(EEntityRemovalReason::Expired);
+}
+
+void CMissile::OnTickMotion(float dt)
+{
+    if (m_attached_to_owner)
+    {
+        if (!RefreshAttachedTransform()) MarkForDestroy(EEntityRemovalReason::OwnerRemoved);
+        return;
+    }
+    CProjectile::OnTickMotion(std::min(dt, std::max(0.f, m_lifetime - m_age)));
+}
+
+void CMissile::OnTickEffects(float dt)
 {
     if (Health() <= 0.f)
     {
@@ -76,7 +93,8 @@ void CMissile::Tick(float dt)
         return;
     }
 
-    CProjectile::Tick(dt);
+    // 本帧刚从装填态发射的弹药从下一帧起计飞行时间。
+    if (m_attached_at_frame_start) return;
     const bool lifetime_depleted = ApplyLifetimeHealthDecay(dt, m_lifetime, m_decay_base_health, m_age, Health());
     if (Health() <= 0.f)
         MarkForDestroy(lifetime_depleted ? EEntityRemovalReason::Expired : EEntityRemovalReason::Defeated);
@@ -173,7 +191,7 @@ CPollenProjectile::CPollenProjectile(CGameWorld* world, florrbt::Vector2f pos, f
     : CProjectile(world ? world : (owner ? owner->GameWorld() : nullptr), pos, radius, owner, entity_type),
       m_damage(std::max(0.f, damage)), m_lifetime(std::max(0.f, lifetime))
 {
-    if (owner) Team() = owner->Team();
+    if (owner) SetTeam(owner->Team());
     AllowSkipTick() = false;
     Health() = std::max(0.f, health);
     m_decay_base_health = Health();
@@ -188,9 +206,19 @@ CPollenProjectile::CPollenProjectile(CGameWorld* world, florrbt::Vector2f pos, f
         MarkForDestroy(EEntityRemovalReason::Expired);
 }
 
-void CPollenProjectile::Tick(float dt)
+void CPollenProjectile::OnTickBegin(float)
 {
-    CProjectile::Tick(dt);
+    if (Health() <= 0.f) MarkForDestroy(EEntityRemovalReason::Defeated);
+    else if (m_age >= m_lifetime) MarkForDestroy(EEntityRemovalReason::Expired);
+}
+
+void CPollenProjectile::OnTickMotion(float dt)
+{
+    CProjectile::OnTickMotion(std::min(dt, std::max(0.f, m_lifetime - m_age)));
+}
+
+void CPollenProjectile::OnTickEffects(float dt)
+{
     const bool lifetime_depleted = m_decay_health_over_lifetime
                                        ? ApplyLifetimeHealthDecay(dt, m_lifetime, m_decay_base_health, m_age, Health())
                                        : ((m_age += std::max(0.f, dt)) >= m_lifetime);
@@ -227,7 +255,7 @@ CTrapProjectile::CTrapProjectile(CGameWorld* world, florrbt::Vector2f pos, float
     }
 }
 
-void CTrapProjectile::Tick(float dt)
+void CTrapProjectile::OnTickMotion(float dt)
 {
     if (m_deceleration_time <= game_config::entity_collision_epsilon)
     {
@@ -238,7 +266,12 @@ void CTrapProjectile::Tick(float dt)
         m_vel = m_initial_velocity * (1.f - progress);
     }
 
-    CPollenProjectile::Tick(dt);
+    CPollenProjectile::OnTickMotion(dt);
+}
+
+void CTrapProjectile::OnTickEffects(float dt)
+{
+    CPollenProjectile::OnTickEffects(dt);
     m_move_age += std::max(0.f, dt);
     if (m_move_age >= m_deceleration_time) m_vel = { 0.f, 0.f };
 }

@@ -1,5 +1,4 @@
-// Pure layout / request planning. The visual tree always follows our actual
-// prerequisites and prices; the reference video is not a talent-data source.
+// 天赋图布局和请求计划遵循实际前置关系与价格。
 export function collectTalentChain(node, owned, byKey) {
   const chain = [], seen = new Set();
   while (node && !owned.has(node.key) && !seen.has(node.key)) {
@@ -12,7 +11,7 @@ export function collectTalentChain(node, owned, byKey) {
 
 export function collectTalentRemoval(node, owned, nodes) {
   const keys = new Set([node.key]);
-  // Data need not be topologically sorted.
+  // 输入数据不要求拓扑排序。
   let changed = true;
   while (changed) {
     changed = false;
@@ -40,12 +39,14 @@ export function buildTalentLayout(nodes) {
   const leaves = new Map();
   function weight(node) {
     if (leaves.has(node.key)) return leaves.get(node.key);
-    leaves.set(node.key, 1); // guard a malformed cycle
+    leaves.set(node.key, 1); // 防止损坏数据中的循环递归。
     const result = Math.max(1, (children.get(node.key) || []).reduce((sum, child) => sum + weight(child), 0));
     leaves.set(node.key, result);
     return result;
   }
-  // Give every root a spoke, but reserve more angular space for real forks.
+  // 每个根分配方向，真实分叉较多时保留更大角空间。
+  const branchOrder = [4, 8, 1, 14, 10, 11, 5, 3, 7];
+  roots.sort((a, b) => (branchOrder.indexOf(a.id) + 1 || 99) - (branchOrder.indexOf(b.id) + 1 || 99));
   const weights = roots.map(node => 1 + Math.sqrt(weight(node)));
   const total = weights.reduce((a, b) => a + b, 0);
   const positions = new Map();
@@ -53,13 +54,10 @@ export function buildTalentLayout(nodes) {
   function place(node, depth, start, span) {
     if (positions.has(node.key)) return;
     const angle = start + span / 2;
-    // A small deterministic bend keeps long chains readable, not ruler-straight.
     const bend = Math.sin(depth * 0.85) * Math.min(0.12, span * 0.16);
-    let radius = 128 * depth;
+    let radius = 108 * depth;
     let position = { x: Math.cos(angle + bend) * radius, y: Math.sin(angle + bend) * radius };
-    // Wide forks (notably the seven Rare poison ranks) must not overlap.
-    // Move crowded nodes a little further along their own branch, retaining
-    // the prerequisite links rather than inventing a simpler fake tree.
+    // 拥挤分叉沿自身支路外移，保持真实前置关系。
     for (let attempt = 0; attempt < 80; attempt++) {
       const crowded = [...positions.values()].some(other => Math.hypot(position.x - other.x, position.y - other.y) < 84);
       if (!crowded) break;
@@ -77,6 +75,7 @@ export function buildTalentLayout(nodes) {
       cursor += part;
     }
   }
+  // 分支围绕根花朵铺满整圈；视口显示上方扇区，通过旋转查看其余部分。
   let start = -Math.PI;
   roots.forEach((node, index) => {
     const span = weights[index] / total * Math.PI * 2;

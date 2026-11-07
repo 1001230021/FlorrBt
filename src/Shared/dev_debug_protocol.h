@@ -7,8 +7,7 @@
 #include <string_view>
 #include <vector>
 
-// A separate, explicitly versioned connection branch. Never interpret these
-// packets as player input/auth; the first byte selects this branch pre-player.
+// 首字节在创建玩家前选择独立调试连接，按自己的版本校验，不进入玩家输入或认证解析器。
 namespace dev_debug
 {
 inline constexpr std::uint8_t magic = 0xd0;
@@ -53,8 +52,7 @@ inline bool IsTicket(std::string_view value)
     });
 }
 
-// Work is bounded even for an authenticated admin; the debug UI must not
-// accidentally flood the simulation while dragging or repeating a command.
+// 已认证管理员也受工作量上限约束，避免拖动和重复命令淹没模拟线程。
 struct RateLimit
 {
     double tokens = 32.0;
@@ -69,4 +67,4 @@ struct RateLimit
         return true;
     }
 };
-} // namespace dev_debug
+}

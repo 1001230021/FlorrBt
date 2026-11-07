@@ -55,7 +55,7 @@ bool HasAvailablePetal(const CFlower& flower, EPetalType type)
 {
     for (const auto& slot : flower.GetSlots())
     {
-        if (!slot.m_available || slot.m_banned || !slot.m_p_proto) continue;
+        if (!slot.m_available || slot.IsBanned() || !slot.m_p_proto) continue;
         if (slot.m_p_proto->m_type == type) return true;
     }
     return false;
@@ -71,8 +71,7 @@ void PopulateOwnerPetalRuntime(const CEntity& owner, ServerEntitySnap& snap)
     for (size_t slot_index = 0; slot_index < slot_count; ++slot_index)
     {
         const CPetalSlot& slot = slots[slot_index];
-        // Proxy-filled slots carry their copies in the primary pass and have
-        // no runtime petal state to populate here.
+        // 代理槽位的副本已在主遍历填写，无额外花瓣运行态。
         if (!slot.m_p_proto) continue;
         SOwnerPetalSlot& slot_snap = snap.primary_slots[slot_index];
         EPetalType runtime_type = slot.m_runtime_type;
@@ -86,8 +85,7 @@ void PopulateOwnerPetalRuntime(const CEntity& owner, ServerEntitySnap& snap)
             slot_snap.visual_type = SOwnerPetalSlot::EVisualType::Angle;
         else if (runtime_type == EPetalType::Tomato)
             slot_snap.visual_type = SOwnerPetalSlot::EVisualType::Size;
-        // Lightning's contact-hit accumulator is internal combat state,
-        // not a player-facing resource/charge count.
+        // Lightning 的接触累计次数是内部战斗状态，不是客户端资源数量。
         else if (runtime_type == EPetalType::Battery || runtime_type == ToPetalType(EModPetalType::Linker))
             slot_snap.visual_type = SOwnerPetalSlot::EVisualType::Counter;
         else
@@ -126,7 +124,7 @@ void PopulateOwnerPetalRuntime(const CEntity& owner, ServerEntitySnap& snap)
                 } else if (slot_snap.visual_type == SOwnerPetalSlot::EVisualType::Counter)
                 {
                     int count = 0;
-                    if (!slot.m_banned && !petal->IsMarkedForDes() && petal->Health() > 0.f)
+                    if (!slot.IsBanned() && !petal->IsMarkedForDes() && petal->Health() > 0.f)
                     {
                         if (const auto* battery = dynamic_cast<const CBatteryPetal*>(petal))
                             count = battery->m_charges_remaining;
@@ -178,7 +176,7 @@ struct cached_snapshot_entity
     ServerEntitySnap snap;
     float rarity_rank = 0.f;
     std::string drop_owner_account;
-    std::string drop_owner_progress_account;
+    std::string drop_owner_inventory_account;
     snapshot_pool pool = snapshot_pool::Misc;
     bool is_private_drop = false;
     bool player_entity = false;
@@ -262,7 +260,7 @@ cached_snapshot_entity BuildCachedSnapshotEntity(const CSnapshotService& service
         const auto* drop = static_cast<const CDrop*>(&entity);
         cached.is_private_drop = drop->GetOwnerId() != drop_owner_all;
         cached.drop_owner_account = drop->GetOwnerAccount();
-        cached.drop_owner_progress_account = drop->GetOwnerProgressAccount();
+        cached.drop_owner_inventory_account = drop->GetOwnerInventoryAccount();
     }
 
     if (entity.IsEntityType(EEntityType::Mob)) cached.pool = snapshot_pool::Mob;
@@ -320,8 +318,8 @@ bool CanSnapshotEntityForPlayer(const cached_snapshot_entity& cached, const CPla
 {
     return !cached.is_private_drop || (player.IsAuthenticated() && !cached.drop_owner_account.empty() &&
         cached.drop_owner_account == player.GetAccountName() &&
-        (cached.drop_owner_progress_account.empty() ? !player.HasIsolatedProgress() :
-            cached.drop_owner_progress_account == player.GetProgressAccountName()));
+        (cached.drop_owner_inventory_account.empty() ? !player.HasIsolatedInventory() :
+            cached.drop_owner_inventory_account == player.GetInventoryAccountName()));
 }
 
 visible_candidate MakeVisibleCandidate(const cached_snapshot_entity& cached, const cached_snapshot_entity& owner,
@@ -347,8 +345,7 @@ bool BetterSnapshotCandidate(const visible_candidate& lhs, const visible_candida
     if (lhs.attached != rhs.attached) return lhs.attached;
     if (lhs.dist_sq != rhs.dist_sq) return lhs.dist_sq < rhs.dist_sq;
 
-    // Spatial-grid iteration order is not stable. Use the entity identity as a final tie-breaker so
-    // an nth_element cutoff does not randomly replace equally ranked entities between snapshots.
+    // 同优先级最终按实体身份排序，避免空间网格遍历变化导致快照边界随机替换。
     const CEntity* lhs_entity = lhs.cached ? lhs.cached->entity : nullptr;
     const CEntity* rhs_entity = rhs.cached ? rhs.cached->entity : nullptr;
     if (lhs_entity && rhs_entity)
@@ -374,7 +371,7 @@ void TrimSnapshotPool(std::vector<visible_candidate>& pool, size_t budget)
         pool.resize(budget);
     }
 }
-} // namespace
+}
 
 struct CSnapshotService::CBuildBatch::SImpl
 {
@@ -397,8 +394,7 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
     out = {};
 
     CEntity* owner = player.GetEntity();
-    // A dead player flower remains visible for death/revival presentation.
-    // Removal, not IsDead(), is the boundary for publishing its owner snap.
+    // 死亡花朵仍需呈现死亡与复活，拥有者快照以实体移除为边界。
     if (!owner || owner->IsMarkedForDes() || !owner->GameWorld()) return false;
     auto* owner_mob = owner->IsEntityType(EEntityType::Mob) ? static_cast<CMobBase*>(owner) : nullptr;
     const SMobStats* owner_stats = owner_mob ? owner_mob->GetFinalStats() : nullptr;
@@ -420,6 +416,11 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
     const size_t configured_packet_budget =
         std::clamp(game_config::network_snapshot_packet_budget, size_t{ 128 }, CSnapshotService::packet_budget);
     const cached_snapshot_entity& owner_cached = CachedSnapshotEntity(frame, *this, *owner->GameWorld(), *owner, snapshot_id);
+    auto* controller = owner->GameWorld()->GetController();
+    const auto can_observe = [&](const CEntity* entity) {
+        return entity && entity->GameWorld() == owner->GameWorld() && !entity->IsMarkedForDes() && entity->IsVisible() &&
+            (!controller || controller->SnapshotEntityVisibleToPlayer(*owner->GameWorld(), player, *entity));
+    };
 
     auto& mandatory_squad_entities = scratch.mandatory_squad_entities;
     mandatory_squad_entities.clear();
@@ -429,8 +430,7 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
         for (CPlayer* squad_member : squads->Members(player))
         {
             CEntity* squad_entity = squad_member ? squad_member->GetEntity() : nullptr;
-            if (!squad_entity || squad_entity == owner || squad_entity->GameWorld() != owner->GameWorld() ||
-                squad_entity->IsMarkedForDes() || !squad_entity->IsVisible())
+            if (squad_entity == owner || !can_observe(squad_entity))
                 continue;
             if (std::find(mandatory_squad_entities.begin(), mandatory_squad_entities.end(), squad_entity) ==
                 mandatory_squad_entities.end())
@@ -443,7 +443,7 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
                 std::find(mandatory_squad_entities.begin(), mandatory_squad_entities.end(), entity) !=
                     mandatory_squad_entities.end()) return false;
             const auto* mob = static_cast<const CMobBase*>(entity);
-            return mob->GetMobType() == EMobType::Titan && mob->IsVisible();
+            return mob->GetMobType() == EMobType::Titan && can_observe(mob);
         });
 
     const size_t mandatory_fixed_count = 1 + (mandatory_titan_entity ? 1 : 0);
@@ -470,7 +470,7 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
     size_t visible_count = mandatory_entity_count;
 
     owner->GameWorld()->ForEachEntityInEdgeRange(owner->Pos(), snap_view_radius, [&](CEntity* entity) {
-        if (!entity || entity->IsMarkedForDes() || !entity->IsVisible() || entity == owner) return;
+        if (entity == owner || !can_observe(entity)) return;
         if (entity == mandatory_titan_entity) return;
         if (std::find(mandatory_squad_entities.begin(), mandatory_squad_entities.end(), entity) !=
             mandatory_squad_entities.end())
@@ -486,20 +486,7 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
         else misc_entities.push_back(candidate);
     });
 
-    // One extra cull pass after the default collection: the world controller
-    // may hide entities from this player (fog of war, ...) before the budget
-    // trimming below, so hidden entities never consume snapshot budget.
-    if (IGameController* controller = owner->GameWorld()->GetController())
-    {
-        const auto hidden = [&](const visible_candidate& candidate) {
-            const CEntity* entity = candidate.cached ? candidate.cached->entity : nullptr;
-            return !entity || !controller->SnapshotEntityVisibleToPlayer(*owner->GameWorld(), player, *entity);
-        };
-        mob_entities.erase(std::remove_if(mob_entities.begin(), mob_entities.end(), hidden), mob_entities.end());
-        projectile_entities.erase(std::remove_if(projectile_entities.begin(), projectile_entities.end(), hidden),
-                                  projectile_entities.end());
-        misc_entities.erase(std::remove_if(misc_entities.begin(), misc_entities.end(), hidden), misc_entities.end());
-    }
+    // 所有优先级路径先校验可见权限，队伍和 Titan 保底不能越权。
     visible_count = mandatory_entity_count + mob_entities.size() + projectile_entities.size() + misc_entities.size();
 
     TrimSnapshotPool(mob_entities, configured_mob_budget);
@@ -575,7 +562,6 @@ bool CSnapshotService::BuildSnapshot(CPlayer& player, std::uint32_t snapshot_id,
 
     out.message = std::move(msg);
     out.visible_count = visible_count;
-    // Weather intensities and wind ride along with every snapshot.
     out.packed_size = packed_size + server_environment_weather_count + server_environment_wind_size;
     return true;
 }
@@ -611,8 +597,7 @@ ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const 
     snap.entity_id = static_cast<net_entity_id>(entity.Id());
     snap.generation = entity.Generation();
     snap.entity_type = entity.GetNetworkType();
-    // Mod mobs may disguise themselves as a vanilla mob type on the wire so
-    // clients render the vanilla sprite without client-side mod support.
+    // 扩展生物通过基础视觉类型进入协议。
     if (const auto* mob = dynamic_cast<const CMobBase*>(&entity))
     {
         if (const CMobPrototype* proto = FindMobPrototype(mob->GetMobType());
@@ -654,8 +639,7 @@ ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const 
     if (const auto* drop = dynamic_cast<const CDrop*>(&entity))
     {
         snap.rarity = static_cast<uint8_t>(drop->GetRarity());
-        // Drops have no gameplay team. Reuse that already-present wire byte as
-        // their petal subtype so the id is no longer encoded into entity_type.
+        // 掉落物没有阵营语义，复用 team 字节携带花瓣子类型。
         snap.team = static_cast<uint8_t>(drop->GetType());
     }
     if (const auto* petal = dynamic_cast<const CPetal*>(&entity)) snap.rarity = static_cast<uint8_t>(petal->m_rarity);
@@ -699,8 +683,7 @@ ServerEntitySnap CSnapshotService::BuildEntitySnap(const CEntity& entity, const 
     }
     if (const auto* drop = dynamic_cast<const CDrop*>(&entity))
     {
-        // Stacked drops carry their count so the client can render the same
-        // "xN" badge the inventory cards use.
+        // 堆叠数用于客户端显示与背包一致的数量角标。
         if (drop->GetStackNum() > 1)
         {
             SEntityStateSnap state_snap{ EStateType::DropStack, 0 };

@@ -1,8 +1,7 @@
 import { t } from "./i18n.js";
 import { setAnimatedVisibility } from "./ui_motion.js";
 
-// A/B/X are touch labels: attack/defend/swap. They dispatch the same builtins
-// as the keyboard without sharing (or changing) physical keyboard bindings.
+// 触屏 A/B/X 对应攻击/防御/换槽，共用内置动作但不共享物理按键来源。
 export const mobileActionBindings = Object.freeze({ touch: Object.freeze(Object.fromEntries(
   ["attack", "defend", "swap"]
     .map(action => [action, [action]]),
@@ -146,8 +145,7 @@ export function createMobileControls({ isUiTarget, movementSurface, onAction, on
     if (movementSurface && event.target !== movementSurface) return;
     if (isUiTarget?.(event.target)) return;
     if (onSurfaceTap?.(event)) { event.preventDefault(); return; }
-    // The right side belongs to actions/camera taps; it must not steal a
-    // second finger or create an invisible joystick under a battle button.
+    // 右侧留给动作和相机手势，不创建隐藏摇杆或抢占第二指。
     if (event.clientX > window.innerWidth * 0.55) return;
     movementPointerId = event.pointerId;
     joystick.classList.remove("hidden");

@@ -40,28 +40,20 @@ class IWorldModule : public IModule
     std::vector<CGameWorld*> FindWorldsByMapName(const std::string& map_name) const;
     CGameWorld* FindRandomWorldByMapName(const std::string& map_name) const;
 
-    // Creates a brand new world (map + controller key) at runtime, wires it
-    // into the game context, and returns it. Used by the room system.
-    // Construction-time controller overrides come from the waiting room's
-    // /setting parameters.
+    // 运行时创建并接入世界；初始控制器参数来自等待房间的 /setting。
     CGameWorld* CreateWorld(const std::string& map_path, std::string_view controller_key,
                             const CControllerParams& controller_params = {});
 
-    // Room registry: room code (int) -> the room's active world. Before the
-    // room starts this is the waiting world; after /start it becomes the game
-    // world created on demand.
+    // 房间码指向当前活动世界，开始前是等待世界，开始后是玩法世界。
     CGameWorld* CreateRoomWorld(const std::string& map_path, std::string_view controller_key, int room_code);
-    // Lazily creates the room's game world (map + controller blueprint stored
-    // in the waiting controller) and registers it as the room's active world.
+    // 按等待控制器保存的地图和参数创建玩法世界，并更新房间登记。
     CGameWorld* CreateRoomGameWorld(int room_code);
     CGameWorld* FindRoomWorld(int room_code) const;
     int NextRoomCode() const;
 
-    // World instances for a static map (garden/ant_hel overrides).
     std::size_t OpenWorldInstancesForMap(std::string_view map_path) const;
-    // Destroys the world by id (admin command). Players inside are migrated
-    // to another world (or their entities released if none is available).
-    // Destroying a room's game world also closes its retained waiting world.
+    // 销毁世界前迁移玩家；无替代世界时释放受控实体。
+    // 销毁玩法世界时同时关闭保留的等待世界。
     bool DestroyWorldById(std::uint32_t world_id);
 
     struct SWorldBlueprint

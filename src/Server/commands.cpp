@@ -206,7 +206,7 @@ int FindFirstEquipSlot(CFlower& flower)
     auto& slots = flower.GetSlots();
     for (size_t i = 0; i < slots.size(); ++i)
     {
-        if (slots[i].m_available && !slots[i].m_banned && !slots[i].m_p_proto) return static_cast<int>(i);
+        if (slots[i].m_available && !slots[i].IsBanned() && !slots[i].m_p_proto) return static_cast<int>(i);
     }
     return -1;
 }
@@ -226,8 +226,7 @@ CPlayer* FindPlayerByName(CGameContext* context, std::string_view name)
 CPlayer* FindPlayerByIdOrName(CGameContext* context, std::string_view text)
 {
     if (!context) return nullptr;
-    auto* network = &context->Network();
-    if (auto id = ParseInt(text)) return *id >= 0 ? network->FindPlayerById(static_cast<uint32_t>(*id)) : nullptr;
+    if (auto id = ParseInt(text)) return *id >= 0 ? context->PlayerDirectory().FindPlayerById(static_cast<uint32_t>(*id)) : nullptr;
     return FindPlayerByName(context, text);
 }
 
@@ -351,7 +350,7 @@ int CalculateTalentPointsForCommandLevel(int level)
     if (major_interval > 0 && level % major_interval == 0) gain += game_config::player_talent_point_major_bonus;
     return gain;
 }
-} // namespace
+}
 
 REGISTER_CONSOLE_COMMAND_USAGE(quit, "quit", {}, {
     if (auto* server = CServer::GetInstance()) server->RequestStop();
@@ -553,7 +552,8 @@ REGISTER_CONSOLE_COMMAND_USAGE(perf, "perf", {}, {
     if (game_config::world_tick_phase_profile_enabled)
     {
         constexpr std::array<const char*, CGameWorld::tick_phase_count> phase_names = {
-            "active", "entities", "controller", "walls", "collisions", "cleanup"
+            "active", "rules", "begin", "intent", "forces", "motion", "constraints", "environment", "actions",
+            "requests", "collisions", "effects", "cleanup"
         };
         std::array<double, CGameWorld::tick_phase_count> last_sum{};
         std::array<double, CGameWorld::tick_phase_count> average_sum{};
@@ -701,7 +701,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(level_up, "level_up <player> <count>", "player", 
     if (gained_talent_points > 0) player->AddTalentPoints(gained_talent_points);
     if (player->IsAuthenticated())
         CAccountDataStore::SetProgress(player->GetProgressAccountName(), flower->m_level, flower->m_exp);
-    if (context) context->Network().QueueOwnerStateUpdate(*player);
+    if (context) context->PlayerUpdates().QueueOwnerStateUpdate(*player);
 
     LOG_INFO("console", "Level " + player->GetName() + " " + std::to_string(old_level) + " -> " +
                             std::to_string(flower->m_level) + ", +" + std::to_string(gained_talent_points) + " TP.");
@@ -927,7 +927,10 @@ REGISTER_CONSOLE_COMMAND_USAGE(world_controller, "world_controller <world_id> <c
     }
 
     const std::string_view old_controller = world->GetController() ? world->GetController()->SnapshotKey() : "";
-    world->SetController(CreateWorldController(controller_key, {}));
+    auto controller = CreateWorldController(controller_key, {});
+    if (!controller) { LOG_WARN("world", "玩法参数无效，保留当前控制器"); return; }
+    const auto changed = world->SetController(std::move(controller));
+    if (!changed) { LOG_WARN("world", changed.error); return; }
     LOG_INFO("console", "World " + std::to_string(*world_id) + " controller " + std::string(old_controller) +
                             " -> " + std::string(controller_key));
 })
@@ -992,7 +995,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(set_team, "set_team <world_id>:<entity_id> <team>
     }
 
     int old_team = entity->Team();
-    entity->Team() = *team;
+    entity->SetTeam(*team);
     CGameWorld* world = entity->GameWorld();
     LOG_INFO("console", "Entity " + std::to_string(world ? world->GetId() : 0) + ":" + std::to_string(entity->Id()) +
                             " team " + std::to_string(old_team) + " -> " + std::to_string(entity->Team()));
@@ -1121,7 +1124,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(kick, "kick <player>", "player", {
 
     auto* server = CServer::GetInstance();
     CGameContext* context = server ? server->GameContext() : nullptr;
-    auto* network = context ? &context->Network() : nullptr;
+    auto* network = server ? server->GetNetworkModule() : nullptr;
     CPlayer* player = FindPlayerByIdOrName(context, args[0]);
     if (!network || !player)
     {
@@ -1150,7 +1153,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(ban_ip, "ban_ip <player> <seconds|-1>", "player",
 
     auto* server = CServer::GetInstance();
     CGameContext* context = server ? server->GameContext() : nullptr;
-    auto* network = context ? &context->Network() : nullptr;
+    auto* network = server ? server->GetNetworkModule() : nullptr;
     CPlayer* player = FindPlayerByIdOrName(context, args[0]);
     if (!network || !player)
     {
@@ -1181,7 +1184,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(ban_name, "ban_name <player|account> <seconds|-1>
 
     auto* server = CServer::GetInstance();
     CGameContext* context = server ? server->GameContext() : nullptr;
-    auto* network = context ? &context->Network() : nullptr;
+    auto* network = server ? server->GetNetworkModule() : nullptr;
     CPlayer* player = FindPlayerByIdOrName(context, args[0]);
     std::string name = player ? player->GetAccountName() : args[0];
     if (!network)
@@ -1203,7 +1206,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(control, "control <player> <world_id>:<entity_id>
 
     auto* server = CServer::GetInstance();
     CGameContext* context = server ? server->GameContext() : nullptr;
-    auto* network = context ? &context->Network() : nullptr;
+    auto* network = server ? server->GetNetworkModule() : nullptr;
     if (!network)
     {
         LOG_WARN("console", "No active network module for control command.");
@@ -1246,7 +1249,29 @@ REGISTER_CONSOLE_COMMAND_USAGE(control, "control <player> <world_id>:<entity_id>
     }
 
     LOG_INFO("console", "Player " + std::to_string(player->GetId()) + " is now controlling entity " +
-                            std::to_string(entity_ref->world_id) + ":" + std::to_string(entity_ref->entity_id) + ".");
+                            FormatEntityCommandReference(player->GetEntity()) + ".");
+})
+
+REGISTER_CONSOLE_COMMAND_USAGE(world_feature, "world_feature <world_id> <feature> <show|hide|enable|disable|readonly|default>", "world feature action", {
+    if (args.size() != 3) { LOG_WARN("console", "Usage: world_feature <world_id> <feature> <show|hide|enable|disable|readonly|default>"); return; }
+    auto* server = CServer::GetInstance(); const auto id = ParseWorldId(args[0]);
+    auto* world = server && id ? server->FindWorldById(*id) : nullptr;
+    if (!world) { LOG_WARN("console", "World not found"); return; }
+    const auto key = ToLower(args[1]), action = ToLower(args[2]);
+    if (!server->Extensions().HasClientFeature({world->GetId(), world->GetInstanceGeneration()}, key)) { LOG_WARN("console", "Unknown client feature"); return; }
+    if (action != "show" && action != "hide" && action != "enable" && action != "disable" && action != "readonly" && action != "default")
+    { LOG_WARN("console", "Unknown feature policy"); return; }
+    auto config = world->ExtensionConfig();
+    auto found = std::find_if(config.features.begin(), config.features.end(), [&](const auto& rule) { return rule.key == key; });
+    if (action == "default") { if (found != config.features.end()) config.features.erase(found); }
+    else
+    {
+        if (found == config.features.end()) { config.features.push_back({key}); found = std::prev(config.features.end()); }
+        if (action == "show" || action == "hide") found->visible = action == "show";
+        else found->access = action == "enable" ? feature_access::all : action == "readonly" ? feature_access::view : 0;
+    }
+    world->ConfigureExtensions(std::move(config));
+    LOG_INFO("console", "World feature policy updated");
 })
 
 REGISTER_CONSOLE_COMMAND_USAGE(add, "add <player|account> <petal> <rarity> [count]", "player petal rarity", {
@@ -1296,7 +1321,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(add, "add <player|account> <petal> <rarity> [coun
     auto* server = CServer::GetInstance();
     CGameContext* context = server ? server->GameContext() : nullptr;
     CPlayer* player = FindPlayerByIdOrName(context, args[target_index]);
-    std::string account_name = player ? player->GetProgressAccountName() : args[target_index];
+    std::string account_name = player ? player->GetInventoryAccountName() : args[target_index];
     if (account_name.empty())
     {
         LOG_WARN("console", "Player/account has no account name: " + args[target_index]);
@@ -1307,7 +1332,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(add, "add <player|account> <petal> <rarity> [coun
     const uint8_t rarity_id = static_cast<uint8_t>(*rarity);
     CAccountDataStore::AddItem(account_name, petal_type, rarity_id, count);
 
-    if (player && player->IsAuthenticated() && context) context->Network().QueueInventoryUpdate(*player);
+    if (player && player->IsAuthenticated() && context) context->PlayerUpdates().QueueInventoryUpdate(*player);
 
     LOG_INFO("console", "Added " + std::to_string(count) + " " + RarityName(*rarity) + " " + proto->m_name + " to " +
                             account_name + ".");
@@ -1325,7 +1350,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(inventory, "inventory <player> <list|add|remove|s
     const std::string operation = ToLower(args[1]);
     if (operation == "list")
     {
-        for (const auto& item : CAccountDataStore::GetInventory(player->GetProgressAccountName()))
+        for (const auto& item : CAccountDataStore::GetInventory(player->GetInventoryAccountName()))
             LOG_INFO("console", "type=" + std::to_string(item.petal_type) + " rarity=" + std::to_string(item.rarity) +
                                 " count=" + std::to_string(item.count));
         return;
@@ -1438,7 +1463,7 @@ REGISTER_CONSOLE_COMMAND_USAGE(
 
         auto* server = CServer::GetInstance();
         CGameContext* context = server ? server->GameContext() : nullptr;
-        auto* network = context ? &context->Network() : nullptr;
+        auto* network = server ? server->GetNetworkModule() : nullptr;
         if (!server || !network)
         {
             LOG_WARN("console", "No active server/network for say command.");

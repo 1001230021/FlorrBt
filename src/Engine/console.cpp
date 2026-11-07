@@ -33,7 +33,7 @@ std::vector<std::string> SplitString(const std::string& str)
     if (!current.empty()) args.push_back(current);
     return args;
 }
-} // namespace
+}
 
 void CConsole::RegisterCommand(std::string name, CallBack callback, std::string usage, std::string completion_schema)
 {

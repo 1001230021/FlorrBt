@@ -1,4 +1,5 @@
 #include "server.h"
+#include "Auth/account_link_service.h"
 #include "../Engine/logger.h"
 #include "../Shared/drop_rate.h"
 #include "../Shared/game_config.h"
@@ -115,14 +116,16 @@ std::string ReportArticle(std::string_view word)
 
 std::string RarityReportArticle(ERarity rarity) { return ReportArticle(GetRarityName(rarity)); }
 
-} // namespace
+}
 
 CServer* CServer::s_p_instance = nullptr;
 
 CServer::CServer()
 {
+    if (!GenerateOpaqueId(m_runtime_identity)) throw std::runtime_error("Cannot initialize server instance identity");
     s_p_instance = this;
     m_extensions = std::make_unique<CExtensionRuntime>();
+    m_account_links = std::make_unique<CAccountLinkService>();
     m_reports = std::make_unique<CReportReviewService>();
     m_p_data_store = CreateServerDataStore();
     m_modules.emplace_back(std::make_unique<IConsoleModule>(m_console));
@@ -131,9 +134,9 @@ CServer::CServer()
 
 CServer::~CServer()
 {
+    m_account_links->ShutDown();
     m_reports->ShutDown();
-    // All borrowed views are detached while network/player services still
-    // exist. Runtime ownership never keeps a dead world alive.
+    // 网络及玩家服务仍存在时撤销借用视图；运行时所有权不延长已销毁世界的寿命。
     for (const auto& module : m_modules)
         if (auto* worlds = dynamic_cast<IWorldModule*>(module.get()))
             for (const auto& world : worlds->GetWorlds()) if (world) world->SetGameContext(nullptr);
@@ -147,7 +150,23 @@ CServer::~CServer()
     s_p_instance = nullptr;
 }
 
-void CServer::Init()
+bool CServer::Fail(std::string_view stage, const std::string& message, int exit_code)
+{
+    m_running = false;
+    // 关闭失败时同时取消热重载重启。
+    if (m_exit_code == 0 || m_exit_code == hot_reload_exit_code) m_exit_code = exit_code;
+    LOG_FATAL(std::string(stage), message);
+    return false;
+}
+
+bool CServer::InitializeModules()
+{
+    for (auto& module : m_modules)
+        if (!module->Init()) return Fail("server", "Server module initialization failed");
+    return true;
+}
+
+bool CServer::Init()
 {
     std::string petal_registry_error;
     std::string mob_registry_error;
@@ -161,9 +180,7 @@ void CServer::Init()
             if (!error.empty()) error += '\n';
             error += mob_registry_error;
         }
-        LOG_FATAL("content", error.empty() ? "Failed to initialize game content registries" : error);
-        m_running = false;
-        return;
+        return Fail("content", error.empty() ? "Failed to initialize game content registries" : error);
     }
 
     RegisterDropRates();
@@ -174,58 +191,44 @@ void CServer::Init()
     EnsureRconPasswordInitialized();
 
     auto world_mod = std::make_unique<IWorldModule>();
-    m_p_world_module = world_mod.get();
     auto& worlds = world_mod->GetWorlds();
     CGameWorld* main_world = world_mod->GetMainWorld();
     if (worlds.empty() || !main_world)
     {
-        LOG_FATAL("server", "No game worlds were configured");
-        m_running = false;
-        return;
+        return Fail("server", "No game worlds were configured");
     }
 
+    m_p_world_module = world_mod.get();
     m_modules.emplace_back(std::move(world_mod));
     auto network_mod = std::make_unique<INetworkModule>(*this);
     m_p_network_module = network_mod.get();
     m_modules.emplace_back(std::move(network_mod));
     std::string extension_error;
-    if (!m_extensions->Init(*m_p_network_module, *m_p_network_module, extension_error))
-    { LOG_FATAL("extensions", extension_error); m_running = false; return; }
-    m_p_game_context = std::make_unique<CGameContext>(*m_p_network_module, *this, *this,
-                                                      *m_extensions);
+    if (!m_extensions->Init(*m_p_network_module, *m_p_network_module, *m_p_network_module, extension_error))
+        return Fail("extensions", extension_error);
+    m_p_game_context = std::make_unique<CGameContext>(*m_p_network_module, *m_p_network_module,
+        *m_p_network_module, *m_p_network_module, *this, *this, *this, *m_extensions);
     for (const auto& game_world : worlds)
         if (game_world) game_world->SetGameContext(m_p_game_context.get());
 
     std::string persistence_error;
     if (!m_p_data_store || !m_p_data_store->Init(persistence_error))
     {
-        LOG_FATAL("persistence", persistence_error.empty() ? "Failed to initialize server data store"
-                                                            : persistence_error);
-        m_running = false;
-        return;
+        return Fail("persistence", persistence_error.empty() ? "Failed to initialize server data store" : persistence_error);
     }
 
-    for (auto& module : m_modules)
-    {
-        if (!module->Init())
-        {
-            m_running = false;
-            return;
-        }
-    }
+    if (!InitializeModules()) return false;
 
     if (!RestoreConfiguredSnapshot())
     {
-        m_exit_code = restore_failed_exit_code;
-        m_running = false;
-        return;
+        return Fail("hot_reload", "Cannot start with the requested snapshot", restore_failed_exit_code);
     }
     ExecuteStartupCommands();
     if (!PublishReadyFile())
     {
-        m_exit_code = 1;
-        m_running = false;
+        return Fail("server", "Cannot publish server readiness");
     }
+    return true;
 }
 
 CGameWorld* CServer::GetMainWorld() const
@@ -339,6 +342,47 @@ bool CServer::DeferWorldTransfer(const SDeferredWorldTransfer& request)
 IUniquePetalRegistry* CServer::GetUniquePetalRegistry() const
 {
     return m_p_data_store ? &m_p_data_store->UniquePetals() : nullptr;
+}
+
+bool CServer::IsUniquePetalOwned(EPetalType type) const
+{
+    const auto* registry = GetUniquePetalRegistry();
+    return registry && registry->FindOwner(type);
+}
+
+bool CServer::ClaimUniquePetal(CPlayer& claimant, EPetalType type)
+{
+    if (!claimant.IsAuthenticated() || claimant.HasIsolatedInventory() || !m_p_network_module ||
+        m_p_network_module->FindPlayerById(claimant.GetId()) != &claimant) return false;
+    auto* registry = GetUniquePetalRegistry();
+    SUniquePetalExchangeResult result;
+    std::string error;
+    if (!registry || !registry->ExchangeUnique(type, 0, claimant.GetAccountName(), result, error))
+    {
+        if (!error.empty()) LOG_ERROR("unique_petal", "唯一卡片拾取失败：" + error);
+        return false;
+    }
+    // 经济提交已完成，随后发布在线实体和客户端状态，不能再把结果改成未拾取。
+    try
+    {
+        for (const auto& mutation : result.account_mutations)
+            for (const auto& player : m_p_network_module->GetPlayers())
+            {
+                if (!player || !player->IsAuthenticated() || player->HasIsolatedInventory() ||
+                    player->GetAccountName() != mutation.account_name) continue;
+                if (auto* flower = dynamic_cast<CFlower*>(player->GetEntity()))
+                    for (auto slot : mutation.cleared_primary_slots) flower->ForceUnequipPetal(slot);
+                m_p_network_module->NotifyPlayerRulesChanged(*player);
+                break;
+            }
+        if (!BroadcastPetalReport("stolen", ERarity::Unique, GetPetalTypeName(type), claimant.GetName()))
+            LOG_ERROR("unique_petal", "唯一卡片已提交，但公告未入队");
+    }
+    catch (const std::exception& exception)
+    {
+        Fail("unique_petal", "唯一卡片提交后的发布失败：" + std::string(exception.what()));
+    }
+    return true;
 }
 
 bool CServer::CanTitanForgePetal(EPetalType type) const
@@ -475,8 +519,7 @@ void CServer::ExecuteStartupConfigCommands()
             m_console.ExecuteLine(line.substr(begin));
     }
 
-    // Environment variables override secret config values so real credentials never
-    // need to be stored in a version-controlled config file.
+    // 环境变量覆盖密钥配置，避免凭据进入版本库。
     static constexpr struct
     {
         const char* config;
@@ -518,6 +561,16 @@ bool CServer::ReportMob(std::string_view action, ERarity rarity, std::string_vie
     return BroadcastMobReport(action, rarity, mob_name);
 }
 
+bool CServer::ReportPetal(std::string_view action, ERarity rarity, std::string_view petal_name, std::string_view player_name)
+{
+    return BroadcastPetalReport(action, rarity, petal_name, player_name);
+}
+
+CGameWorld* CServer::CreateRoomGameWorld(int room_code)
+{
+    return m_p_world_module ? m_p_world_module->CreateRoomGameWorld(room_code) : nullptr;
+}
+
 bool CServer::ReportMobSpawn(CGameWorld& source_world, std::string_view action, ERarity rarity,
                              std::string_view mob_name)
 {
@@ -549,10 +602,22 @@ bool CServer::BroadcastPetalReport(std::string_view done, ERarity rarity, std::s
     message.append(doer);
     message += ")";
 
-    const SChatEntry chat = Extensions().Globals().Find<IChatService>()->Submit(nullptr, { 0.f, 0.f }, EChatFlag::Server, 0, "Server", message);
-    if (chat.message.empty()) return false;
-    Extensions().Globals().Find<IChatService>()->Broadcast(chat);
+    if (m_pending_petal_reports.size() >= 4096) return false;
+    m_pending_petal_reports.emplace_back(CAccountDataStore::CurrentSaveFence(), std::move(message));
     return true;
+}
+
+void CServer::PublishCommittedPetalReports()
+{
+    auto* chat_service = Extensions().Globals().Find<IChatService>();
+    if (!chat_service) return;
+    for (auto it = m_pending_petal_reports.begin(); it != m_pending_petal_reports.end();)
+    {
+        if (!CAccountDataStore::IsSaveCommitted(it->first)) { ++it; continue; }
+        const auto chat = chat_service->Submit(nullptr, {0.f, 0.f}, EChatFlag::Server, 0, "Server", it->second);
+        if (!chat.message.empty()) chat_service->Broadcast(chat);
+        it = m_pending_petal_reports.erase(it);
+    }
 }
 
 bool CServer::BroadcastMobReport(std::string_view action, ERarity rarity, std::string_view mob_name)
@@ -627,13 +692,24 @@ bool CServer::BroadcastMobSpawnReport(CGameWorld& source_world, std::string_view
     return sent;
 }
 
+void CServer::TickModules(float dt)
+{
+    // 模拟前执行控制台/界面的边界命令；网络输入输出顺序不依赖模块注册顺序。
+    for (auto& module : m_modules)
+        if (module.get() != m_p_world_module && module.get() != m_p_network_module) module->Tick(dt);
+    if (m_p_network_module) m_p_network_module->BeginTick(dt);
+    if (m_extensions) m_extensions->Tick(dt);
+    if (m_p_world_module) m_p_world_module->Tick(dt);
+    if (m_p_network_module) m_p_network_module->EndTick(dt);
+}
+
 void CServer::Run()
 {
+    if (!m_running) return;
     const float dt = game_config::server_fixed_dt;
     if (!std::isfinite(dt) || dt <= 0.f)
     {
-        LOG_FATAL("server", "server_fixed_dt must be finite and greater than zero");
-        m_running = false;
+        Fail("server", "server_fixed_dt must be finite and greater than zero");
         return;
     }
     m_fixed_dt_seconds = dt;
@@ -721,28 +797,19 @@ void CServer::Run()
                 report::ProcessAsyncResults();
                 TickTitanForgeCooldowns(dt);
                 {
-                    // Coalesce gameplay mutations into one immutable save snapshot
-                    // per tick; release before hot-reload's durable Flush barrier.
+                    // 每帧合并为一个不可变保存快照；热重载的持久化屏障前解除批处理。
                     CAccountDataStore::CSaveBatch account_batch;
-                    for (auto& module : m_modules)
-                    {
-                        // Preserve the old weather-before-world phase while
-                        // ticking shared extensions once, not once per world.
-                        if (module.get() == m_p_world_module) m_extensions->Tick(dt);
-                        module->Tick(dt);
-                    }
+                    TickModules(dt);
                 }
                 ++m_tick;
                 ProcessHotReloadRequest();
                 tick_completed = true;
             } catch (const std::exception& e)
             {
-                LOG_FATAL("server", std::string("Unhandled exception in server tick: ") + e.what());
-                m_running = false;
+                Fail("server", std::string("Unhandled exception in server tick: ") + e.what());
             } catch (...)
             {
-                LOG_FATAL("server", "Unhandled unknown exception in server tick");
-                m_running = false;
+                Fail("server", "Unhandled unknown exception in server tick");
             }
 
             const auto tick_end = server_clock::now();
@@ -784,6 +851,7 @@ void CServer::Run()
 
 void CServer::ShutDown()
 {
+    m_account_links->ShutDown();
     if (m_shutdown) return;
     m_shutdown = true;
     m_reports->ShutDown();
@@ -794,7 +862,8 @@ void CServer::ShutDown()
     if (m_p_data_store)
     {
         std::string persistence_error;
-        if (!m_p_data_store->ShutDown(persistence_error)) LOG_ERROR("persistence", persistence_error);
+        if (!m_p_data_store->ShutDown(persistence_error))
+            Fail("persistence", persistence_error.empty() ? "Shutdown persistence failed" : persistence_error);
     }
     m_running = false;
 }

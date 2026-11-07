@@ -34,6 +34,7 @@ class IGameController
 {
   public:
     virtual ~IGameController() = default;
+    virtual bool PrepareActivation(CWorldPreparation&, std::string&) const { return true; }
     virtual void OnActivate(CGameWorld&) {}
     virtual void OnDeactivate(CGameWorld&) {}
     virtual void OnTick(CGameWorld& world, float dt) = 0;
@@ -44,17 +45,14 @@ class IGameController
     virtual void OnPlayerEntityReady(CGameWorld&, CPlayer&, CPlayerFlower&, EPlayerSpawnReason) {}
     virtual bool ValidatePlayerTransition(const SPlayerTransitionView&, EPlayerTransitionSide,
                                           std::string&) const { return true; }
-    // Committed notifications cannot veto or start nested transfers/teardown.
+    // 提交通知不能否决结果，也不能重入迁移或销毁参与者。
     virtual void OnPlayerArrivalCommitted(CGameWorld&, CPlayer&) {}
-    // Replay only after Welcome is staged. Arrival notifications must not
-    // publish terrain before the client has crossed the scene fence.
+    // 场景数据只能在 Welcome 暂存后写入，进入通知不能提前广播地图状态。
     virtual bool WritePlayerScene(const CGameWorld&, const CPlayer&, IPlayerSceneWriter&) const { return true; }
     virtual void OnPlayerDepartureCommitted(CGameWorld&, CPlayer&, CEntity*) {}
     virtual void OnEntityRemoved(CGameWorld&, CEntity&, EEntityRemovalReason) {}
     virtual void OnMobDefeated(CGameWorld&, CMobBase&) {}
-    // Returns a mob from the spawn habitat surrounding `pos`. Controllers
-    // without map-backed habitats return None; skills can then choose their
-    // own fallback without depending on a concrete world-controller type.
+    // 无栖息地规则时返回 None，由技能选择替代生物。
     virtual EMobType PickHabitatMobType(CGameWorld&, florrbt::Vector2f) { return EMobType::None; }
     virtual std::string_view SnapshotKey() const = 0;
     virtual bool CanRestoreSnapshotKey(std::string_view key) const { return SnapshotKey() == key; }
@@ -67,23 +65,15 @@ class IGameController
         return false;
     }
     virtual bool ResolveReferences(CGameWorld&, const IGameWorldResolver&, std::string&) { return true; }
-    // Worlds that force every player flower into permanent primordial
-    // nullification (phasing through mobs and walls).
+    // 使玩家花朵恒定穿越生物和墙体。
     virtual bool ForcesPrimordialNullification() const { return false; }
-    // Worlds where the player flower's petal loadout is locked: equip and
-    // unequip requests from players are rejected outright.
     virtual bool LocksPetalLoadout() const { return false; }
-    // Identity never changes with gameplay rules. The session independently
-    // selects an ephemeral progress store for modes such as sandbox.
+    // 沙盒只切换临时进度，不改登录身份。
     virtual bool UsesIsolatedProgress() const { return false; }
-    // Fine-grained loadout rules applied after LocksPetalLoadout(): whether a
-    // player may equip the given petal type into a slot, and whether the petal
-    // currently in a slot may be unequipped back into the backpack.
+    // 先检查整套装备锁定，再检查具体花瓣的装备和卸下权限。
     virtual bool CanEquipPetalType(EPetalType type) const { return true; }
     virtual bool CanUnequipPetalType(EPetalType type) const { return true; }
-    // Construction-time parameters declared by this controller type; the
-    // waiting room exposes them through /setting before the game world is
-    // created. Values are validated (审查函数) and stored as overrides.
+    // 等待房间通过 /setting 设置构造参数，创建玩法前完成校验。
     virtual std::vector<SControllerParamInfo> ParamSchema() const { return {}; }
     virtual void ModifyTalentContext(CGameWorld& world, CPlayer* player, ETalentEvent event, STalentContext& ctx)
     {
@@ -92,9 +82,7 @@ class IGameController
         (void)event;
         (void)ctx;
     }
-    // Lets world controllers claim player-issued chat commands (e.g. /start in
-    // the waiting room). `args[0]` is the raw command token including any
-    // leading '/'. Return true when the command was handled.
+    // args[0] 保留原命令前缀；返回 true 表示已处理。
     virtual bool HandlePlayerCommand(CGameWorld& world, CPlayer& player, const std::vector<std::string>& args)
     {
         (void)world;
@@ -102,14 +90,9 @@ class IGameController
         (void)args;
         return false;
     }
-    // Slot proxy (eou-style worlds): logical skill slots disguised as vanilla
-    // petal slots on the wire. The snapshot service fills locked/empty player
-    // slots from this when non-null.
+    // EOU 逻辑技能暂映射到空花瓣槽，由快照服务提供显示数据。
     virtual const CEouSlotProxy* SlotProxy(int team_id) const { return nullptr; }
-    // A pheromone petal finished its throw and reports its resting position;
-    // eou controllers forward it to the bound pheromone group as its new
-    // target (attack throw) or toggle the cells beneath it (defend throw).
-    // Default ignores the report.
+    // 攻击投掷更新信息素目标；防御投掷操作落点下的巢室。
     virtual void OnPheromonePetalStopped(CGameWorld&, int team_id, int group_id, florrbt::Vector2f pos, bool defend)
     {
         (void)team_id;
@@ -117,12 +100,7 @@ class IGameController
         (void)pos;
         (void)defend;
     }
-    // Post-collection snapshot cull: CSnapshotService::BuildSnapshot gathers
-    // the candidates inside the player's view radius exactly as usual, then
-    // this filter runs once on the gathered candidates before budget trimming.
-    // Return false to keep `entity` out of the player's snapshot (fog of war,
-    // limited scout vision, ...). Not applied to the owner flower, mandatory
-    // squad members, or the titan.
+    // 除自身权威状态外，所有实体先检查可见权限，再分配快照优先级。
     virtual bool SnapshotEntityVisibleToPlayer(CGameWorld& world, const CPlayer& player, const CEntity& entity) const
     {
         (void)world;

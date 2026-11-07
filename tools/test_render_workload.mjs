@@ -1,3 +1,4 @@
+import { stepSnapshotPose } from "../web/src/snapshot_pose.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
@@ -64,38 +65,30 @@ assert.equal(isDebugEntityInView({ radius: 0.001 }, { x: 0, y: 0 }, { x: 0, y: 0
 assert.equal(isDebugEntityInView({ radius: 1000 }, { x: 4500, y: 0 }, { x: 0, y: 0, scale: 0.1 }, { width: 800, height: 600 }), true);
 assert.equal(isDebugEntityInView({ radius: 10 }, { x: 500000, y: 0 }, { x: 0, y: 0, scale: 1 }, { width: 800, height: 600 }), false);
 
-// A 120ms hitch used to execute every remote entity up to eight times. The
-// owner still gets all physics substeps, remote analytic motion advances once.
+// 卡顿后玩家和远端实体都只推进一次显示插值，不执行物理预测子步。
 let ownerCalls = 0, remoteCalls = 0, ownerElapsed = 0, remoteElapsed = 0;
 const owner = { snapshot: { entityId: 0, entityType: ids.playerFlowerType, flags: 0 }, renderPos: { x: 0, y: 0 } };
 const simState = { ...sceneState, entities: new Map([[0, owner], ...entities]), ownerEntityId: 0, camera: {} };
 const simSource = code("sim_entities.js");
-const simUpdate = simSource.slice(simSource.indexOf("export function updateRenderPositions("), simSource.indexOf("function lockTrapperRenderPositionsToMounts("));
+const simUpdate = simSource.slice(simSource.indexOf("export function updateRenderPositions("), simSource.indexOf("export function hasPlayerSnapPetal("));
 const update = vm.runInNewContext(`${simUpdate.replace(/^export /, "")};updateRenderPositions`, {
   ...ids, state: simState, performance: { now: () => 1000 }, flowerFaceTypes: new Set(),
-  stepDeathViewFactor: value => value, stepOwnerPrediction(_, dt) { ownerCalls++; ownerElapsed += dt; },
+  stepDeathViewFactor: value => value,
   stepEntityAppearance: () => false, stepEntityGait() {}, hurtFlashDuration: 0.1, serverFixedDt: 0.05,
-  stepEntityRenderToSnapshot(_, dt, isOwner, now) { assert.equal(now, 1); remoteCalls++; remoteElapsed += dt; },
+  stepSnapshotPose(_, dt, isOwner) {
+    if (isOwner) { ownerCalls++; ownerElapsed += dt; }
+    else { remoteCalls++; remoteElapsed += dt; }
+  },
   lockTrapperRenderPositionsToMounts() {},
 });
 const timing = getRenderFrameTiming(0.12);
 update(timing.dt, timing.steps);
-assert.equal(ownerCalls, timing.steps); near(ownerElapsed, 0.12);
+assert.equal(ownerCalls, 1); near(ownerElapsed, 0.12);
 assert.equal(remoteCalls, 7999); near(remoteElapsed / remoteCalls, 0.12);
 
 // Exponential remote interpolation has the same endpoint as repeated small
 // steps at a fixed snapshot/time; combining steps does not drop elapsed time.
-const remoteSource = simSource.slice(simSource.indexOf("function stepEntityRenderToSnapshot("), simSource.indexOf("function ownerCollidesWithWalls("));
-const remoteStep = vm.runInNewContext(`${remoteSource};stepEntityRenderToSnapshot`, {
-  ...ids, isPetalEntity, petalTypeFromEntity,
-  smoothFactor: (rate, dt) => -Math.expm1(-rate * dt),
-  lerpAngle: (a, b, k) => a + (b - a) * k,
-  renderSnapBaseDistance: 1000, ownerRenderSnapBaseDistance: 1000,
-  petalExtrapolateMaxSeconds: 0.08, entityExtrapolateMaxSeconds: 0.08,
-  petalExtrapolateMaxDistance: 80, entityExtrapolateMaxDistance: 80,
-  petalRenderLerpRate: 20, entityRenderLerpRate: 20, ownerRenderLerpRate: 20,
-  petalAngleLerpRate: 20, entityAngleLerpRate: 20, ownerAngleLerpRate: 20, serverFixedDt: 0.05,
-});
+const remoteStep = stepSnapshotPose;
 const seed = { snapshot: { pos: { x: 100, y: 50 }, angle: 0.9, radius: 20, entityType: ids.beeType },
   renderPos: { x: 0, y: 0 }, renderAngle: 0, snapshotAt: 1, snapshotVelocity: { x: 4, y: 2 } };
 const combined = structuredClone(seed), subdivided = structuredClone(seed);

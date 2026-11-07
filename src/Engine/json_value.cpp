@@ -362,7 +362,7 @@ class CJsonParser
     const std::string& m_text;
     size_t m_pos = 0;
 };
-} // namespace
+}
 
 bool CJsonValue::AsBool(bool fallback) const { return IsBool() ? std::get<bool>(m_data) : fallback; }
 

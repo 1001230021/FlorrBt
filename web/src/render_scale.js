@@ -3,13 +3,8 @@ import { normalizeRenderScaleMode } from "./client_settings.js";
 import { t } from "./i18n.js";
 import { minRenderScale, nativeDpr, resizeCanvas } from "./viewport.js";
 
-// Adaptive render resolution ("auto" mode): a frame-budget controller keyed
-// off the complete frame plus background preparation CPU cost, on 60Hz and
-// 120Hz+ displays. The budget derives from the observed peak framerate
-// (~display refresh): the draw must fit in ~3/4 of a refresh interval.
-// Sustained overruns step the scale down; sustained headroom steps it back
-// up toward native DPI, so a temporary fight no longer degrades resolution
-// permanently.
+// 根据完整帧与后台准备开销自动调整分辨率，持续超时降低、持续空闲恢复。
+// 预算约为观测刷新间隔的四分之三。
 let lastDrawCostMs = 0;
 let lastFrameCostMs = 0;
 let drawCostEmaMs = 0;
@@ -20,8 +15,7 @@ const adaptiveStep = 0.25;
 const adaptiveDownFrames = 90;
 const adaptiveUpFrames = 420;
 
-// game.js injects the UI-layer callbacks (console line + settings
-// persistence) so this module stays out of the game.js import cycle.
+// 注入日志和设置回调，避免循环导入。
 let notifyConsoleLine = null;
 let persistSettings = null;
 
@@ -30,7 +24,6 @@ export function initRenderScale(options = {}) {
   persistSettings = options.saveSettings || null;
 }
 
-// Called once per frame with the measured drawScene CPU cost.
 export function noteSceneDrawCost(ms) {
   lastDrawCostMs = ms;
 }
@@ -71,8 +64,6 @@ export function updateAdaptiveRenderScale(paused = false) {
       ? (lastFrameCostMs || lastDrawCostMs)
       : drawCostEmaMs + ((lastFrameCostMs || lastDrawCostMs) - drawCostEmaMs) * 0.05;
 
-  // Draw work should fit in ~3/4 of one refresh interval; the rest of the
-  // frame belongs to input handling, DOM updates and the compositor.
   const refreshMs = 1000 / Math.max(30, observedPeakFps);
   const budgetMs = Math.min(12, Math.max(4.5, refreshMs * 0.75));
   const current = state.adaptiveDpr > 0 ? state.adaptiveDpr : nativeDpr();

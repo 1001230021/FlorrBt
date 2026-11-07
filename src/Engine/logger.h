@@ -50,8 +50,7 @@ class CLogger
     void Log(ELogPriority priority, const std::string& msg)
     {
         std::cout << FormatLine(m_sender, priority, msg) << std::endl;
-        // Workers log concurrently with console/RCON subscription changes.
-        // Copy callbacks under the lock, invoke outside it (callbacks may log).
+        // 锁内复制订阅，锁外调用，允许回调再次记录日志并避免与订阅修改互锁。
         std::vector<sink_entry> sinks;
         {
             std::lock_guard<std::mutex> lock(SinkMutex());
@@ -84,9 +83,7 @@ class CLogger
             const auto it = std::find_if(sinks.begin(), sinks.end(), [id](const sink_entry& entry) { return entry.id == id; });
             if (it != sinks.end()) { removed = it->state; sinks.erase(it); }
         }
-        // Also wait for an in-flight invocation. Existing GUI subscribers
-        // capture `this` and can safely destroy themselves after removal;
-        // callbacks in an older copied list see an empty callback and skip.
+        // 移除订阅时等待在途调用完成；旧回调列表中的空项会跳过，使 GUI 可安全析构。
         if (removed)
         {
             std::lock_guard<std::recursive_mutex> lock(removed->mutex);

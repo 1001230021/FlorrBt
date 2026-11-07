@@ -4,8 +4,7 @@ export function mapLayerRole(name) {
   return name === "shortcut" || name === "shortcut_cover" ? name : "terrain";
 }
 
-// Shared by normal flower lighting and shortcut reveal; deliberately not the
-// final horizon, equipped bulb radius, weather darkness, or camera zoom.
+// 普通花朵照明和密道揭示共用默认半径，不受最终视距、灯泡、天气或相机缩放影响。
 export function defaultPlayerLightRadius(map) {
   return Math.max(Number(map?.tileWidth) || 512, Number(map?.tileHeight) || 512);
 }

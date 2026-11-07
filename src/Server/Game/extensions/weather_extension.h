@@ -36,7 +36,7 @@ class CWeatherExtension : public CExtension, public ITickExtension, public IWeat
     void PublishDerivedState();
 
     SWeatherDiurnalSnapshot m_snapshot;
-    // Last intensities sent to clients, for change-quantized environment revision bumps.
+    // 用上次发送的量化强度判断是否需要更新环境版本。
     float m_published_intensity[weather_type_count] = {};
     std::optional<EWeatherType> m_forced_weather;
     std::optional<float> m_forced_intensity;

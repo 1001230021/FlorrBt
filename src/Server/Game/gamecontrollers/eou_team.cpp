@@ -48,7 +48,6 @@ void CEouPheromoneGroup::RebuildUnupdated()
 
 void CEouPheromoneGroup::OnTick(CGameWorld& world, float dt)
 {
-    // Prune dead, removed or stale members.
     bool pruned = false;
     for (std::size_t i = 0; i < m_members.size();)
     {
@@ -67,9 +66,7 @@ void CEouPheromoneGroup::OnTick(CGameWorld& world, float dt)
     }
     if (pruned) RebuildUnupdated();
 
-    // Time-sliced reroute: pending members are processed at a rate that lets
-    // a full group finish rerouting within eou_group_reroute_window seconds
-    // regardless of size, capped per tick to bound the pathfinding cost.
+    // 按组大小分摊寻路工作，目标是在配置窗口内完成，同时限制每帧成本。
     if (!m_unupdated.empty())
     {
         constexpr int kMaxReroutesPerTick = 8;
@@ -93,7 +90,6 @@ void CEouPheromoneGroup::OnTick(CGameWorld& world, float dt)
         m_reroute_budget = 0.f;
     }
 
-    // Member movement runs inside each mob's own Tick (world-driven).
 }
 
 void CEouPheromoneGroup::CaptureSnapshot(CSnapshotWriter& writer) const
@@ -216,9 +212,7 @@ void CTeam::OnTick(CGameWorld& world, float dt)
         m_groups[i]->OnTick(world, dt);
         if (m_groups[i]->MemberCount() == 0 && !m_groups[i]->Persistent() && m_groups.size() > 1)
         {
-            // Keep at least one group per team (the primary group); empty
-            // transient groups are pruned. Persistent (slot-bound pheromone)
-            // groups always survive.
+            // 每队保留主分组和持久信息素分组，空的临时分组可以回收。
             m_groups.erase(m_groups.begin() + static_cast<std::ptrdiff_t>(i));
             continue;
         }
@@ -307,7 +301,6 @@ bool CTeam::RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version
 }
 
 
-// ============ CCellGroupSet ============
 
 std::pair<int, int> CCellGroupSet::CellKeyOf(CGameWorld& world, SEouEntityHandle handle) const
 {
@@ -341,8 +334,7 @@ std::vector<SEouEntityHandle> CCellGroupSet::NeighboursOf(CGameWorld& world, SEo
 
 void CCellGroupSet::RebuildGroups(CGameWorld& world)
 {
-    // Rebuild the union partition from scratch (cell counts stay small):
-    // same-type, 4-neighbour connected components become one group each.
+    // 格子数量较小，直接重建同类型四邻域连通分量。
     m_groups.clear();
     m_next_group_id = 1;
     std::erase_if(m_cells, [&world](const SEouEntityHandle& handle) {
@@ -366,7 +358,6 @@ void CCellGroupSet::RebuildGroups(CGameWorld& world)
         }
         const int type = static_cast<int>(seed_cell->CellType());
 
-        // BFS over same-type 4-neighbours.
         CCellGroup group(m_next_group_id);
         group.AddMember(seed);
         seed_cell->SetGroupId(m_next_group_id);
@@ -468,7 +459,6 @@ void CCellGroupSet::ResolveReferences(CGameWorld& world, int team_id)
     RebuildGroups(world);
 }
 
-// ============ CTeam cells/food ============
 
 void CTeam::AddCell(CGameWorld& world, CEouCellMob& cell)
 {
@@ -505,7 +495,7 @@ bool CTeam::TryConsumeFood(CGameWorld& world, float amount)
     if (amount <= 0.f) return true;
     if (!std::isfinite(amount) || StorageFoodTotal(world) < amount) return false;
     float remaining = amount;
-    // Drain the stash first, then the storage cells.
+    // 先消费团队库存，再扣储藏格。
     if (m_food_stash > 0.f)
     {
         const float used = std::min(m_food_stash, remaining);
@@ -572,7 +562,7 @@ float CTeam::FoodCapacity(CGameWorld& world) const
 
 void CTeam::RefundFood(CGameWorld& world, float amount)
 {
-    // Preserve the whole payment even after a config/hot-reload capacity change.
+    // 配置或热重载改变容量后仍须完整退还付款。
     const float stored = DepositToNearestStorage(world, m_home_pos, std::max(0.f, amount));
     m_food_stash += std::max(0.f, amount - stored);
 }

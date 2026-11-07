@@ -1,4 +1,5 @@
 import { dom, state, ui } from "./app_context.js";
+import { invokeClientFeature, refreshClientFeatures, featureUsesBadge } from './client_features.js';
 import { releaseInputHolds } from "./bindings.js";
 import { clientRuntimeConfig } from "./client_config.js";
 import {
@@ -10,22 +11,18 @@ import {
 import { applyDocumentTranslations, t } from "./i18n.js";
 import { formatShortCount, hidePetalInfoTooltip } from "./petal_info.js";
 import { packChores, packInput, petalTypeName, rarityName } from "./protocol.js";
-import { toggleCodex } from "./ui_codex.js";
-import {
-  authUiMode,
-  closeSliderPanel,
-  drawScene,
-  isOwnerDead,
-  renderCraftPanel,
-  renderDeathOverlayContent,
-  renderEmailSettingsRow,
-  renderInventoryPanel,
-  renderSliderPanel,
-  renderTalentPanel,
-  setAuthUiMode,
-} from "./game.js";
+
 import { sendBytes } from "./net_outbound.js";
 import { setAnimatedVisibility } from "./ui_motion.js";
+
+let gameActions;
+export function installGameUiActions(actions) {
+  for (const name of ["getAuthUiMode", "closeSliderPanel", "drawScene", "isOwnerDead", "renderCraftPanel",
+    "renderDeathOverlayContent", "renderEmailSettingsRow", "renderInventoryPanel", "renderSliderPanel",
+    "renderTalentPanel", "setAuthUiMode", "toggleCodex"])
+    if (typeof actions?.[name] !== "function") throw new TypeError(`Missing UI action: ${name}`);
+  gameActions = Object.freeze({ ...actions });
+}
 
 const defaultMapName = clientRuntimeConfig.loginMapDefaultName;
 const {
@@ -92,7 +89,7 @@ export async function setFullscreen(enabled) {
   } catch (error) {
     addConsoleLine(String(error?.message || error || "Fullscreen failed"), "error");
   }
-  // Keep the saved preference in line with the actual fullscreen state.
+  // 保存偏好与实际全屏状态同步。
   state.fullscreen = !!document.fullscreenElement;
   saveSettings();
   ui.settingsUi?.render();
@@ -104,6 +101,10 @@ export function toggleFullscreen() {
 
 export function setStatus(text, good = false) {
   ui.consoleUi.setStatus(text, good);
+  if (!state.authenticated) {
+    const status = document.getElementById("startStatus");
+    if (status) { status.textContent = text; status.classList.toggle("good", good); }
+  }
   if (emailBindingStatus) {
     emailBindingStatus.textContent = text;
     emailBindingStatus.classList.toggle("good", good);
@@ -146,7 +147,7 @@ export function localizedTalentName(node) {
 
 export function toggleConsole(force) {
   ui.consoleUi.toggle(force);
-  if (!state.consoleOpen) closeSliderPanel();
+  if (!state.consoleOpen) gameActions.closeSliderPanel();
 }
 
 export function updateQuickActionButtons() {
@@ -161,7 +162,7 @@ export function updateQuickActionButtons() {
     talentPointsLabel.textContent = t("ui.talents.points", { count: points });
   if (quickTalentPoints) {
     quickTalentPoints.textContent = formatShortCount(points);
-    setAnimatedVisibility(quickTalentPoints, points > 0, { duration: 140 });
+    setAnimatedVisibility(quickTalentPoints, points > 0 && featureUsesBadge('talent'), { duration: 140 });
     quickTalentBtn?.setAttribute(
       "title",
       points > 0
@@ -175,14 +176,13 @@ export function updatePlayUiVisibility() {
   const visible = state.authenticated;
   setAnimatedVisibility(quickActions, visible, { duration: 220 });
   const topLeftActions = document.getElementById("topLeftActions");
-  // Settings remain reachable on the login screen, like the reference;
-  // the account's gallery is only shown after authentication.
   setAnimatedVisibility(topLeftActions, true, { duration: 220 });
   codexBtn?.classList.toggle("hidden", !visible);
   ui.chatUi.setVisible(visible);
   ui.mobileControls?.setMode(state.mobileControlMode);
   ui.mobileControls?.setEnabled(visible);
-  renderEmailSettingsRow();
+  gameActions.renderEmailSettingsRow();
+  refreshClientFeatures();
 }
 
 export function setLoadingScreenVisible(visible) {
@@ -203,39 +203,39 @@ export function setLoadingScreenVisible(visible) {
 
 export function refreshLocalizedUi() {
   applyDocumentTranslations();
-  setAuthUiMode(authUiMode);
+  gameActions.setAuthUiMode(gameActions.getAuthUiMode());
   ui.chatUi.refreshTranslations();
   ui.mobileControls?.refreshTranslations();
   ui.settingsUi.refreshTranslations();
-  renderEmailSettingsRow();
+  gameActions.renderEmailSettingsRow();
   updateQuickActionButtons();
   hidePetalInfoTooltip();
-  renderInventoryPanel({ forceInventory: true });
-  if (state.craftOpen) renderCraftPanel();
-  if (state.talentOpen) renderTalentPanel();
-  if (isOwnerDead()) renderDeathOverlayContent();
-  if (state.slider) renderSliderPanel();
+  gameActions.renderInventoryPanel({ forceInventory: true });
+  if (state.craftOpen) gameActions.renderCraftPanel();
+  if (state.talentOpen) gameActions.renderTalentPanel();
+  if (gameActions.isOwnerDead()) gameActions.renderDeathOverlayContent();
+  if (state.slider) gameActions.renderSliderPanel();
   setStatus(
     t(state.connected ? "status.connected" : "status.disconnected"),
     state.connected,
   );
-  requestAnimationFrame(drawScene);
+  requestAnimationFrame(gameActions.drawScene);
 }
 
 export function toggleBackpack(force) {
-  if (ui.backpackUiPanel.toggle(force) && force !== false) toggleCodex(false);
+  return invokeClientFeature('inventory', force);
 }
 
 export function toggleCraft(force) {
-  if (ui.craftUiPanel.toggle(force) && force !== false) toggleCodex(false);
+  return invokeClientFeature('craft', force);
 }
 
 export function toggleTalent(force) {
-  if (ui.talentUiPanel.toggle(force) && force !== false) toggleCodex(false);
+  return invokeClientFeature('talent', force);
 }
 
 export function toggleSettings(force) {
   const opened = ui.settingsUi.toggle(force);
-  if (opened && force !== false) toggleCodex(false);
+  if (opened && force !== false) gameActions.toggleCodex(false);
   return state.settingsOpen;
 }

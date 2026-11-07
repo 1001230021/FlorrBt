@@ -113,18 +113,23 @@ export const state = {
   ws: null,
   connected: false,
   authenticated: false,
+  accountSession: false,
+  accountOpen: false,
   accountName: "",
   emailPolicy: 0,
   emailBound: false,
   emailBindingRequired: false,
   emailBindingPanelOpen: false,
-  // Render resolution: "auto" (adaptive), "native", or a fixed number.
+  // 渲染分辨率可选自适应、原生或固定倍率。
   renderScaleMode: "auto",
-  // Auto mode's current scale; 0 = untouched native DPI.
+  // 自适应模式的当前倍率；0 表示尚未调整原生 DPI。
   adaptiveDpr: 0,
   receiveBuffer: new Uint8Array(),
   entities: new Map(),
   playerId: 0,
+  playerSessionGeneration: "",
+  worldId: 0,
+  worldGeneration: "",
   ownerEntityId: 0,
   ownerLevel: 1,
   ownerExpProgress: 0,
@@ -149,20 +154,10 @@ export const state = {
   slotPanelCollapsed: false,
   lightningChains: [],
   inputSequence: 0,
-  ownerPredictionTiming: {
-    expectedSnapshotInterval: clientRuntimeConfig.expectedSnapshotInterval,
-    snapshotInterval: clientRuntimeConfig.expectedSnapshotInterval,
-    simulationScale: 1,
-    samples: [],
-    lastSnapshotAt: 0,
-    lastSnapshotId: -1,
-  },
   viewRadius: 0,
   targetViewRadius: 0,
   viewRadiusTransition: null,
-  // Client-only field-of-view percentage. The server view radius remains
-  // authoritative for snapshots and audio; this value only affects camera
-  // projection and local render culling.
+  // 仅调整相机投影和本地裁剪；快照及音频范围仍由服务端视野决定。
   viewZoomPercent: clientRuntimeConfig.viewZoomMaxPercent,
   map: null,
   mapName: "",
@@ -180,9 +175,8 @@ export const state = {
   inventory: [],
   runCollectionBaseline: null,
   runCollectionBaselinePending: true,
-  squadMemberNames: new Set(),
+  partyMembers: [],
   slotTxSeq: 0,
-  slotTransactions: [],
   loadoutPresets: Array.from({ length: loadoutPresetCount }, () => ({
     primarySlots: [],
     secondarySlots: [],
@@ -199,15 +193,6 @@ export const state = {
   mouse: { x: 0, y: 0, seen: false, inUi: false },
   localMoveInput: { x: 0, y: 0 },
   moveVector: { x: 0, y: 0 },
-  ownerMovementMultiplier: 1,
-  predictionDebug: {
-    errorDistance: 0,
-    speedScale: 1,
-    tickScale: 1,
-    snapshotInterval: clientRuntimeConfig.expectedSnapshotInterval,
-    staleTime: 0,
-    snapped: false,
-  },
   screenShake: { x: 0, y: 0 },
   particles: [],
   locale: "en",

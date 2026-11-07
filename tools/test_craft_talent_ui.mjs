@@ -85,7 +85,7 @@ function element() {
     replaceChildren(...nodes) { this.children = nodes; },
     setAttribute(key, value) { attributes.set(key, value); }, getAttribute: key => attributes.get(key),
     addEventListener(key, fn) { if (!listeners.has(key)) listeners.set(key, []); listeners.get(key).push(fn); },
-    emit(key, event = {}) { for (const fn of listeners.get(key) || []) fn({ preventDefault() {}, stopPropagation() {}, ...event }); },
+    emit(key, event = {}) { for (const fn of listeners.get(key) || []) fn({ type: key, preventDefault() {}, stopPropagation() {}, ...event }); },
     closest() { return this.dataset.talentKey ? this : null; },
     getBoundingClientRect: () => ({ left: 100, top: 200, width: 64, height: 64, bottom: 264 }),
     setPointerCapture() {}, hasPointerCapture: () => false,
@@ -180,13 +180,13 @@ try {
   advance(700); assert.equal(requests.length, 1);
   viewport.emit("pointerup", { pointerId: 3 });
 
-  // A tree panned outside the viewport is intentional. Even a tiny footer /
-  // resize notification must not snap its offset back to the viewport bounds.
+  // 旋转不搬走根花朵；尺寸通知保留已选择的角度。
   viewport.emit("pointerdown", { target: viewport, button: 0, pointerId: 4, clientX: 200, clientY: 300 });
   viewport.emit("pointermove", { pointerId: 4, clientX: -600, clientY: 300 });
   viewport.emit("pointerup", { pointerId: 4 });
-  advance(20);
+  advance(1500);
   const pannedView = graph.style.transform;
+  assert.notEqual(Number(pannedView.match(/rotate\(([-\d.]+)rad/)[1]),0);
   resizeTree(); advance(20);
   assert.equal(graph.style.transform, pannedView);
   const xBeforeResize = Number(pannedView.match(/translate\(([-\d.]+)px/)[1]);
@@ -194,6 +194,7 @@ try {
   resizeTree(); advance(20);
   const xAfterResize = Number(graph.style.transform.match(/translate\(([-\d.]+)px/)[1]);
   assert.equal(xAfterResize - xBeforeResize, 10);
+  assert.equal(graph.style.transform.match(/rotate\(([-\d.]+)rad/)[1],pannedView.match(/rotate\(([-\d.]+)rad/)[1]);
 
   const footerButtons = panel.children.at(-1).children;
   const zoomIn = footerButtons.find(button => button.className === "talent-zoom-control" && button.textContent === "+");
@@ -204,6 +205,11 @@ try {
   reset.emit("click"); assert.equal(requests.length, 1, "reset requires confirmation");
   reset.emit("click"); assert.equal(requests.length, 2);
   assert.equal(requests[1].action, "remove");
+  tree.close(); viewport.clientWidth += 40;
+  tree.render(); advance(20);
+  assert.equal(Number(graph.style.transform.match(/translate\(([-\d.]+)px/)[1]),viewport.clientWidth/2,
+    "reopening after a hidden resize reanchors the root without resetting rotation");
+  viewport._pinchStart = { scale: 1 }; tree.close(); assert.equal(viewport._pinchStart, undefined);
   tree.reset(); advance(20);
   assert.equal(frames.size, 0); assert.equal(timers.size, 0);
 } finally {

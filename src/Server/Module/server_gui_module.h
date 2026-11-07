@@ -10,11 +10,8 @@
 #include <thread>
 #include <vector>
 
-// The GUI console runs on its own thread: a window pumped from the game tick
-// thread freezes the whole simulation whenever Windows enters a modal loop
-// (title-bar drag, resize) or a present blocks (RDP/occluded sessions), which
-// showed up in game as multi-second world freezes. The game thread only
-// executes the commands typed here and publishes completion data snapshots.
+// 控制台独占界面线程，避免 Windows 拖动/缩放或阻塞显示时冻结游戏模拟。
+// 游戏线程只执行命令并发布补全快照。
 class IServerGuiModule : public IModule
 {
   public:
@@ -24,9 +21,7 @@ class IServerGuiModule : public IModule
     void Tick(float dt) override;
     void ShutDown() override;
 
-    // Completion data gathered on the game thread (live player/world/entity
-    // lists), consumed by the GUI thread. Static registries (petals, mobs,
-    // configs, commands) are read directly: they never change after Init.
+    // 动态补全数据由游戏线程发布；静态注册表在初始化后不变，可直接读取。
     struct SCompletionSnapshot
     {
         std::vector<std::string> players;
@@ -52,17 +47,17 @@ class IServerGuiModule : public IModule
         std::string formatted;
     };
 
-    // Game-thread side.
+    // 游戏线程入口。
     void StartGuiThread();
     void StopGuiThread();
     void RefreshCompletionSnapshot();
 
-    // GUI-thread side.
+    // 界面线程入口。
     void ThreadLoop();
     bool ProcessEvents();
     void DrainPendingLogLines();
-    void PushLine(std::string sender, ELogPriority priority, std::string text); // any thread: enqueue only
-    void AppendLine(ELogPriority priority, const std::string& formatted);       // GUI thread: wrap + layout
+    void PushLine(std::string sender, ELogPriority priority, std::string text); // 任意线程调用，只入队。
+    void AppendLine(ELogPriority priority, const std::string& formatted); // 界面线程负责排版。
     void ExecuteInput();
     void CompleteCommand();
     void ResetCompletion();
@@ -100,7 +95,7 @@ class IServerGuiModule : public IModule
     sf::FloatRect ScrollBarTrackRect() const;
     sf::FloatRect ScrollBarThumbRect() const;
 
-    // GUI-thread-owned state (window, text layout, selections).
+    // 以下状态由界面线程独占。
     sf::RenderWindow m_window;
     sf::Font m_font;
     std::vector<log_line> m_lines;
@@ -124,11 +119,11 @@ class IServerGuiModule : public IModule
     bool m_is_dragging_scrollbar = false;
     bool m_is_completing = false;
 
-    // Cross-thread state.
+    // 跨线程共享状态。
     std::thread m_thread;
     std::atomic<bool> m_stop_requested{ false };
     std::atomic<bool> m_thread_exited{ false };
-    size_t m_log_sink_id = 0; // managed on the game thread only
+    size_t m_log_sink_id = 0; // 仅由游戏线程管理。
 
     std::mutex m_pending_lines_mutex;
     std::vector<pending_log_line> m_pending_lines;

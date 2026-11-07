@@ -25,4 +25,4 @@ inline int ScaledBounces(int base_bounces, float humidity)
     return base_bounces > 0 ? static_cast<int>(base_bounces * RangeMultiplier(humidity)) : 0;
 }
 
-} // namespace lightning_humidity
+}

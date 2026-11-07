@@ -1,17 +1,14 @@
+import { UI_FONT_FAMILY } from "./ui_typography.js";
 import { dom, state } from "./app_context.js";
 
-// Outlined-text raster cache. strokeText/fillText shape and rasterize glyphs
-// on every call — with a name and a level label above every mob that was the
-// single largest per-entity draw cost. Text/style combos repeat heavily, so
-// each combo is rendered once per quantized device-pixel size and blitted
-// afterwards. Falls back to direct text while the game fonts still load so a
-// fallback-font raster never sticks in the cache.
+// 文字按内容/样式及量化像素尺寸缓存，减少逐实体字形栅格化。
+// 字体尚未加载时直接绘制，避免缓存回退字体。
 const outlinedTextCache = new Map();
 let outlinedTextCacheBytes = 0;
 const outlinedTextCacheMaxBytes = 48 * 1024 * 1024;
 const outlinedTextSizeLogRatio = Math.log(1.12);
 
-function outlinedTextRaster(text, font, fill, stroke, lineWidthRatio) {
+function outlinedTextRaster(text, font, fill, stroke, lineWidthRatio, baseline) {
   const sizeMatch = /([\d.]+)px/.exec(font);
   if (!sizeMatch) return null;
   const cssSize = parseFloat(sizeMatch[1]);
@@ -20,7 +17,8 @@ function outlinedTextRaster(text, font, fill, stroke, lineWidthRatio) {
     Math.log(deviceSize) / outlinedTextSizeLogRatio - 1e-6,
   );
   const rasterSize = Math.exp(bucket * outlinedTextSizeLogRatio);
-  const key = `${bucket}|${fill}|${stroke}|${lineWidthRatio}|${font.slice(0, sizeMatch.index)}|${text}`;
+  const family = font.slice(sizeMatch.index + sizeMatch[0].length);
+  const key = `${bucket}|${fill}|${stroke}|${lineWidthRatio}|${baseline}|${font.slice(0, sizeMatch.index)}|${family}|${text}`;
   let entry = outlinedTextCache.get(key);
   if (entry) {
     entry.lastUsed = performance.now();
@@ -32,18 +30,15 @@ function outlinedTextRaster(text, font, fill, stroke, lineWidthRatio) {
   const measure = document.createElement("canvas").getContext("2d");
   if (!measure) return null;
   measure.font = rasterFont;
+  measure.textBaseline = baseline;
   const metrics = measure.measureText(text);
-  const ascent = Math.max(
-    metrics.actualBoundingBoxAscent || rasterSize * 0.8,
-    rasterSize * 0.6,
-  );
-  const descent = Math.max(
-    metrics.actualBoundingBoxDescent || rasterSize * 0.25,
-    rasterSize * 0.05,
-  );
+  const ascent = metrics.actualBoundingBoxAscent;
+  const descent = metrics.actualBoundingBoxDescent;
+  const bearing = metrics.actualBoundingBoxLeft;
+  if (![ascent, descent, bearing, metrics.actualBoundingBoxRight].every(Number.isFinite)) return null;
   const pad = Math.ceil(lineWidth + rasterSize * 0.08) + 2;
-  const width = Math.ceil(Math.max(1, metrics.width) + pad * 2);
-  const height = Math.ceil(ascent + descent + pad * 2);
+  const width = Math.ceil(Math.max(1, bearing + metrics.actualBoundingBoxRight) + pad * 2);
+  const height = Math.ceil(Math.max(1, ascent + descent) + pad * 2);
 
   const canvas = document.createElement("canvas");
   canvas.width = width;
@@ -52,19 +47,20 @@ function outlinedTextRaster(text, font, fill, stroke, lineWidthRatio) {
   if (!context) return null;
   context.font = rasterFont;
   context.textAlign = "left";
-  context.textBaseline = "alphabetic";
+  context.textBaseline = baseline;
   context.lineJoin = "round";
   context.lineWidth = lineWidth;
   context.strokeStyle = stroke;
   context.fillStyle = fill;
-  context.strokeText(text, pad, pad + ascent);
-  context.fillText(text, pad, pad + ascent);
+  context.strokeText(text, pad + bearing, pad + ascent);
+  context.fillText(text, pad + bearing, pad + ascent);
 
   entry = {
     canvas,
     pad,
     ascent,
     descent,
+    bearing,
     textWidth: Math.max(1, metrics.width),
     rasterSize,
     bytes: width * height * 4,
@@ -88,20 +84,18 @@ function evictOutlinedTextRasters() {
   }
 }
 
-let uiFontsReady = false;
-
-function outlinedTextFontsReady() {
-  if (uiFontsReady) return true;
-  uiFontsReady = !!document.fonts && document.fonts.status === "loaded";
-  return uiFontsReady;
+function clearTextRasters() {
+  outlinedTextCache.clear();
+  outlinedTextCacheBytes = 0;
 }
+document.fonts?.addEventListener('loadingdone', clearTextRasters);
 
 export function drawOutlinedText(
   text,
   x,
   y,
   {
-    font = "700 14px Florr UI, Sarasa SC, Segoe UI, Microsoft YaHei, sans-serif",
+    font = `700 14px ${UI_FONT_FAMILY}`,
     fill = "#fff",
     stroke = "#050506",
     lineWidth = 4,
@@ -113,27 +107,23 @@ export function drawOutlinedText(
   const label = String(text ?? "");
   if (!label) return;
 
-  if (outlinedTextFontsReady()) {
+  if (document.fonts?.status === "loaded" && ctx.direction !== "rtl") {
     const sizeMatch = /([\d.]+)px/.exec(font);
     const cssSize = sizeMatch ? parseFloat(sizeMatch[1]) : 0;
     if (cssSize > 0) {
       const lineWidthRatio =
         Math.round(((lineWidth || 0) / cssSize) * 20) / 20;
-      const entry = outlinedTextRaster(label, font, fill, stroke, lineWidthRatio);
+      const entry = outlinedTextRaster(label, font, fill, stroke, lineWidthRatio, baseline);
       if (entry) {
-        // Scale from the raster bucket back to the exact requested size.
+        // 从缓存尺寸还原到实际请求尺寸。
         const scale = cssSize / entry.rasterSize;
         const padCss = entry.pad * scale;
         const textWidthCss = entry.textWidth * scale;
         const ascentCss = entry.ascent * scale;
-        const descentCss = entry.descent * scale;
-        let left = x - padCss;
+        let left = x - padCss - entry.bearing * scale;
         if (align === "center") left -= textWidthCss * 0.5;
         else if (align === "right" || align === "end") left -= textWidthCss;
-        let top = y - padCss;
-        if (baseline === "middle") top -= (ascentCss + descentCss) * 0.5;
-        else if (baseline === "bottom") top -= ascentCss + descentCss;
-        else if (baseline === "alphabetic") top -= ascentCss;
+        const top = y - padCss - ascentCss;
         ctx.drawImage(
           entry.canvas,
           left,

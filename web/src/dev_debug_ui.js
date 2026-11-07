@@ -551,8 +551,7 @@ export function createDevDebugUi({ renderEntities, getTypeIcon, getTypeName, onO
       if (dx * dx + dy * dy > 1000000) record.renderPos = { ...target };
       else { record.renderPos.x += (target.x - record.renderPos.x) * blend; record.renderPos.y += (target.y - record.renderPos.y) * blend; }
       record.renderAngle = record.raw.angle || 0;
-      // Keep authoritative records for selection/inspection. Only screen
-      // visibility controls drawing; tiny but visible bodies are never cut.
+      // 保留权威记录供选择/检查，仅按屏幕可见性绘制，不按微小尺寸裁掉实体。
       if (!visible(record.raw) || !isDebugEntityInView(record.raw, record.renderPos, camera, size,
           Math.max(3, getCullScale(record.raw.entityType)))) continue;
       if (flowerTypes.has(record.raw.entityType)) record.flowerFace = stepFlowerFace(record.flowerFace, { attacking: !!(record.raw.flags & flagAttacking),
@@ -560,6 +559,7 @@ export function createDevDebugUi({ renderEntities, getTypeIcon, getTypeName, onO
       entities.set(record.snapshot.entityId, record);
     }
     renderEntities?.(ctx, { entities, camera, scale: camera.scale, width: size.width, height: size.height, dpr }, now);
+    mapRenderer.drawShortcutSurface?.(now);
     burrowParticles.draw(ctx, camera.scale, pointToDebugScreen({ x: 0, y: 0 }, camera, size));
     mapRenderer.drawShortcutCover?.(now);
     ctx.save(); ctx.lineWidth = 1.5; ctx.font = "12px monospace"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";

@@ -1,13 +1,6 @@
-// Server message dispatch registry. Modules register their own handlers
-// (game.js registers the legacy ones today; extracted sim/ui modules bring
-// their handlers along as they move out), so receiving a new message type
-// never grows a central switch again.
-//
-// Connection-reset hooks fire whenever the socket is torn down (remote close
-// or local disconnect) so every module can drop per-connection state without
-// game.js having to know about it.
+// 消息处理器按类型登记，模块自行维护逻辑；断线钩子统一撤销各模块会话状态。
 
-const messageHandlers = new Map(); // ServerType -> (msg) => void
+const messageHandlers = new Map();
 const connectionResetHooks = [];
 
 export function registerMessageHandler(type, handler) {

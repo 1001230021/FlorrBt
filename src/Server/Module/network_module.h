@@ -25,18 +25,18 @@ class CSnapshotBuildWorkerPool;
 class CDevDebugService;
 struct ClientAuthRequest;
 struct ClientChatRequest;
-struct ClientCraftRequest;
-struct ClientForgeRequest;
+struct ClientEconomyRequest;
 struct ClientInputFrame;
-struct ClientSecondarySlotRequest;
 struct ClientSnapshotAck;
 struct ClientTalentRequest;
 struct SCraftResult;
 struct ServerMessage;
 
-class INetworkModule : public IModule, public IPlayerLifecycleNotifier, public IPlayerDirectory, public IChatDelivery
+class INetworkModule : public IModule, public IPlayerLifecycleNotifier, public IPlayerDirectory,
+    public IChatDelivery, public IPartyDelivery, public IPlayerUpdates, public IWorldEffects, public ISceneTransitions
 {
   public:
+    bool DeliverParty(CPlayer& player, const SPartyState& state) override;
     struct SSnapshotTelemetry
     {
         std::uint64_t full_snapshots_queued = 0;
@@ -60,6 +60,8 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier, public I
 
     bool Init() override;
     void Tick(float dt) override;
+    void BeginTick(float dt);
+    void EndTick(float dt);
     void ShutDown() override;
     CPlayer* FindPlayerById(uint32_t player_id) const override;
     bool AssignPlayerEntity(uint32_t player_id, CGameWorld& world, int entity_id);
@@ -73,23 +75,25 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier, public I
     CGameContext* GameContext() const;
     bool DeliverChat(CPlayer& player, const SChatEntry& chat) override;
     bool QueueWelcome(CPlayer& player) override;
+    bool QueuePlayerState(CPlayer& player) override;
     bool QueueEnvironment(CPlayer& player);
     void QueueCodexFull(CPlayer& player);
     void QueueCodexLoot(CPlayer& player);
-    void SendCodexDelta(CPlayer& player, uint8_t mob_type, uint8_t rarity, uint32_t count);
+    void SendCodexDelta(CPlayer& player, uint8_t mob_type, uint8_t rarity, uint32_t count) override;
     void BroadcastLightningChain(CGameWorld& world, const std::vector<florrbt::Vector2f>& points,
-                                 std::uint8_t style = 0);
+                                 std::uint8_t style = 0) override;
     bool SendTerrainDelta(CPlayer& player, uint8_t layer, uint16_t row, uint16_t col, uint32_t gid);
-    void BroadcastTerrainDelta(CGameWorld& world, uint8_t layer, uint16_t row, uint16_t col, uint32_t gid);
+    void BroadcastTerrainDelta(CGameWorld& world, uint8_t layer, uint16_t row, uint16_t col, uint32_t gid) override;
     bool SendTerrainWallRemove(CPlayer& player, florrbt::Vector2f min_pos, florrbt::Vector2f max_pos);
-    void BroadcastTerrainWallRemove(CGameWorld& world, florrbt::Vector2f min_pos, florrbt::Vector2f max_pos);
+    void BroadcastTerrainWallRemove(CGameWorld& world, florrbt::Vector2f min_pos, florrbt::Vector2f max_pos) override;
     bool QueueOwnerStateUpdate(CPlayer& player) override;
-    bool QueueInventoryUpdate(CPlayer& player);
-    void NotifyPlayerWorldChanged(CPlayer& player);
-    void NotifyPlayerRulesChanged(CPlayer& player);
+    bool QueueInventoryUpdate(CPlayer& player) override;
+    void NotifyPlayerWorldChanged(CPlayer& player) override;
+    void NotifyPlayerStateChanged(CPlayer& player) override;
+    void NotifyPlayerRulesChanged(CPlayer& player) override;
     const SSnapshotTelemetry& GetSnapshotTelemetry() const { return m_snapshot_telemetry; }
     bool QueueDebugTicket(CPlayer& player);
-    bool QueueSkillResult(CPlayer& player, ESkillRequestResult result, uint8_t skill_index, uint8_t skill_count);
+    bool QueueSkillResult(CPlayer& player, ESkillRequestResult result, uint8_t skill_index, uint8_t skill_count) override;
     bool AuthenticateRcon(CPlayer& player, const std::string& password, std::string& message);
     bool ValidateRconAuthorization(CPlayer& player);
 
@@ -112,7 +116,10 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier, public I
         std::string account_name;
         std::string password;
         std::string email;
+        std::string recovery_device_id;
+        std::string recovery_token;
         bool register_mode = false;
+        bool account_only = false;
     };
 
     struct SPendingVerifiedLogin
@@ -121,6 +128,8 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier, public I
         std::string trusted_ip_to_commit;
         bool register_mode = false;
         std::chrono::steady_clock::time_point expires_at{};
+        SAccountAuthResult authentication;
+        bool account_only = false;
     };
 
     struct SAuthFailureState
@@ -196,10 +205,31 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier, public I
     void ResetSnapshotState(CPlayer& player);
     void RetryPendingSceneSyncs();
     bool QueuePlayerBaseline(CPlayer& player, bool full_scene);
-    bool QueueAuthResult(CPlayer& player, EAuthResultCode code, const std::string& message);
+    bool QueueClientFeatures(CPlayer& player, bool force = false);
+    bool QueueAccountLinks(CPlayer& player);
+    bool QueueAccountLinkPayload(CPlayer&, const std::string&);
+    void HandleAccountLinkRequest(CPlayer&, const std::string&);
+    struct SFeaturePublication {
+        SPlayerSessionRef session; SWorldHandle world; int owner = -1; std::uint64_t owner_generation = 0;
+        std::vector<SClientFeature> features; std::uint32_t revision = 0;
+    };
+    std::unordered_map<std::uint32_t, SFeaturePublication> m_feature_states;
+    bool QueueAuthResult(CPlayer& player, EAuthResultCode code, const std::string& message,
+                         const SAccountAuthResult* authentication = nullptr);
     bool QueueOwnerState(CPlayer& player);
     bool QueueInventory(CPlayer& player) override;
-    bool QueueCraftResult(CPlayer& player, const SCraftResult& result);
+    std::string InventoryActorScope(const CPlayer& player) const;
+    bool QueueEconomyResult(CPlayer& player, const std::string& scope, const SEconomyDispatch& result);
+    void HandleEconomyRequest(CPlayer& player, const ClientEconomyRequest& request);
+    void ProcessEconomyReplies();
+    struct SPendingEconomyReply
+    {
+        SPlayerSessionRef session;
+        std::string scope;
+        SEconomyDispatch result;
+        unsigned stage = 0;
+    };
+    std::deque<SPendingEconomyReply> m_economy_replies;
     bool QueueChat(CPlayer& player, const SChatEntry& chat);
     EProxyHeaderResult ResolveTrustedProxyHeader(CPlayer& player);
     EPlayerBufferResult ProcessPlayerBuffer(CPlayer& player);
@@ -207,20 +237,19 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier, public I
     EPlayerBufferResult ApplyAuthentication(CPlayer& player, const std::string& account_name, bool register_mode,
                                             EAuthResultCode result_code = EAuthResultCode::Authenticated,
                                             const std::string& result_message = {},
-                                            const std::string& trusted_ip_to_commit = {});
+                                            const std::string& trusted_ip_to_commit = {},
+                                            const SAccountAuthResult* authentication = nullptr, bool account_only = false);
     bool RequestVerificationCode(CPlayer& player, const std::string& account_name, const std::string& email,
                                  bool registration);
     void ClearPendingEmailAuthentication(std::uint32_t player_id);
     void HandleChatRequest(CPlayer& player, const ClientChatRequest& request);
-    void HandleCraftRequest(CPlayer& player, const ClientCraftRequest& request);
-    void HandleForgeRequest(CPlayer& player, const ClientForgeRequest& request);
-    void HandleSecondarySlotRequest(CPlayer& player, const ClientSecondarySlotRequest& request);
     void HandleTalentRequest(CPlayer& player, const ClientTalentRequest& request);
     CPlayer* FindReconnectablePlayer(const std::string& account_name, const CPlayer* pending_player = nullptr) const;
     void DropPlayer(size_t index, const std::string& reason);
 
     int GetNewPlayerId();
     void FreePlayerId(int id);
+    bool InsertPlayer(std::unique_ptr<CPlayer> player);
 
     CServer& m_server;
     sf::TcpListener m_listener_v6;
@@ -228,6 +257,8 @@ class INetworkModule : public IModule, public IPlayerLifecycleNotifier, public I
     bool m_listening_v4 = false;
     bool m_listening_v6 = false;
     std::vector<std::unique_ptr<CPlayer>> m_players;
+    // 只索引，所有权仍由 m_players 持有；移除会话时先撤销索引。
+    std::unordered_map<std::uint32_t, CPlayer*> m_players_by_id;
     std::vector<std::unique_ptr<SPendingConnection>> m_pending_connections;
     std::unique_ptr<CDevDebugService> m_dev_debug;
     std::set<std::uint32_t> m_proxy_header_pending;

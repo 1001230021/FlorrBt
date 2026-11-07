@@ -16,8 +16,7 @@ namespace
 {
 bool IsSandboxAccount(const std::string& name) { return name.rfind("@sandbox:", 0) == 0; }
 
-// Minimal standalone server.cfg reader: applies every `set <key> <value>`
-// line plus the MySQL secret override, without starting a server console.
+// 迁移工具独立读取配置及 MySQL 密钥覆盖，不启动服务器控制台。
 void ApplyStartupConfig()
 {
     std::ifstream file(game_config::startup_commands_path);
@@ -70,7 +69,6 @@ SMigrationStats CollectStats(const std::vector<SPlayerAccount>& accounts)
     return stats;
 }
 
-// Lists which fields differ so a failed verification is actionable.
 std::string DescribeAccountDifference(const SPlayerAccount& expected, const SPlayerAccount& actual)
 {
     std::string fields;
@@ -88,9 +86,14 @@ std::string DescribeAccountDifference(const SPlayerAccount& expected, const SPla
     if (expected.slots != actual.slots) add("slots");
     if (expected.secondary_slots != actual.secondary_slots) add("secondary_slots");
     if (expected.extra_json != actual.extra_json) add("extra_json");
+    if (expected.account_id != actual.account_id) add("account_id");
+    if (expected.linked_identities != actual.linked_identities) add("linked_identities");
     if (expected.talent_points != actual.talent_points) add("talent_points");
     if (expected.talents != actual.talents) add("talents");
     if (expected.codex != actual.codex) add("codex");
+    if (expected.unique_petals != actual.unique_petals) add("unique_petals");
+    if (expected.recovery_credentials != actual.recovery_credentials) add("recovery_credentials");
+    if (expected.economy != actual.economy) add("economy");
     return fields.empty() ? "unknown difference" : fields;
 }
 
@@ -152,8 +155,7 @@ int MigrateJsonToMysql(const std::string& json_path_override)
         return 1;
     }
 
-    // Force the JSON backend for the load regardless of server.cfg so the
-    // migration always reads the file it was pointed at.
+    // 无论配置如何，迁移源都从指定 JSON 文件读取。
     game_config::account_backend = "json";
     std::string error;
     if (!CAccountDataStore::Load(json_path, &error))
@@ -162,6 +164,13 @@ int MigrateJsonToMysql(const std::string& json_path_override)
         return 1;
     }
     if (!error.empty()) std::cout << "  Load warning: " << error << "\n";
+
+    if (!CAccountDataStore::InitializeUniqueOwnership(game_config::unique_petal_data_path, &error))
+    {
+        std::cout << "ERROR: Unique ownership migration failed: " << error << "\n";
+        CAccountDataStore::ShutDown();
+        return 1;
+    }
 
     const std::vector<SPlayerAccount> accounts = CAccountDataStore::SnapshotAccounts();
     const std::uint64_t generation = CAccountDataStore::SnapshotGeneration();
@@ -173,7 +182,7 @@ int MigrateJsonToMysql(const std::string& json_path_override)
         std::cout << "ERROR: " << error << "\n";
         return 1;
     }
-    // Publish everything as one fresh snapshot (no change detection).
+    // 完整发布为新快照，不使用差异检测。
     mysql_account_backend::ResetPublishState();
     if (!mysql_account_backend::PublishSnapshot(accounts, generation, &error))
     {
@@ -216,11 +225,19 @@ int MigrateMysqlToJson(const std::string& json_path)
     }
 
     std::string error;
-    std::vector<SPlayerAccount> accounts;
-    std::uint64_t generation = 0;
-    if (!mysql_account_backend::LoadAll(accounts, generation, &error))
+    // 通过账号存储加载，确保旧部署的旁路账本先被导入和校验。
+    game_config::account_backend = "mysql";
+    if (!CAccountDataStore::Load(game_config::account_data_path, &error) ||
+        !CAccountDataStore::InitializeUniqueOwnership(game_config::unique_petal_data_path, &error))
     {
         std::cout << "ERROR: failed to load accounts from MySQL: " << error << "\n";
+        CAccountDataStore::ShutDown();
+        return 1;
+    }
+    const auto accounts = CAccountDataStore::SnapshotAccounts();
+    if (!CAccountDataStore::ShutDown(&error))
+    {
+        std::cout << "ERROR: failed to finalize MySQL source: " << error << "\n";
         return 1;
     }
     PrintStats("  Loaded", CollectStats(accounts));
@@ -245,7 +262,7 @@ int MigrateMysqlToJson(const std::string& json_path)
     std::cout << "Rollback export OK: " << json_path << "\n";
     return 0;
 }
-} // namespace
+}
 
 std::optional<int> RunAccountMigrationFromArgs(int argc, char** argv)
 {

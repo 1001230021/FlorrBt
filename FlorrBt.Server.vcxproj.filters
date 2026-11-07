@@ -171,6 +171,9 @@
     <ClInclude Include="src\Server\Persistence\account_store.h">
       <Filter>src\Server\Persistence</Filter>
     </ClInclude>
+    <ClInclude Include="src\Server\Persistence\economy_codec.h">
+      <Filter>src\Server\Persistence</Filter>
+    </ClInclude>
     <ClInclude Include="src\Server\Persistence\account_migration.h">
       <Filter>src\Server\Persistence</Filter>
     </ClInclude>
@@ -320,6 +323,9 @@
     <ClCompile Include="src\Server\Persistence\account_store.cpp">
       <Filter>src\Server\Persistence</Filter>
     </ClCompile>
+    <ClCompile Include="src\Server\Persistence\economy_codec.cpp">
+      <Filter>src\Server\Persistence</Filter>
+    </ClCompile>
     <ClCompile Include="src\Server\Persistence\account_migration.cpp">
       <Filter>src\Server\Persistence</Filter>
     </ClCompile>
@@ -332,7 +338,37 @@
     <ClCompile Include="src\Server\Persistence\unique_petal_registry.cpp">
       <Filter>src\Server\Persistence</Filter>
     </ClCompile>
+    <ClCompile Include="src\Server\Transport\remote_transport.cpp" />
+    <ClCompile Include="src\Server\Game\systems\world_terrain.cpp" />
+    <ClCompile Include="src\Server\Game\systems\natural_spawn_population.cpp" />
+    <ClCompile Include="src\Server\Game\systems\combat_events.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\open_world_rules.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\match_rules.cpp" />
+    <ClCompile Include="src\Server\Game\extensions\party_extension.cpp" />
+    <ClCompile Include="src\Server\Transport\report_review.cpp" />
     <ClCompile Include="src\Server\HotReload\hot_reload_snapshot.cpp" />
     <ClCompile Include="src\Server\HotReload\snapshot_archive.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\Server\Transport\remote_transport.h" />
+    <ClInclude Include="src\Server\Game\systems\world_terrain.h" />
+    <ClInclude Include="src\Server\Game\systems\natural_spawn_population.h" />
+    <ClInclude Include="src\Server\Game\systems\combat_events.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\open_world_rules.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\match_rules.h" />
+    <ClInclude Include="src\Server\Game\extensions\party_extension.h" />
+    <ClInclude Include="src\Server\Transport\report_review.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\Server\Game\extensions\player_feature_extensions.cpp" />
+    <ClCompile Include="src\Server\Module\network_features.cpp" />
+    <ClCompile Include="src\Server\Module\network_account_links.cpp" />
+    <ClCompile Include="src\Server\Auth\oauth_provider.cpp" />
+    <ClCompile Include="src\Server\Auth\account_link_service.cpp" />
+    <ClCompile Include="src\Server\Persistence\account_identity_codec.cpp" />
+    <ClInclude Include="src\Server\Game\extensions\player_feature_extensions.h" />
+    <ClInclude Include="src\Server\Auth\oauth_provider.h" />
+    <ClInclude Include="src\Server\Auth\account_link_service.h" />
+    <ClInclude Include="src\Server\Persistence\account_identity_codec.h" />
   </ItemGroup>
 </Project>

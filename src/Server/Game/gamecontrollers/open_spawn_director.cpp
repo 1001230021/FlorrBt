@@ -11,7 +11,6 @@
 #include "../gameworld.h"
 #include "../player.h"
 #include "../zone_mob_tools.h"
-#include "../../server.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -84,20 +83,6 @@ struct SSpawnScratch
     florrbt::SpawnInfluenceIndex dominant_index;
 };
 
-// All open-world directors run on the same server thread. Cache the expensive
-// cross-world occupancy scan for one server tick, then extend the cache as a
-// director inserts a natural rare mob. Without this, N open-world instances
-// each scan all N worlds on the same tick.
-struct SNaturalRareTypeCache
-{
-    CServer* server = nullptr;
-    std::uint64_t tick = 0;
-    bool valid = false;
-    std::unordered_set<int> types;
-};
-
-SNaturalRareTypeCache g_natural_rare_type_cache;
-
 SZoneBounds BuildZoneBounds(const FlorrBtMap::Zone& zone)
 {
     SZoneBounds bounds;
@@ -158,51 +143,11 @@ bool IsNaturalRareRarity(ERarity rarity)
     return rarity == ERarity::Eternal || rarity == ERarity::Unique;
 }
 
-// Collect the server-wide natural ET/Unique occupancy once per spawn pass.
-// This avoids scanning every world for every rarity roll and keeps the
-// uniqueness rule separate from console/summoned/precise spawn paths.
 void CollectNaturalRareMobTypes(CGameWorld& source_world, std::unordered_set<int>& result)
 {
     result.clear();
-    CServer* server = CServer::GetInstance();
-    if (server)
-    {
-        const std::uint64_t tick = server->GetTick();
-        if (g_natural_rare_type_cache.valid && g_natural_rare_type_cache.server == server &&
-            g_natural_rare_type_cache.tick == tick)
-        {
-            result = g_natural_rare_type_cache.types;
-            return;
-        }
-
-        g_natural_rare_type_cache.server = server;
-        g_natural_rare_type_cache.tick = tick;
-        g_natural_rare_type_cache.valid = true;
-        g_natural_rare_type_cache.types.clear();
-    }
-
-    auto collect_world = [&result](CGameWorld* world) {
-        if (!world) return;
-        world->ForEachEntity([&](CEntity* entity) {
-            if (!entity || entity->IsMarkedForDes()) return;
-            const auto* mob = dynamic_cast<const CMobBase*>(entity);
-            if (!mob || mob->IsDead() || !mob->IsNaturallySpawned()) return;
-            if (IsNaturalRareRarity(mob->GetRarity()))
-                result.insert(static_cast<int>(mob->GetMobType()));
-        });
-    };
-
-    if (server)
-    {
-        for (CGameWorld* world : server->GetWorlds())
-            collect_world(world);
-    }
-    else
-    {
-        collect_world(&source_world);
-    }
-
-    if (server) g_natural_rare_type_cache.types = result;
+    if (auto* context = source_world.GameContext()) context->NaturalSpawnPopulation().Collect(result);
+    else CNaturalSpawnPopulation::CollectWorld(source_world, result);
 }
 
 void RememberNaturalRareMobType(const CMobBase& mob, std::unordered_set<int>& result)
@@ -211,10 +156,8 @@ void RememberNaturalRareMobType(const CMobBase& mob, std::unordered_set<int>& re
 
     const int type = static_cast<int>(mob.GetMobType());
     result.insert(type);
-    CServer* server = CServer::GetInstance();
-    if (server && g_natural_rare_type_cache.valid && g_natural_rare_type_cache.server == server &&
-        g_natural_rare_type_cache.tick == server->GetTick())
-        g_natural_rare_type_cache.types.insert(type);
+    if (auto* world = mob.GameWorld())
+        if (auto* context = world->GameContext()) context->NaturalSpawnPopulation().Remember(mob);
 }
 
 bool PointInZoneBounds(const SZoneBounds& bounds, const florrbt::Vector2f& point)
@@ -266,9 +209,7 @@ bool CanSpawnAt(CGameWorld& world, const florrbt::Vector2f& pos, float spawn_rad
     bool too_close_to_mob = false;
     const float spawn_query_radius = std::max(0.f, game_config::open_spawn_query_radius);
     const float density_query_radius_sq = spawn_query_radius * spawn_query_radius;
-    // The spacing requirement is spawn_radius + mob_radius + min_distance, so the
-    // query must cover at least that for the largest possible mob; otherwise a
-    // large mob just outside the query circle could violate true minimum spacing.
+    // 查询范围须覆盖双方半径与最小间距，避免遗漏查询圆外的大体型生物。
     const float largest_mob_radius = std::max(
         0.f, game_config::open_spawn_query_radius * 0.5f + std::max(0.f, game_config::open_min_spawn_distance));
     const float query_radius = std::max(spawn_query_radius, spawn_radius + largest_mob_radius);
@@ -293,11 +234,9 @@ bool CanSpawnAt(CGameWorld& world, const florrbt::Vector2f& pos, float spawn_rad
 void CollectPlayerFlowerPositions(CGameWorld& world, std::vector<florrbt::Vector2f>& positions)
 {
     positions.clear();
-    const CGameContext* context = world.GameContext();
-    if (!context) return;
-
-    positions.reserve(context->Players().size());
-    for (const auto& player : context->Players())
+    const auto players = world.Players();
+    positions.reserve(players.size());
+    for (auto* player : players)
     {
         if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
         const CEntity* entity = player->GetEntity();
@@ -308,7 +247,7 @@ void CollectPlayerFlowerPositions(CGameWorld& world, std::vector<florrbt::Vector
         positions.push_back(mob->Pos());
     }
 }
-} // namespace
+}
 
 struct COpenSpawnDirector::CImplementation
 {
@@ -386,14 +325,11 @@ struct COpenSpawnDirector::CImplementation
             const float distance = florrbt::DistanceSquaredToSpawnPolygon(pos, zone.vertices);
             if (!std::isfinite(distance)) continue;
             const float difficulty = zone.difficulty + (resolved ? resolved->difficulty_offset : 0.f);
-            // A containing zone has distance zero. Overlapping/equidistant
-            // habitats use the harder one, matching spawn-retirement rules.
+            // 重叠或等距栖息地选择更高难度，与回收规则一致。
             if (selected_pool.empty() || distance < selected_distance ||
                 (distance == selected_distance && difficulty > selected_difficulty))
             {
-                // Resolve() returns storage owned by an unordered cache; copy
-                // the small weighted pool so resolving another profile cannot
-                // invalidate the selected candidate through a rehash.
+                // 解析缓存可能重哈希，复制选中的小型权重池以避免后续解析使引用失效。
                 selected_pool = *pool;
                 selected_distance = distance;
                 selected_difficulty = difficulty;
@@ -420,8 +356,7 @@ struct COpenSpawnDirector::CImplementation
                                                           game_config::open_dominant_mob_min_rate);
         if (std::uniform_real_distribution<float>(0.f, 1.f)(rng) >= rate) return false;
         const float penalty = florrbt::SpawnLevelPenalty(pressure, game_config::open_dominant_mob_level_penalty);
-        // Same quantile, lower mean: pressure cannot reroll a low result into
-        // a lucky higher result. A denied attempt consumes its spawn budget.
+        // 沿用同一分位数降低平均值，压力不能把原本低档结果重掷成高档；拒绝也消耗预算。
         rarity = PickRarityForDifficulty(difficulty - penalty * game_config::open_rarity_difficulty_scale, rarity_roll);
         return true;
     }
@@ -508,8 +443,7 @@ struct COpenSpawnDirector::CImplementation
     int ZoneTargetGetMobCount(const FlorrBtMap::Zone& zone, float area, float density_multiplier)
     {
         if (zone.density < 0.f) return 0;
-        // density == 0 with a mob pool is a map-authored single-spawn sentinel,
-        // not a population density. Keep it independent from the ambient wave.
+        // 密度为零且声明生物池表示地图单体刷怪点，独立于普通密度波次。
         if (zone.density == 0.f) return IsSingleSpawnZone(zone) ? 1 : 0;
 
         const double density_area = std::max(1.0, static_cast<double>(game_config::open_spawn_density_area));
@@ -694,12 +628,10 @@ struct COpenSpawnDirector::CImplementation
         if (single_spawn_zone_mobs.size() != zone_count)
             single_spawn_zone_mobs.assign(zone_count, SSingleSpawnZoneMob{});
 
-        // Ambient mobs can skip ticks, so an empty world cannot naturally consume or retire an idle population.
-        // Filling map-wide density targets here would therefore create permanent entities without serving a player.
+        // 空世界中的普通生物会休眠，不能为满足全图密度持续创建无人使用的实体。
         if (!has_players) return;
 
-        // Once per spawn round, not a world scan for every candidate. Include
-        // sleeping high-tier inhabitants; retain them without forcing ticks.
+        // 每轮只统计一次，包括休眠的高档生物，不为计数强制唤醒。
         scratch.dominant_mobs.clear();
         scratch.dominant_index.Clear();
         world.ForEachEntity([&](const CEntity* entity) {
@@ -722,10 +654,7 @@ struct COpenSpawnDirector::CImplementation
                                                      std::max<size_t>(1, game_config::open_active_spawn_zones_per_tick))
                                           : 0;
 
-        // Cursors come from a persisted snapshot.  Normalize them against
-        // the current map-derived vectors before using them in arithmetic;
-        // this makes a corrupt/old cursor harmless even when the map changed
-        // between reloads.
+        // 使用前按当前地图归一化快照游标，兼容换图或旧数据。
         if (!active_zone_indices.empty()) spawn_zone_cursor %= active_zone_indices.size();
 
         zone_work.reserve(zones_to_visit);
@@ -810,7 +739,7 @@ struct COpenSpawnDirector::CImplementation
                 auto mob = CreateMob(mob_type, &world, pos, rarity, true, true);
                 if (!mob) continue;
 
-                // A prototype rarity resolver may alter the final tier.
+                // 原型解析器可能改变最终稀有度。
                 if (IsNaturalRareRarity(mob->GetRarity()) &&
                     scratch.natural_rare_types.contains(static_cast<int>(mob->GetMobType())))
                     continue;
@@ -819,9 +748,7 @@ struct COpenSpawnDirector::CImplementation
                 if (!raw_mob) continue;
 
                 if (single_spawn_zone) RememberSingleSpawnZoneMob(zone_index, raw_mob);
-                // Reserve the type before the callback can perform any
-                // secondary work, so one natural ET/Unique cannot open a
-                // duplicate window within this tick.
+                // 回调前立即占用自然稀有类型，防止同帧重复刷新。
                 RememberNaturalRareMobType(*raw_mob, scratch.natural_rare_types);
                 RememberDominantMob(world, *raw_mob);
                 if (on_spawn) on_spawn(world, *raw_mob);
@@ -837,9 +764,7 @@ struct COpenSpawnDirector::CImplementation
             }
         }
 
-        // Only the rare path is allowed to sample an inactive advanced zone.
-        // It is intentionally bounded: this removes the proximity gate for ET
-        // and Unique without waking/populating every idle zone on the server.
+        // 无活跃玩家的高难度区域仅允许有界的稀有刷新，不填满或唤醒全部闲置区。
         const size_t rare_zones_to_visit =
             std::min(rare_zone_indices.size(), std::max<size_t>(1, game_config::open_rare_spawn_zones_per_tick));
         if (!rare_zone_indices.empty()) rare_spawn_zone_cursor %= rare_zone_indices.size();
@@ -997,8 +922,7 @@ bool COpenSpawnDirector::RestoreSnapshot(const CSnapshotReader& reader, std::str
     m_impl->count = reader.Float("spawn_countdown", game_config::open_initial_spawn_delay);
     if (!std::isfinite(m_impl->count)) m_impl->count = game_config::open_initial_spawn_delay;
     m_impl->spawn_zone_cursor = static_cast<size_t>(reader.UInt64("spawn_zone_cursor"));
-    // Accept snapshots written before the inactive rare-zone cursor was
-    // introduced; the old cursor has no semantic state to preserve.
+    // 旧快照没有非活跃稀有区游标时使用默认起点。
     m_impl->rare_spawn_zone_cursor = static_cast<size_t>(reader.UInt64(
         "rare_spawn_zone_cursor", reader.UInt64("idle_spawn_zone_cursor")));
     if (const std::string rng_state = reader.String("spawn_rng"); !rng_state.empty())

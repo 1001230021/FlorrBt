@@ -1,8 +1,6 @@
 #include "ant_kingdom_controller.h"
 #include "../../../Engine/logger.h"
 #include "../../../Shared/tools.h"
-#include "../../Module/network_module.h"
-#include "../../server.h"
 #include "../entities/eou_mob.h"
 #include "../entities/mob.h"
 #include "../entities/petals/petal.h"
@@ -15,6 +13,7 @@
 #include <cmath>
 #include <sstream>
 #include <string>
+#include <stdexcept>
 
 namespace
 {
@@ -58,40 +57,44 @@ bool CAntKingdomController::ValidatePheromoneGroupCount(const std::string& value
 }
 
 CAntKingdomController::CAntKingdomController(CControllerParams params)
-    : CAntHelPvpController(params)
+    : m_match(params, ToPetalType(EModPetalType::EouPheromone))
 {
+    const int start_team = params.GetInt("start_team",
+        ParseIntDefault(ResolveControllerParamDefault("pvp_start_team"), 2));
+    if (start_team < 2 || start_team > 31)
+        throw std::invalid_argument("EOU 参赛阵营必须在 2–31 之间，墙体标记最多支持 32 个阵营");
     if (params.Contains("pheromone_group_count"))
         m_pheromone_group_count = std::clamp(params.GetInt("pheromone_group_count", 6), 0, kMaxPheromoneGroups);
     else
         m_pheromone_group_count = std::clamp(
             ParseIntDefault(ResolveControllerParamDefault("eou_pheromone_group_count"), 6), 0, kMaxPheromoneGroups);
+    m_match.ForceLoadoutLock();
     InitializeSlotProxies();
+}
+
+CWall& CAntKingdomController::WallBoard() { return m_terrain->WallBoard(); }
+const CWall& CAntKingdomController::WallBoard() const { return m_terrain->WallBoard(); }
+
+bool CAntKingdomController::PrepareActivation(CWorldPreparation& preparation, std::string& error) const
+{
+    return preparation.RequireDigBoard(error);
 }
 
 void CAntKingdomController::OnActivate(CGameWorld& world)
 {
-    CMutableTerrainController::OnActivate(world);
-    // Bind wall markers to every in-rule dirt tile; map walls are registered
-    // by the board itself. Safe to run again after a hot-reload restore
-    // (InsertCell is idempotent per cell).
-    m_wall_board.Reload(world);
-    InsertWallsForTerrain(world);
-
-    SpawnInitialFood(world);
+    m_terrain = &world.Terrain();
+    m_initial_food_pending = true;
     m_food_replenish_timer = std::max(1.f, game_config::eou_food_replenish_interval);
 }
 
 void CAntKingdomController::OnDeactivate(CGameWorld& world)
 {
-    m_wall_board.DetachWorld(world);
-    CMutableTerrainController::OnDeactivate(world);
+    WallBoard().DetachWorld(world);
 }
 
 void CAntKingdomController::InitializeSlotProxies()
 {
-    // Skill cards disguised as vanilla petal slots for the client. The build
-    // card mirrors the build mode (Soil = storage, AntEgg = worker hatchery,
-    // Stinger = soldier hatchery).
+    // 显示卡片对应建造模式：Soil 储藏室、AntEgg 工蚁巢室、Stinger 兵蚁巢室。
     if (m_slot_proxy.GetSlotCount() == 0)
     {
         m_slot_proxy.SetSlotCount(3);
@@ -116,8 +119,8 @@ void CAntKingdomController::SpawnInitialFood(CGameWorld& world)
     const int count = std::clamp(game_config::eou_initial_food_count, 0, 128);
     if (count <= 0) return;
 
-    const int width = m_wall_board.Width();
-    const int height = m_wall_board.Height();
+    const int width = WallBoard().Width();
+    const int height = WallBoard().Height();
     if (width <= 0 || height <= 0) return;
 
     int placed = 0;
@@ -126,9 +129,9 @@ void CAntKingdomController::SpawnInitialFood(CGameWorld& world)
         const int col = static_cast<int>(GetLimitedRng(0.f, static_cast<float>(width)));
         const int row = static_cast<int>(GetLimitedRng(0.f, static_cast<float>(height)));
         if (row < 0 || row >= height || col < 0 || col >= width) continue;
-        if (m_wall_board.InBounds(row, col) && m_wall_board.TileSolid(row, col)) continue;
-        const florrbt::Vector2f pos{ (static_cast<float>(col) + 0.5f) * m_tile_size,
-                                (static_cast<float>(row) + 0.5f) * m_tile_size };
+        if (WallBoard().InBounds(row, col) && WallBoard().TileSolid(row, col)) continue;
+        const florrbt::Vector2f pos{ (static_cast<float>(col) + 0.5f) * WallBoard().TileSize(),
+                                (static_cast<float>(row) + 0.5f) * WallBoard().TileSize() };
         if (SpawnFoodEntity(world, pos, game_config::eou_initial_food_amount, 0)) ++placed;
     }
     LOG_INFO("ant_kingdom", "initial food placed: " + std::to_string(placed));
@@ -151,16 +154,16 @@ CEntity* CAntKingdomController::SpawnFoodEntity(CGameWorld& world, florrbt::Vect
 
     CEntity* entity = world.InsertEntity(std::move(food));
     if (!entity) return nullptr;
-    entity->Team() = 0; // neutral: anybody may harvest
+    entity->SetTeam(0); // 中立，允许所有队伍采集。
     m_food_entities.insert(entity->GetHandle());
     return entity;
 }
 
 int CAntKingdomController::SpawnColonyFood(CGameWorld& world, const CTeam& team, int count)
 {
-    if (!team.HasHomePos() || !m_wall_board.IsLoaded()) return 0;
+    if (!team.HasHomePos() || !WallBoard().IsLoaded()) return 0;
     count = std::clamp(count, 0, 8);
-    const float tile = m_wall_board.TileSize();
+    const float tile = WallBoard().TileSize();
     const float radius = std::max(0.f, game_config::eou_food_mob_radius);
     const float min_distance = std::max(100.f, game_config::eou_queen_radius + radius + 32.f);
     const float max_distance = std::max(min_distance, std::min(480.f, game_config::default_horizon * 0.8f));
@@ -176,9 +179,9 @@ int CAntKingdomController::SpawnColonyFood(CGameWorld& world, const CTeam& team,
         {
             const int row = static_cast<int>(std::floor((pos.y + dy * (radius + 8.f)) / tile));
             const int col = static_cast<int>(std::floor((pos.x + dx * (radius + 8.f)) / tile));
-            clear = m_wall_board.InBounds(row, col) && !m_wall_board.TileSolid(row, col);
+            clear = WallBoard().InBounds(row, col) && !WallBoard().TileSolid(row, col);
         }
-        if (!clear || !eou_has_line_of_sight(m_wall_board, team.HomePos(), pos)) continue;
+        if (!clear || !eou_has_line_of_sight(WallBoard(), team.HomePos(), pos)) continue;
         for (const SEntityHandle& food_ref : m_food_entities)
         {
             const auto* food = world.ResolveEntity(food_ref);
@@ -207,7 +210,7 @@ void CAntKingdomController::ReplenishFood(CGameWorld& world)
         {
             const auto* food = world.ResolveEntity(food_ref);
             if (food && EouDistance(team.HomePos(), food->Pos()) <= std::max(512.f, game_config::default_horizon) &&
-                eou_has_line_of_sight(m_wall_board, team.HomePos(), food->Pos())) ++nearby;
+                eou_has_line_of_sight(WallBoard(), team.HomePos(), food->Pos())) ++nearby;
         }
         if (nearby < near_cap) SpawnColonyFood(world, team, 1);
     }
@@ -215,8 +218,7 @@ void CAntKingdomController::ReplenishFood(CGameWorld& world)
 
 void CAntKingdomController::OnMobDefeated(CGameWorld& world, CMobBase& mob)
 {
-    // A slain queen loses the match for her team (despawns via Dissolve do
-    // not run through the defeat path, so this only fires on real kills).
+    // 只有真实击杀才判定蚁后战败，解散队伍不经过该路径。
     for (auto& [team_id, team] : m_teams)
     {
         if (!team.IsQueen(mob.GetHandle())) continue;
@@ -224,14 +226,13 @@ void CAntKingdomController::OnMobDefeated(CGameWorld& world, CMobBase& mob)
         break;
     }
 
-    // Every eou mob leaves its corpse: a neutral food entity with the mob's
-    // biomass as food total.
+    // EOU 生物死亡后按生物量生成中立食物。
     if (IEouMob* eou = dynamic_cast<IEouMob*>(&mob))
     {
         const float biomass = eou->EouBiomass();
         if (biomass > 0.f) SpawnFoodEntity(world, mob.Pos(), biomass, 0);
     }
-    COpenController::OnMobDefeated(world, mob);
+    m_open.OnMobDefeated(world, mob);
 }
 
 void CAntKingdomController::OnEntityRemoved(CGameWorld& world, CEntity& entity, EEntityRemovalReason reason)
@@ -242,16 +243,17 @@ void CAntKingdomController::OnEntityRemoved(CGameWorld& world, CEntity& entity, 
         if (CTeam* team = FindTeam(cell->TeamId())) team->RemoveCell(world, *cell);
     }
     m_food_entities.erase(entity.GetHandle());
-    CAntHelPvpController::OnEntityRemoved(world, entity, reason);
+    m_open.OnEntityRemoved(world, entity, reason);
 }
 
 void CAntKingdomController::OnTick(CGameWorld& world, float dt)
 {
-    CMutableTerrainController::OnTick(world, dt);
-    CAntHelPvpController::OnTick(world, dt);
-    // After a hot-reload restore the world's map (and wall grid) is rebuilt:
-    // lazily rebuild the board and replay its recorded cells/removals.
-    if (!m_wall_board.IsLoaded()) m_wall_board.Reload(world);
+    if (m_initial_food_pending) { m_initial_food_pending = false; SpawnInitialFood(world); }
+    m_open.OnTick(world, dt);
+    world.Terrain().TickTools(dt);
+    m_match.OnTick(world, dt);
+    // 按世界当前地形刷新寻路标记。
+    world.Terrain().EnsureDigBoard();
     m_food_replenish_timer -= dt;
     if (m_food_replenish_timer <= 0.f)
     {
@@ -270,36 +272,30 @@ void CAntKingdomController::OnTick(CGameWorld& world, float dt)
 void CAntKingdomController::OnPlayerEntityReady(CGameWorld& world, CPlayer& player, CPlayerFlower& flower,
                                                  EPlayerSpawnReason reason)
 {
-    CAntHelPvpController::OnPlayerEntityReady(world, player, flower, reason);
-    // Pheromone petal slots (slot 0 stays reserved; slots 1..N hold one
-    // pheromone petal each, bound to pheromone group 1..N).
-    if (HasMatchTeam(player.GetId())) EquipPheromonePetals(flower);
+    m_match.OnPlayerEntityReady(world, player, flower, reason);
+    // 槽 0 保留，槽 1..N 与信息素组 1..N 对应。
+    if (HasMatchTeam(player)) EquipPheromonePetals(flower);
 }
 
 void CAntKingdomController::OnPlayerArrivalCommitted(CGameWorld& world, CPlayer& player)
 {
-    CMutableTerrainController::OnPlayerArrivalCommitted(world, player);
-    CAntHelPvpController::OnPlayerArrivalCommitted(world, player);
+    m_match.OnPlayerArrivalCommitted(world, player);
 
-    // A match team gets its eou team (owning its pheromone groups).
     const int team_id = PlayerTeam(player.GetId());
-    if (HasMatchTeam(player.GetId()))
+    if (HasMatchTeam(player))
     {
         m_team_slot_proxies.try_emplace(team_id, m_slot_proxy);
         SyncBuildModeCard(team_id);
         if (auto* flower = dynamic_cast<CPlayerFlower*>(player.GetEntity())) EquipPheromonePetals(*flower);
     }
-    if (HasMatchTeam(player.GetId()) && m_teams.find(team_id) == m_teams.end())
+    if (HasMatchTeam(player) && m_teams.find(team_id) == m_teams.end())
     {
-        m_teams.emplace(team_id, CTeam(team_id, m_wall_board));
-        // The team starts with pheromone groups 1..N (slot-bound petals bind
-        // to group == slot index; group 1 is the primary /pheromone target).
+        m_teams.emplace(team_id, CTeam(team_id, WallBoard()));
+        // 主信息素目标为组 1，其他组与对应槽位绑定。
         florrbt::Vector2f origin = player.GetEntity() ? player.GetEntity()->Pos() : florrbt::Vector2f{};
         CTeam& team = m_teams.at(team_id);
         for (int i = 1; i <= m_pheromone_group_count; ++i) team.EnsureGroup(i, origin);
-        // The team's home is the first player's spawn: the queen stands here
-        // and workers ferry food here. Home must exist before the workers
-        // spawn so adoption hands them the right ferry point.
+        // 先确定巢穴再生成工蚁，避免搬运目标缺失。
         if (!team.HasHomePos()) team.SetHomePos(origin);
         team.DepositFood(game_config::eou_initial_stash);
         SpawnQueen(world, team, origin);
@@ -317,14 +313,11 @@ void CAntKingdomController::OnPlayerArrivalCommitted(CGameWorld& world, CPlayer&
     SendSystemMessage(world, player, "EOU: /colony = food/army status; /colony help = controls. Collect food, build nurseries, protect your queen.");
 }
 
-bool CAntKingdomController::WritePlayerScene(const CGameWorld& world, const CPlayer& player, IPlayerSceneWriter& writer) const
-{
-    return CMutableTerrainController::WritePlayerScene(world, player, writer) && m_wall_board.WritePlayerScene(writer);
-}
+
 
 void CAntKingdomController::OnPlayerDepartureCommitted(CGameWorld& world, CPlayer& player, CEntity* departing)
 {
-    // Dissolve the player's team before the pvp base forgets the assignment.
+    // 先解散团队，再撤销玩家的参赛记录。
     const int team_id = PlayerTeam(player.GetId());
     const auto it = m_teams.find(team_id);
     if (it != m_teams.end())
@@ -335,7 +328,7 @@ void CAntKingdomController::OnPlayerDepartureCommitted(CGameWorld& world, CPlaye
         m_team_slot_proxies.erase(team_id);
         LOG_INFO("ant_kingdom", "team " + std::to_string(team_id) + " dissolved");
     }
-    CAntHelPvpController::OnPlayerDepartureCommitted(world, player, departing);
+    m_match.OnPlayerDepartureCommitted(world, player, departing);
 }
 
 bool CAntKingdomController::HandlePlayerCommand(CGameWorld& world, CPlayer& player,
@@ -352,7 +345,7 @@ bool CAntKingdomController::HandlePlayerCommand(CGameWorld& world, CPlayer& play
         if (name == "build") return HandleBuildCommand(world, player, args);
         if (name == "colony" || name == "food") return HandleColonyCommand(world, player, args);
     }
-    return COpenController::HandlePlayerCommand(world, player, args);
+    return false;
 }
 
 EEouBuildMode CAntKingdomController::TeamBuildMode(int team_id) const
@@ -373,12 +366,12 @@ const char* EouBuildModeName(EEouBuildMode mode)
     }
     return "storage";
 }
-} // namespace
+}
 
 bool CAntKingdomController::HandleBuildCommand(CGameWorld& world, CPlayer& player,
                                                const std::vector<std::string>& args)
 {
-    if (!HasMatchTeam(player.GetId()))
+    if (!HasMatchTeam(player))
     {
         SendSystemMessage(world, player, "build: only players with a match team can build");
         return true;
@@ -408,7 +401,7 @@ bool CAntKingdomController::HandleBuildCommand(CGameWorld& world, CPlayer& playe
         return true;
     }
     SyncBuildModeCard(team_id);
-    if (CGameContext* context = world.GameContext()) context->Network().QueueOwnerStateUpdate(player);
+    if (CGameContext* context = world.GameContext()) context->PlayerUpdates().QueueOwnerStateUpdate(player);
     const EEouBuildMode chosen = TeamBuildMode(team_id);
     const float cost = chosen == EEouBuildMode::SoldierHatchery ? game_config::eou_soldier_cell_build_cost
                        : chosen == EEouBuildMode::WorkerHatchery ? game_config::eou_worker_cell_build_cost
@@ -419,14 +412,11 @@ bool CAntKingdomController::HandleBuildCommand(CGameWorld& world, CPlayer& playe
     return true;
 }
 
-// `/colony` (alias `/food`): the colony readout. Without a HUD this is the
-// only way to see the food economy, so it reports stock, nurseries and the
-// live population in one message.
 bool CAntKingdomController::HandleColonyCommand(CGameWorld& world, CPlayer& player,
                                                 const std::vector<std::string>& args)
 {
     (void)args;
-    if (!HasMatchTeam(player.GetId()))
+    if (!HasMatchTeam(player))
     {
         SendSystemMessage(world, player, "colony: only players with a match team have a colony");
         return true;
@@ -457,8 +447,7 @@ bool CAntKingdomController::HandleColonyCommand(CGameWorld& world, CPlayer& play
         if (egg->Grown()) ++grown_eggs;
     }
 
-    // Population: ants counted from the world (group membership can lag a
-    // tick behind a hatch), carried cargo included so ferried food is visible.
+    // 按世界实体统计人口，避免孵化后组成员登记延迟一帧。
     int workers = 0;
     int soldiers = 0;
     float carried = 0.f;
@@ -510,19 +499,16 @@ void CAntKingdomController::SyncBuildModeCard(int team_id)
 
 bool CAntKingdomController::WorkerDigWall(CGameWorld& world, int team, florrbt::Vector2f pos)
 {
-    if (m_tile_size <= 0.f) return false;
-    const int col = static_cast<int>(std::floor(pos.x / m_tile_size));
-    const int row = static_cast<int>(std::floor(pos.y / m_tile_size));
-    if (!m_wall_board.InBounds(row, col)) return false;
-    // The job may have vanished under the worker: the wall already dug (by
-    // either team) or the flag withdrawn mid-dig.
-    if (!m_wall_board.TileSolid(row, col)) return false;
-    if (!m_wall_board.IsDugByTeam(row, col, team)) return false;
-    if (!m_wall_board.CommitRemove(row, col, team)) return false;
-    // The walls are gone (removed + broadcast by CommitRemove); erase the
-    // dirt tile so the client visual matches and the four-tile rule
-    // re-normalizes the tunnel edge.
-    EraseTerrain(world, m_wall_board.CellCenter(row, col), 1.f);
+    if (WallBoard().TileSize() <= 0.f) return false;
+    const int col = static_cast<int>(std::floor(pos.x / WallBoard().TileSize()));
+    const int row = static_cast<int>(std::floor(pos.y / WallBoard().TileSize()));
+    if (!WallBoard().InBounds(row, col)) return false;
+    // 挖掘过程中墙体或标记可能已被其他操作移除。
+    if (!WallBoard().TileSolid(row, col)) return false;
+    if (!WallBoard().IsDugByTeam(row, col, team)) return false;
+    if (!WallBoard().CommitRemove(row, col, team)) return false;
+    // 删墙后同步擦除贴图，并重新计算通道边缘。
+    world.Terrain().EraseTerrain(WallBoard().CellCenter(row, col), 1.f);
     return true;
 }
 
@@ -541,13 +527,11 @@ const CTeam* CAntKingdomController::FindTeam(int team_id) const
 void CAntKingdomController::AdoptEouMob(CGameWorld& world, CTeam& team, CEntity& entity)
 {
     (void)world;
-    entity.Team() = team.TeamId();
+    entity.SetTeam(team.TeamId());
     ConfigureColonyEntity(entity);
-    // Workers know where to ferry food: the team's home (the queen's spot).
     if (auto* eou = dynamic_cast<IEouMob*>(&entity))
         if (team.HasHomePos()) eou->SetHomePos(team.HomePos());
-    // Membership in the primary group (id 1) wires the board and group id;
-    // create the group on demand when the team has none yet.
+    // 加入主信息素组时同时绑定寻路板。
     CEouPheromoneGroup* group = team.GroupCount() > 0 ? team.FindGroup(1) : nullptr;
     if (!group) group = team.CreateGroup(entity.Pos());
     group->AddMember(&entity);
@@ -579,7 +563,7 @@ CEntity* CAntKingdomController::SpawnQueen(CGameWorld& world, CTeam& team, florr
 
     CEntity* entity = world.InsertEntity(std::move(queen_mob));
     if (!entity) return nullptr;
-    entity->Team() = team.TeamId();
+    entity->SetTeam(team.TeamId());
     ConfigureColonyEntity(*entity);
     team.SetQueen({ entity->Id(), entity->Generation() });
     LOG_INFO("ant_kingdom", "team " + std::to_string(team.TeamId()) + " queen spawned at " +
@@ -589,8 +573,7 @@ CEntity* CAntKingdomController::SpawnQueen(CGameWorld& world, CTeam& team, florr
 
 void CAntKingdomController::OnQueenSlain(CGameWorld& world, int team_id)
 {
-    // Name the winner: with the fixed two-team cap the only other match team
-    // still standing takes the match.
+    // 保留双队规则：另一支仍存活的队伍获胜。
     int winner_team = 0;
     for (const auto& [other_id, other_team] : m_teams)
     {
@@ -620,7 +603,7 @@ bool CAntKingdomController::HandleMarkWallCommand(CGameWorld& world, CPlayer& pl
                                                   const std::vector<std::string>& args)
 {
     const int team = PlayerTeam(player.GetId());
-    if (!HasMatchTeam(player.GetId()))
+    if (!HasMatchTeam(player))
     {
         SendSystemMessage(world, player, "mark_wall: only players with a match team can mark walls");
         return true;
@@ -630,17 +613,15 @@ bool CAntKingdomController::HandleMarkWallCommand(CGameWorld& world, CPlayer& pl
     int target_col = -1;
     if (args.size() == 1)
     {
-        // Cell under the player.
         if (CEntity* entity = player.GetEntity())
         {
             const florrbt::Vector2f pos = entity->Pos();
-            target_col = static_cast<int>(std::floor(pos.x / m_tile_size));
-            target_row = static_cast<int>(std::floor(pos.y / m_tile_size));
+            target_col = static_cast<int>(std::floor(pos.x / WallBoard().TileSize()));
+            target_row = static_cast<int>(std::floor(pos.y / WallBoard().TileSize()));
         }
     }
     else if (args.size() == 2)
     {
-        // "[x,y]" world coordinates.
         const std::string& token = args[1];
         if (token.size() < 5 || token.front() != '[' || token.back() != ']')
         {
@@ -653,8 +634,8 @@ bool CAntKingdomController::HandleMarkWallCommand(CGameWorld& world, CPlayer& pl
             SendSystemMessage(world, player, "mark_wall: usage /mark_wall or /mark_wall [x,y]");
             return true;
         }
-        target_col = static_cast<int>(std::floor(target.x / m_tile_size));
-        target_row = static_cast<int>(std::floor(target.y / m_tile_size));
+        target_col = static_cast<int>(std::floor(target.x / WallBoard().TileSize()));
+        target_row = static_cast<int>(std::floor(target.y / WallBoard().TileSize()));
     }
     else
     {
@@ -662,21 +643,21 @@ bool CAntKingdomController::HandleMarkWallCommand(CGameWorld& world, CPlayer& pl
         return true;
     }
 
-    if (!m_wall_board.InBounds(target_row, target_col))
+    if (!WallBoard().InBounds(target_row, target_col))
     {
         SendSystemMessage(world, player, "mark_wall: target cell is out of bounds");
         return true;
     }
 
-    if (m_wall_board.IsDugByTeam(target_row, target_col, team))
+    if (WallBoard().IsDugByTeam(target_row, target_col, team))
     {
-        m_wall_board.ClearTeamFlag(target_row, target_col, team);
+        WallBoard().ClearTeamFlag(target_row, target_col, team);
         SendSystemMessage(world, player, "mark_wall: removed your flag at [" +
                                              std::to_string(target_col) + "," + std::to_string(target_row) + "]");
     }
     else
     {
-        m_wall_board.SetTeamFlag(target_row, target_col, team);
+        WallBoard().SetTeamFlag(target_row, target_col, team);
         SendSystemMessage(world, player, "mark_wall: flagged [" + std::to_string(target_col) + "," +
                                              std::to_string(target_row) + "] for team " + std::to_string(team));
     }
@@ -692,7 +673,7 @@ bool CAntKingdomController::HandleMarkWallCommand(CGameWorld& world, CPlayer& pl
 bool CAntKingdomController::HandlePheromoneCommand(CGameWorld& world, CPlayer& player,
                                                    const std::vector<std::string>& args)
 {
-    if (!HasMatchTeam(player.GetId()))
+    if (!HasMatchTeam(player))
     {
         SendSystemMessage(world, player, "pheromone: only players with a match team can place pheromones");
         return true;
@@ -730,7 +711,6 @@ bool CAntKingdomController::HandlePheromoneCommand(CGameWorld& world, CPlayer& p
         return true;
     }
 
-    // The primary group (first created) receives the pheromone target.
     CEouPheromoneGroup* group = team->GroupCount() > 0 ? team->FindGroup(1) : nullptr;
     if (!group) group = team->CreateGroup(target);
     else group->SetPheromoneTarget(target);
@@ -768,11 +748,7 @@ void CAntKingdomController::EquipPheromonePetals(CPlayerFlower& flower)
     if (!proto) return;
     const int count = m_pheromone_group_count;
 
-    // Slot 0 stays reserved (empty / proxy skill card); slots 1..N carry the
-    // pheromone petals in rarity order Common..Mythic (then Ultra/Super/
-    // Eternal/Unique for larger N). Two more empty slots trail the petals so
-    // the mark-wall and build-mode proxy cards have somewhere to show (the
-    // snapshot service maps proxy cards onto empty slots in order).
+    // 槽 0 与末尾两个空槽保留给逻辑技能，中间槽依稀有度映射信息素组。
     static constexpr ERarity kPheromoneRarities[kMaxPheromoneGroups] = {
         ERarity::Common,  ERarity::Unusual, ERarity::Rare,      ERarity::Epic,
         ERarity::Legendary, ERarity::Mythic, ERarity::Ultra,    ERarity::Super,
@@ -784,7 +760,7 @@ void CAntKingdomController::EquipPheromonePetals(CPlayerFlower& flower)
     {
         const auto& slot = flower.GetSlots()[i];
         if (slot.m_p_proto != proto || slot.m_stored_rarity != kPheromoneRarities[i - 1] ||
-            slot.m_banned || !slot.m_available)
+            slot.IsBanned() || !slot.m_available)
             flower.LoadPetalSlot(i, proto, kPheromoneRarities[i - 1]);
     }
 }
@@ -797,7 +773,6 @@ void CAntKingdomController::OnPheromonePetalStopped(CGameWorld& world, int team_
 
     if (!defend)
     {
-        // Attack release: the resting point guides the bound pheromone group.
         if (group_id <= 0) return;
         CEouPheromoneGroup* group = team->FindGroup(group_id);
         if (!group) return;
@@ -805,27 +780,25 @@ void CAntKingdomController::OnPheromonePetalStopped(CGameWorld& world, int team_
         return;
     }
 
-    // Defend release: toggle the cell under the resting point.
     if (CEouCellMob* cell = team->GetCellAt(world, pos))
     {
         DestroyCellEntity(world, cell, team_id);
         return;
     }
-    // Cells live in dug-out space: refuse to build inside a standing wall.
-    if (m_tile_size > 0.f)
+    // 只能在已经挖开的区域建造。
+    if (WallBoard().TileSize() > 0.f)
     {
-        const int col = static_cast<int>(std::floor(pos.x / m_tile_size));
-        const int row = static_cast<int>(std::floor(pos.y / m_tile_size));
-        if (m_wall_board.InBounds(row, col) && m_wall_board.TileSolid(row, col))
+        const int col = static_cast<int>(std::floor(pos.x / WallBoard().TileSize()));
+        const int row = static_cast<int>(std::floor(pos.y / WallBoard().TileSize()));
+        if (WallBoard().InBounds(row, col) && WallBoard().TileSolid(row, col))
         {
             SendTeamMessage(world, team_id, "cannot build inside a wall - dig it open first");
             return;
         }
-        // Snap to the cell center so the grid connectivity reads cleanly.
-        if (m_wall_board.InBounds(row, col)) pos = m_wall_board.CellCenter(row, col);
+        // 巢室对齐网格中心，以便计算连通关系。
+        if (WallBoard().InBounds(row, col)) pos = WallBoard().CellCenter(row, col);
     }
     const EEouBuildMode build_mode = TeamBuildMode(team_id);
-    // Cell count is capped so a colony cannot carpet the map with nurseries.
     if (static_cast<int>(team->Cells().AllCells().size()) >= std::max(1, game_config::eou_max_cells_per_team))
     {
         SendTeamMessage(world, team_id, "cell limit reached - demolish one first");
@@ -836,8 +809,7 @@ void CAntKingdomController::OnPheromonePetalStopped(CGameWorld& world, int team_
     const EMobType egg_type = build_mode == EEouBuildMode::SoldierHatchery ? ToMobType(EModMobType::EouSoldier)
                               : build_mode == EEouBuildMode::WorkerHatchery ? ToMobType(EModMobType::EouWorker)
                                                                             : EMobType::None;
-    // Building costs food (soldier nurseries cost the most). Payment is
-    // atomic: it only leaves the stores once the cell actually exists.
+    // 创建巢室失败时返还建造费用。
     const float cost = build_mode == EEouBuildMode::SoldierHatchery ? game_config::eou_soldier_cell_build_cost
                        : build_mode == EEouBuildMode::WorkerHatchery ? game_config::eou_worker_cell_build_cost
                                                                      : game_config::eou_storage_build_cost;
@@ -858,9 +830,7 @@ float CAntKingdomController::DepositWorkerFood(CGameWorld& world, int team_id, f
 {
     CTeam* team = FindTeam(team_id);
     if (!team || amount <= 0.f) return 0.f;
-    // Storage cells first; whatever they cannot take (no cells yet, or the
-    // nearest is full) lands on the queen's stash. Both are capped, so the
-    // worker keeps whatever neither could accept and retries later.
+    // 储藏室和团队库存都满时，未接收的食物继续留在工蚁身上。
     const float stored = team->DepositToNearestStorage(world, pos, amount);
     const float stashed = stored < amount ? team->DepositFood(amount - stored) : 0.f;
     return stored + stashed;
@@ -868,7 +838,16 @@ float CAntKingdomController::DepositWorkerFood(CGameWorld& world, int team_id, f
 
 std::vector<SControllerParamInfo> CAntKingdomController::ParamSchema() const
 {
-    std::vector<SControllerParamInfo> schema = CAntHelPvpController::ParamSchema();
+    std::vector<SControllerParamInfo> schema = CMatchRules::ParamSchemaStatic();
+    for (auto& item : schema)
+        if (item.key == "start_team")
+        {
+            item.description = "EOU 首个参赛阵营（2–31）";
+            item.validate = [](const std::string& value) {
+                const int team = ParseIntDefault(value, -1);
+                return team >= 2 && team <= 31;
+            };
+        }
     schema.push_back({
         "pheromone_group_count",
         EControllerParamType::Int,
@@ -896,29 +875,13 @@ void CAntKingdomController::SendSystemMessage(CGameWorld& world, CPlayer& player
     context->Extensions().Globals().Find<IChatService>()->SendTo(player, entry);
 }
 
-void CAntKingdomController::InsertWallsForTerrain(CGameWorld& world)
-{
-    (void)world;
-    if (!m_terrain_loaded) return;
 
-    int inserted = 0;
-    for (int row = 0; row < m_height; ++row)
-    {
-        for (int col = 0; col < m_width; ++col)
-        {
-            // In-rule tile: a dirt variant the four-tile rule can express.
-            if (CurrentDirtMask(row, col) < 0) continue;
-            if (m_wall_board.InsertCell(row, col)) ++inserted;
-        }
-    }
-    LOG_INFO("ant_kingdom", "bound " + std::to_string(inserted) + " wall markers to in-rule dirt tiles");
-}
 
 void CAntKingdomController::CaptureSnapshot(CSnapshotWriter& writer) const
 {
-    CMutableTerrainController::CaptureSnapshot(writer);
-    CAntHelPvpController::CaptureSnapshot(writer);
-    m_wall_board.CaptureSnapshot(writer);
+    writer.Field("initial_food_pending", m_initial_food_pending);
+    m_open.CaptureSnapshot(writer);
+    m_match.CaptureSnapshot(writer);
 
     writer.Field("eou_team_count", static_cast<std::uint32_t>(m_teams.size()));
     std::uint32_t index = 0;
@@ -937,17 +900,21 @@ void CAntKingdomController::CaptureSnapshot(CSnapshotWriter& writer) const
 
 bool CAntKingdomController::RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error)
 {
-    if (!CMutableTerrainController::RestoreSnapshot(reader, version, error)) return false;
-    if (!CAntHelPvpController::RestoreSnapshot(reader, version, error)) return false;
+    if (reader.Int("start_team", 2) > 31) { error = "EOU 阵营超出墙体标记范围"; return false; }
+    m_initial_food_pending = reader.Bool("initial_food_pending", false);
+    if (!m_open.RestoreSnapshot(reader, version, error)) return false;
+    if (!m_match.RestoreSnapshot(reader, version, error)) return false;
+    m_match.ForceLoadoutLock();
     if (version > SnapshotVersion())
     {
         error = "Unsupported ant-kingdom controller snapshot version " + std::to_string(version);
         return false;
     }
-    if (!m_wall_board.RestoreSnapshot(reader, version, error)) return false;
 
     m_teams.clear();
     m_team_build_type.clear();
+    if (!m_terrain && reader.UInt32("eou_team_count", 0))
+    { error = "恢复 EOU 团队前必须绑定世界地形"; return false; }
     constexpr std::uint32_t max_restore_teams = 4096;
     const std::uint32_t count = std::min(reader.UInt32("eou_team_count", 0), max_restore_teams);
     for (std::uint32_t i = 0; i < count; ++i)
@@ -956,11 +923,10 @@ bool CAntKingdomController::RestoreSnapshot(const CSnapshotReader& reader, std::
         const json_t* node = reader.Node("eou_team_" + std::to_string(team_id));
         if (!node || !json_is_object(node) || team_id <= 0) continue;
         CSnapshotReader team_reader(node);
-        auto team = std::make_unique<CTeam>(team_id, m_wall_board);
+        auto team = std::make_unique<CTeam>(team_id, WallBoard());
         if (!team->RestoreSnapshot(team_reader, version, error)) return false;
         m_teams.emplace(team_id, std::move(*team));
-        // Old snapshots stored ECouCellType (0 storage / 1 hatchery); the
-        // build-mode values keep those meanings (1 = worker hatchery).
+        // 兼容旧类型：0 为储藏室，1 为工蚁巢室。
         const int build_mode = reader.Int("eou_build_type_" + std::to_string(team_id),
                                           static_cast<int>(EEouBuildMode::Storage));
         m_team_build_type[team_id] = build_mode == static_cast<int>(EEouBuildMode::SoldierHatchery)
@@ -980,8 +946,8 @@ bool CAntKingdomController::RestoreSnapshot(const CSnapshotReader& reader, std::
 
 bool CAntKingdomController::ResolveReferences(CGameWorld& world, const IGameWorldResolver& resolver, std::string& error)
 {
-    if (!CMutableTerrainController::ResolveReferences(world, resolver, error)) return false;
-    m_wall_board.Reload(world);
+    if (!m_match.ResolveReferences(world, resolver, error)) return false;
+    world.Terrain().EnsureDigBoard();
     for (auto& [team_id, team] : m_teams)
     {
         if (team.TeamId() != team_id)
@@ -992,11 +958,7 @@ bool CAntKingdomController::ResolveReferences(CGameWorld& world, const IGameWorl
         team.ResolveReferences(world);
     }
 
-    // The neutral food index holds {id, generation} handles that only make
-    // sense against live entities, so it is deliberately not snapshotted:
-    // after a restore we rebuild it by scanning the world once. Without this
-    // the replenisher would see an empty field and re-seed on top of the
-    // food that actually survived.
+    // 食物索引从恢复后的实体重建，防止补给逻辑重复生成食物。
     m_food_entities.clear();
     world.ForEachEntity([&](CEntity* entity) {
         if (auto* egg = dynamic_cast<CEouEggMob*>(entity))
@@ -1013,9 +975,7 @@ bool CAntKingdomController::ResolveReferences(CGameWorld& world, const IGameWorl
     return true;
 }
 
-// A cell is going away (demolished, despawned or dissolved): its egg dies
-// with it and its stored food returns to the team so a rebuild does not
-// silently burn the colony's reserves.
+// 移除巢室时清理卵，并返还储粮。
 void CAntKingdomController::ReleaseCellContents(CGameWorld& world, CEouCellMob& cell)
 {
     if (cell.HasEgg())
@@ -1024,14 +984,13 @@ void CAntKingdomController::ReleaseCellContents(CGameWorld& world, CEouCellMob& 
             egg->MarkForDestroy(EEntityRemovalReason::Despawned);
         cell.ClearEgg();
     }
-    // The bound ant outlives its nursery; it just loses its tile binding.
+    // 蚂蚁保留，只解除与巢室的绑定。
     cell.ClearBoundAnt();
 
     const float stored = cell.StoredFood();
     if (stored <= 0.f) return;
     cell.TakeFood(stored);
-    // Hand it back through the team so remaining storage cells get first
-    // refusal and only the overflow lands in the queen's stash.
+    // 退款先补充储藏室，溢出部分进入团队库存。
     if (CTeam* team = FindTeam(cell.TeamId())) team->RefundFood(world, stored);
 }
 
@@ -1055,9 +1014,8 @@ CEntity* CAntKingdomController::SpawnCellEntity(CGameWorld& world, int team_id, 
 
     CEntity* entity = world.InsertEntity(std::move(cell_mob));
     if (!entity) return nullptr;
-    entity->Team() = team_id;
+    entity->SetTeam(team_id);
 
-    // Join the connectivity set: unifies with same-type neighbours.
     auto* placed = dynamic_cast<CEouCellMob*>(entity);
     team->AddCell(world, *placed);
     if (!team->HasHomePos()) team->SetHomePos(pos);
@@ -1100,7 +1058,7 @@ CEntity* CAntKingdomController::SpawnOrStandbyEgg(CGameWorld& world, CEouCellMob
 
     CEntity* entity = world.InsertEntity(std::move(egg_mob));
     if (!entity) return nullptr;
-    entity->Team() = team_id;
+    entity->SetTeam(team_id);
     if (auto* placed = dynamic_cast<CEouEggMob*>(entity)) cell.SetEgg(placed->GetHandle());
     return entity;
 }
@@ -1114,11 +1072,9 @@ void CAntKingdomController::TickTeamCells(CGameWorld& world, CTeam& team, float 
         auto* cell = dynamic_cast<CEouCellMob*>(entity);
         if (!cell) continue;
 
-        if (cell->EggType() == EMobType::None) continue; // storage cells
+        if (cell->EggType() == EMobType::None) continue; // 储存格不孵化。
 
-        // One tile, one ant (the EotU rule): while the tile's bound ant is
-        // alive no egg is laid; its death starts the respawn cycle (retry
-        // timer -> egg -> grow -> hatch for the food cost).
+        // 一个巢室对应一只蚂蚁；绑定蚂蚁死亡后才重新开始孵化。
         if (cell->HasBoundAnt())
         {
             CEntity* ant_entity = world.ResolveEntity(cell->BoundAntRef());
@@ -1127,7 +1083,6 @@ void CAntKingdomController::TickTeamCells(CGameWorld& world, CTeam& team, float 
             cell->ClearBoundAnt();
         }
 
-        // Hatchery: keep an egg alive.
         CEouEggMob* egg = nullptr;
         if (cell->HasEgg())
         {
@@ -1151,16 +1106,13 @@ void CAntKingdomController::TickTeamCells(CGameWorld& world, CTeam& team, float 
             continue;
         }
 
-        // Egg grown? Hatch once the team can pay the food cost (soldiers
-        // cost more than workers).
         if (!egg->Grown()) continue;
         const bool soldier = egg->HatchType() == ToMobType(EModMobType::EouSoldier);
         const float cost = soldier ? game_config::eou_soldier_hatch_food_cost
                                    : game_config::eou_egg_hatch_food_cost;
         if (!team.TryConsumeFood(world, cost)) continue;
 
-        // Payment is only final once the ant exists: a factory/insertion
-        // failure refunds the food and keeps the egg for the next tick.
+        // 生成失败时返还食物，保留卵以便下次重试。
         std::unique_ptr<CMobBase> hatch = CreateMob(egg->HatchType(), &world, egg->Pos(), ERarity::Common);
         CEntity* hatched = hatch ? world.InsertEntity(std::move(hatch)) : nullptr;
         if (!hatched)
@@ -1168,9 +1120,7 @@ void CAntKingdomController::TickTeamCells(CGameWorld& world, CTeam& team, float 
             team.RefundFood(world, cost);
             continue;
         }
-        // Adoption gives the hatchling its colony: team, home point and
-        // primary-group membership (which wires the path board). The tile
-        // binds its ant: no new egg until this one dies.
+        // 孵化后归队并绑定巢室，绑定蚂蚁存活期间不生成新卵。
         AdoptEouMob(world, team, *hatched);
         cell->SetBoundAnt(hatched->GetHandle());
         SendTeamMessage(world, team_id, soldier ? "soldier hatched" : "worker hatched");
@@ -1181,9 +1131,7 @@ void CAntKingdomController::TickTeamCells(CGameWorld& world, CTeam& team, float 
 
 void CAntKingdomController::SendTeamMessage(CGameWorld& world, int team_id, const std::string& message)
 {
-    CGameContext* context = world.GameContext();
-    if (!context) return;
-    for (const auto& player : context->Players())
+    for (CPlayer* player : world.Players())
     {
         if (!player) continue;
         if (PlayerTeam(player->GetId()) != team_id) continue;
@@ -1193,9 +1141,7 @@ void CAntKingdomController::SendTeamMessage(CGameWorld& world, int team_id, cons
 
 void CAntKingdomController::BroadcastMessage(CGameWorld& world, const std::string& message)
 {
-    CGameContext* context = world.GameContext();
-    if (!context) return;
-    for (const auto& player : context->Players())
+    for (CPlayer* player : world.Players())
     {
         if (!player) continue;
         SendSystemMessage(world, *player, message);

@@ -1,7 +1,9 @@
 #pragma once
+#include "party.h"
 #include "entity_type.h"
 #include "dev_debug_protocol.h"
 #include "inventory.h"
+#include "economy.h"
 #include "math_types.h"
 #include "state_type.h"
 #include "talent_type.h"
@@ -25,28 +27,22 @@ constexpr uint8_t chore_disconnect_bit = 5;
 constexpr uint8_t chore_digging_bit = 6;
 constexpr uint8_t client_auth_packet_type = 0xf0;
 constexpr uint8_t client_chat_packet_type = 0xf1;
-constexpr uint8_t client_secondary_slot_packet_type = 0xf2;
-constexpr uint8_t client_craft_packet_type = 0xf3;
 constexpr uint8_t client_talent_packet_type = 0xf4;
 constexpr uint8_t client_state_request_packet_type = 0xf5;
-constexpr uint8_t client_forge_packet_type = 0xf6;
 constexpr uint8_t client_snapshot_ack_packet_type = 0xf7;
 constexpr uint8_t client_input_frame_packet_type = 0xf8;
-// One-shot skill request. It is a dedicated packet because the legacy
-// gameplay operation header has only two type bits and all four values are
-// already occupied by Input/Equip/Unequip/Chores.
+// 旧操作头的两位类型已用完，单次技能请求使用独立消息。
 constexpr uint8_t client_skill_packet_type = 0xf9;
-// First packet a client must send after connecting; carries the wire version
-// triple. Old clients that never send it are rejected with "Outdated version".
+// 连接后必须先发送版本握手，拒绝不兼容客户端。
 constexpr uint8_t client_version_packet_type = 0xfb;
+constexpr uint8_t client_economy_packet_type = 0xfa;
+constexpr uint8_t client_account_link_packet_type = 0xfc;
+constexpr size_t max_service_payload_size = 16384;
 constexpr size_t client_version_packet_size = 4;
 constexpr size_t client_compact_packet_size = 1;
 constexpr size_t client_extended_packet_size = 3;
-constexpr size_t client_auth_header_size = 6;
+constexpr size_t client_auth_header_size = 8;
 constexpr size_t client_chat_header_size = 3;
-constexpr size_t client_secondary_slot_packet_size = 4;
-constexpr size_t client_craft_packet_size = 7;
-constexpr size_t client_forge_packet_size = client_craft_packet_size;
 constexpr size_t client_snapshot_ack_packet_size = 5;
 constexpr size_t client_input_frame_packet_size = 16;
 constexpr size_t client_skill_packet_size = 2;
@@ -58,32 +54,18 @@ constexpr size_t owner_slot_packet_size = 2;
 constexpr size_t legacy_entity_state_packet_size = 2;
 constexpr size_t entity_state_packet_size = 3;
 constexpr size_t entity_hallucination_parameter_count = 6;
-// Effective hallucinogenic parameters are clamped server-side to at most +-8, so a 1/1024
-// fixed-point int16 (range +-32) covers them with plenty of headroom.
+// 致幻参数在服务端限制为 ±8；1/1024 精度的 int16 定点数可覆盖该范围。
 constexpr float net_hallucination_param_scale = 1024.f;
 constexpr size_t entity_hallucination_packet_size = entity_hallucination_parameter_count * 2;
 constexpr size_t max_auth_name_size = 32;
 constexpr size_t max_auth_password_size = 64;
 constexpr size_t max_auth_email_size = 254;
 constexpr size_t max_auth_code_size = 32;
+constexpr size_t auth_recovery_device_size = 32;
+constexpr size_t auth_recovery_token_size = 64;
 constexpr size_t max_chat_message_size = 180;
 constexpr size_t packet_length_prefix_size = 2;
-// Client packets:
-// Input:        [type:2 bits][move_x:1 byte][move_y:1 byte]
-// EquipPetal:   [type:2 bits][petal_type:1 byte][slot:4 bits][rarity:4 bits]
-// UnequipPetal: [type:2 bits][slot:4 bits]
-// Chores:       [type:2 bits][attack:1 bit][defend:1 bit][agree:1 bit][disconnect:1 bit]
-// Auth:         [0xf0][mode:1 byte][name_len:1 byte][password_len:1 byte][email_len:1 byte][code_len:1 byte]
-//               [name][password][email][code]
-// Chat:         [0xf1][flag:1 byte][message_len:1 byte][message]
-// SecondarySlot:[0xf2][slot:1 byte][petal_type:1 byte][rarity:1 byte]
-// Craft:        [0xf3][petal_type:1 byte][rarity:1 byte][count:4 bytes]
-// Talent:       [0xf4][action:1 byte][count:1 byte][talent_id:2 bytes][rarity:1 byte][rank:1 byte]...
-// StateRequest: [0xf5]
-// Forge:        [0xf6][petal_type:1 byte][rarity:1 byte][count:4 bytes]
-// SnapshotAck:  [0xf7][snapshot_id:4 bytes], UINT32_MAX requests a full snapshot
-// InputFrame:   [0xf8][sequence:4 bytes][target_server_tick:8 bytes][move_x:1 byte][move_y:1 byte][flags:1 byte]
-// Skill:        [0xf9][skill_index:1 byte]
+// 字段布局以各消息的 pack/parse 为准，协议变更须同步客户端与往返测试。
 
 enum class EChatFlag : uint8_t
 {
@@ -292,6 +274,9 @@ struct ClientAuthRequest
         RequestRegistrationCode = 2,
         RequestBindingCode = 3,
         ConfirmBinding = 4,
+        AccountLogin = 5,
+        AccountRegister = 6,
+        EnterGame = 7,
     };
 
     Mode mode = Mode::Login;
@@ -299,6 +284,8 @@ struct ClientAuthRequest
     std::string password;
     std::string email;
     std::string code;
+    std::string recovery_device_id;
+    std::string recovery_token;
 
     static bool IsPacketStart(uint8_t value) { return value == client_auth_packet_type; }
 
@@ -307,7 +294,7 @@ struct ClientAuthRequest
         if (!data || len < client_auth_header_size) return 0;
         if (!IsPacketStart(data[0])) return 0;
         return client_auth_header_size + static_cast<size_t>(data[2]) + static_cast<size_t>(data[3]) +
-               static_cast<size_t>(data[4]) + static_cast<size_t>(data[5]);
+               static_cast<size_t>(data[4]) + static_cast<size_t>(data[5]) + static_cast<size_t>(data[6]) + static_cast<size_t>(data[7]);
     }
 
     static ClientAuthRequest parse(const uint8_t* data, size_t len, bool* ok = nullptr)
@@ -320,16 +307,19 @@ struct ClientAuthRequest
         size_t offset = 0;
         offset++;
         const uint8_t mode = data[offset++];
-        if (mode > static_cast<uint8_t>(Mode::ConfirmBinding)) return request;
+        if (mode > static_cast<uint8_t>(Mode::EnterGame)) return request;
         request.mode = static_cast<Mode>(mode);
         uint8_t name_len = data[offset++];
         uint8_t password_len = data[offset++];
         uint8_t email_len = data[offset++];
         uint8_t code_len = data[offset++];
+        uint8_t device_len = data[offset++];
+        uint8_t token_len = data[offset++];
         if (name_len == 0 || name_len > max_auth_name_size) return request;
         if (password_len > max_auth_password_size) return request;
         if (email_len > max_auth_email_size || code_len > max_auth_code_size) return request;
-        if (offset + name_len + password_len + email_len + code_len > len) return request;
+        if ((device_len && device_len != auth_recovery_device_size) || (token_len && token_len != auth_recovery_token_size)) return request;
+        if (offset + name_len + password_len + email_len + code_len + device_len + token_len != len) return request;
 
         request.name.assign(reinterpret_cast<const char*>(data + offset),
                             reinterpret_cast<const char*>(data + offset + name_len));
@@ -342,6 +332,10 @@ struct ClientAuthRequest
         offset += email_len;
         request.code.assign(reinterpret_cast<const char*>(data + offset),
                             reinterpret_cast<const char*>(data + offset + code_len));
+        offset += code_len;
+        request.recovery_device_id.assign(reinterpret_cast<const char*>(data + offset), device_len);
+        offset += device_len;
+        request.recovery_token.assign(reinterpret_cast<const char*>(data + offset), token_len);
         if (ok) *ok = true;
         return request;
     }
@@ -354,6 +348,8 @@ struct ClientAuthRequest
         size_t password_len = std::min(request.password.size(), max_auth_password_size);
         size_t email_len = std::min(request.email.size(), max_auth_email_size);
         size_t code_len = std::min(request.code.size(), max_auth_code_size);
+        const auto device_len = request.recovery_device_id.size(), token_len = request.recovery_token.size();
+        if ((device_len && device_len != auth_recovery_device_size) || (token_len && token_len != auth_recovery_token_size)) return 0;
         if (name_len == 0) return 0;
 
         size_t offset = 0;
@@ -363,6 +359,8 @@ struct ClientAuthRequest
         out[offset++] = static_cast<uint8_t>(password_len);
         out[offset++] = static_cast<uint8_t>(email_len);
         out[offset++] = static_cast<uint8_t>(code_len);
+        out[offset++] = static_cast<uint8_t>(device_len);
+        out[offset++] = static_cast<uint8_t>(token_len);
         std::copy_n(request.name.data(), name_len, out + offset);
         offset += name_len;
         std::copy_n(request.password.data(), password_len, out + offset);
@@ -371,16 +369,20 @@ struct ClientAuthRequest
         offset += email_len;
         std::copy_n(request.code.data(), code_len, out + offset);
         offset += code_len;
+        std::copy_n(request.recovery_device_id.data(), device_len, out + offset); offset += device_len;
+        std::copy_n(request.recovery_token.data(), token_len, out + offset); offset += token_len;
         return offset;
     }
 
     static size_t GetPackedSize(const ClientAuthRequest& request)
     {
+        if ((!request.recovery_device_id.empty() && request.recovery_device_id.size() != auth_recovery_device_size) ||
+            (!request.recovery_token.empty() && request.recovery_token.size() != auth_recovery_token_size)) return 0;
         size_t name_len = std::min(request.name.size(), max_auth_name_size);
         if (name_len == 0) return 0;
         return client_auth_header_size + name_len + std::min(request.password.size(), max_auth_password_size) +
                std::min(request.email.size(), max_auth_email_size) +
-               std::min(request.code.size(), max_auth_code_size);
+               std::min(request.code.size(), max_auth_code_size) + request.recovery_device_id.size() + request.recovery_token.size();
     }
 };
 
@@ -439,146 +441,111 @@ struct ClientChatRequest
     }
 };
 
-struct ClientSecondarySlotRequest
+
+struct ClientEconomyRequest
 {
-    uint8_t slot_index = 0;
-    uint8_t petal_type = 0;
-    uint8_t rarity = 0;
-
-    static bool IsPacketStart(uint8_t value) { return value == client_secondary_slot_packet_type; }
-
-    static size_t GetPacketSize(const uint8_t* data, size_t len)
-    {
-        if (!data || len < client_secondary_slot_packet_size) return 0;
-        if (!IsPacketStart(data[0])) return 0;
-        return client_secondary_slot_packet_size;
-    }
-
-    static ClientSecondarySlotRequest parse(const uint8_t* data, size_t len, bool* ok = nullptr)
-    {
-        ClientSecondarySlotRequest request;
-        if (ok) *ok = false;
-        if (!data || len < client_secondary_slot_packet_size) return request;
-        if (!IsPacketStart(data[0])) return request;
-
-        request.slot_index = data[1];
-        request.petal_type = data[2];
-        request.rarity = data[3];
-        if (ok) *ok = true;
-        return request;
-    }
-
-    static size_t pack(const ClientSecondarySlotRequest& request, uint8_t* out)
-    {
-        if (!out) return 0;
-        out[0] = client_secondary_slot_packet_type;
-        out[1] = request.slot_index;
-        out[2] = request.petal_type;
-        out[3] = request.rarity;
-        return client_secondary_slot_packet_size;
-    }
-};
-
-struct ClientCraftRequest
-{
-    uint8_t petal_type = 0;
-    uint8_t rarity = 0;
+    static constexpr size_t header_size = 20;
+    static constexpr size_t max_slots = 64;
+    EEconomyOperation operation = EEconomyOperation::Craft;
+    SEconomyRequestContext context;
+    uint8_t petal_type = 0, rarity = 0;
     uint32_t count = 0;
+    std::vector<SInventoryItem> primary, secondary;
 
-    static bool IsPacketStart(uint8_t value) { return value == client_craft_packet_type; }
-
-    static size_t GetPacketSize(const uint8_t* data, size_t len)
+    static bool IsPacketStart(uint8_t byte) { return byte == client_economy_packet_type; }
+    static size_t GetPacketSize(const uint8_t* data, size_t length)
     {
-        if (!data || len < client_craft_packet_size) return 0;
-        if (!IsPacketStart(data[0])) return 0;
-        return client_craft_packet_size;
+        if (!data || length < header_size || !IsPacketStart(data[0])) return 0;
+        const size_t start = header_size + data[2] + data[3];
+        if (data[1] == static_cast<uint8_t>(EEconomyOperation::Craft) || data[1] == static_cast<uint8_t>(EEconomyOperation::Forge))
+            return start + 6;
+        if (data[1] != static_cast<uint8_t>(EEconomyOperation::Loadout)) return start;
+        if (length < start + 2) return 0;
+        return start + 2 + (size_t(data[start]) + data[start + 1]) * 2;
     }
-
-    static ClientCraftRequest parse(const uint8_t* data, size_t len, bool* ok = nullptr)
+    static ClientEconomyRequest parse(const uint8_t* data, size_t length, bool* ok = nullptr)
     {
-        ClientCraftRequest request;
         if (ok) *ok = false;
-        if (!data || len < client_craft_packet_size) return request;
-        if (!IsPacketStart(data[0])) return request;
-
-        size_t offset = 1;
-        request.petal_type = data[offset++];
-        request.rarity = data[offset++];
-        request.count = static_cast<uint32_t>(data[offset]) | (static_cast<uint32_t>(data[offset + 1]) << 8) |
-                        (static_cast<uint32_t>(data[offset + 2]) << 16) |
-                        (static_cast<uint32_t>(data[offset + 3]) << 24);
-        if (ok) *ok = true;
-        return request;
+        ClientEconomyRequest result;
+        if (!data || length < header_size || GetPacketSize(data, length) != length || !data[2]) return result;
+        if (data[1] < 1 || data[1] > 3) return result;
+        result.operation = static_cast<EEconomyOperation>(data[1]);
+        size_t offset = 4;
+        result.context.request_id = ReadCounter(data, offset);
+        result.context.expected_revision = ReadCounter(data, offset);
+        if (!result.context.request_id || offset + data[2] + data[3] > length) return result;
+        result.context.inventory_scope.assign(reinterpret_cast<const char*>(data + offset), data[2]); offset += data[2];
+        result.context.actor_scope.assign(reinterpret_cast<const char*>(data + offset), data[3]); offset += data[3];
+        if (result.operation == EEconomyOperation::Loadout)
+        {
+            const auto primary_count = data[offset++], secondary_count = data[offset++];
+            if (primary_count > max_slots || secondary_count > max_slots) return result;
+            for (auto [items, size] : {std::pair{&result.primary, primary_count}, std::pair{&result.secondary, secondary_count}})
+                for (size_t i = 0; i < size; ++i)
+                {
+                    const auto type = data[offset++], rarity = data[offset++];
+                    if ((!type) != (!rarity)) return result;
+                    items->push_back({type, rarity, type ? 1u : 0u});
+                }
+        }
+        else
+        {
+            result.petal_type = data[offset++]; result.rarity = data[offset++];
+            for (unsigned i = 0; i < 4; ++i) result.count |= uint32_t(data[offset++]) << (8 * i);
+        }
+        if (ok) *ok = offset == length;
+        return result;
     }
-
-    static size_t pack(const ClientCraftRequest& request, uint8_t* out)
+    static size_t GetPackedSize(const ClientEconomyRequest& request)
     {
-        if (!out) return 0;
+        if (!request.context.request_id || request.context.inventory_scope.empty() || request.context.inventory_scope.size() > 255 ||
+            request.context.actor_scope.size() > 255 || static_cast<unsigned>(request.operation) < 1 || static_cast<unsigned>(request.operation) > 3)
+            return 0;
+        if (request.operation == EEconomyOperation::Loadout && (request.primary.size() > max_slots || request.secondary.size() > max_slots)) return 0;
+        return header_size + request.context.inventory_scope.size() + request.context.actor_scope.size() +
+            (request.operation == EEconomyOperation::Loadout ? 2 + 2 * (request.primary.size() + request.secondary.size()) : 6);
+    }
+    static size_t pack(const ClientEconomyRequest& request, uint8_t* out)
+    {
+        if (!out || !GetPackedSize(request)) return 0;
         size_t offset = 0;
-        out[offset++] = client_craft_packet_type;
-        out[offset++] = request.petal_type;
-        out[offset++] = request.rarity;
-        out[offset++] = static_cast<uint8_t>(request.count & 0xFF);
-        out[offset++] = static_cast<uint8_t>((request.count >> 8) & 0xFF);
-        out[offset++] = static_cast<uint8_t>((request.count >> 16) & 0xFF);
-        out[offset++] = static_cast<uint8_t>((request.count >> 24) & 0xFF);
-        return client_craft_packet_size;
+        out[offset++] = client_economy_packet_type; out[offset++] = static_cast<uint8_t>(request.operation);
+        out[offset++] = static_cast<uint8_t>(request.context.inventory_scope.size());
+        out[offset++] = static_cast<uint8_t>(request.context.actor_scope.size());
+        WriteCounter(out, offset, request.context.request_id); WriteCounter(out, offset, request.context.expected_revision);
+        for (const auto* scope : {&request.context.inventory_scope, &request.context.actor_scope})
+        { std::copy(scope->begin(), scope->end(), out + offset); offset += scope->size(); }
+        if (request.operation == EEconomyOperation::Loadout)
+        {
+            out[offset++] = static_cast<uint8_t>(request.primary.size()); out[offset++] = static_cast<uint8_t>(request.secondary.size());
+            for (const auto* items : {&request.primary, &request.secondary})
+                for (const auto& item : *items) { out[offset++] = item.petal_type; out[offset++] = item.rarity; }
+        }
+        else
+        {
+            out[offset++] = request.petal_type; out[offset++] = request.rarity;
+            for (unsigned i = 0; i < 4; ++i) out[offset++] = static_cast<uint8_t>(request.count >> (8 * i));
+        }
+        return offset;
     }
+    std::string Fingerprint() const
+    {
+        const auto size = GetPackedSize(*this);
+        if (!size) return {};
+        std::vector<uint8_t> bytes(size); pack(*this, bytes.data());
+        constexpr char hex[] = "0123456789abcdef";
+        std::string result; result.reserve(size * 2);
+        for (auto byte : bytes) { result += hex[byte >> 4]; result += hex[byte & 15]; }
+        return result;
+    }
+  private:
+    static uint64_t ReadCounter(const uint8_t* data, size_t& offset)
+    { uint64_t result = 0; for (unsigned i = 0; i < 8; ++i) result |= uint64_t(data[offset++]) << (i * 8); return result; }
+    static void WriteCounter(uint8_t* out, size_t& offset, uint64_t value)
+    { for (unsigned i = 0; i < 8; ++i) out[offset++] = static_cast<uint8_t>(value >> (i * 8)); }
 };
 
-struct ClientForgeRequest
-{
-    uint8_t petal_type = 0;
-    uint8_t rarity = 0;
-    uint32_t count = 0;
-
-    static bool IsPacketStart(uint8_t value) { return value == client_forge_packet_type; }
-
-    static size_t GetPacketSize(const uint8_t* data, size_t len)
-    {
-        if (!data || len < client_forge_packet_size) return 0;
-        if (!IsPacketStart(data[0])) return 0;
-        return client_forge_packet_size;
-    }
-
-    static ClientForgeRequest parse(const uint8_t* data, size_t len, bool* ok = nullptr)
-    {
-        ClientForgeRequest request;
-        if (ok) *ok = false;
-        if (!data || len < client_forge_packet_size) return request;
-        if (!IsPacketStart(data[0])) return request;
-
-        size_t offset = 1;
-        request.petal_type = data[offset++];
-        request.rarity = data[offset++];
-        request.count = static_cast<uint32_t>(data[offset]) | (static_cast<uint32_t>(data[offset + 1]) << 8) |
-                        (static_cast<uint32_t>(data[offset + 2]) << 16) |
-                        (static_cast<uint32_t>(data[offset + 3]) << 24);
-        if (ok) *ok = true;
-        return request;
-    }
-
-    static size_t pack(const ClientForgeRequest& request, uint8_t* out)
-    {
-        if (!out) return 0;
-        size_t offset = 0;
-        out[offset++] = client_forge_packet_type;
-        out[offset++] = request.petal_type;
-        out[offset++] = request.rarity;
-        out[offset++] = static_cast<uint8_t>(request.count & 0xFF);
-        out[offset++] = static_cast<uint8_t>((request.count >> 8) & 0xFF);
-        out[offset++] = static_cast<uint8_t>((request.count >> 16) & 0xFF);
-        out[offset++] = static_cast<uint8_t>((request.count >> 24) & 0xFF);
-        return client_forge_packet_size;
-    }
-};
-
-enum class ClientTalentAction : uint8_t
-{
-    Add = 1,
-    Remove = 2,
-};
-
+enum class ClientTalentAction : uint8_t { Add = 1, Remove = 2 };
 struct STalentPacketItem
 {
     ETalentId id = ETalentId::None;
@@ -783,38 +750,7 @@ struct ClientInputFrame
     }
 };
 
-// Server packets:
-// Welcome:    [type:1 byte][player_id:2 bytes][owner_entity_id:4 bytes][tick_rate:1 byte][map_len:1 byte][map_name]
-// Snapshot:   [type:1 byte][snapshot_id:4 bytes][base_snapshot_id:4 bytes][server_tick:8 bytes]
-// [owner_entity_id:4 bytes][view_radius:4 bytes][changed_count:2 bytes][removed_count:2 bytes]
-// [entity_snap...][removed_entity_id:4 bytes]...[weather_intensity:4 bytes][wind_direction:1 byte]
-// [wind_speed:1 byte]
-// A base_snapshot_id of UINT32_MAX denotes a full snapshot. Weather intensities
-// and wind ride along with every snapshot; the client refreshes them without a
-// broadcast. Wind direction is degrees/360*255, wind speed is speed/20*255.
-// EntitySnap full:    [format:1 byte][entity_id:4 bytes][generation:8 bytes][entity_type:1 byte][team:1 byte][x:4
-// bytes][y:4 bytes][radius:2 bytes][hp_percent:1 byte][shield_percent:1 byte][flags:2 bytes][angle:2
-// bytes][rarity:1 byte][owner_mana:f32][owner_max_mana:f32][name_len:1
-// byte][name][primary_slot_count:1 byte][petal_type:1 byte][rarity:1 byte][visual_type:1 byte]
-// [copy_count:1 byte][copy_state:1 byte][copy_progress:1 byte][copy_visual_value:0/2 bytes]......[state_count:1 byte]
-// [state_type:1 byte][rarity:1 byte]... EntitySnap full states: EntitySnap full with each state followed by
-// [value:1 byte], then [hallucination_count:1 byte][parameter_0:i16]...[parameter_5:i16]...
-// EntitySnap compact: [format:1
-// byte][entity_id:4 bytes][generation:8 bytes][entity_type:1 byte][team:1 byte][rel_x:2 bytes][rel_y:2 bytes][radius:2 bytes][hp_percent:1
-// byte][shield_percent:1 byte][flags:2 bytes][angle:2 bytes][rarity:1 byte]
-// EntitySnap compact states: EntitySnap compact followed by [state_count:1 byte]
-// [state_type:1 byte][rarity:1 byte][value:1 byte]...
-//             live petal entity_type = 100 + petal_type, drop entity_type = 180 + petal_type.
-// OwnerState: [type:1 byte][level:1 byte][flags:1 byte][petal_slots:1 byte][secondary_slots:1 byte][exp_progress_bps:2
-// bytes][petal_type:1 byte][rarity:1 byte]...[talent_points:2 bytes][talent_count:1 byte][talent_id:2 bytes][rarity:1
-// byte][rank:1 byte]... Inventory:  [type:1 byte][count:2 bytes][petal_type:1 byte][rarity:1 byte][count:4 bytes]...
-// AuthResult: [type:1 byte][result_code:1 byte][message_len:1 byte][message]
-// Chat:       [type:1 byte][flag:1 byte][player_id:2 bytes][time:4 bytes][name_len:1 byte][message_len:1
-// byte][name][message] CraftResult:[type:1 byte][success:1 byte][petal_type:1 byte][rarity:1 byte][consumed:4
-// bytes][count:2 bytes][item...]
-// Environment: [type:1 byte][anchor_server_tick:8 bytes][time_of_day_u16:2 bytes]
-// [day_duration_seconds:f32][fixed_dt_seconds:f32][weather_intensity:4 bytes]
-// [wind_direction:1 byte][wind_speed:1 byte]
+// base_snapshot_id 为 UINT32_MAX 时表示全量快照；每次快照均携带天气和风向。
 
 using net_coord = int32_t;
 using net_relative_coord = int16_t;
@@ -835,9 +771,7 @@ constexpr size_t server_entity_compact_size = 28;
 constexpr uint32_t full_snapshot_base_id = std::numeric_limits<uint32_t>::max();
 constexpr uint32_t uint32_sequence_half_range = 0x80000000u;
 
-// Serial-number arithmetic for wrapping 32-bit protocol counters. Values at
-// exactly half the number space are intentionally unordered; accepting either
-// direction there would make duplicate/stale detection ambiguous.
+// 回绕序号按半空间比较；恰好相差半空间时无法判断先后，两个方向都不接受。
 inline uint32_t Uint32SequenceDistance(uint32_t value, uint32_t previous) { return value - previous; }
 
 inline bool IsNewerUint32Sequence(uint32_t value, uint32_t previous)
@@ -847,13 +781,13 @@ inline bool IsNewerUint32Sequence(uint32_t value, uint32_t previous)
 }
 
 constexpr size_t server_snapshot_header_size = 29;
-// Environment weather payload: one u8 per EWeatherType in enum order
-// (clear, cloudy, rain, fog), followed by wind direction (u8, degrees/360*255)
-// and wind speed (u8, speed/20*255 clamped).
+// 天气按 EWeatherType 顺序编码为 u8；风向为角度/360*255，风速为限幅至 [0,20] 后的 speed/20*255。
 constexpr size_t server_environment_weather_count = 4;
 constexpr size_t server_environment_wind_size = 2;
-// OwnerState flags: the visible room loadout must not be edited as inventory.
+// 房间提供的可见装备不能作为背包物品编辑。
 constexpr uint8_t owner_state_loadout_locked = 1u << 0;
+constexpr uint8_t owner_state_npc_inventory = 1u << 1;
+constexpr uint8_t owner_state_temporary_inventory = 1u << 2;
 
 inline net_coord PackCoord(float value) { return static_cast<net_coord>(std::round(value * net_coord_scale)); }
 
@@ -1029,7 +963,7 @@ struct SOwnerPetalSlot
         None = 0,
         Angle = 1,
         Size = 2,
-        Counter = 3, // Unsigned live count per copy (charges, accumulated hits, ...).
+        Counter = 3, // 各副本的无符号计数，如充能数或累计命中。
     };
 
     uint8_t petal_type = 0;
@@ -1124,12 +1058,8 @@ struct SEntityStateSnap
     uint8_t value = 0;
 };
 
-// Single source of truth for ServerEntitySnap: the struct layout below and the
-// dedup comparison SameServerEntitySnap() are BOTH generated from this table, so
-// adding a snapshot field is one row and the diff can never forget it. Each row:
-//   X(member, type, default-init, comparator)
-// Note: types must contain no commas (macro args split on commas); alias any
-// comma-bearing template types first.
+// 结构体与差量比较共用字段表：X(成员, 类型, 初始值, 比较器)。
+// 含逗号的模板类型须先定义别名，避免被宏拆成多个参数。
 using SnapHallucinationArray = std::array<float, entity_hallucination_parameter_count>;
 
 #define PER_SNAPSHOT_FIELD(X)                                                             \
@@ -1154,9 +1084,7 @@ using SnapHallucinationArray = std::array<float, entity_hallucination_parameter_
 struct ServerEntitySnap
 {
 #define SNAPSHOT_FIELD_MEMBER(member, type, def, cmp) type member def;
-    // Owner-only hallucinations carry clamped effective hallucinogenic affine
-    // parameters per active state (stack order) so the afflicted client can
-    // preview distorted movement and render scene ghosts.
+    // 仅向拥有者发送按叠加顺序排列的致幻仿射参数，用于移动预测和幻影渲染。
     PER_SNAPSHOT_FIELD(SNAPSHOT_FIELD_MEMBER)
 #undef SNAPSHOT_FIELD_MEMBER
 
@@ -1226,7 +1154,9 @@ struct ServerEntitySnap
         snap.generation = ReadU64(data, offset);
         snap.entity_type = data[offset++];
         snap.team = data[offset++];
-        snap.pos = florrbt::Vector2f(UnpackCoord(ReadI32(data, offset)), UnpackCoord(ReadI32(data, offset)));
+        // 参数求值顺序未定义；读取会推进偏移，必须先依次读完再构造。
+        snap.pos.x = UnpackCoord(ReadI32(data, offset));
+        snap.pos.y = UnpackCoord(ReadI32(data, offset));
         snap.radius = UnpackRadius(ReadU16(data, offset));
         snap.hp_percent = UnpackPercent(data[offset++]);
         snap.shield_percent = UnpackPercent(data[offset++]);
@@ -1441,12 +1371,9 @@ inline bool Hallucinations(const std::vector<SnapHallucinationArray>& a,
 {
     return a == b;
 }
-} // namespace snap_eq
+}
 
 #define SNAPSHOT_FIELD_COMPARE(member, type, def, cmp) if (!cmp(lhs.member, rhs.member)) return false;
-// Generated from PER_SNAPSHOT_FIELD: comparing two snapshots is a per-field walk
-// over the same table that declared the struct, so a field added there is
-// automatically part of the dedup decision here.
 inline bool SameServerEntitySnap(const ServerEntitySnap& lhs, const ServerEntitySnap& rhs)
 {
     PER_SNAPSHOT_FIELD(SNAPSHOT_FIELD_COMPARE)
@@ -1458,7 +1385,8 @@ inline bool SameServerEntitySnap(const ServerEntitySnap& lhs, const ServerEntity
 struct SChatMessage
 {
     EChatFlag flag = EChatFlag::Global;
-    uint16_t player_id = 0;
+    uint32_t player_id = 0;
+    uint64_t session_generation = 0;
     uint32_t time = 0;
     std::string player_name;
     std::string message;
@@ -1515,7 +1443,6 @@ struct ServerMessage
         OwnerState = 0x10,
         Inventory = 0x11,
         Chat = 0x12,
-        CraftResult = 0x13,
         Environment = 0x14,
         CodexFull = 0x15,
         CodexDelta = 0x16,
@@ -1526,10 +1453,19 @@ struct ServerMessage
         CombatFeedback = 0x1b,
         DebugTicket = 0x1c,
         SkillResult = 0x1d,
+        EconomyResult = 0x1e,
+        PartyState = 0x1f,
+        ClientFeatures = 0x20,
+        AccountLinks = 0x21,
         Unknown = 0xff,
     } type = Type::Unknown;
 
-    std::optional<uint16_t> player_id;
+    std::optional<uint32_t> player_id;
+    std::uint64_t player_session_generation = 0;
+    std::uint32_t world_id = 0;
+    std::uint64_t world_generation = 0;
+    SPartyState party;
+    std::string service_payload;
     std::optional<net_entity_id> owner_entity_id;
     std::optional<uint8_t> tick_rate;
     std::string map_name;
@@ -1548,14 +1484,10 @@ struct ServerMessage
     std::optional<float> day_duration_seconds;
     std::optional<float> fixed_dt_seconds;
     std::uint8_t weather_intensity[server_environment_weather_count] = {};
-    // Wind rides along with the weather payload: direction (degrees/360*255)
-    // and speed (speed/20*255 clamped to [0,20]).
     std::uint8_t wind_direction = 0;
     std::uint8_t wind_speed = 0;
 
-    // Bestiary (codex). CodexFull carries the complete kill table on connect,
-    // CodexDelta carries a single updated entry, CodexLoot carries the whole
-    // mob drop table (mob_type, mob_rarity, petal_type, drop_rarity, rate).
+    // 图鉴登录时发送完整击杀表，后续仅增量更新；掉落表独立发送。
     struct SCodexEntry
     {
         uint8_t mob_type = 0;
@@ -1570,23 +1502,22 @@ struct ServerMessage
         uint8_t mob_rarity = 0;
         uint8_t petal_type = 0;
         uint8_t drop_rarity = 0;
-        uint16_t drop_rate = 0; // rate * 10000
+        uint16_t drop_rate = 0; // 概率乘以 10000。
     };
     std::vector<SCodexLootEntry> codex_loot_entries;
 
-    // Lightning chain visual: world-space node positions (net coords).
+    // 连锁闪电视效使用世界坐标节点。
     std::vector<florrbt::Vector2f> lightning_points;
-    std::uint8_t lightning_style = 0; // 0 = normal white, 1 = magic blue
+    std::uint8_t lightning_style = 0; // 0 为普通白色，1 为魔法蓝色。
 
-    // Batched authoritative health damage, aggregated per target/kind between
-    // snapshots. Never inferred client-side from rounded health percentages.
+    // 两次快照间按目标和伤害类型汇总实际扣血，客户端不得用取整后的血量比例推算。
     struct SCombatHit
     {
         net_entity_id target_id = 0;
         florrbt::Vector2f pos{};
         float radius = 0.f;
         float amount = 0.f;
-        uint8_t kind = 0; // BaseDamageType: normal / poison / lightning / true
+        uint8_t kind = 0; // 基础伤害类型：普通、中毒、闪电、真实。
         uint8_t source_type = 0;
         uint8_t source_rarity = 0;
         uint64_t target_generation = 0;
@@ -1595,15 +1526,13 @@ struct ServerMessage
     static constexpr size_t combat_hit_limit = 64;
     std::vector<SCombatHit> combat_hits;
 
-    // Mutable-terrain tile change: layer index (tilelayer order), tile row,
-    // tile column, and the new raw gid (including flip bits).
+    // 地形编辑包含瓦片层索引、行列与含翻转位的原始 gid。
     std::uint8_t terrain_layer = 0;
     std::uint16_t terrain_row = 0;
     std::uint16_t terrain_col = 0;
     std::uint32_t terrain_gid = 0;
 
-    // Native wall removal: world-space rect whose overlapping walls were
-    // deleted by the terrain eraser.
+    // 以世界坐标矩形标识橡皮删除的墙体范围。
     florrbt::Vector2f wall_remove_min = { 0.f, 0.f };
     florrbt::Vector2f wall_remove_max = { 0.f, 0.f };
 
@@ -1618,6 +1547,9 @@ struct ServerMessage
     std::optional<uint16_t> talent_points;
     std::vector<STalentPacketItem> talents;
     std::optional<EAuthResultCode> auth_result_code;
+    std::string auth_recovery_device_id;
+    std::string auth_recovery_token;
+    std::uint64_t auth_recovery_expires_at = 0;
     std::string auth_message;
     std::optional<EEmailPolicy> email_policy;
     std::optional<bool> email_bound;
@@ -1625,6 +1557,12 @@ struct ServerMessage
     uint8_t skill_index = 0;
     uint8_t skill_count = 0;
     std::vector<SInventoryItem> inventory;
+    std::string inventory_scope, inventory_actor_scope;
+    std::uint64_t inventory_revision = 0, inventory_last_request = 0;
+    std::uint64_t economy_request_id = 0;
+    EEconomyOperation economy_operation = EEconomyOperation::Craft;
+    EEconomyOutcome economy_outcome = EEconomyOutcome::Invalid;
+    bool economy_recorded = false;
     SChatMessage chat;
     std::optional<bool> craft_success;
     uint8_t craft_petal_type = 0;
@@ -1643,18 +1581,21 @@ struct ServerMessage
         switch (msg.type)
         {
         case Type::Welcome:
-            if (len < 8)
+            if (len < 32)
             {
                 msg.type = Type::Unknown;
                 break;
             }
-            msg.player_id = ReadU16(data, offset);
+            msg.player_id = ReadU32(data, offset);
+            msg.player_session_generation = ReadU64(data, offset);
             msg.owner_entity_id = ReadU32(data, offset);
             msg.tick_rate = data[offset++];
+            msg.world_id = ReadU32(data, offset);
+            msg.world_generation = ReadU64(data, offset);
             if (offset < len)
             {
                 uint8_t map_len = data[offset++];
-                if (offset + map_len > len)
+                if (offset + map_len + 1 != len)
                 {
                     msg.type = Type::Unknown;
                     break;
@@ -1745,6 +1686,14 @@ struct ServerMessage
             msg.skill_count = data[offset++];
             break;
         }
+        case Type::ClientFeatures:
+        case Type::AccountLinks: {
+            if (len < 3) { msg.type = Type::Unknown; break; }
+            const auto count = ReadU16(data, offset);
+            if (!count || count > max_service_payload_size || offset + count != len) { msg.type = Type::Unknown; break; }
+            msg.service_payload.assign(reinterpret_cast<const char*>(data + offset), count);
+            break;
+        }
         case Type::AuthResult: {
             if (len < 3)
             {
@@ -1778,6 +1727,17 @@ struct ServerMessage
                 msg.email_policy = static_cast<EEmailPolicy>(email_policy);
             }
             if (offset < len) msg.email_bound = data[offset++] != 0;
+            if (offset < len)
+            {
+                if (offset + 10 > len) { msg.type = Type::Unknown; break; }
+                const auto device_size = data[offset++], token_size = data[offset++];
+                msg.auth_recovery_expires_at = ReadU64(data, offset);
+                if ((device_size && device_size != auth_recovery_device_size) ||
+                    (token_size && token_size != auth_recovery_token_size) || offset + device_size + token_size != len)
+                { msg.type = Type::Unknown; break; }
+                msg.auth_recovery_device_id.assign(reinterpret_cast<const char*>(data + offset), device_size); offset += device_size;
+                msg.auth_recovery_token.assign(reinterpret_cast<const char*>(data + offset), token_size);
+            }
             break;
         }
         case Type::OwnerState:
@@ -1873,10 +1833,16 @@ struct ServerMessage
                 item.count = ReadU32(data, offset);
                 msg.inventory.push_back(item);
             }
+            if (offset + 18 > len) { msg.type = Type::Unknown; break; }
+            msg.inventory_revision = ReadU64(data, offset); msg.inventory_last_request = ReadU64(data, offset);
+            const auto scope_size = data[offset++], actor_size = data[offset++];
+            if (offset + scope_size + actor_size != len) { msg.type = Type::Unknown; break; }
+            msg.inventory_scope.assign(reinterpret_cast<const char*>(data + offset), scope_size); offset += scope_size;
+            msg.inventory_actor_scope.assign(reinterpret_cast<const char*>(data + offset), actor_size);
             break;
         }
         case Type::Chat: {
-            if (len < 10)
+            if (len < 20)
             {
                 msg.type = Type::Unknown;
                 break;
@@ -1888,7 +1854,8 @@ struct ServerMessage
                 break;
             }
             msg.chat.flag = static_cast<EChatFlag>(flag);
-            msg.chat.player_id = ReadU16(data, offset);
+            msg.chat.player_id = ReadU32(data, offset);
+            msg.chat.session_generation = ReadU64(data, offset);
             msg.chat.time = ReadU32(data, offset);
             uint8_t name_len = data[offset++];
             uint8_t message_len = data[offset++];
@@ -1905,8 +1872,43 @@ struct ServerMessage
             offset += message_len;
             break;
         }
-        case Type::CraftResult: {
-            if (len < 10)
+        case Type::PartyState: {
+            if (len < 14) { msg.type = Type::Unknown; break; }
+            msg.party.leader_id = ReadU32(data, offset);
+            msg.party.leader_generation = ReadU64(data, offset);
+            const auto count = data[offset++];
+            if (count > SPartyState::max_members || offset + size_t(count) * 38 > len)
+            { msg.type = Type::Unknown; break; }
+            for (size_t i = 0; i < count; ++i)
+            {
+                if (offset + 38 > len) { msg.type = Type::Unknown; break; }
+                SPartyMember member;
+                member.player_id = ReadU32(data, offset); member.session_generation = ReadU64(data, offset);
+                const auto flags = data[offset++];
+                if (flags & ~3u) { msg.type = Type::Unknown; break; }
+                member.connected = (flags & 1) != 0; member.has_entity = (flags & 2) != 0;
+                member.world_id = ReadU32(data, offset); member.world_generation = ReadU64(data, offset);
+                member.entity_id = ReadU32(data, offset); member.entity_generation = ReadU64(data, offset);
+                const auto size = data[offset++];
+                if (offset + size > len) { msg.type = Type::Unknown; break; }
+                member.name.assign(reinterpret_cast<const char*>(data + offset), size); offset += size;
+                msg.party.members.push_back(std::move(member));
+            }
+            if (offset != len || !IsValidPartyState(msg.party)) msg.type = Type::Unknown;
+            break;
+        }
+        case Type::EconomyResult: {
+            if (len < 30) { msg.type = Type::Unknown; break; }
+            const auto operation = data[offset++], outcome = data[offset++], recorded = data[offset++];
+            if (operation < 1 || operation > 3 || outcome > static_cast<unsigned>(EEconomyOutcome::Pending) || recorded > 1)
+            { msg.type = Type::Unknown; break; }
+            msg.economy_operation = static_cast<EEconomyOperation>(operation); msg.economy_outcome = static_cast<EEconomyOutcome>(outcome);
+            msg.economy_recorded = recorded != 0;
+            msg.economy_request_id = ReadU64(data, offset); msg.inventory_revision = ReadU64(data, offset);
+            const auto size = data[offset++];
+            if (offset + size + 9 > len) { msg.type = Type::Unknown; break; }
+            msg.inventory_scope.assign(reinterpret_cast<const char*>(data + offset), size); offset += size;
+            if (offset + 9 > len)
             {
                 msg.type = Type::Unknown;
                 break;
@@ -2064,8 +2066,7 @@ struct ServerMessage
                     const float y = UnpackCoord(ReadI32(data, offset));
                     msg.lightning_points.push_back({ x, y });
                 }
-                // Appended for backward compatibility: packets produced by
-                // older servers simply render as ordinary white lightning.
+                // 兼容旧消息缺少样式字段时的普通白色闪电。
                 if (offset < len) msg.lightning_style = data[offset++];
             }
             break;
@@ -2086,9 +2087,12 @@ struct ServerMessage
         switch (msg.type)
         {
         case Type::Welcome:
-            WriteU16(out, offset, msg.player_id.value_or(0));
+            WriteU32(out, offset, msg.player_id.value_or(0));
+            WriteU64(out, offset, msg.player_session_generation);
             WriteU32(out, offset, msg.owner_entity_id.value_or(0));
             out[offset++] = msg.tick_rate.value_or(60);
+            WriteU32(out, offset, msg.world_id);
+            WriteU64(out, offset, msg.world_generation);
             {
                 uint8_t map_len = static_cast<uint8_t>(std::min<size_t>(msg.map_name.size(), UINT8_MAX));
                 out[offset++] = map_len;
@@ -2121,8 +2125,6 @@ struct ServerMessage
                 }
             }
             for (uint16_t i = 0; i < removed_count; ++i) WriteU32(out, offset, msg.removed_entity_ids[i]);
-            // Weather intensities and wind ride along with every snapshot so clients
-            // always have fresh weather without a separate broadcast.
             for (size_t i = 0; i < server_environment_weather_count; ++i)
                 out[offset++] = msg.weather_intensity[i];
             out[offset++] = msg.wind_direction;
@@ -2139,14 +2141,27 @@ struct ServerMessage
             out[offset++] = msg.skill_index;
             out[offset++] = msg.skill_count;
             return offset;
+        case Type::ClientFeatures:
+        case Type::AccountLinks:
+            if (msg.service_payload.empty() || msg.service_payload.size() > max_service_payload_size) return 0;
+            WriteU16(out, offset, static_cast<uint16_t>(msg.service_payload.size()));
+            std::copy(msg.service_payload.begin(), msg.service_payload.end(), out + offset);
+            return offset + msg.service_payload.size();
         case Type::AuthResult: {
             out[offset++] = static_cast<uint8_t>(msg.auth_result_code.value_or(EAuthResultCode::Failed));
+            if ((!msg.auth_recovery_device_id.empty() && msg.auth_recovery_device_id.size() != auth_recovery_device_size) ||
+                (!msg.auth_recovery_token.empty() && msg.auth_recovery_token.size() != auth_recovery_token_size)) return 0;
             uint8_t message_len = static_cast<uint8_t>(std::min<size_t>(msg.auth_message.size(), UINT8_MAX));
             out[offset++] = message_len;
             std::copy_n(msg.auth_message.data(), message_len, out + offset);
             offset += message_len;
             out[offset++] = static_cast<uint8_t>(msg.email_policy.value_or(EEmailPolicy::Disabled));
             out[offset++] = msg.email_bound.value_or(false) ? 1 : 0;
+            out[offset++] = static_cast<uint8_t>(msg.auth_recovery_device_id.size());
+            out[offset++] = static_cast<uint8_t>(msg.auth_recovery_token.size());
+            WriteU64(out, offset, msg.auth_recovery_expires_at);
+            std::copy_n(msg.auth_recovery_device_id.data(), msg.auth_recovery_device_id.size(), out + offset); offset += msg.auth_recovery_device_id.size();
+            std::copy_n(msg.auth_recovery_token.data(), msg.auth_recovery_token.size(), out + offset); offset += msg.auth_recovery_token.size();
             return offset;
         }
         case Type::OwnerState: {
@@ -2190,11 +2205,17 @@ struct ServerMessage
                 out[offset++] = item.rarity;
                 WriteU32(out, offset, std::min(item.count, max_inventory_item_count));
             }
+            if (msg.inventory_scope.size() > 255 || msg.inventory_actor_scope.size() > 255) return 0;
+            WriteU64(out, offset, msg.inventory_revision); WriteU64(out, offset, msg.inventory_last_request);
+            out[offset++] = static_cast<uint8_t>(msg.inventory_scope.size()); out[offset++] = static_cast<uint8_t>(msg.inventory_actor_scope.size());
+            std::copy(msg.inventory_scope.begin(), msg.inventory_scope.end(), out + offset); offset += msg.inventory_scope.size();
+            std::copy(msg.inventory_actor_scope.begin(), msg.inventory_actor_scope.end(), out + offset); offset += msg.inventory_actor_scope.size();
             return offset;
         }
         case Type::Chat: {
             out[offset++] = static_cast<uint8_t>(msg.chat.flag);
-            WriteU16(out, offset, msg.chat.player_id);
+            WriteU32(out, offset, msg.chat.player_id);
+            WriteU64(out, offset, msg.chat.session_generation);
             WriteU32(out, offset, msg.chat.time);
             uint8_t name_len = static_cast<uint8_t>(std::min<size_t>(msg.chat.player_name.size(), UINT8_MAX));
             uint8_t message_len =
@@ -2207,7 +2228,27 @@ struct ServerMessage
             offset += message_len;
             return offset;
         }
-        case Type::CraftResult:
+        case Type::PartyState:
+            if (!IsValidPartyState(msg.party)) return 0;
+            WriteU32(out, offset, msg.party.leader_id); WriteU64(out, offset, msg.party.leader_generation);
+            out[offset++] = static_cast<uint8_t>(msg.party.members.size());
+            for (const auto& member : msg.party.members)
+            {
+                WriteU32(out, offset, member.player_id); WriteU64(out, offset, member.session_generation);
+                out[offset++] = (member.connected ? 1 : 0) | (member.has_entity ? 2 : 0);
+                WriteU32(out, offset, member.world_id); WriteU64(out, offset, member.world_generation);
+                WriteU32(out, offset, member.entity_id); WriteU64(out, offset, member.entity_generation);
+                out[offset++] = static_cast<uint8_t>(member.name.size());
+                std::copy(member.name.begin(), member.name.end(), out + offset); offset += member.name.size();
+            }
+            return offset;
+        case Type::EconomyResult:
+            if (msg.inventory_scope.size() > 255) return 0;
+            out[offset++] = static_cast<uint8_t>(msg.economy_operation); out[offset++] = static_cast<uint8_t>(msg.economy_outcome);
+            out[offset++] = msg.economy_recorded ? 1 : 0;
+            WriteU64(out, offset, msg.economy_request_id); WriteU64(out, offset, msg.inventory_revision);
+            out[offset++] = static_cast<uint8_t>(msg.inventory_scope.size());
+            std::copy(msg.inventory_scope.begin(), msg.inventory_scope.end(), out + offset); offset += msg.inventory_scope.size();
             out[offset++] = msg.craft_success.value_or(false) ? 1 : 0;
             out[offset++] = msg.craft_petal_type;
             out[offset++] = msg.craft_rarity;
@@ -2323,7 +2364,7 @@ struct ServerMessage
         switch (msg.type)
         {
         case Type::Welcome:
-            return 10 + std::min<size_t>(msg.map_name.size(), UINT8_MAX);
+            return 32 + std::min<size_t>(msg.map_name.size(), UINT8_MAX);
         case Type::Snapshot: {
             size_t size = server_snapshot_header_size;
             size_t count = std::min<size_t>(msg.entities.size(), UINT16_MAX);
@@ -2349,7 +2390,9 @@ struct ServerMessage
         case Type::SkillResult:
             return 4;
         case Type::AuthResult:
-            return 5 + std::min<size_t>(msg.auth_message.size(), UINT8_MAX);
+            if ((!msg.auth_recovery_device_id.empty() && msg.auth_recovery_device_id.size() != auth_recovery_device_size) ||
+                (!msg.auth_recovery_token.empty() && msg.auth_recovery_token.size() != auth_recovery_token_size)) return 0;
+            return 15 + std::min<size_t>(msg.auth_message.size(), UINT8_MAX) + msg.auth_recovery_device_id.size() + msg.auth_recovery_token.size();
         case Type::OwnerState:
             return 10 +
                    (std::min<size_t>(msg.owner_slots.size(), UINT8_MAX) +
@@ -2357,12 +2400,23 @@ struct ServerMessage
                        owner_slot_packet_size +
                    std::min<size_t>(msg.talents.size(), UINT8_MAX) * talent_packet_item_size;
         case Type::Inventory:
-            return 3 + std::min<size_t>(msg.inventory.size(), UINT16_MAX) * inventory_item_packet_size;
+            return msg.inventory_scope.size() > 255 || msg.inventory_actor_scope.size() > 255 ? 0 :
+                21 + msg.inventory_scope.size() + msg.inventory_actor_scope.size() + std::min<size_t>(msg.inventory.size(), UINT16_MAX) * inventory_item_packet_size;
         case Type::Chat:
-            return 10 + std::min<size_t>(msg.chat.player_name.size(), UINT8_MAX) +
+            return 20 + std::min<size_t>(msg.chat.player_name.size(), UINT8_MAX) +
                    std::min<size_t>(msg.chat.message.size(), max_chat_message_size);
-        case Type::CraftResult:
-            return 10 + std::min<size_t>(msg.craft_items.size(), UINT16_MAX) * inventory_item_packet_size;
+        case Type::ClientFeatures:
+        case Type::AccountLinks:
+            return msg.service_payload.empty() || msg.service_payload.size() > max_service_payload_size ? 0 : 3 + msg.service_payload.size();
+        case Type::PartyState: {
+            if (!IsValidPartyState(msg.party)) return 0;
+            size_t size = 14;
+            for (const auto& member : msg.party.members) size += 38 + member.name.size();
+            return size;
+        }
+        case Type::EconomyResult:
+            return msg.inventory_scope.size() > 255 ? 0 : 30 + msg.inventory_scope.size() +
+                std::min<size_t>(msg.craft_items.size(), UINT16_MAX) * inventory_item_packet_size;
         case Type::Environment:
             return 25;
         case Type::CombatFeedback:

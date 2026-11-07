@@ -1,7 +1,9 @@
 #pragma once
 #include "../extension.h"
+#include "../game_services.h"
 #include "../../../Shared/math_types.h"
 #include "../../../Shared/network_msg.h"
+#include "../../../Shared/party.h"
 #include <memory>
 #include <string>
 #include <vector>
@@ -23,20 +25,19 @@ struct SChatEntry
     SPlayerSessionRef sender_session;
 };
 
-class IPlayerDirectory
-{
-  public:
-    virtual ~IPlayerDirectory() = default;
-    virtual const std::vector<std::unique_ptr<CPlayer>>& GetPlayers() const = 0;
-    virtual CPlayer* FindPlayerById(std::uint32_t id) const = 0;
-};
-
-// Transport only: recipient selection and history belong to IChatService.
+// 只负责投递；收件人选择和历史记录由聊天服务管理。
 class IChatDelivery
 {
   public:
     virtual ~IChatDelivery() = default;
     virtual bool DeliverChat(CPlayer&, const SChatEntry&) = 0;
+};
+
+class IPartyDelivery
+{
+  public:
+    virtual ~IPartyDelivery() = default;
+    virtual bool DeliverParty(CPlayer&, const SPartyState&) = 0;
 };
 
 class IChatService
@@ -70,9 +71,22 @@ class ISquadCommands
     virtual bool Leave(CPlayer&) = 0;
 };
 
+struct SLegacyPartyMember
+{
+    std::uint32_t id = 0, parent = 0;
+    std::uint64_t generation = 0;
+};
+
+class IPartyService : public ISquadView, public ISquadCommands
+{
+  public:
+    virtual void ImportLegacy(SWorldHandle world, const std::vector<SLegacyPartyMember>& members) = 0;
+};
+
 class ISquadDirectory
 {
   public:
     virtual ~ISquadDirectory() = default;
     virtual const ISquadView* FindSquads(SWorldHandle) const = 0;
+    virtual IPartyService* Parties() const = 0;
 };

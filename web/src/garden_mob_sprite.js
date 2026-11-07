@@ -24,8 +24,7 @@ const BASE_CACHE = new Map();
 const PART_CACHE = new Map();
 const ROCK_SHAPE_CACHE = new Map();
 
-// Drawn size = radius * 4.0, i.e. the sprite's visual radius is ~2x the
-// entity collision radius.
+// 贴图尺寸为半径四倍，视觉半径约为碰撞半径两倍。
 const BUBBLE_VISUAL_SCALE = 4.0;
 const BUBBLE_FALLBACK_FILL = "rgba(255, 255, 255, 0.34)";
 const BUBBLE_FALLBACK_STROKE = "rgba(255, 255, 255, 0.7)";
@@ -33,8 +32,7 @@ const BUBBLE_FALLBACK_STROKE = "rgba(255, 255, 255, 0.7)";
 export function drawBubble(ctx, pos, radius, entityId) {
   if (!(radius > 0) || !Number.isFinite(radius)) return;
   const image = baseImage("./assets/bubble.svg", "raw", "raw");
-  // Fixed size: the per-mob ±10% radius variation is baked in by the server
-  // at spawn time (snap.radius) and must not change afterwards.
+  // 服务端出生时已将半径随机变化写入快照，客户端不再随机。
   const size = Math.max(1, radius * BUBBLE_VISUAL_SCALE);
   const half = size * 0.5;
 
@@ -879,19 +877,10 @@ function drawFallbackPortal(ctx, radius, scale) {
 }
 
 const FIREFLY_BASE_FACE_ANGLE = -Math.PI * 0.75;
-// Sprite sizing: scale the 110×110 viewBox so the body half-diameter (≈ 21
-// viewBox units) maps to the mob's collision radius. Without this the body
-// only fills ~76% of the collision circle and the firefly looks small.
+// 110 单位素材的身体半径约 21 单位，需将该部分映射到碰撞半径。
 const FIREFLY_VIEWBOX_SIZE = 110;
 const FIREFLY_BODY_RADIUS = 21;
-// Wings animate exactly like the soldier ant's: same phase formula and same
-// per-part pivot rotation (svgParts "wings" + drawAnimatedParts).
-// Glow (荧光): warm bloom anchored at the lantern, sprite-local (65,65) —
-// 10 viewBox units right/down of the 110×110 center. Scaled to the collision
-// radius that lands (10/21 × radius, 10/21 × radius) in the rotated frame,
-// i.e. exactly at the butt behind the body when facing. Drawn UNDER the body;
-// radius tracks the body so it grows with size and its area pulses ±12.5%
-// over time like a breathing lantern.
+// 翅膀复用兵蚁的相位及枢轴旋转；光晕位于身体下方的局部 (65,65)，随半径缩放。
 const FIREFLY_GLOW_RADIUS_SCALE = 1.35;
 const FIREFLY_GLOW_ANCHOR = (65 - FIREFLY_VIEWBOX_SIZE * 0.5) / FIREFLY_BODY_RADIUS;
 const FIREFLY_GLOW_AREA_PULSE = 0.125;
@@ -905,9 +894,7 @@ function fireflyBodyImage(magic) {
   );
 }
 
-// Firefly: lantern glow (under the sprite, at the butt) + body + wings that
-// flap exactly like the soldier ant's. Everything scales with `radius` so
-// bigger fireflies radiate a proportionally larger bloom.
+// 萤火虫光晕、身体及翅膀按半径整体缩放。
 export function drawFirefly(ctx, pos, radius, entityId, angle, motion, time, magic = false) {
   const body = fireflyBodyImage(magic);
   const wings = svgParts(
@@ -927,9 +914,7 @@ export function drawFirefly(ctx, pos, radius, entityId, angle, motion, time, mag
   ctx.translate(pos.x, pos.y);
   if (Number.isFinite(angle)) ctx.rotate(rotation);
 
-  // (0) Glow UNDER the body, anchored at the lantern (sprite-local 65,65;
-  // both offsets positive because the sprite's +y is the image's down).
-  // Area pulses ±12.5%.
+  // 光晕绘制在身体下，锚点为素材局部 (65,65)，面积脉动 ±12.5%。
   const glowRadius = Math.max(1, radius * FIREFLY_GLOW_RADIUS_SCALE);
   const pulse = Math.sqrt(
     Math.max(
@@ -969,8 +954,7 @@ export function drawFirefly(ctx, pos, radius, entityId, angle, motion, time, mag
     ctx.fill();
   }
 
-  // Wings: identical to the soldier ant — same amount, same per-part pivot
-  // rotation around each wing's own pivot.
+  // 翅膀沿用兵蚁各自枢轴的旋转方式。
   drawAnimatedParts(ctx, wings, spriteSize, animation.wing, "fill");
 
   ctx.restore();

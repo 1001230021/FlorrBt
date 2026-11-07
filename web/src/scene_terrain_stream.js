@@ -1,6 +1,4 @@
-// Welcome is the scene fence on the ordered TCP/WebSocket stream. Asset
-// paths are not scene identities: even two rooms using the same TMJ get a
-// fresh epoch and a fresh mutable terrain baseline.
+// Welcome 是有序连接上的场景屏障；地图路径不是场景身份，同资源房间也要新建场景代数和可变地形。
 export function createSceneTerrainStream(apply, { limit = 131072, onOverflow = () => {} } = {}) {
   let epoch = 0;
   let ready = false;

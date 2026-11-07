@@ -24,21 +24,21 @@ bool DoesMapPathExist(std::string_view value)
     }
     return std::filesystem::exists(resolved_path);
 }
-} // namespace
+}
 
 void CDeathmatchController::OnPlayerArrivalCommitted(CGameWorld&, CPlayer& player)
 {
-    if (auto* entity = player.GetEntity()) entity->Team() = 0;
+    if (auto* entity = player.GetEntity()) entity->SetTeam(0);
 }
 
 void CDeathmatchController::OnPlayerEntityReady(CGameWorld&, CPlayer&, CPlayerFlower& flower, EPlayerSpawnReason)
 {
-    flower.Team() = 0;
+    flower.SetTeam(0);
 }
 
 void CDeathmatchController::OnPlayerDepartureCommitted(CGameWorld&, CPlayer&, CEntity* departing)
 {
-    if (departing) departing->Team() = game_config::mob_player_flower_team;
+    if (departing) departing->SetTeam(game_config::mob_player_flower_team);
 }
 
 bool CDeathmatchController::ValidateMapPath(const std::string& value)

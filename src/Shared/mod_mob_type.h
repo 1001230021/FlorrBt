@@ -2,46 +2,28 @@
 #include <array>
 #include <string_view>
 
-// Controller-owned mob content. Native (vanilla / open-world) mobs live in
-// mob_type.h; everything a specific game controller brings along is declared
-// HERE, one block per controller, and never leaks into EMobType.
-//
-// These ids are server-internal ONLY: every mod mob must register through
-// RegisterModMob with a mandatory vanilla visual proxy, so the wire and the
-// client id generator never see them (tools/generate_shared_ids.js skips this
-// header on purpose).
-//
-// Allocation rules:
-//  - one block per controller, explicit base, ids auto-increment inside it;
-//  - values are stable forever (hot-reload snapshots store them numerically):
-//    never renumber, never reuse a released id;
-//  - every id used by code MUST have a row in mod_mob_type_names below -
-//    RegisterModMob refuses unnamed ids at compile time. That table is the
-//    controller's type manifest.
+// 玩法专属生物按控制器分段声明，与 mob_type.h 的基础生物分开。
+// ID 只在服务端使用，注册时必须指定基础生物的视觉代理；客户端生成器跳过此表。
+// 快照保存数值 ID，不能重排或复用；每项须在下方名称清单中登记。
 
 inline constexpr int kModMobTypeBase = 64;
-// Registry slot capacity shared with the native range: natives [1..40],
-// mod content [64..127].
+// 注册表共享容量：基础生物 [1..40]，扩展内容 [64..127]。
 inline constexpr int kMobIdCapacity = 128;
 
 enum class EModMobType : int
 {
     None = 0,
 
-    // --- ant_kingdom controller (EOU) --- base 64
+    // EOU 专属生物，预留 [64..79]。
     EouWorker = 64,
     EouFood,
     EouCell,
     EouEgg,
     EouQueen,
     EouSoldier,
-    // next ant_kingdom id: 70 (block reserves 64..79)
 
-    // --- native implementation details --- base 80
-    // These are not standalone bestiary entries. They use a native visual
-    // proxy and only exist so compound native mobs can own real entities.
+    // 复合生物的内部实体，预留 [80..95]；使用基础视觉代理，不单独列入图鉴。
     FireflyLarvaBody = 80,
-    // next internal id: 81 (block reserves 80..95)
 };
 
 struct SModMobTypeName
@@ -50,8 +32,7 @@ struct SModMobTypeName
     std::string_view name;
 };
 
-// Per-controller manifest: names are snake_case so console spawn commands and
-// zone tools match them directly (spawn eou_worker).
+// 名称使用 snake_case，可由控制台和区域工具直接匹配。
 inline constexpr std::array<SModMobTypeName, 7> mod_mob_type_names = { {
     { static_cast<int>(EModMobType::EouWorker), "eou_worker" },
     { static_cast<int>(EModMobType::EouFood), "eou_food" },
@@ -87,7 +68,7 @@ constexpr bool AllEntriesInRangeAndUnique()
     }
     return true;
 }
-} // namespace mod_mob_type_detail
+}
 
 static_assert(mod_mob_type_detail::AllEntriesInRangeAndUnique(),
               "mod mob manifest entries must be unique, named, and inside [kModMobTypeBase, kMobIdCapacity)");

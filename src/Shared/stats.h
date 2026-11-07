@@ -54,8 +54,7 @@ struct SFlowerStats : public SMobStats
     float mana_regen = 0.f;
     float health_regen = 0.f;
     float defense_health_regen = 0.f;
-    // Multiplies every recovery path supplied by the flower: health regen,
-    // defensive health regen, mana regen and petal medicine.
+    // 统一影响花朵的生命、守御生命、法力回复及花瓣药物回复。
     float recovery_multiplier = 1.f;
     float tridmgbonus = 0.f;
     float reach = 0.0f;
@@ -136,7 +135,7 @@ struct SPetalStats : public SEntityStats
 
     void ActedOn(const SFlowerStats& other, float damage_bonus = 0.f)
     {
-        // Each petal owns its baseline; the flower supplies only its explicit petal bonus.
+        // 花瓣自带基础属性，花朵只贡献明确的花瓣加成。
         const std::int64_t original_hit_count =
             std::max<std::int64_t>(1, static_cast<std::int64_t>(extra_hit_num) + other.petal_extra_hit_num + 1);
         const double compression_power = std::max(0.0, static_cast<double>(other.petal_hit_compression_power));

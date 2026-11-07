@@ -1,4 +1,5 @@
 :root {
+  --ui-font-family: "Florr UI", "Sarasa SC", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
   color-scheme: light;
   --ink: #263241;
   --muted: #6c7785;
@@ -10,8 +11,7 @@
   --green: #308f5f;
   --gold: #e8c452;
 
-  /* Florr uses muted, slightly greyed surfaces and reserves strong
-     saturation for petals, rarity cards, and action buttons. */
+
   --florr-blue-edge: #54738f;
   --florr-blue-surface: #6e8cae;
   --florr-blue-well: #627f9d;
@@ -29,27 +29,18 @@
   --florr-grey-well: #686f75;
   --florr-text-shadow: #405568;
 
-  /* Motion rhythm, measured frame-by-frame off florr's own UI: entrances are
-     slow and confident (a decelerating slide, fully opaque the whole way),
-     exits are short and light (shrink away in place).  Symmetric open/close
-     timings are exactly what made our panels feel sticky, so every animated
-     surface pulls its durations from this one pair of tokens. */
+  /* 进入缓慢减速、退出快速缩小，所有动画共用这对时长。 */
   --m-enter-dur: 260ms;
   --m-enter-ease: cubic-bezier(0.16, 1, 0.3, 1);
   --m-exit-dur: 110ms;
   --m-exit-ease: cubic-bezier(0.4, 0, 1, 1);
   --m-exit-scale: 0.62;
 
-  /* ui_motion.js rewrites this pair per phase on the element it is animating,
-     so a component can declare one transition and still get the slow entrance
-     and the fast exit without duplicating rules. */
+  /* 由 ui_motion.js 按阶段设置时长和曲线，组件共用同一过渡声明。 */
   --ui-motion-duration: var(--m-enter-dur);
   --ui-motion-ease: var(--m-enter-ease);
 
-  /* Bottom loadout bar. florr's main row is ~1.5x the secondary row (about
-     72/48 at 1080p); ours used to be 58/46, which made the two rows read as
-     near-equals.  The slot buttons, their petal stacks and the mobile scale
-     rules all derive from this pair. */
+  /* 主槽约为副槽的 1.5 倍，按钮、卡片和移动端缩放共用尺寸源。 */
   --slot-primary-size: 64px;
   --slot-secondary-size: 44px;
 }
@@ -57,6 +48,8 @@
 @font-face {
   font-family: "Florr UI";
   src: url("./assets/florr/Ubuntu-B.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400 900;
   font-display: swap;
 }
 
@@ -96,8 +89,7 @@ body {
   outline: none;
 }
 
-/* Base-layer scrollbar host: containers managed by custom_scrollbar.js.
-   The native scrollbar is hidden so only the custom one is visible. */
+/* 自定义滚动条接管显示，隐藏原生滚动条。 */
 .custom-scrollbar-host {
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -132,8 +124,7 @@ body {
   left: 1px;
   right: 1px;
   border-radius: 999px;
-  /* Dark, high-contrast thumb: visible on every light panel background
-     (the old light blue thumb was nearly invisible on the blue panels). */
+
   background: var(--scrollbar-thumb, rgba(20, 32, 48, 0.75));
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
   will-change: transform;
@@ -157,14 +148,14 @@ body {
   background: var(--scrollbar-thumb-hover, rgba(30, 46, 68, 0.95));
 }
 
-/* Light overlay panels use a pale thumb (chat log). */
+
 .chat-log.custom-scrollbar-host {
   --scrollbar-track: rgba(255, 255, 255, 0.14);
   --scrollbar-thumb: rgba(255, 255, 255, 0.4);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.6);
 }
 
-/* Wider, easier to grab on touch devices. */
+
 @media (pointer: coarse) {
   .custom-scrollbar {
     width: 12px;
@@ -226,7 +217,6 @@ button:active {
 .ui-text-input:focus {
   border-color: var(--blue);
   background: #ffffff;
-  box-shadow: 0 0 0 2px rgba(53, 119, 212, 0.18);
 }
 
 .ui-text-input:disabled {
@@ -277,7 +267,7 @@ button:active {
 .loading-screen-label {
   max-width: calc(100vw - 32px);
   overflow-wrap: anywhere;
-  font-family: "Florr UI", "Sarasa SC", Ubuntu, "Segoe UI", sans-serif;
+  font-family: var(--ui-font-family);
   font-size: clamp(42px, 8vh, 72px);
   font-weight: 700;
   line-height: 1;
@@ -290,12 +280,7 @@ button:active {
   user-select: none;
 }
 
-/* Reversible visibility motion.  The helper in ui_motion.js keeps the
-   existing .hidden contract (display:none after an exit), while these rules
-   animate only opacity by default.  Individual components add their own
-   compositor-friendly transform without disturbing their positioning
-   transforms.  ui_motion.js drives --ui-motion-duration per phase so the
-   entrance and the exit run at the two different speeds above. */
+/* 退出结束后再隐藏，默认仅改变透明度；组件可增加独立的表现变换。 */
 .ui-motion-target {
   will-change: opacity;
   transition: opacity var(--ui-motion-duration) var(--ui-motion-ease);
@@ -309,7 +294,7 @@ button:active {
 
 
 .loading-screen.ui-motion-exiting {
-  /* Keep the loading curtain modal until the delayed .hidden cleanup. */
+  /* 延迟隐藏完成前，加载遮罩仍拦截交互。 */
   pointer-events: all;
 }
 
@@ -324,9 +309,7 @@ button:active {
   display: block;
 }
 
-/* Auth + email binding: same visual language as the in-game panels
-   (thick tinted border, saturated fill, Florr UI font, outlined white
-   text) so the login screen no longer looks like a plain web form. */
+
 .auth-panel {
   top: 50%;
   left: 50%;
@@ -341,7 +324,7 @@ button:active {
   max-height: calc(100vh - 32px);
   overflow-y: auto;
   color: #fff;
-  font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
+  font-family: var(--ui-font-family);
   transition:
     opacity var(--ui-motion-duration) var(--ui-motion-ease),
     transform var(--ui-motion-duration) var(--ui-motion-ease);
@@ -431,7 +414,7 @@ button:active {
     1px 1px 0 var(--florr-blue-edge);
 }
 
-/* White rounded inputs with a chunky border, like the inventory search. */
+
 .auth-panel .ui-text-input {
   height: 36px;
   border: 3px solid #d5dde3;
@@ -506,8 +489,7 @@ button:active {
   grid-template-columns: 1fr;
 }
 
-/* Primary auth action: chunky green button, same family as the revive
-   button on the death screen. */
+
 .auth-panel button {
   height: 42px;
   border: 4px solid #36863b;
@@ -536,8 +518,7 @@ button:active {
   filter: none;
 }
 
-/* Secondary actions (send code / cancel): neutral slate, same family as
-   the death-screen close button. */
+
 .auth-code-row button,
 #cancelEmailBindingBtn {
   border-color: #656f78;
@@ -659,7 +640,7 @@ button:active {
   background: transparent;
   pointer-events: auto;
   color: #fff;
-  font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
+  font-family: var(--ui-font-family);
   text-align: center;
   transition:
     transform 420ms cubic-bezier(0.16, 1, 0.3, 1),
@@ -857,8 +838,7 @@ button:active {
   align-items: flex-start;
 }
 
-/* Florr-style buttons: the border is the fill darkened to ~78% of the same
-   hue, hover brightens the whole button, press sinks it. */
+
 .top-action {
   position: relative;
   width: 38px;
@@ -919,7 +899,7 @@ button:active {
 }
 
 .game-panel.codex-panel {
-  /* Reference gallery: a flat lemon surface, olive frame/empty cells. */
+
   --game-panel-border: var(--florr-yellow-edge);
   --game-panel-background: var(--florr-yellow-surface);
   --game-panel-well: var(--game-panel-background);
@@ -971,8 +951,7 @@ button:active {
   text-shadow: none;
 }
 
-/* Shared floating-card base: every card-like element (backpack slots,
-   inventory entries, codex cells) inherits these variables and behaviors. */
+
 .card-base {
   --card-bg: #c9a83f;
   --card-bg-empty: #b69a35;
@@ -1008,8 +987,7 @@ button:active {
 
 .codex-grid {
   --codex-gap: 6px;
-  /* Keep every real FBT rarity column. Fit them on smaller desktops rather
-     than forcing the reference account's eight-column data onto this one. */
+  /* 保留全部实际稀有度列，在小桌面适配宽度。 */
   --codex-card-size: clamp(40px,
     calc((100vw - 72px - (var(--codex-columns, 11) - 1) * var(--codex-gap)) / var(--codex-columns, 11)), 64px);
   --scrollbar-track: transparent;
@@ -1026,8 +1004,7 @@ button:active {
   overflow: auto;
   border-radius: 0;
   background: var(--game-panel-well);
-  /* Rotated counts extend above/right of the cards, including the first
-     row and last column. Reserve space before the scroll clipping edge. */
+  /* 角标伸出右上，滚动裁剪边缘需为首行末列预留空间。 */
   padding: 10px 16px 6px 4px;
 }
 
@@ -1051,8 +1028,7 @@ button:active {
 }
 
 .codex-cell > .card-bg-layer {
-  /* Card SVGs draw only x/y=5..105 inside a 110-unit viewBox. Remove that
-     transparent margin so occupied and empty slots have the same outline. */
+  /* 去除 SVG 外围透明留白，使实卡和空槽轮廓一致。 */
   inset: -5%;
   width: 110%;
   height: 110%;
@@ -1083,13 +1059,12 @@ button:active {
   right: 0;
   box-shadow: none;
 }
-/* Shared floating card base for tooltips (bestiary + petal info): the same
-   translucent dark panel as the chat log/messages. */
+
 :is(.codex-detail, .petal-info-tooltip) {
   position: fixed;
   z-index: 70;
   width: max-content;
-  max-width: 460px;
+  max-width: min(460px, calc(100vw - 16px));
   padding: 10px 12px;
   border: 0;
   border-radius: 4px;
@@ -1145,8 +1120,9 @@ button:active {
 
 .codex-detail-desc {
   color: rgba(255, 255, 255, 0.94);
-  font-size: 12px;
-  margin-bottom: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 7px;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1159,17 +1135,34 @@ button:active {
 .codex-loot {
   display: flex;
   flex-direction: column;
-  gap: 2px 0;
+  gap: 6px;
   margin-top: 4px;
 }
 
-.codex-loot-row {
+.codex-detail {
+  width: min(340px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+}
+
+.codex-loot-group {
   display: grid;
-  gap: 3px;
+  grid-template-columns: repeat(auto-fill, 42px);
+  justify-content: start;
+  gap: 6px 4px;
+}
+
+.codex-loot-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   align-items: center;
 }
 
-.codex-loot-row .petal-stack {
+.codex-loot-entry .petal-stack {
   position: relative;
   left: auto;
   top: auto;
@@ -1178,14 +1171,14 @@ button:active {
   height: 39px;
 }
 
-.codex-loot-rate-row {
-  display: grid;
-  gap: 3px;
+.codex-loot-rate {
   text-align: center;
   font-size: 11px;
   font-weight: 700;
   color: rgba(255, 255, 255, 0.88);
-  margin-bottom: 6px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .quick-action {
@@ -1298,7 +1291,7 @@ button:active {
   background: rgba(8, 9, 11, 0.55);
   padding: 3px 5px;
   border-radius: 3px;
-  font: 800 12px/1.3 "Florr UI", "Sarasa SC", sans-serif;
+  font: 800 12px/1.3 var(--ui-font-family);
   text-shadow: 1px 1px #333;
   overflow-wrap: anywhere;
 }
@@ -1653,7 +1646,6 @@ button:active {
 
 .chat-composer:focus-within {
   border-color: #3577d4;
-  box-shadow: 0 0 0 2px rgba(53, 119, 212, 0.22);
 }
 
 .chat-compose-channel {
@@ -1880,10 +1872,7 @@ button:active {
   --game-panel-max-height: min(620px, calc(100vh - 132px));
   --game-panel-gap: 9px;
   --game-panel-padding: 10px 12px 12px;
-  /* florr never outlines a panel. Depth comes from stacking same-hue shades:
-     frame -> surface -> well -> card, each step only slightly darker. Our old
-     border was ~40% darker than the fill, which read as a drawn outline and
-     made everything look like a web control. These steps are ~12%/~10%. */
+
   --game-panel-border: var(--florr-blue-edge);
   --game-panel-background: var(--florr-blue-surface);
   --game-panel-well: var(--florr-blue-well);
@@ -1892,34 +1881,25 @@ button:active {
   bottom: 12px;
   z-index: 60;
   width: min(var(--game-panel-width), calc(100vw - 24px));
-  /* Definite height so the 1fr rows actually constrain the inner lists and
-     the custom scrollbars can kick in; without it the panel grows with its
-     content instead of scrolling. */
+  /* 固定高度使网格行能约束内部列表，内容超出时滚动而非撑大面板。 */
   height: var(--game-panel-max-height);
   overflow: hidden;
   display: grid;
   gap: var(--game-panel-gap);
   padding: var(--game-panel-padding);
   border: 5px solid var(--game-panel-border);
-  /* Radii step down as you nest: panel 8 -> well 6 -> card 4. Ours used to be
-     panel 5 / card 4, so the outer shell looked sharper than its contents. */
+
   border-radius: 8px;
   background: var(--game-panel-background);
   box-shadow: none;
-  /* Slide with transform (compositor-only) instead of animating `left`,
-     which reflowed the whole panel subtree — hundreds of petal cards —
-     every frame. Closed panels also go visibility-hidden so they cost no
-     paint/hit-testing and can't be focused; ui_panel.js owns the timing of
-     that flip, so the resting state below carries no transition at all. */
+  /* 以 transform 移动面板，避免逐帧重排卡片；关闭后隐藏以停止绘制及命中。 */
   visibility: hidden;
   opacity: 0;
   transform: var(--game-panel-closed-transform);
-  font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
+  font-family: var(--ui-font-family);
 }
 
-/* Entrance: slide in from the screen edge, decelerating, and *opaque the
-   whole way*.  Fading a panel in while it travels is what made ours look
-   washed out mid-flight — florr's never drops below full opacity. */
+/* 进入过程保持不透明并减速滑入。 */
 .game-panel.open {
   visibility: visible;
   opacity: 1;
@@ -1933,19 +1913,14 @@ button:active {
   opacity: 1;
   transform: var(--game-panel-closed-transform);
   pointer-events: none;
-  /* Snap to the start pose instead of animating into it. Without this, a panel
-     re-opened mid-dismissal would first travel from its half-shrunk state out
-     to the edge, then slide back in. */
+  /* 先直接设置起始姿态，避免中途重开时先向外反向飞行。 */
   transition: none;
 }
 
-/* Exit: do not reverse the entrance.  florr shrinks the panel away in place
-   in roughly 110ms, which reads as "dismissed" instead of "retracting". */
+
 .game-panel.ui-panel-exiting {
   will-change: transform, opacity;
-  /* setOpen(false) removes .open immediately. Keep the panel painted for
-     the exit phase; otherwise the base visibility:hidden rule makes the
-     shrink unobservable. */
+  /* 移除 open 后仍保留退出阶段可见性，确保缩小动画能完成。 */
   visibility: visible;
   opacity: 0;
   transform: scale(var(--m-exit-scale));
@@ -2009,7 +1984,7 @@ button:active {
   --settings-control-fill-on: #5fc85a;
   --settings-control-fill-on-border: #4a9c46;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
-  /* Pop down from the top-left instead of sliding from the left edge. */
+
   left: 12px;
   bottom: auto;
   top: 56px;
@@ -2038,7 +2013,7 @@ button:active {
 .settings-tabs button {
   flex: 1; min-width: 0; padding: 6px 8px; color: white;
   border: 3px solid #60656b; border-radius: 6px; background: #85898e;
-  font: 900 14px "Florr UI", "Sarasa SC", sans-serif; text-shadow: 1px 1px #333;
+  font: 900 14px var(--ui-font-family); text-shadow: 1px 1px #333;
 }
 .settings-tabs button.active { background: #a6aaaf; border-color: #555a60; }
 .settings-panel:not([data-settings-category="game"]) #emailSettingsRow { display: none; }
@@ -2062,7 +2037,8 @@ button:active {
   color: #ffffff;
   font-size: 16px;
   font-weight: 900;
-  line-height: 1.2;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
   text-shadow:
     -1px -1px 0 #3f4348,
     1px -1px 0 #3f4348,
@@ -2089,9 +2065,7 @@ button:active {
     1px 1px 0 #3f4348;
 }
 
-/* Every settings control speaks the same florr language as the buttons in
-   the HUD: 3px border in the fill's own darkened hue, chunky radius, white
-   outlined text, hover brightens, press sinks. */
+
 .settings-action {
   min-width: 104px;
   height: 36px;
@@ -2138,14 +2112,14 @@ button:active {
   appearance: none;
   -webkit-appearance: none;
   background-color: var(--settings-control-bg);
-  /* Chunky florr caret instead of the OS dropdown arrow. */
+
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path d='M1.6 1.4 6 5.8l4.4-4.4' fill='none' stroke='%23ffffff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
   background-repeat: no-repeat;
   background-position: right 9px center;
   background-size: 12px 8px;
   color: #fff;
   cursor: pointer;
-  font: 900 14px/1 "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
+  font: 900 14px/1.3 var(--ui-font-family);
   text-shadow:
     -1px -1px 0 #3f4348,
     1px -1px 0 #3f4348,
@@ -2169,8 +2143,7 @@ button:active {
   cursor: default;
 }
 
-/* The dropdown list itself is drawn by the OS; keep it legible instead of
-   inheriting the outlined white text above. */
+/* 下拉候选由系统绘制，使用可读的普通文字色。 */
 .settings-choice option {
   background: #4a4d52;
   color: #f2f4f5;
@@ -2178,7 +2151,7 @@ button:active {
   text-shadow: none;
 }
 
-/* Florr checkbox: a chunky square that fills green with a white tick. */
+
 .settings-square-toggle {
   justify-self: end;
   width: 36px;
@@ -2316,8 +2289,7 @@ button:active {
   background: #7c7c7c;
   background-clip: padding-box;
   color: #fff;
-  /* Position and interaction transforms must be independent: the shared
-     button:active reset must never remove the node's centring offset. */
+  /* 定位与按压变换独立，不能在按下时丢失居中偏移。 */
   translate: -50% -50%;
   transform: scale(1);
   box-shadow: none;
@@ -2329,7 +2301,6 @@ button:active {
 .talent-node:hover, .talent-node:focus-visible { filter: brightness(1.1); transform: scale(1.06); }
 .talent-node:active, .talent-node.holding { transform: scale(0.97); }
 .talent-root:active { transform: scale(0.97); }
-.talent-node:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 .talent-node.pending { opacity: 0.75; }
 .talent-icon { width: 34px; height: 34px; pointer-events: none; }
 .talent-icon svg, .talent-root svg { width: 100%; height: 100%; }
@@ -2339,7 +2310,7 @@ button:active {
   top: -9px;
   right: -8px;
   color: #ff7f81;
-  font: 900 18px/1 "Florr UI", "Sarasa SC", sans-serif;
+  font: 900 18px/1 var(--ui-font-family);
   -webkit-text-stroke: 3px #45292a;
   paint-order: stroke fill;
   transform: rotate(12deg);
@@ -2352,7 +2323,7 @@ button:active {
 @keyframes talent-hold-ring { to { stroke-dashoffset: 0; } }
 .talent-footer { display: flex; gap: 7px; align-items: center; z-index: 2; height: 42px; min-height: 42px; }
 .talent-help { flex: 1; color: white; font-size: 11px; line-height: 1.3; text-shadow: 1px 1px #75282c; }
-.talent-footer button { padding: 5px 12px; border: 3px solid #a23b3d; border-radius: 5px; color: white; background: #c3484b; font: 900 13px "Florr UI", "Sarasa SC", sans-serif; text-shadow: 1px 1px #66262b; }
+.talent-footer button { padding: 5px 12px; border: 3px solid #a23b3d; border-radius: 5px; color: white; background: #c3484b; font: 900 13px var(--ui-font-family); text-shadow: 1px 1px #66262b; }
 .talent-footer .talent-reset { background: #e22b32; }
 .talent-footer button:hover:not(:disabled) { filter: brightness(1.12); }
 .talent-footer button:disabled { opacity: 0.55; }
@@ -2366,7 +2337,7 @@ button:active {
   border-radius: 4px;
   background: rgba(8, 9, 11, 0.55);
   color: white;
-  font: 800 13px/1.35 "Florr UI", "Sarasa SC", sans-serif;
+  font: 800 13px/1.35 var(--ui-font-family);
   text-shadow: 1px 1px #222;
   pointer-events: none;
   transition: opacity 100ms ease, transform 100ms ease;
@@ -2384,7 +2355,9 @@ button:active {
   color: #fff;
   font-size: 23px;
   font-weight: 900;
-  line-height: 1;
+  line-height: 1.25;
+  min-width: 0;
+  overflow-wrap: anywhere;
   text-shadow:
     -2px -2px 0 rgba(48, 75, 96, 0.76),
     2px -2px 0 rgba(48, 75, 96, 0.76),
@@ -2419,19 +2392,21 @@ button:active {
 
 .panel-close {
   position: absolute;
-  right: -4px;
-  top: -5px;
+  right: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
   width: 30px;
   height: 30px;
   min-width: 0;
-  padding: 0 0 2px;
+  padding: 0;
   border: 3px solid #983c3c;
   border-radius: 5px;
   background: #d35757;
   color: #f8eeee;
   font-size: 24px;
   font-weight: 900;
-  line-height: 20px;
+  line-height: 1;
 }
 
 .craft-selection,
@@ -2495,7 +2470,7 @@ button:active {
 }
 
 .craft-workbench {
-  /* The ring backing and a normal petal card share one exact footprint. */
+
   --craft-card-size: 54px;
   --craft-orbit-radius: 88px;
   display: grid;
@@ -2539,8 +2514,7 @@ button:active {
   transform: translate(-50%, -50%) scale(0.78);
 }
 
-/* Ring slots re-enter with a settling rotation (they "return to position"
-   after the crafted card is dismissed). */
+
 .craft-stage-slot.ui-motion-entering {
   opacity: 0;
   pointer-events: none;
@@ -2568,8 +2542,7 @@ button:active {
   box-shadow: none;
 }
 
-/* A successful result is the focus. Keep the ring geometry mounted for a
-   seamless transition, but do not leave five dark selection wells behind it. */
+/* 保留环位几何以平滑过渡，成功结果后隐藏多余的空槽底色。 */
 .craft-stage.success .craft-stage-slot.empty,
 .craft-stage.success .craft-stage-slot.craft-card-fading {
   background: transparent;
@@ -2601,9 +2574,7 @@ button:active {
   --slot-y: calc(-0.30902 * var(--craft-orbit-radius));
 }
 
-/* Craft gamble spin (craft_motion.js): the orbit controller drives each slot
-   button's transform per frame, so the CSS transition must not smooth it and
-   the ring position left/top must collapse to the stage center. */
+/* 轨道控制器逐帧设置变换，禁用 CSS 二次平滑，并将各环位布局原点统一到舞台中心。 */
 .craft-stage.spinning .craft-stage-slot {
   pointer-events: none;
 }
@@ -2669,6 +2640,10 @@ button:active {
 }
 
 .craft-action button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.3;
   min-width: 64px;
   width: auto;
   height: 34px;
@@ -2733,7 +2708,7 @@ button:active {
 
 .craft-matrix {
   display: grid;
-  /* Keep the empty cells exactly the same size as their petal cards. */
+
   grid-template-columns: repeat(var(--craft-rarity-count, 9), 56px);
   gap: 4px;
   align-items: center;
@@ -2768,24 +2743,6 @@ button:active {
   background: rgba(0, 0, 0, 0.28);
   box-shadow: none;
   pointer-events: none;
-}
-
-/* The shell arrives first, then the heading settles a fraction later.  The
-   exit has no counterpart: at 110ms a staggered title would still be flying
-   after the panel it belongs to has gone. */
-.game-panel.ui-panel-entering .panel-title {
-  opacity: 0;
-  transform: translateY(-7px) scale(0.98);
-}
-
-.game-panel .panel-title {
-  transition:
-    opacity var(--m-enter-dur) var(--m-enter-ease) 55ms,
-    transform var(--m-enter-dur) var(--m-enter-ease) 55ms;
-}
-
-.game-panel.ui-panel-exiting .panel-title {
-  transition: none;
 }
 
 .craft-matrix-cell.locked {
@@ -2904,8 +2861,7 @@ button:active {
   transform-origin: top center;
 }
 
-/* Live data, distinct from the angled inventory xN badge. Both rows use the
-   same top-centred tab; it never consumes card/name space or pointer input. */
+/* 实时资源计数独立于背包数量角标，不占名称空间或拦截输入。 */
 .slot-value {
   position: absolute;
   z-index: 5;
@@ -2919,7 +2875,7 @@ button:active {
   box-shadow: none;
   background: var(--slot-rarity-color, #7eef6d);
   color: #fff;
-  font: 900 18.75cqw/1.15 "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
+  font: 900 18.75cqw/1.15 var(--ui-font-family);
   -webkit-text-stroke: 0.16em #303030;
   paint-order: stroke fill;
   font-variant-numeric: tabular-nums;
@@ -3027,18 +2983,14 @@ button:active {
 .petal-icon-copy {
   width: var(--copy-size, 60%);
   height: var(--copy-size, 60%);
-  /* Group rotation happens around the whole image center: the ring offset
-     (copy-x/y) is rotated by the live angle before the per-copy angle turns
-     the petal itself, so multi-petal stacks revolve around the stack center
-     instead of spinning each copy around its own center. */
+  /* 先绕整堆中心旋转副本偏移，再旋转副本自身，保证多副本整体绕行。 */
   transform: translate(-50%, -50%) rotate(var(--live-angle, 0rad))
     translate(var(--copy-x, 0px), var(--copy-y, 0px))
     rotate(var(--copy-angle, 0rad)) rotate(var(--card-angle, 0rad))
     scale(var(--live-scale, 1));
 }
 
-/* Linker's SVG is deliberately diagonal in cards, while its live projectile
-   keeps the authoritative facing angle from the server. */
+/* 卡片内 Linker 保持斜向素材，活体投射物服从权威朝向。 */
 .petal-icon.petal-linker-card,
 .petal-icon-copy.petal-linker-card {
   --card-angle: 0.785398rad;
@@ -3065,7 +3017,7 @@ button:active {
   transform: translate(-50%, -50%);
 }
 
-/* Names and copy offsets use the stack itself as their scale reference. */
+
 .petal-stack {
   container-type: inline-size;
 }
@@ -3075,16 +3027,15 @@ button:active {
   left: 50%;
   bottom: 14%;
   z-index: 4;
-  /* Configured font/width caps apply at 56px; scale both with the card.
-     A flight scales this exact same layout as one compositor layer. */
+  /* 字体和宽度按 56px 基准缩放，飞行动画整体变换同一布局。 */
   font-size: var(--petal-label-font-fallback, 14px);
   font-size: calc(var(--petal-label-font-cqw, 25) * 1cqw);
   white-space: nowrap;
   pointer-events: none;
-  font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
+  font-family: var(--ui-font-family);
   font-weight: 900;
   color: #ffffff;
-  line-height: 1;
+  line-height: 1.25;
   letter-spacing: 0;
   text-shadow:
     -0.055em 0 0 #000,
@@ -3110,10 +3061,7 @@ button:active {
   transform: translate(-50%, -4px);
 }
 
-/* Stack count the florr way: no pill, just outlined white text that hangs
-   off the card's top-right corner, tilted clockwise (~12deg, text runs down
-   to the right).  The card containers deliberately don't clip so the label
-   can overflow the card edge. */
+/* 数量角标伸出右上并轻微旋转，容器不得裁掉溢出部分。 */
 .petal-count[hidden] { display: none !important; }
 
 .petal-count {
@@ -3125,7 +3073,7 @@ button:active {
   border-radius: 0;
   background: transparent;
   color: #ffffff;
-  font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
+  font-family: var(--ui-font-family);
   font-size: 11px;
   font-weight: 900;
   line-height: 1;
@@ -3178,13 +3126,10 @@ button:active {
   height: var(--slot-secondary-size);
 }
 
-/* Key hints, florr style: the swap key sits left of the secondary row, and
-   each secondary column gets its select key underneath.  Text is the same
-   outlined white as card names.  They read the live bindings (game.js fills
-   them), so a rebound key shows up here too. */
+/* 快捷键提示读取实时绑定，改键后同步。 */
 .slot-key-hint {
   color: #ffffff;
-  font-family: "Florr UI", "Sarasa SC", "Segoe UI", sans-serif;
+  font-family: var(--ui-font-family);
   font-size: 12px;
   font-weight: 900;
   line-height: 1;
@@ -3238,7 +3183,7 @@ button:active {
   min-height: 11px;
 }
 
-/* Touch devices have no keys to hint at (and the secondary row collapses). */
+
 body.mobile-ui .slot-swap-hint,
 body.mobile-ui .slot-key-hints {
   display: none;
@@ -3363,9 +3308,7 @@ body.mobile-ui .slot-key-hints {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  /* Recessed well: the middle shade step between the panel surface and the
-     saturated cards, which is how florr separates content without a rule or
-     a border. */
+
   border-radius: 6px;
   background: var(--game-panel-well);
   padding: 5px 4px 4px;
@@ -3431,7 +3374,7 @@ body.mobile-ui .slot-key-hints {
     filter 120ms ease,
     opacity 120ms ease,
     transform 120ms ease;
-  /* Keep vertical inventory scrolling until a held card becomes a drag. */
+  /* 长按成为拖拽前保留原生纵向滚动。 */
   touch-action: pan-y;
 }
 
@@ -3567,7 +3510,7 @@ body.mobile-ui .slot-key-hints {
   .talent-points { font-size: 18px; }
 
   .craft-matrix {
-    /* Wrap the enlarged cards instead of clipping them on narrow screens. */
+
     grid-template-columns: repeat(auto-fill, 56px);
     gap: 4px;
   }
@@ -3644,9 +3587,7 @@ body.mobile-ui .slot-key-hints {
   }
 }
 
-/* ================================================================
-   Chat: florr-style translucent dark panel (kept from theme pass).
-   ================================================================ */
+
 .chat-panel {
   --chat-message-background: rgba(8, 9, 11, 0.55);
 }
@@ -3730,7 +3671,7 @@ body.mobile-ui .slot-key-hints {
 .chat-input {
   color: #fff;}
 
-/* Slot-swap flight ghost: petal glides from source slot to target slot. */
+
 .petal-flight {
   position: fixed;
   z-index: 80;
@@ -3739,11 +3680,9 @@ body.mobile-ui .slot-key-hints {
   pointer-events: none;
 }
 
-/* ================================================================
-   Light cleanups + mobile UI layout (mobile-only).
-   ================================================================ */
 
-/* Remove white selection accents. */
+
+
 .custom-scrollbar-thumb {
   box-shadow: none;
 }
@@ -3753,11 +3692,10 @@ body.mobile-ui .slot-key-hints {
   box-shadow: none;
 }
 
-/* Responsive touch layout is isolated in mobile.css. */
+/* 移动端响应布局由 mobile.css 管理。 */
 .slot-collapse-btn { display: none; }
 
-/* Slot-swap flight: while a petal is airborne the destination slots show
-   no petal card; it renders only when the swap settles. */
+/* 花瓣飞行期间隐藏目标槽卡片，落位后再显示。 */
 .slot.slot-swap-hidden .petal-stack,
 .slot.slot-swap-hidden .slot-value,
 .slot.slot-swap-hidden .slot-durability-overlays {

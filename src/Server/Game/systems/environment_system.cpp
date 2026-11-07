@@ -18,8 +18,7 @@ void CEnvironmentSystem::Synchronize(CGameWorld& world, CMobBase& mob,
     const float radius = mob.EnvironmentProbeRadius();
     const bool inside = player_controlled &&
         world.CircleBlockedByWall(mob.Pos(), radius, EWallQuery::Shortcut);
-    // A fast movement can enter and leave between samples. It must still clear
-    // the old petal runtime and start one full reload, not keep loaded petals.
+    // 高速移动即使在两次采样之间穿入又离开，也须清除旧花瓣运行态并启动一次完整重载。
     if (player_controlled && movement_start && !inside && !mob.IsInShortcut() &&
         world.SweptCircleBlockedByWall(*movement_start, mob.Pos(), radius, EWallQuery::Shortcut))
         mob.SetShortcutContact(true);

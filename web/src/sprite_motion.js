@@ -1,6 +1,4 @@
-// Integrate angular velocity instead of multiplying wall-clock time by the
-// latest speed. A speed change must never teleport an insect's legs/wings.
-// The base, hit-flash and hallucination passes share a pose for a given time.
+// 积分角速度，避免速度变化使肢体相位跳变；同一时间各绘制通道共享姿态。
 const TAU = Math.PI * 2;
 const phases = new Map();
 const MAX_ENTITIES = 2048;
@@ -28,8 +26,7 @@ export function getSpritePhase(entityId, channel, time, rate, offset = 0) {
 
 export function getLimbMotionAmount(motion) {
   const value = Math.max(0, Math.min(1, Number(motion) || 0));
-  // Original limb deadzone/amplitude; phase integration above only prevents
-  // speed changes from jumping the pose and must not damp the movement.
+  // 只调整相位积分，保留原有动作死区和幅度。
   return value < 0.12 ? 0 : value;
 }
 

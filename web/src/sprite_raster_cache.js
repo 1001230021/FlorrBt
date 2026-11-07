@@ -3,18 +3,10 @@ import { sceneRasterBudget } from "./raster_budget.js";
 import { recordRenderPreparationCost } from "./render_timing.js";
 import { requestRedraw } from "./render_invalidate.js";
 
-// SVG-backed <img> sources re-rasterize the whole vector on every drawImage
-// whose destination size misses the browser's internal cache. Entity sprites
-// draw at per-entity, per-zoom sizes, so in practice every mob paid a full
-// SVG rasterization every frame — the dominant draw cost of the world pass.
-//
-// This cache rasterizes each image once per quantized device-pixel bucket
-// into a plain canvas and blits that instead: bitmap-to-bitmap draws are
-// cheap and stay cheap at any entity count. Buckets grow in 1.25x steps and
-// always round up, so the blit only ever downscales (≤20%, visually clean).
-const spriteRasterCache = new Map(); // image -> { src, buckets: Map(key -> entry) }
-// Larger drawings fall back to the decoded SVG, not an enlarged low-res
-// bitmap. Map composites and all raster/tint variants share a byte budget.
+// SVG 按设备像素尺寸分桶缓存到画布，避免每实体每帧重新栅格化。
+// 桶按 1.25 倍递增并向上取整，绘制只轻微缩小。
+const spriteRasterCache = new Map();
+// 超过缓存尺寸时回退矢量图，避免放大低分辨率位图；全部变体共享字节预算。
 const maxBucketPx = 2048;
 const minBucketPx = 8;
 const bucketLogRatio = Math.log(1.25);
@@ -23,20 +15,14 @@ const pendingRasters = new Map();
 const rasterJobs = [];
 let rasterPumpScheduled = false;
 
-// The cache is touched by many entities per frame. Let the scene provide one
-// shared frame token instead of calling performance.now() for every draw
-// and every LRU touch. Both game and debug renderers enter here.
+// 场景提供共用帧标记，避免每次绘制及缓存访问都读取时钟。
 export function setSpriteRasterFrameTime(now = performance.now()) {
   sceneRasterBudget.beginFrame(Number.isFinite(now) ? now : performance.now());
 }
 
-// White-silhouette variants power the hit flash: instead of re-drawing a
-// flashing entity through ctx.filter (which forces intermediate surfaces and
-// stalled frames whenever a whole pack got hit), the entity is re-blitted
-// from pre-tinted copies of the cached rasters at flash alpha. While the
-// tint mode is active drawSpriteImage substitutes the white variant.
+// 受击闪光使用预着色缓存轮廓，避免画布滤镜创建临时表面。
 let whiteTintActive = false;
-const whiteSourceVariants = new WeakMap(); // non-<img> sources (pattern canvases)
+const whiteSourceVariants = new WeakMap(); // 非图片源的弱引用着色缓存。
 
 export function setSpriteHitTint(active) {
   whiteTintActive = !!active;
@@ -60,8 +46,7 @@ export function drawSpriteImage(ctx, image, dx, dy, dw, dh) {
     typeof HTMLImageElement !== "undefined" &&
     image instanceof HTMLImageElement
   ) {
-    // SVGs remain vectors outside the bounded cache. Stretching a 2048px
-    // bitmap at 4K zoom was the reason large bodies became blurry.
+    // 超大尺寸使用矢量源，避免拉伸有限尺寸缓存造成模糊。
     if (Math.max(dw, dh) * (state.dpr || 1) > maxBucketPx && !whiteTintActive) {
       ctx.drawImage(image, dx, dy, dw, dh);
       return;
@@ -74,14 +59,12 @@ export function drawSpriteImage(ctx, image, dx, dy, dw, dh) {
       ctx.drawImage(source, dx, dy, dw, dh);
       return;
     }
-    // Not-yet-loaded images: nothing sensible to tint, and the normal path
-    // keeps the caller's existing fallback behavior.
+    // 未加载图像无法着色，保留普通绘制回退。
     if (whiteTintActive) return;
     ctx.drawImage(image, dx, dy, dw, dh);
     return;
   }
-  // Canvas/bitmap sources are already fast; tinting uses a per-source white
-  // copy (kept in a WeakMap so per-entity pattern canvases can be collected).
+  // 画布/位图直接绘制；着色副本以弱映射保存，允许按实体创建的画布回收。
   if (whiteTintActive) {
     const white = whiteVariantForSource(image);
     if (white) ctx.drawImage(white, dx, dy, dw, dh);
@@ -96,8 +79,7 @@ function rasterizedSprite(image, dw, dh, prepare = false) {
   let cached = spriteRasterCache.get(image);
   const src = image.currentSrc || image.src || "";
   if (cached && cached.src !== src) {
-    // The <img> swapped sources after load (blob URL replaced the original):
-    // drop the stale rasters.
+    // 图像源被替换后丢弃旧栅格。
     for (const entry of cached.buckets.values()) sceneRasterBudget.remove(entry);
     cached = null;
   }
@@ -114,15 +96,14 @@ function rasterizedSprite(image, dw, dh, prepare = false) {
   if (!entry) {
     if (!prepare) {
       queueSpriteRaster(image, dw, dh, key, src);
-      // Reuse a sharper already-decoded bitmap during zoom-out while the
-      // exact bucket is queued. Never upscale a coarse raster or drop bodies.
+      // 缩小时可复用更清晰缓存等待目标桶，不能放大粗糙缓存或漏绘。
       let fallback = null;
       for (const candidate of cached.buckets.values()) {
         if (candidate.canvas.width >= bucketW && candidate.canvas.height >= bucketH &&
             (!fallback || candidate.bytes < fallback.bytes)) fallback = candidate;
       }
       if (fallback) { sceneRasterBudget.touch(fallback); return fallback; }
-      return null; // Draw the decoded vector until its bitmap is ready.
+      return null; // 位图就绪前直接绘制已解码矢量图。
     }
     const canvas = document.createElement("canvas");
     canvas.width = bucketW;
@@ -145,7 +126,7 @@ function rasterizedSprite(image, dw, dh, prepare = false) {
       canvas.width = canvas.height = 0;
       return null;
     }
-    // store() can evict the last older bucket owned by this image.
+    // 存入新桶可能淘汰该图像最后一个旧桶。
     spriteRasterCache.set(image, cached);
     cached.buckets.set(key, entry);
   }
@@ -211,8 +192,7 @@ function whitenedCanvas(source, width, height) {
     return null;
   }
   context.globalCompositeOperation = "source-in";
-  // The reference's yellow mobs flash orange/red, not opaque white. Keep
-  // the cached silhouette approach (one extra blit, no canvas filter).
+  // 受击轮廓使用暖色，仍只额外位图绘制一次。
   context.fillStyle = "#ff7954";
   context.fillRect(0, 0, width, height);
   return canvas;

@@ -15,7 +15,7 @@ struct SControllerFactory
 
 template <class T> SControllerFactory SnapshotControllerFactory()
 {
-    // The key is defined by the controller itself, never repeated here.
+    // 注册键直接读取控制器自身声明。
     return { T{}.SnapshotKey(), []() -> std::unique_ptr<IController> { return std::make_unique<T>(); } };
 }
 

@@ -7,7 +7,6 @@ const textDecoder = new TextDecoder();
 
 export const NETWORK_PETAL_TYPE_OFFSET = 100;
 export const NETWORK_DROP_ENTITY_TYPE = 91;
-// Kept as an alias for modules that only need a named drop discriminator.
 export const NETWORK_DROP_TYPE_OFFSET = NETWORK_DROP_ENTITY_TYPE;
 export const NETWORK_TRAP_PROJECTILE_ENTITY_TYPE = 93;
 export const NETWORK_BLOOD_SACRIFICE_ENTITY_TYPE = 94;
@@ -62,7 +61,6 @@ export const ServerType = Object.freeze({
   OwnerState: 0x10,
   Inventory: 0x11,
   Chat: 0x12,
-  CraftResult: 0x13,
   Environment: 0x14,
   CodexFull: 0x15,
   CodexDelta: 0x16,
@@ -73,6 +71,10 @@ export const ServerType = Object.freeze({
   CombatFeedback: 0x1b,
   DebugTicket: 0x1c,
   SkillResult: 0x1d,
+  EconomyResult: 0x1e,
+  PartyState: 0x1f,
+  ClientFeatures: 0x20,
+  AccountLinks: 0x21,
 });
 
 export const SkillResultCode = Object.freeze({
@@ -101,6 +103,9 @@ export const AuthMode = Object.freeze({
   RequestRegistrationCode: 2,
   RequestBindingCode: 3,
   ConfirmBinding: 4,
+  AccountLogin: 5,
+  AccountRegister: 6,
+  EnterGame: 7,
 });
 
 export const AuthResultCode = Object.freeze({
@@ -203,8 +208,7 @@ export function axisToPacket(value) {
 export function fitUtf8(text, maxBytes) {
   const bytes = textEncoder.encode(text);
   if (bytes.length <= maxBytes) return bytes;
-  // Back off over UTF-8 continuation bytes (10xxxxxx) so the cut never splits a
-  // multi-byte code point; decoding would otherwise emit U+FFFD replacement chars.
+  // 回退到 UTF-8 码点边界，避免截断多字节字符后出现替代符号。
   let end = maxBytes;
   while (end > 0 && (bytes[end] & 0xc0) === 0x80) end -= 1;
   return bytes.slice(0, end);
@@ -456,6 +460,13 @@ export function parseServerMessage(payload) {
       return msg;
     }
 
+    if (type === ServerType.ClientFeatures || type === ServerType.AccountLinks) {
+      const size = reader.u16();
+      if (!size || size > 16384 || payload.length !== size + 3) throw new Error("Invalid service state length");
+      const data = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(payload.subarray(3)));
+      if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid service state');
+      return { type, data };
+    }
     if (type === ServerType.CombatFeedback) {
       const count = reader.u8();
       if (count > 64 || !reader.has(count * 29)) throw new Error("invalid combat feedback length");
@@ -470,11 +481,15 @@ export function parseServerMessage(payload) {
     }
 
     if (type === ServerType.Welcome) {
-      msg.playerId = reader.u16();
+      msg.playerId = reader.u32();
+      msg.playerSessionGeneration = reader.u64Key();
       msg.ownerEntityId = reader.u32();
       msg.tickRate = reader.u8();
-      msg.mapName = reader.has(1) ? reader.string(reader.u8()) : "";
-      msg.weatherEnabled = reader.has(1) ? reader.u8() !== 0 : true;
+      msg.worldId = reader.u32();
+      msg.worldGeneration = reader.u64Key();
+      msg.mapName = reader.string(reader.u8());
+      msg.weatherEnabled = reader.u8() !== 0;
+      if (reader.has(1)) return { type: 0xff };
       return msg;
     }
 
@@ -516,6 +531,13 @@ export function parseServerMessage(payload) {
       msg.message = reader.string(reader.u8());
       msg.emailPolicy = reader.has(1) ? reader.u8() : EmailPolicy.Disabled;
       msg.emailBound = reader.has(1) ? reader.u8() !== 0 : false;
+      if (reader.has(1)) {
+        const deviceSize = reader.u8(), tokenSize = reader.u8();
+        msg.recoveryExpiresAt = reader.u64();
+        if ((deviceSize && deviceSize !== 32) || (tokenSize && tokenSize !== 64)) throw new Error("invalid recovery credential size");
+        msg.recoveryDeviceId = reader.string(deviceSize);
+        msg.recoveryToken = reader.string(tokenSize);
+      }
       return msg;
     }
 
@@ -567,13 +589,19 @@ export function parseServerMessage(payload) {
           count: reader.u32(),
         });
       }
+      msg.inventoryRevision = reader.u64Key();
+      msg.inventoryLastRequest = reader.u64Key();
+      const scopeLength = reader.u8(), actorLength = reader.u8();
+      msg.inventoryScope = reader.string(scopeLength);
+      msg.actorScope = reader.string(actorLength);
       return msg;
     }
 
     if (type === ServerType.Chat) {
       msg.chat = {};
       msg.chat.flag = reader.u8();
-      msg.chat.playerId = reader.u16();
+      msg.chat.playerId = reader.u32();
+      msg.chat.sessionGeneration = reader.u64Key();
       msg.chat.time = reader.u32();
       const nameLength = reader.u8();
       const messageLength = reader.u8();
@@ -582,7 +610,44 @@ export function parseServerMessage(payload) {
       return msg;
     }
 
-    if (type === ServerType.CraftResult) {
+    if (type === ServerType.PartyState) {
+      msg.leaderId = reader.u32();
+      msg.leaderGeneration = reader.u64Key();
+      const count = reader.u8();
+      if (count > 64) return { type: 0xff };
+      msg.members = [];
+      const ids = new Set();
+      for (let i = 0; i < count; ++i) {
+        const playerId = reader.u32(), sessionGeneration = reader.u64Key(), flags = reader.u8();
+        const worldId = reader.u32(), worldGeneration = reader.u64Key();
+        const entityId = reader.u32(), entityGeneration = reader.u64Key();
+        const name = reader.string(reader.u8());
+        const hasEntity = (flags & 2) !== 0;
+        if (!playerId || sessionGeneration === "0000000000000000" || sessionGeneration === "ffffffffffffffff" ||
+            (worldId && worldGeneration === "0000000000000000") ||
+            ids.has(playerId) || (flags & ~3) || (!hasEntity && (entityId || entityGeneration !== "0000000000000000")) ||
+            (hasEntity && (worldGeneration === "0000000000000000" || entityGeneration === "0000000000000000")))
+          return { type: 0xff };
+        ids.add(playerId);
+        msg.members.push({ playerId, sessionGeneration, connected: (flags & 1) !== 0,
+          worldId, worldGeneration, hasEntity, entityId, entityGeneration, name });
+      }
+      if (reader.has(1) || (count && !msg.members.some(member =>
+          member.playerId === msg.leaderId && member.sessionGeneration === msg.leaderGeneration)) ||
+          (!count && (msg.leaderId || msg.leaderGeneration !== "0000000000000000"))) return { type: 0xff };
+      return msg;
+    }
+
+    if (type === ServerType.EconomyResult) {
+      msg.operation = reader.u8();
+      msg.outcome = reader.u8();
+      const recorded = reader.u8();
+      if (recorded > 1) return { type: 0xff };
+      msg.recorded = recorded !== 0;
+      msg.requestId = reader.u64Key();
+      msg.inventoryRevision = reader.u64Key();
+      msg.inventoryScope = reader.string(reader.u8());
+      if (msg.operation < 1 || msg.operation > 3 || msg.outcome > 10) return { type: 0xff };
       msg.success = reader.u8() !== 0;
       msg.petalType = reader.u8();
       msg.rarity = reader.u8();
@@ -706,14 +771,19 @@ export function packAuth({
   password = "",
   email = "",
   code = "",
+  recoveryDeviceId = "",
+  recoveryToken = "",
 } = {}) {
   const nameBytes = fitUtf8(name, 32);
   const passwordBytes = fitUtf8(password, 64);
   const emailBytes = fitUtf8(email, 254);
   const codeBytes = fitUtf8(code, 32);
+  if ((recoveryDeviceId && !/^[a-f0-9]{32}$/.test(recoveryDeviceId)) ||
+      (recoveryToken && !/^[a-f0-9]{64}$/.test(recoveryToken))) return null;
+  const deviceBytes = textEncoder.encode(recoveryDeviceId), tokenBytes = textEncoder.encode(recoveryToken);
   if (nameBytes.length === 0) return null;
   const out = new Uint8Array(
-    6 +
+    8 + deviceBytes.length + tokenBytes.length +
       nameBytes.length +
       passwordBytes.length +
       emailBytes.length +
@@ -726,6 +796,8 @@ export function packAuth({
   out[offset++] = passwordBytes.length;
   out[offset++] = emailBytes.length;
   out[offset++] = codeBytes.length;
+  out[offset++] = deviceBytes.length;
+  out[offset++] = tokenBytes.length;
   out.set(nameBytes, offset);
   offset += nameBytes.length;
   out.set(passwordBytes, offset);
@@ -733,6 +805,9 @@ export function packAuth({
   out.set(emailBytes, offset);
   offset += emailBytes.length;
   out.set(codeBytes, offset);
+  offset += codeBytes.length;
+  out.set(deviceBytes, offset); offset += deviceBytes.length;
+  out.set(tokenBytes, offset);
   return out;
 }
 
@@ -794,47 +869,6 @@ export function packSkill(skillIndex = 0) {
   return new Uint8Array([0xf9, index]);
 }
 
-export function packEquip(slotIndex, petalType, rarity) {
-  return new Uint8Array([
-    0x01,
-    petalType & 0xff,
-    ((slotIndex & 0x0f) << 4) | (rarity & 0x0f),
-  ]);
-}
-
-export function packUnequip(slotIndex) {
-  return new Uint8Array([0x02 | ((slotIndex & 0x0f) << 2)]);
-}
-
-export function packSecondarySlot(slotIndex, petalType, rarity) {
-  return new Uint8Array([
-    0xf2,
-    slotIndex & 0xff,
-    petalType & 0xff,
-    rarity & 0xff,
-  ]);
-}
-
-export function packCraft(petalType, rarity, count) {
-  const out = new Uint8Array(7);
-  const safeCount = Math.max(0, Math.min(0xffffffff, Math.floor(count || 0)));
-  out[0] = 0xf3;
-  out[1] = petalType & 0xff;
-  out[2] = rarity & 0xff;
-  const view = new DataView(out.buffer);
-  view.setUint32(3, safeCount, true);
-  return out;
-}
-
-export function packForge(petalType) {
-  const out = new Uint8Array(7);
-  out[0] = 0xf6;
-  out[1] = petalType & 0xff;
-  out[2] = 8;
-  const view = new DataView(out.buffer);
-  view.setUint32(3, 5, true);
-  return out;
-}
 
 export function packStateRequest() {
   return new Uint8Array([0xf5]);

@@ -1,13 +1,9 @@
 #pragma once
-// UTF-8 helpers that are deliberately free of SFML and other engine
-// dependencies so they can be compiled and unit-tested standalone.
 
 #include <cstddef>
 #include <string_view>
 
-// Truncates UTF-8 text to at most max_bytes bytes without splitting a
-// multi-byte code point. Byte-level substring cuts (std::string::substr) can
-// split e.g. a 3-byte CJK character in the middle, corrupting the message.
+// 按完整 UTF-8 码点截断到字节上限，避免拆开中文等多字节字符。
 inline std::string_view TruncateUtf8(std::string_view text, size_t max_bytes)
 {
     if (text.size() <= max_bytes) return text;
@@ -16,8 +12,7 @@ inline std::string_view TruncateUtf8(std::string_view text, size_t max_bytes)
     return text.substr(0, end);
 }
 
-// Strict UTF-8 validation: rejects invalid lead/continuation sequences,
-// overlong encodings, surrogates and code points beyond U+10FFFF.
+// 严格拒绝无效首字节或续字节、过长编码、代理区码点及超过 U+10FFFF 的码点。
 inline bool IsValidUtf8(std::string_view text)
 {
     size_t i = 0;

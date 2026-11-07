@@ -10,11 +10,7 @@ class CPlayer;
 class CPlayerFlower;
 class CMobBase;
 
-// Sandbox world: inherits the open controller but the room maintains its
-// own player inventory/loadout copy (in-world changes never write back to
-// the persistent account), exposes the server-side admin commands to
-// players (player argument optional; defaults to the sender), and gates
-// those commands behind a permission system when the room enables it.
+// 沙盒进度与正式账号隔离；命令受房间权限约束，省略目标时作用于发送者。
 class CSandboxController : public COpenController
 {
   public:

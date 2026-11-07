@@ -1,17 +1,10 @@
 #pragma once
 
-#include "../../Shared/petal_type.h"
+#include "account_store.h"
 #include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
-
-struct SUniquePetalOwner
-{
-    EPetalType type = EPetalType::None;
-    int cost = 0;
-    std::string owner;
-};
 
 class IUniquePetalRegistry
 {
@@ -23,9 +16,8 @@ class IUniquePetalRegistry
 
     virtual const std::vector<SUniquePetalOwner>& GetOwners() const = 0;
     virtual const SUniquePetalOwner* FindOwner(EPetalType type) const = 0;
-    virtual bool GetUnique(EPetalType type, int cost, const std::string& getter) = 0;
-    virtual bool SetOwner(EPetalType type, int cost, std::string owner) = 0;
-    virtual bool RemoveOwner(EPetalType type) = 0;
+    virtual bool ExchangeUnique(EPetalType type, int cost, const std::string& getter,
+                                SUniquePetalExchangeResult& result, std::string& error) = 0;
 };
 
 std::unique_ptr<IUniquePetalRegistry> CreateUniquePetalRegistry();

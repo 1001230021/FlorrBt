@@ -94,15 +94,14 @@ try {
       assert.ok(images.every(call => call.image.src?.includes(pass.role === "shortcut" ? "foliage" : "dirt")));
     }
   }
-  const predicted = renderer.resolvePredictedCircleMotion({ x: 220, y: 64 }, { x: 400, y: 64 }, 10);
-  assert.equal(predicted.pos.x, 400); assert.equal(predicted.normals.length, 0);
+  assert.equal(renderer.resolvePredictedCircleMotion, undefined, "client movement has no collision prediction");
   const owner = { snapshot: { flags: 0, pos: { x: 384, y: 128 }, horizon: 99999 }, renderPos: { x: 380, y: 120 } };
   state.entities.set(7, owner);
-  renderer.drawGrid(1000); renderer.drawShortcutCover(1000);
+  renderer.drawGrid(1000); renderer.drawShortcutSurface(1000); renderer.drawShortcutCover(1000);
   assert.ok(!canvases.some(item => item.getContext().commands.some(call => call.composite === "destination-out")));
   owner.snapshot.flags = flagShortcut;
   const before = new Set(canvases);
-  renderer.drawGrid(1001); renderer.drawShortcutCover(1001);
+  renderer.drawGrid(1001); renderer.drawShortcutSurface(1001); renderer.drawShortcutCover(1001);
   const erasures = canvases.flatMap(item => item.getContext().commands).filter(call => call.kind === "fill" && call.composite === "destination-out");
   assert.deepEqual(erasures.map(call => call.alpha), [0.5, 0.95]);
   const circles = canvases.flatMap(item => item.getContext().commands).filter(call => call.kind === "arc");
@@ -118,7 +117,14 @@ try {
   assert.equal(shortcutReveal(state, map), null, "a reused owner id must not keep the previous actor's reveal");
   renderer.applyTerrainDelta(2, 0, 1, 0);
   assert.equal(map.overlayPasses[1].layers[0].tiles[1], 0, "passes share authoritative tile arrays, not stale copies");
+  renderer.applyTerrainDelta(1, 0, 1, 0);
+  const emptyDraws = target.getContext().commands.length;
+  renderer.drawShortcutSurface(1002); renderer.drawShortcutCover(1002);
+  assert.equal(target.getContext().commands.length, emptyDraws, "empty overlay passes do not composite full-screen canvases");
+  renderer.applyTerrainDelta(1, 0, 1, 127);
+  renderer.drawShortcutSurface(1003);
+  assert(target.getContext().commands.length > emptyDraws, "terrain edits update the sparse coverage index");
   renderer.dispose();
   for (const pass of map.overlayPasses) assert.equal(pass.overviewCanvas.width, 0);
 } finally { globalThis.requestAnimationFrame = previousAnimationFrame; }
-console.log("PASS quarter-tile outlines, layer roles, player prediction, independent alpha masks, base light radius, scene identity and cache lifetime");
+console.log("PASS quarter-tile outlines, layer roles, authoritative movement boundary, independent alpha masks, base light radius, scene identity and cache lifetime");

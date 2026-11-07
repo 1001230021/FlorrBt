@@ -18,14 +18,13 @@ class CDrop : public CEntity
           float lifetime = game_config::default_drop_lifetime, uint16_t stack_num = 1);
     ~CDrop() = default;
 
-    void Tick(float dt) override;
+    void OnTickActions(float dt) override;
+    void OnTickMotion(float dt) override;
     bool CanCollide() const override { return false; }
     bool CanBePickedUpBy(const CPlayer& player) const;
     bool IsOwnedBy(const CPlayer& player) const;
     bool PickUpTo(CPlayer& player);
-    // Drop inertia: the target center starts at `center_start` and inherits
-    // the killer's velocity (decaying to zero over `delay`); each drop glides
-    // from that moving center to its final spot during the same window.
+    // 惯性阶段继承中心速度并逐渐归位，期间不可拾取。
     void BeginInertiaDrop(florrbt::Vector2f center_start, florrbt::Vector2f center_velocity, float delay);
     bool IsInertiaActive() const { return m_inertia_active; }
 
@@ -33,9 +32,9 @@ class CDrop : public CEntity
     ERarity GetRarity() const { return m_rarity; }
     int GetOwnerId() const { return m_owner_id; }
     const std::string& GetOwnerAccount() const { return m_owner_account; }
-    const std::string& GetOwnerProgressAccount() const { return m_owner_progress_account; }
+    const std::string& GetOwnerInventoryAccount() const { return m_owner_inventory_account; }
     void RestoreOwnerAccount(std::string account) { m_owner_account = std::move(account); }
-    void RestoreOwnerProgressAccount(std::string account) { m_owner_progress_account = std::move(account); }
+    void RestoreOwnerInventoryAccount(std::string account) { m_owner_inventory_account = std::move(account); }
     uint16_t GetStackNum() const { return m_stack_num; }
     float GetPickupDelay() const { return m_unable_picked_timer; }
     float GetMergeTimer() const { return m_merge_timer; }
@@ -54,14 +53,13 @@ class CDrop : public CEntity
     ERarity m_rarity = ERarity::Null;
     int m_owner_id = drop_owner_all;
     std::string m_owner_account;
-    std::string m_owner_progress_account;
+    std::string m_owner_inventory_account;
     uint16_t m_stack_num = 1;
 
     float m_unable_picked_timer = game_config::default_drop_pickup_delay;
     float m_merge_timer = 0.f;
     float m_timer = game_config::default_drop_lifetime;
 
-    // Inertia window.
     bool m_inertia_active = false;
     float m_inertia_duration = game_config::default_drop_inertia_delay;
     float m_inertia_elapsed = 0.f;

@@ -99,9 +99,7 @@ class TPrototypeRegistry
             AddError("duplicate registration for " + Name(id));
             return false;
         }
-        // Optional (mod) slots stay open after the registry freezes so game
-        // controllers can register their own content at runtime; core slots
-        // are sealed once Finalize runs.
+        // 核心槽位冻结后保持不变，预留扩展槽位仍可注册玩法内容。
         if (index >= OptionalFrom)
         {
             m_entries[index] = std::move(prototype);
@@ -165,7 +163,7 @@ class TPrototypeRegistry
 
         for (std::size_t index = 1; index < Size; ++index)
         {
-            if (index >= OptionalFrom) continue; // mod range: slots may stay empty
+            if (index >= OptionalFrom) continue; // 模组预留区允许空槽。
             if (!m_entries[index] && m_unsupported_reasons[index].empty())
                 AddError("missing registration for " + Name(static_cast<TId>(index)));
         }

@@ -1,0 +1,8 @@
+# 留空表示该平台暂未开放。填写后，在启动服务端的同一 PowerShell 会话中点入此脚本。
+# 填有真实密钥的副本命名为 account_links.ps1，已加入忽略规则。
+$env:FLORRBT_DISCORD_CLIENT_ID = ""
+$env:FLORRBT_DISCORD_CLIENT_SECRET = ""
+$env:FLORRBT_DISCORD_REDIRECT_URI = ""
+$env:FLORRBT_QQ_APP_ID = ""
+$env:FLORRBT_QQ_APP_KEY = ""
+$env:FLORRBT_QQ_REDIRECT_URI = ""

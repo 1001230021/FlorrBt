@@ -1,4 +1,6 @@
 import { dom, loadoutPresetCount, state } from "./app_context.js";
+import { referenceClient } from "./client_profile.js";
+import { defaultSocketEndpoint } from "./socket_endpoint.js";
 import {
   clientRuntimeConfig,
   defaultClientConfig,
@@ -6,7 +8,7 @@ import {
   normalizeClientConfig,
 } from "./client_config.js";
 
-const settingsKey = "florrbt.web.settings";
+const settingsKey = referenceClient ? "florrbt.reference.settings" : "florrbt.web.settings";
 const settingsVersion = 15;
 const dandelionRightFacingConfigVersion = 7;
 const loginMapViewDefaultsVersion = 10;
@@ -91,12 +93,12 @@ export function loadClientSettings() {
     try {
       localStorage.setItem(settingsKey, JSON.stringify(saved));
     } catch {
-      // Settings remain usable even when storage is unavailable.
+      // 存储不可用时设置仍可在本次会话使用。
     }
   }
 
   wsUrlInput.value =
-    saved.wsUrl || `ws://${location.host || "127.0.0.1:8080"}/ws`;
+    saved.wsUrl || defaultSocketEndpoint();
   accountInput.value = saved.account || "";
   passwordInput.value = "";
   state.locale = String(saved.locale || "en");
@@ -128,7 +130,7 @@ export function loadClientSettings() {
         finiteSettingNumber(saved.loginMapHorizon, loginMapDefaultHorizon),
       )
     : loginMapDefaultHorizon;
-  state.viewZoomPercent = normalizeViewZoomPercent(saved.viewZoomPercent);
+  state.viewZoomPercent = normalizeViewZoomPercent(saved.viewZoomPercent ?? (referenceClient ? 67 : undefined));
   state.clientConfig = normalizeClientConfig(saved.clientConfig);
   state.holdAttack = saved.holdAttack === true;
   state.holdDefense = saved.holdDefense === true;
@@ -157,10 +159,7 @@ export function loadClientSettings() {
   }
 }
 
-// Restores the gameplay/display preferences to their shipped defaults.
-// Deliberately leaves the account name, server URL, language, saved loadout
-// presets and the tunables owned by `set` alone -- those are either identity
-// or have their own reset path (`reset config`).
+// 恢复玩法/显示默认值；账号、服务器、语言、装备预设及 set 参数各有独立保存或重置入口。
 export function resetClientPreferences() {
   state.movementMode = normalizeMovementMode("");
   state.mobileControlMode = normalizeMobileControlMode("auto");

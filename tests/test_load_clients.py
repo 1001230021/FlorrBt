@@ -63,7 +63,7 @@ class LoadClientProtocolTests(unittest.TestCase):
 
     def test_welcome_uses_wide_owner_id_layout(self):
         client = self.client()
-        payload = struct.pack("<BHIBBB", 0, 12, 0x12345678, 30, 0, 1)
+        payload = struct.pack("<BIQIBIQBB", 0, 70000, 0x20000000000001, 0x12345678, 30, 9, 0x20000000000002, 0, 1)
         frame = struct.pack("<H", len(payload)) + payload
         client.receive_buffer.extend(frame[:-1])
         load.process_frames(client)

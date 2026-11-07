@@ -9,4 +9,9 @@
     <IntDir>$(FlorrBtOutputRoot)obj\$(MSBuildProjectName)\$(Platform)\$(Configuration)\</IntDir>
     <TLogLocation>$(IntDir)$(MSBuildProjectName).tlog\</TLogLocation>
   </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+  </ItemDefinitionGroup>
 </Project>

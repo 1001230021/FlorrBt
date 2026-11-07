@@ -97,5 +97,6 @@ assert.ok(canvas.width >= 176 && canvas.width <= 528);
 
 const game = readFileSync(new URL("../web/src/game.js", import.meta.url), "utf8");
 const ownerHandler = game.slice(game.indexOf("function handleOwnerSnapshot("), game.indexOf("function shouldFadeMissingEntity("));
-assert.ok(ownerHandler.indexOf("if (isDead)") < ownerHandler.indexOf("initOwnerPrediction("), "dead snapshots must bypass position resets");
+assert.match(ownerHandler, /if \(wasDead && !isDead\)/, "only revival resets the presentation pose");
+assert.doesNotMatch(ownerHandler, /Prediction|correction/, "no input prediction or correction after death");
 console.log("PASS death coast/zoom at 30/60/120fps, repeated snapshots, zero speed, teleport/respawn, frozen loadout and portrait");

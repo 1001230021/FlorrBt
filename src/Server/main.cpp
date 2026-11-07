@@ -182,7 +182,7 @@ LONG WINAPI LogUnhandledSehException(EXCEPTION_POINTERS* pointers)
     return EXCEPTION_EXECUTE_HANDLER;
 }
 #endif
-} // namespace
+}
 
 int main(int argc, char** argv)
 {
@@ -196,8 +196,7 @@ int main(int argc, char** argv)
     }
 
     NormalizeServerWorkingDirectory();
-    // Account migration tool modes (json <-> mysql); exits without starting
-    // the game server when one of the --migrate-accounts-* flags is present.
+    // 账号迁移模式只执行迁移，不启动游戏服务。
     if (const std::optional<int> migration_exit = RunAccountMigrationFromArgs(argc, argv))
         return *migration_exit;
     std::set_terminate(LogTerminate);
@@ -222,8 +221,7 @@ int main(int argc, char** argv)
             }
             LOG_WARN("server", "Ignoring unknown startup argument: " + argument);
         }
-        server.Init();
-        server.Run();
+        if (server.Init()) server.Run();
         server.ShutDown();
         return server.GetExitCode();
     } catch (const std::exception& e)

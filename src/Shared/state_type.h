@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-// Stable wire identifiers for gameplay states. Keep existing values unchanged.
+// 状态协议 ID 必须保持稳定。
 enum class EStateType : std::uint8_t
 {
     None = 0,
@@ -22,8 +22,7 @@ enum class EStateType : std::uint8_t
     Pulse = 15,
 };
 
-// DropStack is not a gameplay state: it carries a drop entity's stack count
-// (value byte, clamped to 255) so the client can render the "xN" badge.
+// DropStack 仅携带最高 255 的掉落堆叠数用于角标，不参与玩法状态生命周期。
 
 inline constexpr bool IsKnownStateType(EStateType type)
 {

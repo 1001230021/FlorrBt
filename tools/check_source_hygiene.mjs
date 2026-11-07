@@ -9,6 +9,7 @@ const privateKey = /-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----/;
 const credential = /(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|sk-[A-Za-z0-9_-]{24,}|AKIA[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]{20,})/;
 const failures = [];
 for (const path of paths) {
+  if (path.toLowerCase() === 'deploy/windows/account_links.ps1') failures.push(`${path}: local OAuth configuration is tracked`);
   if (forbidden.test(path)) failures.push(`${path}: runtime/local/build file is tracked`);
   if (!existsSync(path) || /\.(?:ttf|woff2?|png|jpe?g|gif|webp|mp3|ogg)$/i.test(path)) continue;
   const text = readFileSync(path, "utf8");

@@ -1,12 +1,10 @@
 #include "email_verification_service.h"
 #include "../../Shared/game_config.h"
 #include "../../Shared/tools.h"
+#include "../../Engine/logger.h"
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <cstdio>
-#include <filesystem>
-#include <fstream>
 #include <iomanip>
 #include <random>
 #include <sstream>
@@ -28,35 +26,7 @@ std::string HeaderText(std::string value)
                 value.end());
     return value;
 }
-
-std::string CurlConfigValue(const std::string& value)
-{
-    std::string escaped;
-    escaped.reserve(value.size() + 8);
-    for (char ch : value)
-    {
-        if (ch == '\\' || ch == '"') escaped.push_back('\\');
-        if (ch != '\r' && ch != '\n') escaped.push_back(ch);
-    }
-    return escaped;
 }
-
-std::string ShellQuotedExecutable(const std::string& path)
-{
-    std::string clean = path.empty() ? "curl.exe" : path;
-    clean.erase(std::remove_if(clean.begin(), clean.end(), [](char ch) { return ch == '\r' || ch == '\n'; }),
-                clean.end());
-    std::string quoted = "\"";
-    for (char ch : clean)
-    {
-        if (ch == '"') quoted += "\\\"";
-        else quoted.push_back(ch);
-    }
-    quoted += "\"";
-    return quoted;
-}
-
-} // namespace
 
 CEmailVerificationService::~CEmailVerificationService() { ShutDown(); }
 
@@ -67,6 +37,7 @@ bool CEmailVerificationService::Start(std::string& error)
     try
     {
         m_stopping = false;
+        m_cancellation = std::stop_source{};
         m_worker = std::thread(&CEmailVerificationService::WorkerLoop, this);
         return true;
     } catch (const std::exception& exception)
@@ -81,6 +52,7 @@ void CEmailVerificationService::ShutDown()
     {
         std::lock_guard lock(m_worker_mutex);
         m_stopping = true;
+        m_cancellation.request_stop();
         m_jobs.clear();
     }
     m_worker_cv.notify_all();
@@ -268,7 +240,6 @@ bool CEmailVerificationService::RequestCode(std::uint32_t player_id, const std::
         "</div>\r\n"
         "</body>\r\n"
         "</html>\r\n";
-    job.settings.curl_path = game_config::email_curl_path;
     job.settings.username = game_config::email_username;
     job.settings.password = game_config::email_password;
     job.settings.from_address = from_address;
@@ -341,8 +312,7 @@ bool CEmailVerificationService::VerifyCode(const std::string& account_name, cons
         return false;
     }
 
-    // The caller consumes the challenge with ForgetChallenge only after the
-    // corresponding account mutation has been persisted successfully.
+    // 账号变更持久化成功后，调用方才通过 ForgetChallenge 消耗验证码。
     return true;
 }
 
@@ -396,100 +366,49 @@ void CEmailVerificationService::WorkerLoop()
             m_jobs.pop_front();
         }
 
-        SDeliveryResult result = SendMail(job);
+        SDeliveryResult result;
+        result.player_id = job.player_id; result.request_id = job.request_id;
+        try { result = SendMail(job); }
+        catch (const std::exception&) { result.error = "Mail transport raised a standard exception"; }
+        catch (...) { result.error = "Mail transport raised an unknown exception"; }
         std::lock_guard lock(m_worker_mutex);
-        m_delivery_results.push_back(std::move(result));
+        if (!m_stopping) m_delivery_results.push_back(std::move(result));
     }
 }
 
 CEmailVerificationService::SDeliveryResult CEmailVerificationService::SendMail(const SMailJob& job)
 {
     SDeliveryResult result;
-    result.player_id = job.player_id;
-    result.request_id = job.request_id;
-
-    std::error_code error_code;
-    std::filesystem::path temp_dir = std::filesystem::temp_directory_path(error_code);
-    if (error_code)
+    result.player_id = job.player_id; result.request_id = job.request_id;
+    std::ostringstream message;
+    const std::string from_name = HeaderText(job.settings.from_name);
+    message << "From: " << (from_name.empty() ? "FlorrBt" : from_name) << " <" << job.settings.from_address << ">\r\n"
+            << "To: <" << job.recipient << ">\r\n"
+            << "Subject: " << HeaderText(job.subject) << "\r\nMIME-Version: 1.0\r\n";
+    const std::string boundary = "----FlorrBt-" + std::to_string(job.request_id);
+    message << "Content-Type: multipart/alternative; boundary=\"" << boundary << "\"\r\n\r\n"
+            << "--" << boundary << "\r\nContent-Type: text/plain; charset=UTF-8\r\n"
+            << "Content-Transfer-Encoding: 8bit\r\n\r\n" << job.plain_body
+            << "--" << boundary << "\r\nContent-Type: text/html; charset=UTF-8\r\n"
+            << "Content-Transfer-Encoding: 8bit\r\n\r\n" << job.html_body << "--" << boundary << "--\r\n";
+    if (job.settings.security != "ssl" && job.settings.security != "starttls")
+    { result.error = "Unsupported mail TLS configuration"; return result; }
+    remote_transport::SSmtpMail request;
+    request.host = job.settings.host; request.username = job.settings.username; request.password = job.settings.password;
+    request.from = job.settings.from_address; request.recipient = job.recipient; request.message = message.str();
+    request.starttls = job.settings.security == "starttls";
+    request.port = request.starttls ? job.settings.starttls_port : job.settings.ssl_port;
+    request.timeout = std::chrono::seconds(job.settings.send_timeout_seconds);
+    request.connect_timeout = std::chrono::seconds(job.settings.connect_timeout_seconds);
+    const auto response = m_send ? m_send(request, m_cancellation.get_token())
+        : remote_transport::SendMail(request, m_cancellation.get_token());
+    result.success = static_cast<bool>(response);
+    if (!result.success)
     {
-        result.error = "Unable to create verification email";
-        return result;
+        result.error = "Verification email could not be delivered";
+        if (response.error != remote_transport::EError::Cancelled)
+            LOG_WARN("email", remote_transport::Describe(response));
     }
-    const std::filesystem::path message_path =
-        temp_dir / ("florrbt-mail-" + std::to_string(job.request_id) + ".eml");
-
-    {
-        std::ofstream message(message_path, std::ios::binary | std::ios::trunc);
-        if (!message)
-        {
-            result.error = "Unable to create verification email";
-            return result;
-        }
-        const std::string from_name = HeaderText(job.settings.from_name);
-        message << "From: " << (from_name.empty() ? "FlorrBt" : from_name) << " <" << job.settings.from_address
-                << ">\r\n";
-        message << "To: <" << job.recipient << ">\r\n";
-        message << "Subject: " << HeaderText(job.subject) << "\r\n";
-        message << "MIME-Version: 1.0\r\n";
-        const std::string boundary = "----FlorrBt-" + std::to_string(job.request_id);
-        message << "Content-Type: multipart/alternative; boundary=\"" << boundary << "\"\r\n\r\n";
-        message << "--" << boundary << "\r\n";
-        message << "Content-Type: text/plain; charset=UTF-8\r\n";
-        message << "Content-Transfer-Encoding: 8bit\r\n\r\n";
-        message << job.plain_body;
-        message << "--" << boundary << "\r\n";
-        message << "Content-Type: text/html; charset=UTF-8\r\n";
-        message << "Content-Transfer-Encoding: 8bit\r\n\r\n";
-        message << job.html_body;
-        message << "--" << boundary << "--\r\n";
-        if (!message)
-        {
-            std::filesystem::remove(message_path, error_code);
-            result.error = "Unable to create verification email";
-            return result;
-        }
-    }
-
-    const std::string command = ShellQuotedExecutable(job.settings.curl_path) +
-                                " --silent --show-error --fail --config -";
-#ifdef _WIN32
-    FILE* pipe = _popen(command.c_str(), "w");
-#else
-    FILE* pipe = popen(command.c_str(), "w");
-#endif
-    if (!pipe)
-    {
-        std::filesystem::remove(message_path, error_code);
-        result.error = "Unable to start mail transport";
-        return result;
-    }
-
-    const bool starttls = job.settings.security == "starttls";
-    const char* scheme = starttls ? "smtp" : "smtps";
-    const int port = starttls ? job.settings.starttls_port : job.settings.ssl_port;
-    const std::string mail_url =
-        std::string(scheme) + "://" + job.settings.host + ":" + std::to_string(port);
-
-    std::ostringstream config;
-    config << "url = \"" << CurlConfigValue(mail_url) << "\"\n";
-    config << "ssl-reqd\n";
-    config << "user = \"" << CurlConfigValue(job.settings.username + ":" + job.settings.password) << "\"\n";
-    config << "mail-from = \"" << CurlConfigValue(job.settings.from_address) << "\"\n";
-    config << "mail-rcpt = \"" << CurlConfigValue(job.recipient) << "\"\n";
-    config << "upload-file = \"" << CurlConfigValue(message_path.string()) << "\"\n";
-    config << "connect-timeout = " << job.settings.connect_timeout_seconds << "\n";
-    config << "max-time = " << job.settings.send_timeout_seconds << "\n";
-    const std::string config_text = config.str();
-    const size_t written = std::fwrite(config_text.data(), 1, config_text.size(), pipe);
-#ifdef _WIN32
-    const int exit_code = _pclose(pipe);
-#else
-    const int exit_code = pclose(pipe);
-#endif
-    std::filesystem::remove(message_path, error_code);
-
-    result.success = written == config_text.size() && exit_code == 0;
-    if (!result.success) result.error = "Verification email could not be delivered";
     return result;
 }
 

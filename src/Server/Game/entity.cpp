@@ -8,6 +8,32 @@
 
 CGameContext* CEntity::GameContext() { return m_p_game_world ? m_p_game_world->GameContext() : nullptr; }
 
+void CEntity::Tick(float dt)
+{
+    if (!std::isfinite(dt) || dt < 0.f) return;
+    if (GameWorld() && !GameWorld()->CanSimulateThisTick(*this)) return;
+    for (const auto phase : {ETickPhase::Begin, ETickPhase::Intent, ETickPhase::Forces, ETickPhase::Motion,
+                            ETickPhase::Constraints, ETickPhase::Environment, ETickPhase::Actions, ETickPhase::Requests, ETickPhase::Effects})
+        TickPhase(phase, dt);
+}
+
+void CEntity::TickPhase(ETickPhase phase, float dt)
+{
+    if (IsMarkedForDes()) return;
+    switch (phase)
+    {
+    case ETickPhase::Begin: OnTickBegin(dt); break;
+    case ETickPhase::Intent: OnTickIntent(dt); break;
+    case ETickPhase::Forces: OnTickForces(dt); break;
+    case ETickPhase::Motion: OnTickMotion(dt); break;
+    case ETickPhase::Constraints: OnTickConstraints(dt); break;
+    case ETickPhase::Environment: OnTickEnvironment(dt); break;
+    case ETickPhase::Actions: OnTickActions(dt); break;
+    case ETickPhase::Requests: OnTickActionRequests(dt); break;
+    case ETickPhase::Effects: OnTickEffects(dt); break;
+    }
+}
+
 SEntityHandle CEntity::GetHandle() const
 {
     if (!m_p_game_world || m_id < 0 || m_generation == 0) return {};
@@ -39,7 +65,20 @@ bool CEntity::IsCollision(const CEntity& other) const
     return dist_sq <= radius_sum * radius_sum;
 }
 
-void CEntity::TakeDamage(float dmg, CEntity*, EDamageType)
+void CEntity::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
+{
+    if (!std::isfinite(dmg) || dmg <= 0.f) return;
+    auto* events = GameWorld() ? &GameWorld()->CombatEvents() : nullptr;
+    CCombatEventScope scope(events);
+    if (events)
+    {
+        events->Touch(*this);
+        if (attacker) events->Touch(*attacker);
+    }
+    OnTakeDamage(dmg, attacker, damage_type);
+}
+
+void CEntity::OnTakeDamage(float dmg, CEntity*, EDamageType)
 {
     if (!std::isfinite(dmg)) return;
     dmg = std::max(0.f, dmg);

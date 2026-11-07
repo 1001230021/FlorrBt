@@ -31,8 +31,10 @@ int unpack_tileset(json_t* tileset, Tileset* ret) {
             &error,
             0,
             "{"
-            "s?s, s?s, s?s, s:s, s:s, s?s, s?s, s:s, s?s, s?s, s:s, s:s,"
-            "s:i, s?i, s:i, s:i, s:i, s:i, s:i, s:i, s:i,"
+            /* Image collections have no atlas image/dimensions. Embedded
+             * tilesets also omit the standalone file's type/version fields. */
+            "s?s, s?s, s?s, s?s, s:s, s?s, s?s, s?s, s?s, s?s, s?s, s?s,"
+            "s:i, s?i, s?i, s?i, s?i, s?i, s:i, s:i, s:i,"
             "s?o, s?o, s?o, s?o, s?o, s?o"
             "}",
             "backgroundcolor",

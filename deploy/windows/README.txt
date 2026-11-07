@@ -1,10 +1,15 @@
-FlorrBt v1.0.3 Windows deployment
+FlorrBt Windows deployment
 
 Quick start:
 1. Build FlorrBt.Server.exe first, usually x64/Release or x64/Debug.
 2. Deployment packages include node.exe; source checkouts may use Node.js LTS or Visual Studio's bundled node.exe.
 3. Run deploy/windows/deploy.cmd.
 4. Open http://SERVER_IP:8080.
+
+Build a self-contained ZIP:
+powershell -ExecutionPolicy Bypass -File deploy/windows/package_zip.ps1 -Configuration Release -SfmlRoot C:\SDK\SFML -MySqlRoot C:\SDK\mysql -BundleMySqlServer
+Use -BuildDirectory <path> for an isolated build output. Both server and launcher must be built first.
+Node.js is discovered locally; its version-specific license is read from the build directory or downloaded from the Node.js repository.
 
 Useful commands:
 - deploy/windows/deploy.cmd
@@ -43,7 +48,7 @@ Useful commands:
 Notes:
 - data/server.cfg controls the real game server port. If it does not exist, deploy.ps1 creates it from server.cfg.example.
 - The MySQL build must ship `libmysql.dll`, `libssl-3-x64.dll` and `libcrypto-3-x64.dll` beside `FlorrBt.Server.exe`; the Visual Studio post-build step and package script copy all three automatically.
-- The deployment package contains the management scripts, but not the large MySQL server distribution. Install/extract MySQL 8.x separately and pass its root directory, or set `FLORRBT_MYSQL_ROOT`.
+- Packages built with -BundleMySqlServer include MySQL under mysql-server; START_ALL discovers it automatically. Otherwise install/extract MySQL 8.x separately and pass its root directory, or set `FLORRBT_MYSQL_ROOT`.
 - `START_ALL.cmd` starts MySQL before the game server. On a fresh MySQL initialization, root has no password; use `-RootPassword` when managing an existing secured MySQL installation. Set `FLORRBT_MYSQL_PASSWORD` for the application user's password.
 - If `-MySqlRoot` is not available through `FLORRBT_MYSQL_ROOT` or a standard installation path, pass it to each command that starts or manages MySQL (for example, both `START_MYSQL.cmd` and `START_ALL.cmd`).
 - When the MySQL installation has no `my.ini`, the launcher creates a marked temporary one for the package data directory and removes it after a clean `stop_mysql.cmd`. An existing unmarked `my.ini` is never overwritten.
@@ -51,3 +56,4 @@ Notes:
 - Put a replacement binary at FlorrBt.Server.next.exe, then enter hot_reload in the server console. You can also use hot_reload <candidate-path>.
 - To deploy only the static web client on another machine, run with -Mode start-web and point -GameHost to the game server IP.
 - The browser should use http://SERVER_IP:8080, not 127.0.0.1, when connecting from another computer.
+- For upgrades, extract into a new directory and preserve the existing MySQL data, account files, data/server.cfg and local OAuth/web settings. The package includes no production data or credentials.

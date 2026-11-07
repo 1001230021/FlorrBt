@@ -1,7 +1,6 @@
 ﻿#include "wall_board.h"
 #include "../../Engine/map_tools.h"
 #include "../HotReload/snapshot_archive.h"
-#include "../Module/network_module.h"
 #include "gamecontext.h"
 #include "gameworld.h"
 #include "entities/eou_mob.h"
@@ -58,15 +57,13 @@ void CWall::BuildFromMap(const CGameWorld& world)
         SWallRecord record;
         record.min_pos = { wall.min_x, wall.min_y };
         record.max_pos = { wall.max_x, wall.max_y };
-        // Primary cell: the cell under the wall's center. Partial/spanning
-        // walls get a single deterministic owner cell this way.
+        // 以墙体中心所在格为唯一归属格，兼容跨格或只覆盖部分网格的墙体。
         const int primary_row = std::clamp(static_cast<int>(wall.center.y / m_tile_size), 0, max_row);
         const int primary_col = std::clamp(static_cast<int>(wall.center.x / m_tile_size), 0, max_col);
         record.primary_cell = CellIndex(primary_row, primary_col);
         m_walls.push_back(record);
         m_alive.push_back(true);
 
-        // Register every cell the wall's AABB touches.
         const int min_row = std::clamp(static_cast<int>(wall.min_y / m_tile_size), 0, max_row);
         const int max_row_cell = std::clamp(static_cast<int>(wall.max_y / m_tile_size), 0, max_row);
         const int min_col = std::clamp(static_cast<int>(wall.min_x / m_tile_size), 0, max_col);
@@ -85,7 +82,7 @@ void CWall::ReplayInsertedCells()
     for (const std::uint32_t cell : m_inserted_cells)
     {
         if (cell_count == 0 || cell >= cell_count) continue;
-        // Skip when the cell already carries a cell wall (idempotent replay).
+        // 已有单格墙时跳过，保证回放幂等。
         bool exists = false;
         for (const SWallRecord& record : m_walls)
             if (!record.from_map && record.primary_cell == cell)
@@ -110,9 +107,7 @@ void CWall::ReplayInsertedCells()
 
 std::optional<std::pair<florrbt::Vector2f, florrbt::Vector2f>> CWall::RemovalRect(const SWallRecord& record)
 {
-    // Remove by the wall's own AABB, shrunk by an epsilon: RemoveWallsInRect
-    // matches on inclusive intersection, so an unshrunk rect would also take
-    // out flush neighbours sharing an edge with this wall.
+    // 移除矩形向内收缩，避免相交判定同时删除共边的相邻墙。
     const florrbt::Vector2f shrunk_min{ record.min_pos.x + kWallRemoveEpsilon, record.min_pos.y + kWallRemoveEpsilon };
     const florrbt::Vector2f shrunk_max{ record.max_pos.x - kWallRemoveEpsilon, record.max_pos.y - kWallRemoveEpsilon };
     if (!record.from_map || shrunk_max.x <= shrunk_min.x || shrunk_max.y <= shrunk_min.y) return std::nullopt;
@@ -124,14 +119,14 @@ void CWall::RemoveMapWallFromWorld(CGameWorld& world, const SWallRecord& record)
     if (const auto bounds = RemovalRect(record)) world.RemoveWallsInRect(bounds->first, bounds->second);
 }
 
-void CWall::ReplayRecordedRemovals(CGameWorld& world)
+void CWall::ReplayRecordedRemovals(CGameWorld* world)
 {
     for (const std::uint32_t cell : m_removed_primary_cells)
     {
         for (size_t id = 0; id < m_walls.size(); ++id)
         {
             if (!m_alive[id] || m_walls[id].primary_cell != cell) continue;
-            if (m_walls[id].from_map) RemoveMapWallFromWorld(world, m_walls[id]);
+            if (world && m_walls[id].from_map) RemoveMapWallFromWorld(*world, m_walls[id]);
             m_alive[id] = false;
         }
     }
@@ -142,9 +137,7 @@ void CWall::Reload(CGameWorld& world)
     m_world = &world;
     BuildFromMap(world);
 
-    // The map is authoritative after a reload.  Discard persisted cell keys
-    // that no longer fit it before replaying them; otherwise an old map with
-    // a different dimensions could leave phantom walls in the marker maps.
+    // 重载后以地图尺寸为准，先丢弃越界记录，避免旧地图遗留幽灵墙。
     const std::uint64_t cell_count = static_cast<std::uint64_t>(std::max(0, m_width)) *
                                      static_cast<std::uint64_t>(std::max(0, m_height));
     const auto valid_cell = [cell_count](std::uint32_t cell) {
@@ -163,7 +156,15 @@ void CWall::Reload(CGameWorld& world)
         else ++it;
     }
     ReplayInsertedCells();
-    ReplayRecordedRemovals(world);
+    ReplayRecordedRemovals(&world);
+}
+
+void CWall::RefreshFromWorld(CGameWorld& world)
+{
+    m_world = &world;
+    BuildFromMap(world);
+    ReplayInsertedCells();
+    ReplayRecordedRemovals(nullptr);
 }
 
 void CWall::DetachWorld(CGameWorld& world)
@@ -185,14 +186,13 @@ bool CWall::WritePlayerScene(IPlayerSceneWriter& writer) const
 void CWall::BroadcastWallRemovals(CGameWorld& world, const std::vector<int>& wall_ids) const
 {
     CGameContext* context = world.GameContext();
-    auto* network = context ? dynamic_cast<INetworkModule*>(&context->Network()) : nullptr;
-    if (!network) return;
+    if (!context) return;
 
     for (const int id : wall_ids)
     {
         const SWallRecord& record = m_walls[static_cast<size_t>(id)];
         if (const auto bounds = RemovalRect(record))
-            network->BroadcastTerrainWallRemove(world, bounds->first, bounds->second);
+            context->WorldEffects().BroadcastTerrainWallRemove(world, bounds->first, bounds->second);
     }
 }
 
@@ -236,7 +236,6 @@ bool CWall::CommitRemove(int row, int col, int team)
         m_alive[static_cast<size_t>(id)] = false;
     }
     m_removed_primary_cells.push_back(cell);
-    // Mark the dug cell for the digging team (any team may mark it too).
     if (team >= 1 && team <= 32) m_dig_claims[cell].team_flags |= (1u << static_cast<unsigned>(team - 1));
     BroadcastWallRemovals(*m_world, ids);
     return true;

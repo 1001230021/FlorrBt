@@ -1,7 +1,6 @@
 #include "portal.h"
 #include "../../../Shared/game_config.h"
 #include "../../../Shared/tools.h"
-#include "../../server.h"
 #include "../gamecontext.h"
 #include "../gameworld.h"
 #include "../player.h"
@@ -21,29 +20,37 @@ CPortal::CPortal(CGameWorld* world, florrbt::Vector2f pos, float radius, std::st
 {
     Health() = std::numeric_limits<float>::infinity();
     Mass() = 0.f;
-    Team() = 0;
+    SetTeam(0);
     HasFacing() = true;
 }
 
-void CPortal::Tick(float dt)
+void CPortal::OnTickActions(float dt)
 {
     FacingAngle() += dt * game_config::portal_rotation_speed;
     if (FacingAngle() > game_config::pi * 2.f) FacingAngle() -= game_config::pi * 2.f;
+}
 
-    CGameContext* context = GameContext();
-    if (!context) return;
-
+void CPortal::OnTickForces(float dt)
+{
     CGameWorld* world = GameWorld();
-    for (const auto& player : context->Players())
+    if (!world) return;
+    for (auto* player : world->Players())
     {
         if (!player || !player->IsConnected() || !player->IsAuthenticated()) continue;
         CEntity* entity = player->GetEntity();
         if (!entity || entity->GameWorld() != world) continue;
-        AttractAndTransferPlayer(*player, dt);
+        UpdatePlayerContact(*player, dt, false);
     }
 }
 
-void CPortal::AttractAndTransferPlayer(CPlayer& player, float dt)
+void CPortal::OnTickActionRequests(float dt)
+{
+    if (auto* world = GameWorld())
+        for (auto* player : world->Players())
+            if (player && player->IsConnected() && player->IsAuthenticated()) UpdatePlayerContact(*player, dt, true);
+}
+
+void CPortal::UpdatePlayerContact(CPlayer& player, float dt, bool transfer)
 {
     CEntity* entity = player.GetEntity();
     if (!entity || entity->GameWorld() != GameWorld() || entity->IsMarkedForDes() || entity->IsDead()) return;
@@ -57,9 +64,9 @@ void CPortal::AttractAndTransferPlayer(CPlayer& player, float dt)
     float attract_radius = Radius() * game_config::portal_attraction_radius_multiplier;
     if (dist_sq > attract_radius * attract_radius) return;
 
-    CServer* server = CServer::GetInstance();
-    if (!server) return;
-    std::vector<CGameWorld*> target_worlds = server->FindWorldsByMapName(m_target_world_name);
+    CGameContext* context = GameContext();
+    if (!context) return;
+    std::vector<CGameWorld*> target_worlds = context->Worlds().FindWorldsByMapName(m_target_world_name);
     CGameWorld* current_world = GameWorld();
     target_worlds.erase(std::remove(target_worlds.begin(), target_worlds.end(), current_world), target_worlds.end());
     if (target_worlds.empty()) return;
@@ -67,6 +74,7 @@ void CPortal::AttractAndTransferPlayer(CPlayer& player, float dt)
     float dist = std::sqrt(std::max(0.f, dist_sq));
     if (dist <= Radius() * game_config::portal_transfer_radius_multiplier)
     {
+        if (!transfer) return;
         std::uniform_int_distribution<size_t> target_dist(0, target_worlds.size() - 1);
         CGameWorld* target_world = target_worlds[target_dist(GetRng())];
         if (target_world && GameWorld())
@@ -74,6 +82,7 @@ void CPortal::AttractAndTransferPlayer(CPlayer& player, float dt)
         return;
     }
 
+    if (transfer) return;
     if (dist <= game_config::entity_collision_epsilon) return;
     florrbt::Vector2f dir = delta / dist;
     float t = std::clamp(1.f - dist / attract_radius, 0.f, 1.f);

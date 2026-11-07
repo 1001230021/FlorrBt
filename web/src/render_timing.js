@@ -19,6 +19,5 @@ export function stepRenderZoom(current, target, dt) {
 
 export function getRenderFrameTiming(elapsed) {
   const dt = Number.isFinite(elapsed) ? Math.max(0, Math.min(0.25, elapsed)) : 0;
-  const steps = Math.max(1, Math.min(8, Math.ceil(dt * 60 - 1e-6)));
-  return { dt, steps, step: dt / steps };
+  return { dt };
 }

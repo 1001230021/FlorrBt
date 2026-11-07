@@ -1,4 +1,6 @@
 #pragma once
+#include "../Transport/remote_transport.h"
+#include <functional>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -26,7 +28,8 @@ class CEmailVerificationService
         std::string error;
     };
 
-    CEmailVerificationService() = default;
+    using TSend = std::function<remote_transport::SResult(const remote_transport::SSmtpMail&, std::stop_token)>;
+    explicit CEmailVerificationService(TSend send = {}) : m_send(std::move(send)) {}
     ~CEmailVerificationService();
 
     CEmailVerificationService(const CEmailVerificationService&) = delete;
@@ -51,7 +54,6 @@ class CEmailVerificationService
 
     struct SSmtpSettings
     {
-        std::string curl_path;
         std::string username;
         std::string password;
         std::string from_address;
@@ -106,11 +108,13 @@ class CEmailVerificationService
                                       EPurpose purpose);
 
     void WorkerLoop();
-    static SDeliveryResult SendMail(const SMailJob& job);
+    SDeliveryResult SendMail(const SMailJob& job);
     static std::string GenerateCode(int digits);
     static bool CodesEqual(const std::string& lhs, const std::string& rhs);
 
     std::thread m_worker;
+    TSend m_send;
+    std::stop_source m_cancellation;
     std::mutex m_worker_mutex;
     std::condition_variable m_worker_cv;
     std::deque<SMailJob> m_jobs;

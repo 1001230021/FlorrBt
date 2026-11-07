@@ -2,6 +2,8 @@
 
 首次使用原生 Visual Studio 工程时，将根目录的 `FlorrBt.Dependencies.example.props` 复制为 `FlorrBt.Dependencies.local.props`，填写 `SfmlRoot` 和 `MySqlRoot`。本地文件不进入 Git；也可通过环境变量或 MSBuild 参数 `FLORRBT_SFML_ROOT`、`FLORRBT_MYSQL_ROOT` 指定 SDK 路径。CMake 构建继续使用自身的依赖配置。
 
+举报和验证码邮件使用进程内 libcurl。需要 CMake 3.24 或更新版本；首次原生 VS 构建会自动下载并校验固定版本，生成的 SDK 按 Debug/Release 放在 `build/dependencies/curl-sdk/`，无需配置系统 curl.exe。离线环境可设置 `FLORRBT_CURL_SOURCE_DIR` 为对应源码目录。构建会把 `libcurl.dll` 和 `curl-COPYING.txt` 放到输出目录，发布时须一并携带；详情见[传输依赖说明](engineering-debt-2026-10-31.md)。
+
 正常 `Release | x64` 的服务端仍输出到：
 
 ```text

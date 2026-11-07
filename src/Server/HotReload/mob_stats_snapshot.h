@@ -5,9 +5,8 @@
 #include <array>
 #include <utility>
 
-// Intrinsic per-instance rolls and spawn-time modifiers are not derivable
-// from mob type/rarity. Use the same field table in both directions. Flower
-// loadout/talent bonuses remain derived and must not be multiplied twice.
+// 实例随机属性和出生修正不能从类型/稀有度推导，读写共用字段表。
+// 装备和天赋仍按规则派生，避免重复叠加。
 inline constexpr std::array<std::pair<const char*, float SMobStats::*>, 11> mob_snapshot_stat_fields{{
     { "max_health", &SMobStats::max_health }, { "armor", &SMobStats::armor },
     { "damage", &SMobStats::damage }, { "radius", &SMobStats::radius },
@@ -33,8 +32,7 @@ inline SMobStats ReadMobBaseStats(const CSnapshotReader& reader, SMobStats stats
     for (const auto& [key, member] : mob_snapshot_stat_fields)
     {
         const float value = reader.Float(key, stats.*member);
-        // Negative armor is a supported vulnerability modifier, not an
-        // invalid radius/health/speed. Preserve its signed combat semantics.
+        // 负护甲是合法的易伤修正，需保留其有符号语义。
         stats.*member = member == &SMobStats::armor ? value : std::max(0.f, value);
     }
     return stats;

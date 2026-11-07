@@ -15,9 +15,7 @@ class CGameWorld;
 
 class CEouFoodMob;
 
-// Defined in eou_mob.cpp: resolves a fully-qualified food handle to a live
-// food mob (nullptr when stale). Out of line because it dereferences the
-// forward-declared CGameWorld.
+// 按完整句柄解析食物实体，失效时返回空。
 CEouFoodMob* ResolveEouFoodTarget(CGameWorld* world, const SEntityHandle& handle);
 
 inline constexpr float kEouArriveRadius = 16.f;
@@ -29,21 +27,13 @@ inline float EouDistance(florrbt::Vector2f a, florrbt::Vector2f b)
     return std::sqrt(dx * dx + dy * dy);
 }
 
-// Grid BFS pathfinding over a tile board: walks from `start` to `goal`
-// (world coordinates) on the 8-neighbor grid, treating every cell with
-// TileSolid() as blocked. Returns the compressed waypoint chain (start,
-// corners, goal; cell centers in world units). Following the points in order
-// always reaches the goal; collinear runs are merged so the chain is as
-// small as possible. Empty when no path exists.
+// 八邻域 BFS，使用世界坐标起终点，返回压缩后的可通行路径；不可达时为空。
 std::vector<florrbt::Vector2f> eou_find_path(const CTileBoard& board, florrbt::Vector2f start, florrbt::Vector2f goal);
 
-// True when the straight segment from `from` to `to` crosses no solid cell
-// (sampled along the line, exclusive of both endpoints' own cells) - the
-// eou line-of-sight check used by worker ants when picking a dig target.
+// 检查线段途经格是否通行，不含起终点自身，用于工蚁选择挖掘目标。
 bool eou_has_line_of_sight(const CTileBoard& board, florrbt::Vector2f from, florrbt::Vector2f to);
 
-// Type-erased interface the eou team/groups drive. Concrete eou mobs derive
-// from CEOUMob which implements this.
+// 团队和分组通过此接口驱动 EOU 生物。
 class IEouMob
 {
   public:
@@ -51,42 +41,31 @@ class IEouMob
 
     virtual void SetBoard(const CTileBoard* board) = 0;
     virtual const CTileBoard* Board() const = 0;
-    // Replaces the waypoint queue with a path to `goal`. Consecutive
-    // waypoints are directly reachable (straight-line walkable).
+    // 寻路成功后替换路径，相邻路径点须可直达。
     virtual void SetTarget(florrbt::Vector2f goal) = 0;
     virtual bool HasTarget() const = 0;
     virtual int EouGroupId() const = 0;
     virtual void SetEouGroupId(int group_id) = 0;
-    // Goal resolution hook driven by the group's reroute: mobs that pursue
-    // their own priorities (worker ants hunting team-flagged walls) return
-    // that goal, everyone else falls back to `fallback`.
+    // 分组重规划时，生物可用挖掘或战斗等高优先级目标覆盖信息素目标。
     virtual florrbt::Vector2f EouResolveGoal(florrbt::Vector2f fallback) const { return fallback; }
-    // Every eou mob leaves a food corpse behind: the biomass this mob
-    // converts into corpse food total.
+    // 死亡后转为尸体食物的生物量。
     virtual float EouBiomass() const { return 0.f; }
-    // Food currently being ferried home (reported by the /colony readout, so
-    // in-flight cargo is not invisible).
+    // 运输中的食物也计入 /colony 统计。
     virtual float EouCarry() const { return 0.f; }
-    // The team's home point: where workers ferry the gathered food to.
     virtual void SetHomePos(florrbt::Vector2f) {}
 };
 
-// EOU special mob base: a real CEntity (CMob) that follows a waypoint queue.
-// Each tick it heads for the front waypoint, pops it on arrival, and wanders
-// once the queue is empty. Teams own the decisions (SetTarget); the mob owns
-// its own movement (Tick).
-//
-// Registration template: RegisterModMob<EModMobType::EouWorker, CEOUMob<SMobStats>>
-// with a vanilla visual proxy (e.g. WorkerAnt).
+// 团队决定目标，生物负责沿路径移动；无任务时游走。
 template <typename TStats = SMobStats>
 class CEOUMob : public CMob<TStats>, public IEouMob
 {
   public:
     using CMob<TStats>::CMob;
 
-    void Tick(float dt) override
+    void OnTickIntent(float dt) override
     {
-        CMob<TStats>::Tick(dt);
+        CMob<TStats>::OnTickIntent(dt);
+        if (this->IsPlayerControlled()) return;
 
         const float arrival = std::max(kEouArriveRadius, this->Radius() + 4.f);
         while (!m_waypoints.empty() && EouDistance(this->Pos(), m_waypoints.front()) <= arrival)
@@ -106,7 +85,7 @@ class CEOUMob : public CMob<TStats>, public IEouMob
         if (m_board == board && board) return;
         const bool invalidate = m_board || !board;
         m_board = board;
-        if (!invalidate) return; // Initial restore binding preserves saved waypoints.
+        if (!invalidate) return; // 首次恢复绑定保留已存路径。
         m_waypoints.clear();
         m_food_target = {};
         m_food_phase = EFoodPhase::None;
@@ -132,8 +111,7 @@ class CEOUMob : public CMob<TStats>, public IEouMob
         if (m_food_target.valid()) return m_food_target.pos;
         return fallback;
     }
-    // Defaults to the biomass of the mob's base health: every eou mob leaves
-    // a corpse with this much food.
+    // 默认按基础生命计算尸体食物量。
     float EouBiomass() const override
     {
         return this->m_base_stats.max_health * game_config::eou_food_biomass_ratio;
@@ -184,7 +162,7 @@ class CEOUMob : public CMob<TStats>, public IEouMob
         m_eou_group_id = reader.Int("eou_group_id", 0);
         m_carry = std::max(0.f, reader.Float("eou_carry", 0.f));
         m_home_pos = reader.Vector2("eou_home", {});
-        // Targets are transient handles; rescan after restore without losing cargo.
+        // 恢复后重新扫描临时目标，保留已搬运食物。
         if (reader.Bool("eou_foraging", false)) m_waypoints.clear();
         m_food_phase = EFoodPhase::None;
         m_food_target = {};
@@ -209,8 +187,7 @@ class CEOUMob : public CMob<TStats>, public IEouMob
         this->m_vel = { std::cos(angle) * speed, std::sin(angle) * speed };
     }
 
-    // Food harvesting begins after the current group waypoint is reached.
-    // Cargo survives interruptions, full storage, and snapshot restores.
+    // 到达分组路径点后开始采集；任务中断、仓库满和快照恢复都不能丢失搬运量。
     void EouFoodTick(float dt, float scan_interval)
     {
         m_food_path_timer -= dt;
@@ -307,8 +284,7 @@ class CEOUMob : public CMob<TStats>, public IEouMob
 
     virtual float DepositFood(float amount) = 0;
 
-    // Drops the food routine mid-phase (a higher-priority job took over).
-    // The carry is kept: the next idle Home phase delivers it.
+    // 高优先级任务中断采集时保留货物，空闲后继续送回。
     void AbortFoodPhase()
     {
         m_food_phase = EFoodPhase::None;
@@ -318,7 +294,6 @@ class CEOUMob : public CMob<TStats>, public IEouMob
 
     void SetEouHome(florrbt::Vector2f pos) { m_home_pos = pos; }
 
-    // Drops the current waypoint chain (a direct chase takes over movement).
     void ClearEouWaypoints() { m_waypoints.clear(); }
 
   private:
@@ -343,8 +318,6 @@ class CEOUMob : public CMob<TStats>, public IEouMob
             return food && !food->IsMarkedForDes() && !food->IsDead() && food->RemainingFood() > 0.f;
         }
 
-        // Out of line (eou_mob.cpp): dereferencing the world needs the full
-        // CGameWorld type, which this header only forward-declares.
         CEouFoodMob* resolve() const { return ResolveEouFoodTarget(world, ref); }
     };
 
@@ -361,8 +334,7 @@ class CEOUMob : public CMob<TStats>, public IEouMob
         m_food_target = FindEouFoodTarget(world);
         if (!m_food_target.valid())
         {
-            // Nothing to fetch - but a partial carry (an aborted run or an
-            // emptied corpse) still needs to reach home.
+            // 无可采集目标时，仍需送回已有货物。
             if (m_carry > 0.f)
             {
                 m_food_phase = EFoodPhase::Home;
@@ -387,9 +359,7 @@ class CEOUMob : public CMob<TStats>, public IEouMob
     {
         m_food_path_timer = 2.f;
         if (!m_board || !m_food_target.valid()) return;
-        // Path refresh is transactional. A temporary obstruction must not
-        // erase the still-usable route or abandon the selected food target;
-        // keep following the old route and retry on the next refresh tick.
+        // 新路径失败时保留旧路线和食物目标，等待下次刷新，避免暂时阻塞使工蚁停工。
         TryReplaceEouPath(m_food_target.pos);
     }
 
@@ -422,24 +392,16 @@ class CEOUMob : public CMob<TStats>, public IEouMob
     float m_wander_timer = 0.f;
 };
 
-// EOU worker ant: the colony's hands. Priorities, highest first:
-//   1. Dig: scan the team's flagged wall cells (CWall), pick the closest one
-//      inside vision with an unblocked line of sight, walk there on its own
-//      (the pheromone group only reroutes on pheromone changes, so fresh
-//      flags would otherwise go unserviced) and chip the wall away after
-//      eou_worker_dig_time seconds in range.
-//   2. Forage: with no dig goal, run the food loop (fetch a corpse, gather,
-//      ferry the carry home).
-//   3. Pheromone: EouResolveGoal keeps reporting the dig goal to the group
-//      so group reroutes agree with the ant's own priority.
+// 工蚁优先挖掘可达的团队标记墙，其次采集和搬运食物。
+// 分组重规划沿用工蚁当前目标，不能让信息素覆盖正在执行的挖掘任务。
 class CEouWorkerAnt final : public CEOUMob<SMobStats>
 {
   public:
     using CEOUMob<SMobStats>::CEOUMob;
 
-    void Tick(float dt) override
+    void OnTickActions(float dt) override
     {
-        CEOUMob<SMobStats>::Tick(dt);
+        CEOUMob<SMobStats>::OnTickActions(dt);
         m_scan_timer -= dt;
         if (m_scan_timer <= 0.f)
         {
@@ -447,7 +409,6 @@ class CEouWorkerAnt final : public CEOUMob<SMobStats>
             const std::optional<florrbt::Vector2f> found = FindBestMarkedWall();
             if (found && (!m_goal || EouDistance(*found, *m_goal) > 1.f))
             {
-                // New (or better) dig target: drop foraging and head there.
                 m_goal = found;
                 m_dig_progress = 0.f;
                 AbortFoodPhase();
@@ -473,8 +434,7 @@ class CEouWorkerAnt final : public CEOUMob<SMobStats>
   private:
     void OnBoardDetached() override { m_goal.reset(); m_scan_timer = m_dig_progress = 0.f; }
     std::optional<florrbt::Vector2f> FindBestMarkedWall();
-    // Digs while inside dig range of the goal; on completion asks the
-    // controller to remove the wall, then rescans immediately.
+    // 挖掘完成后请求移除墙体并立即重扫目标。
     void TickDig(float dt);
 
     std::optional<florrbt::Vector2f> m_goal;
@@ -482,35 +442,24 @@ class CEouWorkerAnt final : public CEOUMob<SMobStats>
     float m_dig_progress = 0.f;
 };
 
-// EOU soldier ant: the colony's sword, hatched from soldier hatchery cells.
-// Priorities, highest first:
-//   1. Fight: scan for the closest enemy-team mob or flower inside
-//      eou_soldier_aggro_range. While the line of sight is clear the chase is
-//      direct (MoveTowards); through walls it paths on the scan cadence.
-//      Contact damage comes from the normal collision rules. The target drops
-//      once it dies or leaves eou_soldier_leash_range.
-//   2. Pheromone: with no enemy, follow the group like every other eou mob.
-// Soldiers never dig and never forage.
+// 兵蚁优先追击范围内敌人：直视时直接移动，隔墙时定期寻路，接触伤害由碰撞系统处理。
+// 目标死亡或超出追击范围后恢复信息素跟随；不挖掘、不采集。
 class CEouSoldierAnt final : public CEOUMob<SMobStats>
 {
   public:
     using CEOUMob<SMobStats>::CEOUMob;
 
-    void Tick(float dt) override;
+    void OnTickIntent(float dt) override;
 
-    // Group reroutes agree with the fight: an engaged soldier reports its
-    // target position instead of the pheromone fallback.
     florrbt::Vector2f EouResolveGoal(florrbt::Vector2f fallback) const override
     {
         return m_engaged ? m_target_pos : fallback;
     }
 
-    // Soldiers never forage; the deposit hook is unused.
     float DepositFood(float) override { return 0.f; }
 
   private:
-    // Revalidates the stored target handle: alive, unremoved and inside the
-    // leash range. Clears the handle when the target is gone.
+    // 清除失效、死亡或超出追击范围的目标句柄。
     CEntity* ResolveCombatTarget();
     void ScanForEnemy();
 
@@ -520,26 +469,22 @@ class CEouSoldierAnt final : public CEOUMob<SMobStats>
     float m_combat_scan_timer = 0.f;
 };
 
-// EOU queen: the colony's heart. Stationary (she never follows pheromones,
-// only sheds collision shoves); when she dies her team loses the match (the
-// controller reacts through OnMobDefeated).
+// 蚁后保持静止，死亡时由控制器通过 OnMobDefeated 判负。
 class CEouQueenMob final : public CMob<SMobStats>
 {
   public:
     using CMob<SMobStats>::CMob;
     bool IsCollisionPositionLocked() const override { return true; }
 
-    void Tick(float dt) override
+    void OnTickActions(float dt) override
     {
         m_vel = { 0.f, 0.f };
-        CMob<SMobStats>::Tick(dt);
+        CMob<SMobStats>::OnTickActions(dt);
         m_vel = { 0.f, 0.f };
     }
 };
 
-// Neutral food: an attackable/mobile-ish entity that stores food (the proxy
-// type is reserved for the client visual, unused for now). Starts as the
-// world's initial food and as the corpse every eou mob leaves behind.
+// 中立食物实体，用于初始食物与生物尸体。
 class CEouFoodMob : public CMob<SMobStats>
 {
   public:
@@ -552,8 +497,7 @@ class CEouFoodMob : public CMob<SMobStats>
     int FoodType() const { return m_food_type; }
     void SetFoodType(int type) { m_food_type = type; }
 
-    // Clamps the take to what is actually left (multiple ants can gather
-    // from the same corpse); returns the amount removed.
+    // 多只工蚁共享同一食物时按实际余量扣取，返回真正取得的数量。
     float TakeFood(float amount)
     {
         if (amount <= 0.f) return 0.f;
@@ -563,10 +507,10 @@ class CEouFoodMob : public CMob<SMobStats>
         return taken;
     }
 
-    void Tick(float dt) override
+    void OnTickActions(float dt) override
     {
         m_vel = { 0.f, 0.f };
-        CMob<SMobStats>::Tick(dt);
+        CMob<SMobStats>::OnTickActions(dt);
         m_vel = { 0.f, 0.f };
         m_food_total -= std::max(0.f, game_config::eou_food_rotten_rate) * dt;
         if (m_food_total <= 0.f)
@@ -599,28 +543,25 @@ class CEouFoodMob : public CMob<SMobStats>
     int m_food_type = 0;
 };
 
-// EOU cell types: storage cells hold food (workers deposit here); hatchery
-// cells spawn and hatch eggs. Cells only union with same-type neighbours.
+// 储藏格存食物，孵化格产卵；仅同类型相邻格合并分组。
 enum class ECouCellType : std::uint8_t
 {
     Storage = 0,
     Hatchery = 1,
 };
 
-// EOU cell: a stationary piece of territory owned by one team. Neighbouring
-// same-type cells union into a group (via the team's CCellGroupSet).
+// 团队持有的固定领地格，连接关系由 CCellGroupSet 管理。
 class CEouCellMob : public CMob<SMobStats>
 {
   public:
     using CMob<SMobStats>::CMob;
     bool IsCollisionPositionLocked() const override { return true; }
-    // Floors do not push ants or their own eggs away from the tile.
+    // 地板不把蚂蚁或自身卵推离格子。
     bool CanCollide() const override { return false; }
 
     void SetCellType(ECouCellType type) { m_cell_type = type; }
     ECouCellType CellType() const { return m_cell_type; }
 
-    // Storage cells: the food pool (workers deposit here, eggs consume).
     float StoredFood() const { return m_food_stored; }
     float TakeFood(float amount)
     {
@@ -635,8 +576,6 @@ class CEouCellMob : public CMob<SMobStats>
         return added;
     }
 
-    // Hatchery cells: bound egg handle and its hatch type (= egg type the
-    // cell passes to the egg at construction) + retry timer when empty.
     bool HasEgg() const { return m_egg_ref.IsValid(); }
     void SetEgg(const SEntityHandle& ref) { m_egg_ref = ref; }
     void ClearEgg()
@@ -650,8 +589,7 @@ class CEouCellMob : public CMob<SMobStats>
     void ResetEggRetry() { m_egg_retry_timer = game_config::eou_cell_egg_retry_interval; }
     float EggRetryTimer() const { return m_egg_retry_timer; }
 
-    // One tile, one ant (the EotU rule): the hatchery binds the ant it
-    // hatched and only lays a fresh egg once that ant is dead or missing.
+    // 一格一蚁：绑定已孵化生物，死亡或失效后才能再次产卵。
     bool HasBoundAnt() const { return m_ant_ref.IsValid(); }
     void SetBoundAnt(const SEntityHandle& ref) { m_ant_ref = ref; }
     void ClearBoundAnt()
@@ -665,10 +603,10 @@ class CEouCellMob : public CMob<SMobStats>
     int TeamId() const { return m_team_id; }
     void SetTeamId(int team) { m_team_id = team; }
 
-    void Tick(float dt) override
+    void OnTickActions(float dt) override
     {
         m_vel = { 0.f, 0.f };
-        CMob<SMobStats>::Tick(dt);
+        CMob<SMobStats>::OnTickActions(dt);
         m_vel = { 0.f, 0.f };
         m_retire_timer -= dt;
     }
@@ -709,8 +647,7 @@ class CEouCellMob : public CMob<SMobStats>
         m_egg_ref.world_instance_generation = reader.UInt64("cell_egg_world_instance_generation");
         m_egg_type = static_cast<EMobType>(reader.Int("cell_egg_type", static_cast<int>(m_egg_type)));
         m_egg_retry_timer = std::max(0.f, reader.Float("cell_egg_retry", m_egg_retry_timer));
-        // Version 1 snapshots carry no ant binding: the cell simply lays a
-        // fresh egg on the next tick, which matches the old behaviour.
+        // 版本 1 未保存绑定生物，按旧规则在下帧重新产卵。
         m_ant_ref.id = reader.Int("cell_ant_id", -1);
         m_ant_ref.generation = reader.UInt64("cell_ant_gen");
         m_ant_ref.world_id = reader.UInt32("cell_ant_world_id");
@@ -730,9 +667,7 @@ class CEouCellMob : public CMob<SMobStats>
     SEntityHandle m_ant_ref;
 };
 
-// EOU egg: grows over time (radius eou_egg_size_start -> eou_egg_size_final),
-// then hatches into the type the hatchery cell passed at construction when
-// the team can afford the food cost (the controller drives the hatch).
+// 卵随时间生长，食物足够时由控制器按孵化格指定类型孵化。
 class CEouEggMob : public CMob<SMobStats>
 {
   public:
@@ -749,10 +684,10 @@ class CEouEggMob : public CMob<SMobStats>
     bool Grown() const { return m_grown; }
     float GrowProgress() const { return m_grow_progress; }
 
-    void Tick(float dt) override
+    void OnTickActions(float dt) override
     {
         m_vel = { 0.f, 0.f };
-        CMob<SMobStats>::Tick(dt);
+        CMob<SMobStats>::OnTickActions(dt);
         m_vel = { 0.f, 0.f };
         const float grow_time = std::max(0.1f, game_config::eou_egg_grow_time);
         m_age += dt;
@@ -798,6 +733,5 @@ class CEouEggMob : public CMob<SMobStats>
     bool m_grown = false;
 };
 
-// Registers the eou mod mobs (visual proxies keep the vanilla client sprites
-// working without client mods). Call from RegisterMobs before Finalize.
+// 在生物注册表冻结前注册 EOU 类型，使用基础生物的视觉代理。
 bool RegisterEouMobs(std::string& error);

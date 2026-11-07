@@ -152,8 +152,7 @@ export const clientCommandSpecs = Object.freeze([
   {
     name: "bind",
     params: "[keyboard|mouse] <key> <cmd> [+ cmd...]",
-    // Slot 1 may be a device or a key, slot 2 a key or the first command,
-    // everything after that is a command.
+    // 首参数可为设备或按键，后续补全需兼容命令。
     args: "bind_target bind_key_cmd bind_cmd",
     help: "ui.console.help.bind",
   },

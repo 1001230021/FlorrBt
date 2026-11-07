@@ -1,4 +1,4 @@
-// Execute the actual renderer/card factory against fake DOM/Canvas objects.
+// 使用模拟 DOM/画布执行实际渲染器和卡片工厂。
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
@@ -43,7 +43,8 @@ function element(tag) {
 }
 const petal = readFileSync(new URL("../web/src/petal_info.js", import.meta.url), "utf8");
 const start = petal.indexOf("export function makePetalStack(");
-const end = petal.indexOf("// One label", start);
+const end = petal.indexOf("function makePetalDisplayName(", start);
+assert.ok(start >= 0 && end > start, "card factory boundaries must exist");
 const makeCard = vm.runInNewContext(`${petal.slice(start, end).replace(/^export /, "")};makePetalStack`, {
   document: { createElement: element }, petalMimicType: 99, effectivePetalCardCopy: () => 1,
   assignVisualImage() {}, assetImage: () => ({}), getPetalBasePath: () => "base.svg", getPetalCopyLayout: () => [],

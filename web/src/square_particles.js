@@ -1,5 +1,4 @@
-// Shared craft/burrow particle appearance. Coordinates and size use the
-// caller's units; crafting supplies DPR, the world supplies a camera matrix.
+// 合成和出土粒子共用外观，单位/像素比由调用方提供。
 export function drawSquareParticle(ctx, particle, scale = 1) {
   if (!(particle.life > 0) || !(scale > 0)) return;
   const progress = Math.max(0, Math.min(1, particle.age / particle.life));

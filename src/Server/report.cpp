@@ -1,6 +1,6 @@
 #include "report.h"
+#include "Transport/report_review.h"
 #include "server.h"
-#include "../Engine/json_value.h"
 #include "../Engine/logger.h"
 #include "../Shared/game_config.h"
 #include "Game/entity.h"
@@ -12,18 +12,12 @@
 #include "Module/network_module.h"
 #include "Module/world_module.h"
 #include <algorithm>
-#include <atomic>
 #include <charconv>
 #include <cctype>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
 #include <mutex>
-#include <optional>
-#include <queue>
-#include <sstream>
+#include <stop_token>
 #include <string_view>
 #include <thread>
 #include <condition_variable>
@@ -115,58 +109,6 @@ const std::vector<std::string>& ReportKeywords()
     return keywords;
 }
 
-std::string EscapeJsonString(const std::string& text)
-{
-    std::string result;
-    result.reserve(text.size() + 8);
-    for (unsigned char ch : text)
-    {
-        switch (ch)
-        {
-        case '\\':
-            result += "\\\\";
-            break;
-        case '"':
-            result += "\\\"";
-            break;
-        case '\n':
-            result += "\\n";
-            break;
-        case '\r':
-            result += "\\r";
-            break;
-        case '\t':
-            result += "\\t";
-            break;
-        default:
-            if (ch < 0x20)
-            {
-                constexpr char hex[] = "0123456789ABCDEF";
-                result += "\\u00";
-                result += hex[ch >> 4];
-                result += hex[ch & 15];
-            } else
-            {
-                result.push_back(static_cast<char>(ch));
-            }
-            break;
-        }
-    }
-    return result;
-}
-
-std::string ShellQuote(const std::filesystem::path& path)
-{
-    std::string text = path.string();
-    std::string result = "\"";
-    for (char ch : text)
-    {
-        if (ch == '"') result += "\\\"";
-        else result += ch;
-    }
-    result += "\"";
-    return result;
-}
 
 std::string BuildReportedTranscript(const std::vector<SChatEntry>& chats, const SPlayerSessionRef& target)
 {
@@ -183,98 +125,6 @@ std::string BuildReportedTranscript(const std::vector<SChatEntry>& chats, const 
     return transcript;
 }
 
-std::optional<std::string> RunCurlJson(const std::string& body, const std::string& url, const std::string& api_key)
-{
-    static std::atomic<uint64_t> request_counter{ 0 };
-    std::filesystem::path request_path;
-    std::filesystem::path response_path;
-
-    try
-    {
-        std::filesystem::path temp_dir = std::filesystem::temp_directory_path();
-        std::string stamp = std::to_string(NowSeconds()) + "_" + std::to_string(request_counter.fetch_add(1));
-        request_path = temp_dir / ("florrbt_report_request_" + stamp + ".json");
-        response_path = temp_dir / ("florrbt_report_response_" + stamp + ".json");
-        {
-            std::ofstream request(request_path, std::ios::binary);
-            if (!request) return std::nullopt;
-            request << body;
-        }
-
-        std::string command = "curl -sS --max-time 6 -X POST " + ShellQuote(url) +
-                              " -H \"Content-Type: application/json\" -H \"Authorization: Bearer " +
-                              api_key + "\" --data-binary @" + ShellQuote(request_path) +
-                              " -o " + ShellQuote(response_path);
-        int result = std::system(command.c_str());
-        std::filesystem::remove(request_path);
-        if (result != 0)
-        {
-            std::filesystem::remove(response_path);
-            return std::nullopt;
-        }
-
-        std::ifstream response(response_path, std::ios::binary);
-        if (!response)
-        {
-            std::filesystem::remove(response_path);
-            return std::nullopt;
-        }
-        std::ostringstream stream;
-        stream << response.rdbuf();
-        std::filesystem::remove(response_path);
-        return stream.str();
-    } catch (const std::exception& e)
-    {
-        LOG_WARN("report", std::string("AI request failed: ") + e.what());
-    } catch (...)
-    {
-        LOG_WARN("report", "AI request failed: unknown exception");
-    }
-
-    std::error_code ec;
-    if (!request_path.empty()) std::filesystem::remove(request_path, ec);
-    if (!response_path.empty()) std::filesystem::remove(response_path, ec);
-    return std::nullopt;
-}
-
-float ParseDeepSeekMuteSeconds(const std::string& response_text)
-{
-    std::string error;
-    std::optional<CJsonValue> root = CJsonValue::Parse(response_text, &error);
-    if (!root) return -1.f;
-    const CJsonValue* choices = root->Find("choices");
-    if (!choices || choices->AsArray().empty()) return -1.f;
-    const CJsonValue* message = choices->AsArray().front().Find("message");
-    const CJsonValue* content = message ? message->Find("content") : nullptr;
-    if (!content) return -1.f;
-
-    std::optional<CJsonValue> review = CJsonValue::Parse(content->AsString(), &error);
-    if (review)
-    {
-        if (const CJsonValue* seconds = review->Find("mute_seconds"))
-        {
-            const double parsed = seconds->AsNumber(-1.0);
-            if (std::isfinite(parsed) && parsed >= 0.0 && parsed <= 86400.0 * 30.0)
-                return static_cast<float>(parsed);
-            return -1.f;
-        }
-    }
-
-    const std::string& text = content->AsString();
-    size_t pos = text.find_first_of("0123456789");
-    if (pos == std::string::npos) return -1.f;
-    try
-    {
-        const std::string numeric = text.substr(pos);
-        std::size_t consumed = 0;
-        const float parsed = std::stof(numeric, &consumed);
-        if (consumed != numeric.size()) return -1.f;
-        return std::isfinite(parsed) && parsed >= 0.f && parsed <= 86400.f * 30.f ? parsed : -1.f;
-    } catch (...)
-    {
-        return -1.f;
-    }
-}
 
 void SendPrivateSystem(CPlayer& player, const std::string& message)
 {
@@ -331,7 +181,7 @@ void ApplyReportDecision(CPlayer& reporter, CPlayer& target, float mute_seconds,
     }
 }
 
-} // namespace
+}
 
 namespace report
 {
@@ -353,31 +203,7 @@ float ReviewByKeywords(const std::string& source)
     if (matches <= 0) return 0.f;
     return game_config::report_keyword_base_mute_seconds * std::sqrt(static_cast<float>(matches));
 }
-
-float ReviewByDeepSeek(const std::string& transcript, const std::string& url, const std::string& api_key,
-                      const std::string& model)
-{
-    if (api_key.empty()) return -1.f;
-    if (transcript.empty()) return 0.f;
-
-    std::string prompt = "You moderate a small multiplayer game chat. Return only JSON like {\"mute_seconds\":0}. "
-                         "Choose 0 for harmless speech. For harassment, hate, threats, explicit spam, or severe abuse, "
-                         "choose a mute duration in seconds. "
-                         "Reported chat from the last minute:\n" +
-                         transcript;
-
-    std::string body = "{\"model\":\"" + EscapeJsonString(model) +
-                       "\",\"messages\":[{\"role\":\"user\",\"content\":\"" + EscapeJsonString(prompt) +
-                       "\"}],\"temperature\":0}";
-
-    std::optional<std::string> response = RunCurlJson(body, url, api_key);
-    if (!response) return -1.f;
-    float mute_seconds = ParseDeepSeekMuteSeconds(*response);
-    if (mute_seconds < 0.f) return -1.f;
-    return std::max(0.f, mute_seconds);
 }
-
-} // namespace report
 
 struct CReportReviewService::CImplementation
 {
@@ -386,6 +212,8 @@ struct CReportReviewService::CImplementation
         SPlayerSessionRef reporter, target;
         std::string transcript, url, api_key, model;
         float fallback = 0.f, result = -1.f;
+        std::stop_token cancellation;
+        std::string diagnostic;
         std::uint64_t epoch = 0;
     };
     explicit CImplementation(TReview value) : review(std::move(value)) {}
@@ -398,6 +226,7 @@ struct CReportReviewService::CImplementation
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> cooldowns;
     std::uint64_t epoch = 1;
     bool stopping = false;
+    std::stop_source cancellation;
 
     void Run()
     {
@@ -410,11 +239,18 @@ struct CReportReviewService::CImplementation
             lock.unlock();
             try
             {
-                job.result = review ? review(job.transcript) :
-                    report::ReviewByDeepSeek(job.transcript, job.url, job.api_key, job.model);
+                if (review) job.result = review(job.transcript);
+                else
+                {
+                    auto result = report_review::Review(job.transcript, job.url, job.api_key, job.model, job.cancellation);
+                    job.result = result.mute_seconds.value_or(-1.f);
+                    job.diagnostic = std::move(result.diagnostic);
+                }
                 if (!std::isfinite(job.result) || job.result > 86400.f * 30.f) job.result = -1.f;
             }
-            catch (...) { job.result = -1.f; }
+            catch (const std::bad_alloc&) { job.result = -1.f; job.diagnostic = "AI review allocation failed"; }
+            catch (const std::exception&) { job.result = -1.f; job.diagnostic = "AI review raised a standard exception"; }
+            catch (...) { job.result = -1.f; job.diagnostic = "AI review raised an unknown exception"; }
             lock.lock();
             if (!stopping && job.epoch == epoch) results.push_back(std::move(job));
         }
@@ -438,9 +274,10 @@ bool CReportReviewService::Submit(CPlayer& reporter, CPlayer& target, const std:
     { error = "Report queue busy or rate limited; retry later"; return false; }
     CImplementation::SJob job;
     job.reporter = reporter.SessionRef(); job.target = target.SessionRef(); job.epoch = impl.epoch;
+    job.cancellation = impl.cancellation.get_token();
     job.transcript = BuildReportedTranscript(chats, job.target);
     job.fallback = report::ReviewByKeywords(job.transcript);
-    // Capture every mutable setting on the game thread.
+    // 游戏线程捕获所有可变设置。
     job.url = game_config::report_deepseek_api_url;
     job.api_key = game_config::report_deepseek_api_key;
     job.model = game_config::report_deepseek_model;
@@ -482,6 +319,7 @@ void CReportReviewService::Process(CServer& server)
         auto* reporter = network->FindPlayerById(job.reporter.id);
         auto* target = network->FindPlayerById(job.target.id);
         if (!reporter || !target || !reporter->MatchesSession(job.reporter) || !target->MatchesSession(job.target)) continue;
+        if (!job.diagnostic.empty()) LOG_WARN("report", job.diagnostic + "; applying keyword fallback");
         ApplyReportDecision(*reporter, *target, job.result >= 0.f ? job.result : job.fallback, job.result >= 0.f);
     }
 }
@@ -489,6 +327,8 @@ void CReportReviewService::Process(CServer& server)
 void CReportReviewService::CancelPending()
 {
     std::lock_guard lock(m_impl->mutex);
+    m_impl->cancellation.request_stop();
+    m_impl->cancellation = std::stop_source{};
     ++m_impl->epoch;
     m_impl->jobs.clear(); m_impl->results.clear(); m_impl->pending.clear(); m_impl->cooldowns.clear();
 }
@@ -498,6 +338,7 @@ void CReportReviewService::ShutDown()
     {
         std::lock_guard lock(m_impl->mutex);
         m_impl->stopping = true;
+        m_impl->cancellation.request_stop();
         ++m_impl->epoch; m_impl->jobs.clear(); m_impl->results.clear(); m_impl->pending.clear();
     }
     m_impl->wake.notify_all();
@@ -577,7 +418,6 @@ bool HandleServerCommand(CPlayer& reporter, const std::string& command_line)
             return true;
         }
 
-        // The creator joins their own room.
         CEntity* reporter_entity = reporter.GetEntity();
         const int departing_entity_id = reporter_entity ? reporter_entity->Id() : -1;
         bool transferred = false;
@@ -686,4 +526,4 @@ bool HandleServerCommand(CPlayer& reporter, const std::string& command_line)
 
     return true;
 }
-} // namespace report
+}

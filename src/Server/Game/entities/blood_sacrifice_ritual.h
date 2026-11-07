@@ -9,7 +9,7 @@ class CBloodSacrificeRitual : public CEntity
   public:
     CBloodSacrificeRitual(CGameWorld* world, florrbt::Vector2f pos, EMobType mob_type, ERarity rarity, float timer);
 
-    void Tick(float dt) override;
+    void OnTickActions(float dt) override;
     bool CanCollide() const override { return false; }
     bool IsVisible() const override { return !IsDead(); }
 

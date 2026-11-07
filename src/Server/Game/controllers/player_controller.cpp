@@ -1,7 +1,7 @@
 #include "player_controller.h"
 #include "../../../Shared/game_config.h"
 #include "../../HotReload/snapshot_archive.h"
-#include "../../Module/network_module.h"
+#include "../player.h"
 #include "../entities/flower.h"
 #include "../entities/mob.h"
 #include "../entities/petals/petal.h"
@@ -11,6 +11,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <utility>
 
 namespace
 {
@@ -21,16 +22,17 @@ void QueueSkillResult(CMobBase* mob, ESkillRequestResult result, int skill_index
     CPlayer* player = context ? context->FindPlayerFromEntity(mob) : nullptr;
     if (!player) return;
 
-    context->Network().QueueSkillResult(
+    context->PlayerUpdates().QueueSkillResult(
         *player, result,
         static_cast<uint8_t>(std::clamp(skill_index, 0, static_cast<int>(std::numeric_limits<uint8_t>::max()))),
         static_cast<uint8_t>(std::clamp(skill_count, 0, static_cast<int>(std::numeric_limits<uint8_t>::max()))));
 }
-} // namespace
+}
 
 void CPlayerController::OnTick(CMobBase* mob, float dt)
 {
     ++m_local_tick;
+    m_skill_for_actions.reset();
     if (!mob) return;
 
     SPendingOperate& pending = m_pending_operates[m_local_tick % INPUT_QUEUE_CAPACITY];
@@ -58,18 +60,16 @@ void CPlayerController::OnTick(CMobBase* mob, float dt)
             ExecuteOperate(chores, mob);
             if (chores_sequence) m_applied_chores_sequence = chores_sequence;
         }
-        if (has_skill) ExecuteOperate(skill, mob);
+        if (has_skill) m_skill_for_actions = skill;
     }
 
-    // A skill-driven movement owns the velocity for this tick.  Without this
-    // guard player input would immediately steer a crab out of its dash.
+    // 技能拥有本帧速度时，玩家输入不能立即改写冲刺方向。
     if (mob->IsMovementControlledBySkill()) return;
     if (const auto* crab = dynamic_cast<const ICrabDashMob*>(mob);
         crab && (crab->IsDashActive() || crab->IsDashRecovering()))
         return;
 
-    // Input axes already encode an analog vector. Do not normalize it back
-    // to full speed or aim at an arbitrarily distant point.
+    // 输入轴已经携带模拟强度，不能重新归一化为满速。
     const float input_length = Length(m_move_dir);
     const florrbt::Vector2f intent = input_length > 1.f ? m_move_dir / input_length : m_move_dir;
     const float full_speed_distance = std::max(1.f, game_config::player_move_target_distance);
@@ -81,6 +81,17 @@ void CPlayerController::OnTick(CMobBase* mob, float dt)
         if (auto* flower = dynamic_cast<CFlower*>(mob)) flower->TryStartBurrowFromShovel();
     }
 
+}
+
+void CPlayerController::OnActions(CMobBase* mob, float)
+{
+    const auto skill = std::exchange(m_skill_for_actions, std::nullopt);
+    if (!mob || mob->IsDead() || mob->IsMarkedForDes()) return;
+    // 新请求在已有动作推进后提交，不能立即消耗新建技能的一整帧前摇。
+    if (skill) ExecuteOperate(*skill, mob);
+    if (mob->IsMovementControlledBySkill()) return;
+    if (const auto* crab = dynamic_cast<const ICrabDashMob*>(mob);
+        crab && (crab->IsDashActive() || crab->IsDashRecovering())) return;
     TryManualAttack(mob);
 }
 
@@ -134,8 +145,7 @@ bool CPlayerController::ScheduleOperate(const ClientOperate& op, std::uint32_t d
 
     if (!sequence)
     {
-        // Legacy immediate packets are a fence for the fields they update;
-        // an older queued InputFrame must not undo a legacy release either.
+        // 旧式即时消息对其更新字段形成屏障，较旧的排队输入不能覆盖释放操作。
         const bool movement = op.move_x.has_value() || op.move_y.has_value();
         const bool chores = op.is_attacking.has_value() || op.is_defending.has_value() || op.is_digging.has_value();
         for (auto& queued : m_pending_operates)
@@ -204,6 +214,8 @@ void CPlayerController::MergeOperate(SPendingOperate& pending, const ClientOpera
 
 void CPlayerController::ClearPendingOperates()
 {
+    m_manual_attack_held = false;
+    m_skill_for_actions.reset();
     for (SPendingOperate& pending : m_pending_operates) pending = {};
     m_last_sequence = 0;
     m_has_last_sequence = false;
@@ -239,12 +251,12 @@ void CPlayerController::ExecuteOperate(const ClientOperate& op, CMobBase* mob)
         }
         break;
     case ClientOperate::Type::Chores:
+        if (op.is_attacking.has_value()) m_manual_attack_held = *op.is_attacking;
         if (attackable)
         {
             if (op.is_attacking.has_value()) attackable->SetAttacking(*op.is_attacking);
             if (op.is_defending.has_value()) attackable->SetDefending(*op.is_defending);
-            // Independent holds: Bubble must still see defense during attack.
-            // Petal-specific actions (e.g. EOU throwing) choose their own mode.
+            // 攻击和防御按键独立保存；具体花瓣自行决定动作模式。
         }
         if (op.is_digging.value_or(false) || op.is_defending.value_or(false))
         {
@@ -268,9 +280,7 @@ void CPlayerController::ExecuteOperate(const ClientOperate& op, CMobBase* mob)
             break;
         }
 
-        // A manual skill request uses the same aim direction as manual
-        // attacks. The skill itself owns target, cooldown and state limits;
-        // this controller only reports the authoritative TryCastSkill result.
+        // 手动技能沿用瞄准方向，由技能验证目标和冷却，只回报真实执行结果。
         if (m_has_aim_dir && !mob->IsFacingLocked())
         {
             mob->FacingAngle() = std::atan2(m_aim_dir.y, m_aim_dir.x);
@@ -293,7 +303,8 @@ void CPlayerController::ExecuteOperate(const ClientOperate& op, CMobBase* mob)
 void CPlayerController::TryManualAttack(CMobBase* mob)
 {
     auto* attackable = dynamic_cast<IAttackableMob*>(mob);
-    if (!mob || !attackable || !attackable->IsAttacking()) return;
+    // 生物的攻击表现标记可由技能改写，按键意图必须独立保留。
+    if (!mob || !attackable || !m_manual_attack_held) return;
     if (dynamic_cast<CFlower*>(mob)) return;
 
     if (m_has_aim_dir && !mob->IsFacingLocked())

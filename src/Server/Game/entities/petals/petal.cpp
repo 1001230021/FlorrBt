@@ -104,7 +104,7 @@ void ClearSlotPetal(const CPetalSlot* slot, CPetal* petal, CFlower* flower)
     petal->NotifyCleared();
     petal->MarkForDestroy(EEntityRemovalReason::Replaced);
 }
-} // namespace
+}
 
 CPetal::CPetal(float r, CFlower* owner, int slot, SPetalStats petal_stats, EPetalType type)
     : CProjectile(owner->Pos().x, owner->Pos().y, r, owner,
@@ -135,8 +135,7 @@ void CPetal::RefreshOrbitAnchor(CFlower* flower)
         return;
     }
 
-    // Moon itself still circles the Flower. Every other petal follows the
-    // live Moon when one exists, so generation and orbit math share one anchor.
+    // Moon 围绕花朵运动，其余花瓣共享活跃 Moon 作为生成和轨道锚点。
     if (GetPetalType() == EPetalType::Moon)
     {
         m_orbit_anchor_ref = flower->GetHandle();
@@ -155,7 +154,7 @@ CEntity* CPetal::GetOrbitAnchor() const
 
 void CPetal::OnBeforeRemoved(EEntityRemovalReason)
 {
-    // Also runs for sleeping owners. Detach before callbacks that may rebuild slots.
+    // 睡眠宿主也会进入清理；先解绑，再调用可能重建槽位的回调。
     if (auto* flower = dynamic_cast<CFlower*>(GetOwner()))
     {
         for (auto& slot : flower->GetSlots())
@@ -172,7 +171,7 @@ void CPetal::OnBeforeRemoved(EEntityRemovalReason)
     NotifyCleared();
 }
 
-void CPetal::Tick(float dt)
+void CPetal::OnTickActions(float dt)
 {
     if (m_target_release_timer > 0.f)
     {
@@ -189,7 +188,7 @@ void CPetal::Tick(float dt)
     if (flower)
     {
         RefreshOrbitAnchor(flower);
-        Team() = flower->Team();
+        SetTeam(flower->Team());
         const std::uint64_t flower_stats_revision = flower->GetFinalStatsRevision();
         if (m_applied_flower_stats_revision != flower_stats_revision)
         {
@@ -209,7 +208,7 @@ void CPetal::Tick(float dt)
         MarkForDestroy(EEntityRemovalReason::OwnerRemoved);
         return;
     }
-    CProjectile::Tick(dt);
+    CProjectile::OnTickActions(dt);
     m_lifetime += dt;
     if (m_timer > 0.f)
     {
@@ -230,7 +229,7 @@ void CPetal::Tick(float dt)
     }
 }
 
-void CPetal::TakeDamage(float dmg, CEntity*, EDamageType damage_type)
+void CPetal::OnTakeDamage(float dmg, CEntity*, EDamageType damage_type)
 {
     if (damage_type == EDamageType::Normal) dmg = std::max(0.f, dmg - m_final_petal_stats.armor);
     if (dmg <= 0.f) return;
@@ -239,6 +238,7 @@ void CPetal::TakeDamage(float dmg, CEntity*, EDamageType damage_type)
     if (Health() <= 0.f)
     {
         Health() = 0.f;
+        if (auto* flower = dynamic_cast<CFlower*>(GetOwner())) flower->MarkFinalStatsDirty();
     }
 }
 
@@ -261,7 +261,7 @@ bool CPetal::CollidesWithWalls() const
     }
 }
 
-void CMoonPetal::Tick(float dt)
+void CMoonPetal::OnTickMotion(float dt)
 {
     if (!m_orbit_initialized)
     {
@@ -275,11 +275,11 @@ void CMoonPetal::Tick(float dt)
         m_orbit_phase, Radius(), game_config::default_moon_orbit_speed,
         game_config::default_moon_slowdown_time, dt);
     m_vel = motion.movement_velocity;
-    CPetal::Tick(dt);
+    CPetal::OnTickMotion(dt);
     m_vel = motion.final_velocity;
 }
 
-void CBeetleEggPetal::TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
+void CBeetleEggPetal::OnTakeDamage(float dmg, CEntity* attacker, EDamageType damage_type)
 {
     CEntity* summon =
         GameWorld() ? GameWorld()->ResolveEntity(m_summon_ref) : nullptr;
@@ -290,7 +290,7 @@ void CBeetleEggPetal::TakeDamage(float dmg, CEntity* attacker, EDamageType damag
         return;
     }
 
-    CPetal::TakeDamage(dmg, attacker, damage_type);
+    CPetal::OnTakeDamage(dmg, attacker, damage_type);
 }
 
 void CLinkerPetal::OnChainBroken(CChainEntity&)
@@ -319,17 +319,17 @@ void CLinkerPetal::ResetMissingChain()
     if (auto* flower = dynamic_cast<CFlower*>(GetOwner())) flower->MarkFinalStatsDirty();
 }
 
-void CGlassPetal::TakeDamage(float, CEntity*, EDamageType)
+void CGlassPetal::OnTakeDamage(float, CEntity*, EDamageType)
 {
     Health() = std::max(Health(), std::max(1.f, m_final_petal_stats.health));
 }
 
-void CMissilePetal::Tick(float dt)
+void CMissilePetal::OnTickActions(float dt)
 {
     bool restore_fired_angle = m_fired && GetPetalType() == EPetalType::Missile && m_has_fired_angle;
     float fired_angle = m_fired_angle;
 
-    CThrownPetal::Tick(dt);
+    CThrownPetal::OnTickActions(dt);
     if (restore_fired_angle)
     {
         FacingAngle() = fired_angle;
@@ -374,7 +374,7 @@ void CThrownPetal::StopThrow(bool destroy)
     if (destroy) Health() = 0.f;
 }
 
-void CThrownPetal::Tick(float dt)
+void CThrownPetal::OnTickMotion(float dt)
 {
     if (m_thrown)
     {
@@ -387,8 +387,11 @@ void CThrownPetal::Tick(float dt)
         }
     }
 
-    CPetal::Tick(dt);
+    CPetal::OnTickMotion(dt);
+}
 
+void CThrownPetal::OnTickEffects(float dt)
+{
     if (!m_thrown) return;
     m_throw_age += dt;
     if (m_throw_decelerates && m_throw_age >= m_throw_deceleration_time)
@@ -418,7 +421,7 @@ void CPetalSlot::SpawnCopy(int copy_index, CFlower* flower)
     const CPetalPrototype* runtime_proto = GetRuntimeSlotPrototype(this, flower);
     if (!flower || !m_p_proto || !m_p_proto->m_p_behavior || !runtime_proto || !runtime_proto->m_factory) return;
     if (copy_index < 0 || copy_index >= static_cast<int>(m_p_petals.size())) return;
-    if (m_p_petals[copy_index] != nullptr || m_banned) return;
+    if (m_p_petals[copy_index] != nullptr || IsBanned()) return;
 
     std::unique_ptr<CPetal> petal = runtime_proto->m_factory(flower, m_slot_index, m_stored_rarity);
     if (!petal) return;
@@ -533,7 +536,7 @@ float CPetalSlot::GetLoadProgress(int copy_index) const
 
 void CPetalSlot::RefreshPetalState(CFlower* flower)
 {
-    if (m_banned || !m_p_proto || !m_p_proto->m_p_behavior) return;
+    if (IsBanned() || !m_p_proto || !m_p_proto->m_p_behavior) return;
 
     NormalizeRuntimeState();
 
@@ -591,7 +594,7 @@ void CPetalSlot::RefreshPetalState(CFlower* flower)
 
 void CPetalSlot::Tick(float dt, CFlower* flower, bool state_refreshed)
 {
-    if (m_banned || !m_p_proto || !m_p_proto->m_p_behavior || !flower) return;
+    if (IsBanned() || !m_p_proto || !m_p_proto->m_p_behavior || !flower) return;
     if (flower->ArePetalsSuppressed()) return;
     if (!state_refreshed) RefreshPetalState(flower);
     NormalizeRuntimeState();
@@ -629,6 +632,8 @@ void CPetalSlot::Tick(float dt, CFlower* flower, bool state_refreshed)
     {
         CPetal* petal = m_p_petals[i];
         if (!petal) continue;
+        if (flower->GameWorld() && !flower->GameWorld()->CanSimulateThisTick(*petal)) continue;
+        if (flower->GameWorld() && flower->GameWorld()->IsTicking() && petal->FrameUsesWorldTick()) continue;
         petal->RefreshOrbitAnchor(flower);
         petal->m_max_slot_num = static_cast<int>(m_p_petals.size());
         const CPetalPrototype* active_proto = GetActivePetalPrototype(this, petal, flower);
@@ -754,11 +759,7 @@ int CPetalSlot::GetCurrentCopyCount(const CFlower* flower) const
     const CPetalBehavior* behavior = runtime_proto && runtime_proto->m_p_behavior ? runtime_proto->m_p_behavior.get()
                                                                                   : m_p_proto->m_p_behavior.get();
 
-    // Layout capacity is independent from reload state. A null entry means
-    // that this copy is currently reloading, but it must still reserve its
-    // orbit position. The only exceptions are auxiliary Egg/Linker petals
-    // that have explicitly been released from the slot; their live entity is
-    // retained only for summon/chain ownership and must not occupy a slot.
+    // 重载中的空副本仍保留轨道位置；已释放的 Egg/Linker 仅维持召唤或链条归属，不再占布局位置。
     int layout_count = 0;
     for (const CPetal* petal : m_p_petals)
         if (!petal || behavior->CountsForPetalLayout(petal))
@@ -771,7 +772,7 @@ void CPetalSlot::ApplyStatsTo(SFlowerStats& target, const CFlower* flower) const
 {
     if (flower && !flower->AllowsStatModifiers()) return;
     if (!m_p_proto || !m_p_proto->m_p_behavior) return;
-    if (!m_available || m_banned) return;
+    if (!m_available || IsBanned()) return;
 
     SFlowerStats stats = m_p_proto->m_p_behavior->GetStatsForSlot(m_stored_rarity, this, flower);
     int count = GetBonusCopyCount(flower);

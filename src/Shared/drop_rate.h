@@ -765,9 +765,7 @@ inline void RegisterDerivedSuperAndEternalDropRates()
                 else if (drop_entry.rarity == ERarity::Mythic)
                     super_mythic_drop_rate += drop_entry.drop_rate;
             }
-            // Super mobs never drop Super petals (supers are craft-only);
-            // scrub any table that still carries one so future data imports
-            // cannot reintroduce the bug.
+            // Super 生物不直接掉落 Super 花瓣，导入表也须清除该项，保持合成限定规则。
             super_mob_drop_entries.erase(
                 std::remove_if(super_mob_drop_entries.begin(), super_mob_drop_entries.end(),
                                [drop_type](const SDropRate& drop_entry) {
@@ -775,9 +773,7 @@ inline void RegisterDerivedSuperAndEternalDropRates()
                                }),
                 super_mob_drop_entries.end());
 
-            // Use the complete Super->Ultra probability range.  The former
-            // 0.45 saturation point made most Eternal entries collapse to
-            // the same ~10% Super rate.
+            // 使用完整的 Super→Ultra 概率区间，避免高稀有度条目在旧饱和值处退化为同一概率。
             const double super_drop_curve_factor = std::clamp(super_ultra_drop_rate, 0.0, 1.0);
             const double super_drop_curve_weight =
                 super_drop_curve_factor * super_drop_curve_factor * super_drop_curve_factor;
@@ -846,7 +842,7 @@ inline void RegisterDropRates()
     RegisterDropRate(EMobType::SoldierAnt, ERarity::Super, EPetalType::Glass, ERarity::Ultra, 0.464992);
     RegisterDropRate(EMobType::SoldierAnt, ERarity::Super, EPetalType::Glass, ERarity::Mythic, 0.535);
 
-    // Bubble: drops Air and Bubble petals with the same rates as Wing from SoldierAnt.
+    // Bubble 的 Air、Bubble 掉落率沿用 SoldierAnt 的 Wing 表。
     CopyDropRateTable(EMobType::SoldierAnt, EPetalType::Wing, EMobType::Bubble, EPetalType::Air);
     CopyDropRateTable(EMobType::SoldierAnt, EPetalType::Wing, EMobType::Bubble, EPetalType::Bubble);
 
@@ -1424,8 +1420,7 @@ inline void RegisterDropRates()
                       EPetalType::WhiteFungus);
     CopyDropRateTable(EMobType::SoldierAnt, EPetalType::Glass, EMobType::LeafcutterSoldier,
                       EPetalType::BlackFungus);
-    // Magic Firefly uses the exact source-table probabilities requested for
-    // its two drops, including each source mob/drop rarity pairing.
+    // 魔法萤火虫沿用来源表中对应生物和掉落稀有度的概率。
     CopyDropRateTable(EMobType::TermiteOvermind, EPetalType::Relic, EMobType::MagicFirefly,
                       ToPetalType(EModPetalType::Orb));
     CopyDropRateTable(EMobType::SoldierAnt, EPetalType::Wing, EMobType::MagicFirefly,

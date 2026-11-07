@@ -1,13 +1,11 @@
-// Keep texture coordinates on one continuous world -> screen transform.
-// Pixel rounding belongs only to coverage/clip boundaries, never image scale.
+// 纹理使用连续的世界到屏幕变换；仅覆盖和裁剪边界取整，缩放比例不取整。
 export function pixelCoverage(from, to, dpr) {
   const x = Math.round(from.x * dpr) / dpr, y = Math.round(from.y * dpr) / dpr;
   return { x, y, width: Math.round(to.x * dpr) / dpr - x, height: Math.round(to.y * dpr) / dpr - y };
 }
 
-// Preserve the full raster, including any sampling gutters. Its destination
-// remains fractional; disjoint integer clips assign each screen pixel once.
+// 保留含采样边缘的整张图像；目标位置保持小数，用不相交的整数裁剪避免重复覆盖。
 export function drawRasterImage(ctx, image, x, y, width, height) {
-  const sw = image.naturalWidth || image.width, sh = image.naturalHeight || image.height;
-  ctx.drawImage(image, 0, 0, sw, sh, x, y, width, height);
+  // 仅有 viewBox 的 SVG 固有尺寸由浏览器决定，不能据此裁剪源图，否则会放大局部或切掉瓦片。
+  ctx.drawImage(image, x, y, width, height);
 }

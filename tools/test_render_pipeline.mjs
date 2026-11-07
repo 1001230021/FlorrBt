@@ -67,8 +67,8 @@ drawn.length = 0; scale = 0.26; // density 1/4 -> 1/2, new spatial keys
 cache.draw(ctx, 116);
 assert.ok(drawn.some(call => oldCanvases.has(call[0])), "keep old quality until new chunks finish");
 for (const call of drawn) {
-  assert.equal(call.length, 9); assert.equal(call[1], 0); assert.equal(call[2], 0);
-  assert.equal(call[3], call[0].width); assert.equal(call[4], call[0].height);
+  assert.equal(call.length, 5, "draw the complete raster, including its sampling gutter");
+  assert.ok(call[3] > 0 && call[4] > 0);
 }
 let work = 0;
 while (scheduled.length && work++ < 160) await scheduled.shift()();
@@ -86,6 +86,7 @@ assert.ok(![...map.chunkCache.values()].some(e => e.left <= 0 && e.right > 0 && 
 // Queue length is a scheduling cap, never a cap on visible coverage.
 state.canvasWidth = 4800; state.canvasHeight = 2700; state.dpr = 4; scale = 2;
 let regions = 0;
+const allocationsBeforeFallback = created.length;
 let depth = 0;
 ctx.save = () => { depth++; }; ctx.restore = () => { depth--; };
 ctx.rect = () => { if (depth === 1) regions++; };
@@ -93,7 +94,11 @@ cache.draw(ctx, 164);
 assert.ok(map.visibleChunkKeys.size > 160);
 assert.equal(regions, map.visibleChunkKeys.size, "high-DPI viewport cannot drop the cells beyond the queue cap");
 assert.ok(map.chunkBuildQueue.length <= 160);
+assert.equal(created.length, allocationsBeforeFallback + 1, "all uncached cells reuse one scratch canvas");
+const fallbackCanvas = created.at(-1);
+assert.ok(fallbackCanvas.width <= 1028 && fallbackCanvas.height <= 1028, "fallback memory stays bounded");
 cache.dispose();
+assert.equal(fallbackCanvas.width, 0); assert.equal(fallbackCanvas.height, 0);
 assert.equal(renderBudget.bytes, 0);
 while (scheduled.length) await scheduled.shift()();
 assert.equal(map.chunkCache.size, 0, "disposed maps cannot publish late work");
@@ -122,8 +127,7 @@ for (const fps of [30, 60, 120]) {
   assert.ok(stepRenderZoom(halfway, 100, 0.02) > halfway, "reversal starts from current pose");
 }
 const hitch = getRenderFrameTiming(0.12);
-assert.equal(hitch.dt, 0.12); assert.ok(hitch.steps <= 8 && hitch.step <= 1 / 30);
-assert.ok(Math.abs(hitch.step * hitch.steps - 0.12) < 1e-8);
+assert.deepEqual(hitch, { dt: 0.12 }, "one visual update, without prediction catch-up steps");
 assert.equal(getRenderFrameTiming(10).dt, 0.25, "background-tab resume is bounded");
 assert.equal(getRenderFrameTiming(NaN).dt, 0);
 takeRenderPreparationCost();

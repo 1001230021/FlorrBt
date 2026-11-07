@@ -2,7 +2,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { getPointerMoveIntent, clampMoveIntent, quantizeMoveIntent } from "../web/src/movement_input.js";
-import { resolveStaticCircleMotion } from "../web/src/circle_contact.js";
 import { getSlotCounter, getSlotCounterColor } from "../web/src/slot_counter.js";
 import { PETAL_IDS } from "../web/src/generated_ids.js";
 import { PetalSlotVisualType, packInputFrame, parseServerMessage, ServerType } from "../web/src/protocol.js";
@@ -20,15 +19,6 @@ for (const strength of [0, 0.05, 0.25, 0.5, 1]) {
   const packet = packInputFrame(1, 2, intent.y, intent.x, false, false, false);
   near(new DataView(packet.buffer).getInt8(14) / 127, intent.x);
 }
-
-let contact = resolveStaticCircleMotion({ x: 12, y: 0 }, { x: 8, y: 2 }, { x: 0, y: 0 }, 10);
-assert.ok(contact && Math.hypot(contact.pos.x, contact.pos.y) >= 10 - 1e-6);
-assert.ok(contact.pos.y > 0, "tangential movement must survive");
-assert.equal(resolveStaticCircleMotion({ x: 10, y: 0 }, { x: 11, y: 0 }, { x: 0, y: 0 }, 10), null);
-contact = resolveStaticCircleMotion({ x: 12, y: 0 }, { x: -12, y: 0 }, { x: 0, y: 0 }, 10);
-near(contact.pos.x, 10); // A fast frame cannot pass through the dummy.
-contact = resolveStaticCircleMotion({ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, 10);
-assert.ok(Number.isFinite(contact.pos.x));
 
 const slot = { petalType: PETAL_IDS.battery, rarity: 6 };
 const runtime = { ...slot, visualType: PetalSlotVisualType.Counter, copies: [
@@ -88,4 +78,4 @@ const parsed = parseServerMessage(Uint8Array.from(bytes));
 assert.ok(parsed?.entities?.length === 1, "counter snapshot must decode");
 assert.deepEqual(parsed.entities[0].primarySlots.map(s => s.copies[0].visual), [65535, 1, 1, null]);
 assert.equal(parsed.windSpeed, 5);
-console.log("PASS analog input, static circle contact, slot counter semantics and wire decoding");
+console.log("PASS analog input, slot counter semantics and wire decoding");

@@ -1,24 +1,30 @@
 #pragma once
 #include "game_services.h"
+#include "systems/natural_spawn_population.h"
 #include <memory>
 #include <vector>
 
 class CEntity;
 class CGameWorld;
 class CPlayer;
-class INetworkModule;
+class IPlayerDirectory;
 class CExtensionRuntime;
 
 class CGameContext
 {
   public:
-    CGameContext(INetworkModule& network, IGameEventSink& events, IGameWorldResolver& worlds,
-                 CExtensionRuntime& extensions);
+    CGameContext(IPlayerDirectory& players, IPlayerUpdates& updates, IWorldEffects& effects,
+                 ISceneTransitions& scenes, IGameEventSink& events, IGameWorldResolver& worlds,
+                 IUniquePetalAccess& unique_petals, CExtensionRuntime& extensions);
 
     CGameWorld* MainWorld() const { return m_worlds.GetMainWorld(); }
 
-    INetworkModule& Network() { return m_network; }
-    const INetworkModule& Network() const { return m_network; }
+    IPlayerDirectory& PlayerDirectory() const { return m_players; }
+    IPlayerUpdates& PlayerUpdates() const { return m_updates; }
+    IWorldEffects& WorldEffects() const { return m_effects; }
+    ISceneTransitions& Scenes() const { return m_scenes; }
+    IUniquePetalAccess& UniquePetals() const { return m_unique_petals; }
+    CNaturalSpawnPopulation& NaturalSpawnPopulation() { return m_spawn_population; }
 
     IGameEventSink& Events() { return m_events; }
     const IGameEventSink& Events() const { return m_events; }
@@ -32,8 +38,13 @@ class CGameContext
     CPlayer* FindPlayerFromEntity(CEntity* entity) const;
 
   private:
-    INetworkModule& m_network;
+    IPlayerDirectory& m_players;
+    IPlayerUpdates& m_updates;
+    IWorldEffects& m_effects;
+    ISceneTransitions& m_scenes;
     IGameEventSink& m_events;
     IGameWorldResolver& m_worlds;
+    IUniquePetalAccess& m_unique_petals;
     CExtensionRuntime& m_extensions;
+    CNaturalSpawnPopulation m_spawn_population;
 };

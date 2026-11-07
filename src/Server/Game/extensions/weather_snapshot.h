@@ -2,7 +2,6 @@
 #include "../../HotReload/snapshot_archive.h"
 class CWeatherExtension;
 
-// JSON persistence adapter is separate from the dependency-free weather
-// simulation, so standalone simulation tests do not need Jansson or SFML.
+// 持久化适配独立于天气模拟，避免模拟测试依赖 Jansson 或 SFML。
 CJsonOwner CaptureWeatherSnapshot(const CWeatherExtension&);
 bool RestoreWeatherSnapshot(CWeatherExtension&, const json_t*, std::uint32_t version, std::string& error);

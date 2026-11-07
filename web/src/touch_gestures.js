@@ -1,4 +1,3 @@
-// Stationary long press opens explicit actions; moving remains native scroll.
 export function bindTouchLongPress(element, onHold, delay = 450) {
   let pointer = null, origin = null, timer = 0, suppressUntil = 0;
   const cancel = () => { clearTimeout(timer); timer = 0; pointer = null; };

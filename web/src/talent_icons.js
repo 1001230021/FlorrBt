@@ -1,5 +1,4 @@
-// Tiny project-native vector glyphs, kept white like the reference's talent
-// medallions. No raster assets, remote requests or icon-font dependency.
+// 项目内置矢量天赋图标，不依赖远程资源或图标字体。
 import { TalentId } from "./talent_data.js";
 import { flowerGeometry } from "./flower_renderer.js";
 

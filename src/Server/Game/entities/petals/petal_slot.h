@@ -1,5 +1,6 @@
 #pragma once
 #include "../../../../Shared/shared.h"
+#include "../../../../Shared/source_effects.h"
 #include <vector>
 
 class CPetalPrototype;
@@ -23,10 +24,7 @@ class CPetalSlot
     float GetLoadProgress(int copy_index) const;
     void RefreshPetalState(CFlower* flower);
     void Tick(float dt, CFlower* flower, bool state_refreshed = false);
-    // All per-copy arrays describe the same fixed slot layout.  Restore and
-    // controller code may receive older data with one array missing entries;
-    // normalize it before any indexed operation instead of relying on every
-    // caller to keep five vectors in lockstep.
+    // 所有副本数组必须与槽位布局一致，恢复旧数据后先补齐再按下标访问。
     void NormalizeRuntimeState();
     void ApplyStatsTo(SFlowerStats& target, const CFlower* flower = nullptr) const;
     int GetBonusCopyCount(const CFlower* flower = nullptr) const;
@@ -46,5 +44,12 @@ class CPetalSlot
     EPetalType m_runtime_type = EPetalType::None;
 
     bool m_available = true;
-    bool m_banned = false;
+    bool IsBanned() const { return m_ban.Value(); }
+    bool IsPolicyBanned() const { return m_ban.Policy(); }
+    void SetPolicyBan(bool banned) { m_ban.SetPolicy(banned); }
+    void SetBanSource(std::uint64_t source, bool banned) { m_ban.SetSource(source, banned); }
+    // 旧花瓣撤销来源后再调用。
+    void TakeRestrictionsFrom(CPetalSlot& previous) noexcept { m_ban = std::move(previous.m_ban); }
+  private:
+    CSourcedFlag m_ban;
 };

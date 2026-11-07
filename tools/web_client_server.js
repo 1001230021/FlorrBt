@@ -9,6 +9,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
+const { handleOAuthCallback } = require("./oauth_callback.js");
 
 const {
   createFrameParser,
@@ -55,7 +56,9 @@ function main() {
   }
 
   const sendFile = createFileSender(webRoot, dataRoot);
-  const server = http.createServer((req, res) => sendFile(res, req.url || "/", req.headers));
+  const server = http.createServer((req, res) => {
+    if (!handleOAuthCallback(req, res)) sendFile(res, req.url || "/", req.headers);
+  });
 
   server.on("upgrade", (req, socket) => {
     if (req.url && !req.url.startsWith("/ws")) {

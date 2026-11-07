@@ -11,8 +11,10 @@ class CPortal : public CEntity
   public:
     CPortal(CGameWorld* world, florrbt::Vector2f pos, float radius, std::string target_world);
 
-    void Tick(float dt) override;
-    void TakeDamage(float, CEntity*, EDamageType) override {}
+    void OnTickActions(float dt) override;
+    void OnTickForces(float dt) override;
+    void OnTickActionRequests(float dt) override;
+    void OnTakeDamage(float, CEntity*, EDamageType) override {}
     bool CanCollide() const override { return false; }
     bool IsDead() const override { return false; }
 
@@ -21,7 +23,7 @@ class CPortal : public CEntity
     void SetFromPointName(std::string from_point_name) { m_from_point_name = std::move(from_point_name); }
 
   private:
-    void AttractAndTransferPlayer(CPlayer& player, float dt);
+    void UpdatePlayerContact(CPlayer& player, float dt, bool transfer);
 
     std::string m_target_world_name;
     std::string m_from_point_name;

@@ -7,8 +7,7 @@
 
 namespace florrbt
 {
-// Main-thread builder; published objects are immutable and can safely be
-// read by a background writer. Mutable access must first mark that key dirty.
+// 主线程构建、后台只读；修改前须标记对应键，已发布对象保持不可变。
 template<class T> class ImmutableSnapshotCache
 {
   public:

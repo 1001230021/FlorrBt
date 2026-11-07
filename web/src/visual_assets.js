@@ -1,7 +1,6 @@
 import { requestRedraw } from "./render_invalidate.js";
 
-// A resource is ready only after fetch, SVG transformation AND image decode.
-// Originals and derived bodies share source text, not a second HTTP request.
+// 资源须完成获取、SVG 变换及解码才就绪；原图与衍生图共用源文本。
 const sourceTexts = new Map();
 const images = new Map();
 const timeoutMs = 20000;
@@ -20,15 +19,13 @@ export function readSvgSource(src) {
       return response.text();
     }).finally(() => clearTimeout(timer));
     sourceTexts.set(key, job);
-    // Permit an explicit subsequent preparation to retry a failed request.
+    // 显式再次准备可重试失败请求。
     job.catch(() => { if (sourceTexts.get(key) === job) sourceTexts.delete(key); });
   }
   return sourceTexts.get(key);
 }
 
-// Resolve the first move point and final endpoint without mounting the SVG in
-// the document. This accepts compact paths such as "M55 32.5q0-2.5-6-19",
-// which are common in exported creature artwork.
+// 不挂载 SVG 即解析起点和终点，支持导出素材中的紧凑路径语法。
 export function parseSvgPathEndpoints(pathData, fallback = { x: 0, y: 0 }) {
   const tokens = String(pathData || "").match(/[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?|[a-z]/gi) || [];
   const parameterCounts = { M: 2, L: 2, H: 1, V: 1, C: 6, S: 4, Q: 4, T: 2, A: 7 };
@@ -70,7 +67,7 @@ export function parseSvgPathEndpoints(pathData, fallback = { x: 0, y: 0 }) {
     else if (upper === "A") ({ x, y } = point(values[5], values[6]));
 
     if (!start) start = { x, y };
-    // Additional coordinate pairs after a move are implicit line commands.
+    // 移动命令后的额外坐标对隐式视作直线命令。
     if (upper === "M") command = relative ? "l" : "L";
   }
 
@@ -95,15 +92,14 @@ function createVisualImage(resolveSource) {
       image.onload = image.onerror = null;
       image.failed = !ok;
       image.visualState = ok ? "ready" : "failed";
-      // DOM cards and the codex reuse this URL in additional <img> nodes.
-      // Keep successful, finite manifest/variant URLs for the page lifetime.
+      // 成功且数量有限的资源 URL 保留整页生命周期，供其他图片节点复用。
       if (blobUrl && !ok) URL.revokeObjectURL(blobUrl);
       resolve(ok);
       requestRedraw();
     };
     const timer = setTimeout(() => finish(false), timeoutMs);
     image.onload = async () => {
-      try { await image.decode?.(); } catch { /* Loaded SVGs may reject decode on older engines. */ }
+      try { await image.decode?.(); } catch { /* 旧浏览器可能在图像已加载后仍拒绝显式解码。 */ }
       finish(image.naturalWidth > 0);
     };
     image.onerror = () => finish(false);

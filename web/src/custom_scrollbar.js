@@ -16,14 +16,12 @@ function attach(element, options = {}) {
 
   const computed = getComputedStyle(element);
   if (computed.position === "static") element.style.position = "relative";
-  // Only enable vertical scrolling when the container does not scroll yet.
   if (computed.overflowY === "visible") element.style.overflowY = "auto";
   element.classList.add(HOST_CLASS);
 
   const wrapper = document.createElement("div");
   wrapper.className = "custom-scrollbar";
-  // Only explicit colors override the CSS (host-level) defaults so per-panel
-  // stylesheet overrides like the chat log's pale thumb keep working.
+  // 仅显式颜色覆盖样式表，保留各面板自定义颜色。
   if (explicitThumb) wrapper.style.setProperty("--scrollbar-thumb", explicitThumb);
   if (explicitThumbHover)
     wrapper.style.setProperty("--scrollbar-thumb-hover", explicitThumbHover);
@@ -49,10 +47,7 @@ function attach(element, options = {}) {
       return;
     }
     wrapper.style.display = "";
-    // The wrapper is a child of the scrolling element, so it would scroll
-    // away together with the content (absolutely positioned descendants of a
-    // scroll container scroll with it). Counter the scroll offset with a
-    // transform so the scrollbar stays pinned to the visible box.
+    // 滚动条位于滚动容器内，通过反向平移抵消内容滚动，固定在可见框中。
     wrapper.style.transform = `translate(${element.scrollLeft}px, ${element.scrollTop}px)`;
     trackHeight = clientHeight - trackPadding * 2;
     const ratio = clientHeight / scrollHeight;
@@ -164,12 +159,7 @@ function detachTree(node) {
   }
 }
 
-/**
- * Base-layer policy: an element gets a custom scrollbar when it is marked
- * with `data-scrollbar`, or when it is a `.ui` panel whose own CSS already
- * declares vertical scrolling (overflow-y auto/scroll/hidden). Panels with
- * visible overflow keep native layout behavior.
- */
+/* 标记 data-scrollbar 或已有纵向滚动规则的界面面板使用自定义滚动条。 */
 function shouldAttach(element) {
   if (!element || element.nodeType !== 1 || registry.has(element)) return false;
   if (element.matches?.(MARKED_SELECTOR)) return true;
@@ -192,12 +182,7 @@ export function attachCustomScrollbar(element, options = {}) {
   return attach(element, options);
 }
 
-/**
- * Base-layer auto wiring: scrollable panels and every element marked with
- * `data-scrollbar` get a custom scrollbar that only appears while its
- * content overflows. Elements added or removed later are picked up
- * automatically.
- */
+/* 自动跟踪可滚动元素增删，仅内容溢出时显示滚动条。 */
 export function initCustomScrollbars(root = document) {
   for (const candidate of root.querySelectorAll("*")) {
     if (shouldAttach(candidate)) attach(candidate);
@@ -211,8 +196,7 @@ export function initCustomScrollbars(root = document) {
   });
   observer.observe(root, { childList: true, subtree: true });
 
-  // Scroll events do not bubble, so listen globally in the capture phase to
-  // keep every thumb in sync in all modes (mouse, wheel, touch/mobile).
+  // 滚动事件不冒泡，在捕获阶段统一监听以同步鼠标和触屏滚动。
   const onGlobalScroll = (event) => {
     registry.get(event.target)?.update();
   };

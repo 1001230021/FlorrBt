@@ -33,7 +33,7 @@ template <typename T> T ParseIntegerString(const json_t* value, T fallback)
     auto [ptr, ec] = std::from_chars(text, end, parsed);
     return ec == std::errc{} && ptr == end ? parsed : fallback;
 }
-} // namespace
+}
 
 void CSnapshotWriter::Field(std::string_view key, bool value) const
 {

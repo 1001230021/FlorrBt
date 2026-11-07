@@ -11,7 +11,8 @@ for (const dpr of [1, 1.25, 2, 3]) for (const pan of [0, 0.01, 0.25, 0.51, 0.99]
   assert.ok(Math.abs(left.x + left.width - right.x) < 1e-10);
   const calls = [], image = { width: 1028, height: 1028 };
   drawRasterImage({ drawImage: (...args) => calls.push(args) }, image, a.x, a.y, 249.7, 249.7);
-  assert.equal(calls[0][5], a.x); assert.equal(calls[0][7], 249.7);
+  assert.equal(calls[0].length, 5, "whole-image drawing must not invent an SVG source crop");
+  assert.equal(calls[0][1], a.x); assert.equal(calls[0][3], 249.7);
 }
 
 if (process.argv.includes("--pixels")) {
@@ -108,3 +109,8 @@ if (process.argv.includes("--pixels")) {
   console.log(`PASS ${comparisons} raster pixel comparisons: fractional movement/zoom/DPR, opaque and transparent seams`);
 }
 console.log("PASS shared tile coverage and continuous texture transforms");
+
+if (process.argv.includes("--browser")) {
+  const { runMapBrowserRegression } = await import("./map_browser_regression.mjs");
+  await runMapBrowserRegression();
+}

@@ -11,9 +11,8 @@ struct CircleContactWeights
     float rhs = 0.f;
 };
 
-// Use ratios, never mass^exponent or max(epsilon, sum(1/mass)). The latter
-// makes two very heavy bodies stop separating, and the former can overflow.
-// Exponent 1 is ordinary mass weighting; 2 makes a 10:1 mass gap act as 100:1.
+// 按质量比计算权重，避免质量幂溢出或倒数和被 epsilon 截断后重物无法分离。
+// 指数 1 为普通质量权重，指数 2 使 10:1 的质量比产生 100:1 的权重差。
 inline CircleContactWeights ComputeCircleContactWeights(float lhs_mass, float rhs_mass,
                                                         bool lhs_locked = false, bool rhs_locked = false,
                                                         float mass_exponent = 1.f)
@@ -34,9 +33,8 @@ inline CircleContactWeights ComputeCircleContactWeights(float lhs_mass, float rh
                                 : CircleContactWeights{ light_weight, heavy_weight };
 }
 
-// Inelastic, frictionless circle contact. Both normals and position correction
-// use inverse-mass weights; a locked body has weight zero. Separating motion
-// and tangential motion are never damped, so players can slide along a body.
+// 无弹性、无摩擦圆接触；按逆质量修正法向速度和位置，锁定物体权重为零。
+// 不衰减分离或切向运动，使玩家能够沿物体滑动。
 inline bool ResolveCircleContact(Vector2f& lhs_pos, Vector2f& lhs_velocity, float lhs_radius, float lhs_inv_mass,
                                  Vector2f& rhs_pos, Vector2f& rhs_velocity, float rhs_radius, float rhs_inv_mass,
                                  float separation = 1.f, float velocity_transfer = 1.f)
@@ -44,8 +42,7 @@ inline bool ResolveCircleContact(Vector2f& lhs_pos, Vector2f& lhs_velocity, floa
     const Vector2f delta = rhs_pos - lhs_pos;
     const float distance = std::hypot(delta.x, delta.y);
     const float reach = std::max(0.f, lhs_radius) + std::max(0.f, rhs_radius);
-    // A tiny skin keeps a just-separated pair eligible for velocity-only
-    // pressure sweeps despite float roundoff; it never adds position push.
+    // 容差仅让刚分离的接触对继续参与速度压力求解，不额外推开位置。
     const float skin = std::max(0.0001f, reach * 0.00001f);
     if (!std::isfinite(distance) || !std::isfinite(reach) || distance > reach + skin || reach <= 0.f) return false;
     if (!std::isfinite(lhs_inv_mass) || lhs_inv_mass < 0.f) lhs_inv_mass = 0.f;
@@ -68,7 +65,7 @@ inline bool ResolveCircleContact(Vector2f& lhs_pos, Vector2f& lhs_velocity, floa
     }
     const float lhs_weight = lhs_inv_mass / total;
     const float rhs_weight = rhs_inv_mass / total;
-    // Never push beyond contact: >100% correction creates visible bouncing.
+    // 位置修正不能超过接触深度，否则会出现可见弹跳。
     const float correction = std::max(0.f, reach - distance) * std::clamp(separation, 0.f, 1.f);
     lhs_pos -= normal * (correction * lhs_weight);
     rhs_pos += normal * (correction * rhs_weight);
@@ -77,9 +74,7 @@ inline bool ResolveCircleContact(Vector2f& lhs_pos, Vector2f& lhs_velocity, floa
     const float closing = relative.x * normal.x + relative.y * normal.y;
     if (closing > 0.f)
     {
-        // Change the *relative* normal speed. Equal-speed followers and
-        // separating bodies lose nothing, and every lost impulse is received
-        // by the other body instead of being discarded once per neighbour.
+        // 仅修正相对法向速度，并将冲量传给另一物体；同速跟随和分离运动不损失速度。
         const float impulse = closing * std::clamp(velocity_transfer, 0.f, 1.f);
         lhs_velocity -= normal * (impulse * lhs_weight);
         rhs_velocity += normal * (impulse * rhs_weight);
@@ -87,9 +82,7 @@ inline bool ResolveCircleContact(Vector2f& lhs_pos, Vector2f& lhs_velocity, floa
     return true;
 }
 
-// Steering is a bounded acceleration, not a reassignment of actual velocity.
-// Crowd impulses can therefore carry a slowed mob faster/sideways/backwards
-// relative to its requested motion without removing the slowing state.
+// 转向使用有界加速度，因此减速状态保留时，外部推挤仍可使生物侧移、后退或超出自身行走速度。
 inline Vector2f StepVelocityTowards(Vector2f velocity, Vector2f desired, float acceleration, float dt)
 {
     const bool finite_velocity = std::isfinite(velocity.x) && std::isfinite(velocity.y);
@@ -106,4 +99,4 @@ inline Vector2f StepVelocityTowards(Vector2f velocity, Vector2f desired, float a
     const Vector2f result = velocity + difference * (step / distance);
     return std::isfinite(result.x) && std::isfinite(result.y) ? result : desired;
 }
-} // namespace florrbt
+}

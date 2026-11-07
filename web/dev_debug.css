@@ -18,7 +18,6 @@
 .dev-debug button:hover { background: #2e425d; filter: none; }
 .dev-debug button:active { transform: none; background: #1c2d43; }
 .dev-debug button:disabled { opacity: .45; cursor: not-allowed; }
-.dev-debug input:focus, .dev-debug select:focus, .dev-debug button:focus-visible { outline: 2px solid #61bfff; outline-offset: 1px; }
 .dev-debug .primary { background: #266799; border-color: #3989bc; }
 .dev-debug .danger { color: #ffadad; }
 .dev-debug .error { color: #ff9c9c; }

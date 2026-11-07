@@ -8,8 +8,7 @@
 class CPlayer;
 class CServer;
 
-// One bounded, joined worker. It receives value-only transcripts/settings,
-// never live players, worlds or mutable configuration references.
+// 单个有界工作线程，关闭时等待退出；只接收文本/设置值，不持有玩家或世界引用。
 class CReportReviewService
 {
   public:
@@ -30,4 +29,4 @@ namespace report
 {
 bool HandleServerCommand(CPlayer& reporter, const std::string& command_line);
 void ProcessAsyncResults();
-} // namespace report
+}

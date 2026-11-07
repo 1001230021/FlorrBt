@@ -50,14 +50,13 @@ float Approach(float value, float target, float max_delta)
     return value < target ? std::min(value + max_delta, target) : std::max(value - max_delta, target);
 }
 
-// Maps a score to an intensity in [0, 1]: nothing below `onset`, full intensity at or above `full`.
 float RampIntensity(float score, float onset, float full)
 {
     if (score <= onset) return 0.f;
     if (score >= full) return 1.f;
     return (score - onset) / (full - onset);
 }
-} // namespace
+}
 
 std::string_view WeatherTypeName(EWeatherType weather)
 {
@@ -207,8 +206,7 @@ void CWeatherExtension::DeriveIntensities(float out[weather_type_count]) const
     const float warmth = std::clamp((value.temperature_celsius + 5.f) / 40.f, 0.f, 1.f);
     const float condensation = std::clamp((22.f - value.temperature_celsius) / 25.f, 0.f, 1.f);
 
-    // Every score deliberately includes humidity, wind direction, wind speed, and temperature.
-    // Rain absorbs the old storm weighting: stronger wind drives heavier rain.
+    // 各天气均受湿度、风向、风速和温度影响；大风提高降雨强度。
     const float fog_score = value.humidity * 0.55f + (1.f - wind) * 0.18f +
                             condensation * 0.17f + (1.f - moisture_direction) * 0.10f;
     const float rain_score = value.humidity * 0.55f + wind * 0.15f +
@@ -216,8 +214,6 @@ void CWeatherExtension::DeriveIntensities(float out[weather_type_count]) const
     const float cloud_score = value.humidity * 0.58f + wind * 0.17f +
                               moisture_direction * 0.10f + condensation * 0.15f;
 
-    // Intensities ramp from the onset score to full at an extreme score, so the more extreme
-    // the driving attributes, the stronger each weather. Several weathers may be active at once.
     const float cloudy = RampIntensity(cloud_score, 0.45f, 0.66f);
     const float rain = RampIntensity(rain_score, 0.58f, 0.76f);
     const float fog = RampIntensity(fog_score, 0.72f, 0.85f);

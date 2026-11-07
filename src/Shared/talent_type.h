@@ -17,8 +17,7 @@ enum class ETalentId : uint16_t
     PetalReload = 8,
     SecondChance = 9,
     SlotNum = 10,
-    // Numeric value 11 is retained so existing account data and packets keep
-    // resolving the former Medic talent to the renamed Regen talent.
+    // 保留 ID 11，使旧账号和消息中的 Medic 对应改名后的 Regen。
     Regen = 11,
     Medic = Regen,
     Reach = 12,

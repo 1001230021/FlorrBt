@@ -22,17 +22,25 @@ class CSnapshotReader;
 class CSnapshotWriter;
 class CPickupController;
 
+struct SControlEquipment
+{
+    struct SSlot { uint8_t type = 0, rarity = 0; bool available = true, policy_banned = false; };
+    int capacity = 0;
+    std::vector<SSlot> slots;
+};
+
 struct CDamageData
 {
     std::string m_account_name;
     float m_total_dmg = 0.f;
     float m_reset_timer = 0.f;
-    // Reward attribution must not move from a temporary progress namespace
-    // into the same account's persistent data after the player leaves.
+    // 临时进度来源的奖励不能在玩家离开后写入同账号的正式进度。
     std::string m_progress_account;
+    std::string m_inventory_account;
 
     void ResetTimer() { m_reset_timer = 120.f; }
     CPlayer* ResolvePlayer(const CGameContext* context) const;
+    bool MatchesInventoryScope(const CPlayer& player) const;
 };
 
 class CMobBase;
@@ -51,8 +59,20 @@ class CMobBase : public CEntity
     CMobBase(const CMobBase&) = delete;
     CMobBase& operator=(const CMobBase&) = delete;
 
-    void AddState(std::unique_ptr<CState> state);
+    void AddState(std::unique_ptr<CState> state, EStateApplyTiming timing = EStateApplyTiming::EventBoundary);
+    bool DeferStateMutation(std::function<void(CMobBase&)> mutation);
+    CState* FindStateBySource(std::uint64_t source) const;
+    virtual void CommitActionView();
+    void BeginStateTick();
+    void EnsureStateTickPrepared() { if (!m_state_tick_prepared) BeginStateTick(); }
     void TickStates(float dt);
+    void OnTickBegin(float dt) override;
+    void OnTickIntent(float dt) override;
+    void OnTickMotion(float dt) override;
+    void OnTickEnvironment(float dt) override;
+    void OnTickEffects(float dt) override;
+    void OnTickActionRequests(float dt) override;
+    void CollectTickDependencies(std::vector<SEntityHandle>& output) const override;
     bool IsPlayerControlled() const { return m_p_controller && m_p_controller->IsPlayerControlled(); }
     EWallQuery WallCollisionMask() const override
     { return IsPlayerControlled() ? EWallQuery::Solid : EWallQuery::All; }
@@ -60,8 +80,7 @@ class CMobBase : public CEntity
     bool IsInShortcut() const { return m_capabilities.HasSource(ERestrictionSource::Shortcut); }
     bool AllowsStatModifiers() const
     { return !m_capabilities.Restricted(ECapabilityRestriction::StatModifiers); }
-    // Latch the entry footprint. Removing a size bonus must not immediately
-    // shrink the trigger out of the region and restore that same size bonus.
+    // 锁定进入时的接触范围，避免尺寸加成被禁用后缩出区域并反复恢复。
     float EnvironmentProbeRadius() const
     { return std::max(std::max(0.f, WallCollisionRadius()), m_shortcut_probe_radius); }
     float ShortcutProbeRadius() const { return m_shortcut_probe_radius; }
@@ -75,14 +94,9 @@ class CMobBase : public CEntity
         m_shortcut_probe_radius = touching && std::isfinite(probe_radius) ? std::max(0.f, probe_radius) : 0.f;
     }
     bool TickDropPickup(CPlayer* player);
-    // Moves toward target_pos. When target_radius >= 0 the approach stop
-    // distance is the mob's radius plus the target's radius, so melee mobs
-    // close in until they actually overlap the target (contact damage range)
-    // instead of braking one target-radius early.
+    // 接近距离包含双方半径，使近战实际进入接触范围。
     virtual void MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius = -1.f);
-    // Analog intent: distance / full_speed_distance selects the requested
-    // speed (0..1). A negative target_radius denotes a point, with no body
-    // radius dead zone. AI callers keep the existing three-argument contract.
+    // 模拟输入用距离与满幅偏移之比决定速度；负目标半径表示无身体死区的点目标。
     virtual void MoveTowards(const florrbt::Vector2f& target_pos, float dt, float target_radius,
                              float full_speed_distance);
     void ApplyDamageDirect(float dmg, CEntity* attacker, EDamageType damage_type = EDamageType::Normal);
@@ -102,19 +116,14 @@ class CMobBase : public CEntity
         return stats ? std::max(0.f, stats->horizon) : CEntity::TickHorizon();
     }
     virtual ERarity GetRarity() const = 0;
-    // Marks a mob created by an open-world natural spawn. This is deliberately
-    // separate from rarity: console commands, precise map spawns and ability
-    // summons may create Eternal/Unique mobs without consuming the natural
-    // spawn uniqueness budget.
+    // 自然刷新标记独立于稀有度，控制台、精确刷怪和技能召唤不消耗自然稀有配额。
     bool IsNaturallySpawned() const { return m_naturally_spawned; }
     void SetNaturallySpawned(bool value) { m_naturally_spawned = value; }
     virtual bool IsFacingLocked() const { return false; }
     virtual bool IsMovementControlledBySkill() const { return false; }
     virtual CPickupController* GetPickupController();
     virtual const CPickupController* GetPickupController() const;
-    // Wall collision uses a circle of the mob's own radius, capped at the
-    // player-flower radius for stability (a 0-radius "point" contact lets
-    // mobs tunnel/embed into walls after a fast frame).
+    // 墙碰撞半径按玩家花朵半径封顶，避免零半径接触导致高速穿墙。
     float WallCollisionRadius() const override
     {
         return std::clamp(Radius(), 0.f, game_config::mob_player_flower_radius);
@@ -194,13 +203,31 @@ class CMobBase : public CEntity
         }
     }
 
-    bool RemoveState(CState* state);
+    bool RemoveState(CState* state, EStateApplyTiming timing = EStateApplyTiming::EventBoundary);
 
     void SetController(std::unique_ptr<IController> controller);
     IController* GetController() { return m_p_controller.get(); }
     const IController* GetController() const { return m_p_controller.get(); }
+    // 附身期间挂起原 AI，保留冷却与行为状态；控制权交接由迁移事务负责。
+    std::unique_ptr<SControlEquipment> CaptureControlEquipment() const;
+    const SControlEquipment* ControlReturnEquipment() const { return m_control_return_equipment.get(); }
+    void PreserveControlEquipment(std::unique_ptr<SControlEquipment> equipment)
+    { if (!m_control_return_equipment) m_control_return_equipment = std::move(equipment); }
+    void AcquirePlayerControl(std::unique_ptr<IController> controller, std::unique_ptr<SControlEquipment> equipment);
+    void ReleasePlayerControl(std::unique_ptr<IController> default_ai);
+    const IController* SuspendedController() const { return m_suspended_controller.get(); }
+    bool HasPlayerControlLease() const { return m_has_control_lease; }
+    int ControlReturnTeam() const { return m_control_return_team; }
+    bool RestorePlayerControlLease(bool active, int team, std::unique_ptr<IController> controller, std::string& error,
+                                   std::unique_ptr<SControlEquipment> equipment = {});
 
     florrbt::Vector2f m_vel = { 0.f, 0.f };
+
+  private:
+    friend class CCombatEventSystem;
+    friend class CState;
+    void AddStateImmediate(std::unique_ptr<CState> state);
+    bool RemoveStateImmediate(std::uint64_t source);
 
   protected:
     virtual void OnEnvironmentChanged() {}
@@ -215,8 +242,20 @@ class CMobBase : public CEntity
 
     std::vector<CDamageData> m_damage_data;
     std::vector<std::unique_ptr<CState>> m_states;
+    struct SFrameState
+    {
+        std::uint64_t source;
+        float remaining;
+        std::optional<SStateContinuousEffect> effect;
+    };
+    std::vector<SFrameState> m_frame_states;
+    bool m_state_tick_prepared = false;
     std::vector<CState*> m_movement_target_states;
     std::unique_ptr<IController> m_p_controller;
+    std::unique_ptr<IController> m_suspended_controller;
+    std::unique_ptr<SControlEquipment> m_control_return_equipment;
+    bool m_has_control_lease = false;
+    int m_control_return_team = 0;
     float m_inactive_seconds = 0.f;
     bool m_naturally_spawned = false;
 };
@@ -240,14 +279,6 @@ template <typename TStats = SMobStats> class CMob : public CMobBase
 
     ~CMob() override;
 
-    void Tick(float dt) override
-    {
-        SynchronizeEnvironment();
-        if (m_p_controller) m_p_controller->OnTick(this, dt);
-        IntegrateMovement(dt);
-        TickStates(dt);
-    }
-
     const SMobStats* GetBaseStats() const override { return &m_base_stats; }
     const SMobStats* GetFinalStats() const override { return AllowsStatModifiers() ? &m_final_stats : &m_base_stats; }
     void RestoreBaseStats(const SMobStats& stats) override
@@ -257,7 +288,7 @@ template <typename TStats = SMobStats> class CMob : public CMobBase
     }
     ERarity GetRarity() const override { return m_rarity; }
 
-    void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
+    void OnTakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {
         if (ShouldBlockDiggingDamage(this, attacker, dmg_type)) return;
         if (dmg_type == EDamageType::Normal) dmg = std::max(0.f, dmg - m_base_stats.armor);
@@ -272,10 +303,7 @@ template <typename TStats = SMobStats> class CMob : public CMobBase
     ERarity m_rarity;
 };
 
-// Multi-segment mobs are assembled from ordinary mob registrations.  The
-// root owns only generation-safe handles to its body segments; bodies keep a
-// generation-safe handle back to the root.  This deliberately avoids storing
-// raw pointers across ticks, entity-id reuse, world transfers, and snapshots.
+// 多节根与体节仅互持带代数句柄，实体所有权仍归世界。
 enum class EMultiSegmentAssemblyState : std::uint8_t
 {
     NotStarted,
@@ -316,8 +344,7 @@ class IMultiSegmentBodyMob
     virtual void SetNextSegmentReference(const SEntityHandle& next_segment_ref) = 0;
 };
 
-// These helpers are defined in mob.cpp so the templates below do not need a
-// circular include of gameworld.h.
+// 实现放在 mob.cpp，避免模板循环包含 gameworld.h。
 CMobBase* ResolveMultiSegmentRoot(const CGameWorld* world, const SEntityHandle& root_ref);
 CMobBase* ResolveMultiSegmentBody(const CGameWorld* world, const SEntityHandle& body_ref);
 void DestroyMultiSegmentChildren(CMobBase& root, const std::vector<SMobSegmentReference>& references);
@@ -336,9 +363,9 @@ class CMultiSegmentRootMob : public CMob<TStats>, public IMultiSegmentRootMob
     using stats_type = TStats;
     using CMob<TStats>::CMob;
 
-    void Tick(float dt) override
+    void OnTickConstraints(float dt) override
     {
-        CMob<TStats>::Tick(dt);
+        CMob<TStats>::OnTickConstraints(dt);
         ConstrainMultiSegmentChain(*this, dt);
     }
 
@@ -400,9 +427,7 @@ class CMultiSegmentRootMob : public CMob<TStats>, public IMultiSegmentRootMob
     void RestoreSegmentReference(const SEntityHandle& entity_ref, int index) override
     {
         if (!entity_ref.IsValid() || index <= 0) return;
-        // Snapshot restore is intentionally fail-closed: duplicate or
-        // conflicting entries are ignored instead of creating an ambiguous
-        // root-to-body relationship.
+        // 重复或冲突条目不建立引用，避免根与体节关系产生歧义。
         AttachSegment(entity_ref, index);
     }
 
@@ -454,25 +479,26 @@ class CMultiSegmentBodyMob : public CMob<TStats>, public IMultiSegmentBodyMob
     }
 
     CMobBase* ResolveRoot() const { return ResolveMultiSegmentRoot(this->GameWorld(), m_root_ref); }
+    bool IsDead() const override
+    {
+        if (m_root_ref.IsValid())
+        {
+            const auto* root = ResolveRoot();
+            if (!root || root->IsDead()) return true;
+        }
+        return CMob<TStats>::IsDead();
+    }
     CMobBase* ResolveNextSegment() const
     {
         return ResolveMultiSegmentBody(this->GameWorld(), m_next_segment_ref);
     }
 
-    void Tick(float dt) override
-    {
-        if (!UsesMultiSegmentChainConstraint(*this))
-        {
-            CMob<TStats>::Tick(dt);
-            return;
-        }
+    void OnTickIntent(float dt) override
+    { if (!UsesMultiSegmentChainConstraint(*this)) CMob<TStats>::OnTickIntent(dt); }
+    void OnTickMotion(float dt) override
+    { if (!UsesMultiSegmentChainConstraint(*this)) CMob<TStats>::OnTickMotion(dt); }
 
-        // A constrained body has no movement authority of its own. The root
-        // advances the chain once, then each body only advances its states.
-        this->TickStates(dt);
-    }
-
-    void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
+    void OnTakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) override
     {
         if (SharesMultiSegmentRootHealth(*this))
         {
@@ -482,13 +508,12 @@ class CMultiSegmentBodyMob : public CMob<TStats>, public IMultiSegmentBodyMob
                 return;
             }
         }
-        CMob<TStats>::TakeDamage(dmg, attacker, dmg_type);
+        CMob<TStats>::OnTakeDamage(dmg, attacker, dmg_type);
     }
 
     bool CollidesWithWalls() const override
     {
-        // The head performs world navigation. Letting every constrained body
-        // solve walls independently tears the chain apart on corners.
+        // 硬约束多节体由头部导航，体节各自解墙会使转角处链条撕裂。
         return !UsesMultiSegmentChainConstraint(*this);
     }
 
@@ -548,9 +573,7 @@ class IHornetMob
     virtual bool RestoreSkillActions(const CSnapshotReader& reader, std::uint32_t version, std::string& error) = 0;
 };
 
-// Crab's dash is exposed as a real mob skill.  The skill object owns request
-// validation and cooldown; the crab controller consumes the accepted request
-// and remains responsible for the movement state machine.
+// 冲刺由生物技能统一处理校验、冷却与位移，控制器只提交请求。
 class ICrabDashMob
 {
   public:
@@ -559,9 +582,7 @@ class ICrabDashMob
     virtual bool IsDashRecovering() const = 0;
 };
 
-// Sources that can empower a magic-lightning chain expose their value without
-// teaching the chain about every concrete mob type. The rarity overload is
-// also used when a higher-rarity source must be capped to the chain's rarity.
+// 增幅源通过接口提供闪电强度；稀有度重载用于按连锁自身档位封顶。
 class ILightningBoostSource
 {
   public:
@@ -647,9 +668,7 @@ class CMobPrototype
 
     EMobType m_type = EMobType::None;
     std::string m_name;
-    // When set, the snapshot wire type is disguised as this vanilla mob type
-    // so the client renders the vanilla sprite and name without client-side
-    // mod support.
+    // 快照使用基础生物的视觉代理类型，客户端无需认识服务端扩展编号。
     EMobType m_visual_proxy_type = EMobType::None;
     SMobStats m_base_stats;
     SFlowerStats m_base_flower_stats;
@@ -660,19 +679,13 @@ class CMobPrototype
     after_create m_after_create;
     rarity_resolver m_rarity_resolver;
     mob_factory m_factory;
-    // A non-zero count declares this prototype as a multi-segment root.  The
-    // root itself is segment 0; the factory is called with 1..count and must
-    // return the registered mob type for each body segment.
+    // 非零体节数声明多节根；根为第 0 节，工厂为第 1 至 count 节返回已注册类型。
     int m_segment_count = 0;
     segment_count_factory m_segment_count_factory;
     segment_type_factory m_segment_type_factory;
-    // Maps (one-based body index, body count) to a compact client-facing
-    // visual/depth variant. This keeps rarity/layout policy on the server;
-    // clients only render and order the variant carried by the snapshot.
+    // 服务端将体节序号与总数映射为紧凑视觉变体，客户端只按快照绘制及排序。
     segment_visual_variant_factory m_segment_visual_variant_factory;
-    // Opt-in geometry for roots whose bodies are physically constrained. The
-    // center distance is based on the smaller adjacent radius, which keeps a
-    // consistent overlap when rarities scale every segment equally.
+    // 硬约束使用相邻较小半径计算间距，稀有度缩放后仍保持一致重叠。
     bool m_constrain_segment_chain = false;
     bool m_share_segment_health = false;
     float m_segment_center_distance_radius_scale = 2.f;
@@ -698,9 +711,7 @@ template <> inline SFlowerStats CMobPrototype::BuildTypedStats<SFlowerStats>(ERa
     return BuildFlowerStats(rarity);
 }
 
-// Registry slots cover the native range plus the reserved mod range
-// (mod_mob_type.h); slots past the natives are optional so controllers can
-// register content without every id being mandatory at Finalize.
+// 注册槽位覆盖基础与预留扩展区，扩展编号可选，不要求冻结时全部填满。
 using CMobRegistry =
     TPrototypeRegistry<EMobType, CMobPrototype, static_cast<std::size_t>(kMobIdCapacity),
                        static_cast<std::size_t>(EMobType::FireflyLarva) + 1>;
@@ -711,7 +722,7 @@ inline CMobRegistry& MutableRegistry()
     static CMobRegistry registry("mob", static_cast<CMobRegistry::name_function>(GetMobTypeName));
     return registry;
 }
-} // namespace mob_registry_detail
+}
 
 inline const CMobRegistry& GetMobRegistry() { return mob_registry_detail::MutableRegistry(); }
 
@@ -791,7 +802,7 @@ template <EMobType Type, typename TMob> bool RegisterMobPrototype(CMobPrototype 
 
         typename TMob::stats_type stats = raw_ptr->BuildTypedStats<typename TMob::stats_type>(rarity);
         auto mob = std::make_unique<TMob>(world, pos, stats.radius, Type, rarity, stats);
-        mob->Team() = raw_ptr->m_team;
+        mob->SetTeam(raw_ptr->m_team);
         mob->AllowSkipTick() = raw_ptr->m_allow_skip_tick;
         if (raw_ptr->m_after_create) raw_ptr->m_after_create(*mob, rarity);
         if (raw_ptr->m_controller_factory) mob->SetController(raw_ptr->m_controller_factory(rarity));
@@ -802,10 +813,7 @@ template <EMobType Type, typename TMob> bool RegisterMobPrototype(CMobPrototype 
 
 const CMobPrototype* FindMobPrototype(EMobType type);
 
-// Registers a controller-specific mob from the mod id space (mod_mob_type.h).
-// A vanilla visual proxy is MANDATORY: the network snapshot always presents
-// the mob as an existing type, so mod ids stay server-internal and never
-// reach the wire or the client id tables.
+// 扩展生物必须指定基础视觉代理，内部编号不进入协议或客户端类型表。
 template <EModMobType Type, typename TMob> bool RegisterModMob(CMobPrototype prototype, EMobType visual_proxy)
 {
     static_assert(IsModMobTypeId(static_cast<int>(Type)), "mod mobs must live in the reserved mod id range");

@@ -10,30 +10,18 @@
 class CGameWorld;
 class IPlayerSceneWriter;
 
-// Wall overlay: marks which map walls still stand, cell by cell. Walls in
-// FlorrBtMap are arbitrary polygons (Tiled collision objects) that may only
-// cover part of a tile or span several tiles. Each wall is registered to
-// every cell its AABB touches and owns exactly one "primary cell" (the cell
-// under its center).
-//
-// CWall is a marker layer only - it never takes over collision. The world's
-// m_map->walls + wall grid stay authoritative; CommitRemove collects the
-// walls whose primary cell is being dug and removes them from the world by
-// their recorded AABB (shrunk by an epsilon so flush neighbours survive).
-// Ids into m_map->walls are useless for removal: the world compacts that
-// vector on every removal, shifting all later indices.
-//
-// Besides map walls, "cell walls" can be inserted per tile (InsertCell).
-// These are pure markers bound to one dirt cell (no map polygon behind
-// them); committing a removal on them only marks them dead and broadcasts.
+// 墙板只记录标记，碰撞以世界地图及墙网格为准。
+// 多边形墙登记到包围盒覆盖的所有格，但只归属中心所在格。
+// 移除时使用收缩后的包围盒；墙数组会压缩，不能保留其下标作为身份。
+// 单格墙仅是挖掘标记，没有对应的地图多边形。
 class CWall : public CTileBoard
 {
   public:
-    // Rebuilds registration from the world's map and replays recorded
-    // removals. Safe to call again after a hot-reload map rebuild.
+    // 从世界地图重建登记并回放移除记录，可重复调用。
     void Reload(CGameWorld& world) override;
-    // Invalidates the non-owning world context before the controller/world
-    // lifetime ends. CommitRemove must never rely on destruction order.
+    void RefreshFromWorld(CGameWorld& world);
+    void BindWorld(CGameWorld& world) noexcept { m_world = &world; }
+    // 撤销借用的世界上下文，避免移除操作依赖析构顺序。
     void DetachWorld(CGameWorld& world);
     bool WritePlayerScene(IPlayerSceneWriter& writer) const;
 
@@ -45,40 +33,26 @@ class CWall : public CTileBoard
     bool HasTile(int row, int col) const override;
     bool HasWall(int row, int col) const;
 
-    // Binds a marker wall to one cell (whole-tile AABB, primary cell = the
-    // cell). Used by the ant-kingdom controller to give every in-rule dirt
-    // tile a diggable wall marker. Returns false when the cell already has
-    // one or the cell is out of bounds.
+    // 插入仅用于挖掘的单格墙标记；越界或已有标记时失败。
     bool InsertCell(int row, int col);
 
-    // Removes every alive wall whose primary cell is (row, col). Returns the
-    // number of removed walls, or 0 when the cell is clear. When `team` is
-    // positive the digging team's flag is set on the cell (any number of
-    // teams may mark the same dug cell).
+    // 移除归属该格的墙；team 为正时同时登记该队伍的挖掘标记。
     bool CommitRemove(int row, int col, int team = 0) override;
-    // Walls cannot be placed (yet): always rejected.
     bool CommitPlace(int row, int col, std::uint32_t gid) override;
 
-    // Whether this cell has been dug open by `team` (bit per team).
     bool IsDugByTeam(int row, int col, int team) const;
-    // Any team has dug this cell open.
     bool IsDug(int row, int col) const;
-    // Raw per-team flag mask (bit team-1 set when that team dug the cell).
+    // 每队一位，位序为 team - 1。
     std::uint32_t DigFlags(int row, int col) const;
 
-    // Cells flagged by `team` that still have at least one alive (undug) wall:
-    // the dig candidates an eou worker ant searches for. Returns {row, col}
-    // pairs (empty when the team flagged nothing undigged).
+    // 返回该队标记且仍有墙体的格坐标，供工蚁选择挖掘目标。
     std::vector<std::pair<int, int>> TeamFlaggedWallCells(int team) const;
-    // World-space center of a cell.
     florrbt::Vector2f CellCenter(int row, int col) const
     {
         return { (static_cast<float>(col) + 0.5f) * m_tile_size, (static_cast<float>(row) + 0.5f) * m_tile_size };
     }
 
-    // Marks/unmarks a team flag on a cell (pure marker, no wall removal).
-    // Both return false when the cell is out of bounds or the team is
-    // outside 1..32.
+    // 只修改队伍标记；格越界或队号不在 1..32 时失败。
     bool SetTeamFlag(int row, int col, int team);
     bool ClearTeamFlag(int row, int col, int team);
 
@@ -94,18 +68,16 @@ class CWall : public CTileBoard
         std::uint32_t primary_cell = 0;
         florrbt::Vector2f min_pos;
         florrbt::Vector2f max_pos;
-        bool from_map = true; // map polygon (removed from the world) vs cell marker
+        bool from_map = true; // 区分真实地图多边形与单格标记。
     };
 
-    // A dug-open cell can be marked by many teams: one bit per team (bit
-    // team-1), so a compact uint32 flag is the right shape.
+    // 同一格可由多队标记，每队占一位。
     struct SDigClaim
     {
         std::uint32_t team_flags = 0;
     };
 
-    // Keeps flush neighbours out of rect-based world removals (see
-    // RemoveMapWallFromWorld).
+    // 移除矩形内缩，保留共边的相邻墙。
     static constexpr float kWallRemoveEpsilon = 1.f;
     static std::optional<std::pair<florrbt::Vector2f, florrbt::Vector2f>> RemovalRect(const SWallRecord& record);
 
@@ -113,7 +85,7 @@ class CWall : public CTileBoard
     bool HasAliveWallOnCell(std::uint32_t cell) const;
     void BuildFromMap(const CGameWorld& world);
     void ReplayInsertedCells();
-    void ReplayRecordedRemovals(CGameWorld& world);
+    void ReplayRecordedRemovals(CGameWorld* world);
     void RemoveMapWallFromWorld(CGameWorld& world, const SWallRecord& record) const;
     void BroadcastWallRemovals(CGameWorld& world, const std::vector<int>& wall_ids) const;
     int m_width = 0;
@@ -121,11 +93,11 @@ class CWall : public CTileBoard
     float m_tile_size = 512.f;
     bool m_loaded = false;
 
-    std::vector<SWallRecord> m_walls;       // map walls first, then cell walls
-    std::vector<bool> m_alive;              // per wall id
-    std::unordered_map<std::uint32_t, std::vector<int>> m_cells; // cell -> covering wall ids
-    std::unordered_map<std::uint32_t, SDigClaim> m_dig_claims;   // cell -> digging team claim
-    std::vector<std::uint32_t> m_inserted_cells;                 // recorded cell wall bindings
-    std::vector<std::uint32_t> m_removed_primary_cells;          // recorded removals (snapshot/replay)
-    CGameWorld* m_world = nullptr;                              // set by Reload
+    std::vector<SWallRecord> m_walls; // 地图墙在前，单格墙在后。
+    std::vector<bool> m_alive;
+    std::unordered_map<std::uint32_t, std::vector<int>> m_cells; // 格坐标到覆盖墙记录。
+    std::unordered_map<std::uint32_t, SDigClaim> m_dig_claims; // 格坐标到队伍挖掘声明。
+    std::vector<std::uint32_t> m_inserted_cells; // 记录新增单格墙。
+    std::vector<std::uint32_t> m_removed_primary_cells; // 记录移除，供快照回放。
+    CGameWorld* m_world = nullptr; // 由 Reload 绑定的借用指针。
 };

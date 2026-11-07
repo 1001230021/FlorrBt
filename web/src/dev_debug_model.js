@@ -32,8 +32,7 @@ export function hitTestDebugEntities(entities, point, filter = () => true) {
     if (!filter(entity) || !entity.pos || !(entity.radius >= 0)) continue;
     const radius = Math.max(1, entity.radius);
     const distance = Math.hypot(point.x - entity.pos.x, point.y - entity.pos.y);
-    // Prefer the smallest visible body under the cursor, so a giant boss
-    // cannot make the players/petals standing on it impossible to select.
+    // 优先选光标下最小可见实体，避免巨型首领挡住玩家和花瓣选择。
     if (distance <= radius && radius + distance / radius < score) {
       hit = entity; score = radius + distance / radius;
     }
@@ -66,8 +65,7 @@ export function sortDebugPlayers(players, world, generation) {
     String(a.name).localeCompare(String(b.name), "en", { sensitivity: "base", numeric: true }) || a.id - b.id);
 }
 
-// A bounded synchronous bridge to legacy renderer globals. Rendering must
-// not be async: all game state is restored before any event/callback runs.
+// 临时渲染上下文必须同步执行，并在任何异步回调前恢复游戏状态。
 export function withDebugRenderState(state, patch, draw) {
   const saved = Object.keys(patch).map(key => [key, Object.hasOwn(state, key), state[key]]);
   try { Object.assign(state, patch); return draw(); }

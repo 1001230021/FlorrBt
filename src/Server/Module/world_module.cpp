@@ -27,7 +27,7 @@ std::string NormalizeMapName(std::string name)
     return name;
 }
 
-} // namespace
+}
 
 IWorldModule::IWorldModule()
 {
@@ -72,7 +72,8 @@ CGameWorld* IWorldModule::GetMainWorld() const { return ResolveWorld(m_main_worl
 bool IWorldModule::SetMainWorld(std::uint32_t world_id)
 {
     if (IsSimulationActive()) return false;
-    for (const auto& candidate : m_worlds) if (candidate && candidate->IsTransitionActive()) return false;
+    for (const auto& candidate : m_worlds)
+        if (candidate && (candidate->IsTransitionActive() || candidate->IsTicking() || candidate->IsCombatEventActive())) return false;
     CGameWorld* world = FindWorldById(world_id);
     if (!world) return false;
     const SWorldRef ref = MakeWorldRef(world);
@@ -123,7 +124,8 @@ bool IWorldModule::ValidateTopology(const STopologySnapshot& snapshot, std::stri
 {
     if (IsSimulationActive()) { error = "Cannot replace topology during world simulation"; return false; }
     for (const auto& world : m_worlds)
-        if (world && world->IsTransitionActive()) { error = "Cannot replace topology during a transition"; return false; }
+        if (world && (world->IsTransitionActive() || world->IsTicking() || world->IsCombatEventActive()))
+        { error = "Cannot replace topology during a transition or simulation"; return false; }
     if (snapshot.worlds.empty() || snapshot.worlds.size() > 1024 || snapshot.rooms.size() > 1024)
     { error = "Invalid world topology size"; return false; }
     std::unordered_set<std::uint32_t> ids;
@@ -144,8 +146,7 @@ bool IWorldModule::ValidateTopology(const STopologySnapshot& snapshot, std::stri
             (room.waiting_world != SWorldRef::invalid_id && !ids.contains(room.waiting_world)) ||
             !std::isfinite(room.empty_seconds) || room.empty_seconds < 0.f)
         { error = "Invalid room registry in topology"; return false; }
-        // Room teardown owns both worlds. Aliasing the main world or another
-        // room would allow idle cleanup to delete a still-referenced world.
+        // 房间独占两个世界；不能复用主世界或其他房间的世界，避免空闲清理误删。
         if (room.active_world == snapshot.main_world || room.waiting_world == snapshot.main_world ||
             !room_worlds.insert(room.active_world).second ||
             (room.waiting_world != SWorldRef::invalid_id && room.waiting_world != room.active_world &&
@@ -159,8 +160,7 @@ bool IWorldModule::RestoreTopology(const STopologySnapshot& snapshot, std::strin
 {
     if (!ValidateTopology(snapshot, error)) return false;
     CGameContext* context = GetMainWorld() ? GetMainWorld()->GameContext() : nullptr;
-    // Load every missing map before discarding existing worlds. Consumers
-    // resolve the current main-world handle; no object address is pinned.
+    // 先加载全部缺失地图，再移除旧世界；消费者解析当前主世界句柄，不固定对象地址。
     std::unordered_map<std::uint32_t, std::unique_ptr<CGameWorld>> staged;
     for (const auto& blueprint : snapshot.worlds)
     {
@@ -204,15 +204,14 @@ bool IWorldModule::RestoreTopology(const STopologySnapshot& snapshot, std::strin
 
 void IWorldModule::Tick(float dt)
 {
-    // Index-based: room controllers may create new worlds (game world on
-    // /start) while worlds are ticking.
+    // 本帧创建的世界下帧才参与模拟；迁移等待全部源世界完成本帧。
     {
         struct CGuard { bool& value; CGuard(bool& v) : value(v) { value = true; } ~CGuard() { value = false; } } guard(m_simulating_worlds);
-        for (size_t i = 0; i < m_worlds.size(); ++i)
+        const size_t participating_worlds = m_worlds.size();
+        for (size_t i = 0; i < participating_worlds; ++i)
             if (m_worlds[i]) m_worlds[i]->Tick(dt);
     }
-    // Every entity has completed its source-world simulation before any
-    // queued transfer becomes visible to a destination-world tick.
+    // 全部实体完成源世界模拟后，才提交排队迁移。
     auto requests = std::move(m_deferred_transfers);
     m_deferred_transfers.clear();
     for (const auto& request : requests)
@@ -234,7 +233,7 @@ void IWorldModule::Tick(float dt)
 bool IWorldModule::DeferWorldTransfer(const SDeferredWorldTransfer& request)
 {
     if (!m_simulating_worlds) return false;
-    // First portal/policy request wins for this session in this frame.
+    // 同一会话同帧只接受第一个传送请求。
     if (std::none_of(m_deferred_transfers.begin(), m_deferred_transfers.end(), [&](const auto& pending) {
         return pending.player == request.player;
     })) m_deferred_transfers.push_back(request);
@@ -302,11 +301,13 @@ CGameWorld* IWorldModule::CreateWorld(const std::string& map_path, std::string_v
     }
     if (!controller_key.empty())
     {
+        auto controller = CreateWorldController(controller_key, controller_params);
+        if (!controller) return nullptr;
         auto config = world->ExtensionConfig();
         config.squads = controller_key != world_controller_keys::waiting;
         config.weather_spawns = controller_key == "world_controller.weather_diurnal_open";
         world->ConfigureExtensions(config);
-        world->SetController(CreateWorldController(controller_key, controller_params));
+        if (!world->SetController(std::move(controller))) return nullptr;
     }
     world->SetGameContext(context);
 
@@ -324,13 +325,12 @@ CGameWorld* IWorldModule::CreateRoomWorld(const std::string& map_path, std::stri
         return nullptr;
     }
 
-    // The room starts as a bare waiting world; the game world (map + named
-    // controller) is created lazily when /start releases the players.
+    // 初始只建等待世界，/start 释放玩家时才创建玩法世界。
     CGameWorld* waiting_world = CreateWorld(game_config::room_waiting_map_path, world_controller_keys::waiting);
     if (!waiting_world) return nullptr;
 
     SWaitingControllerConfig config;
-    config.release_policy = EWaitingReleasePolicy::Disabled; // start only via /start
+    config.release_policy = EWaitingReleasePolicy::Disabled; // 只能通过 /start 开始。
     config.minimum_player_count = 1;
     config.destination_world_id = SWaitingControllerConfig::invalid_world_id;
     config.game_map_path = map_path;
@@ -392,7 +392,7 @@ bool IWorldModule::DestroyWorldById(std::uint32_t world_id)
     {
         CGameWorld* world = m_worlds[i].get();
         if (!world || world->GetId() != world_id) continue;
-        if (world->IsTransitionActive()) return false;
+        if (world->IsTransitionActive() || world->IsTicking() || world->IsCombatEventActive()) return false;
         if (IsMainWorld(*world))
         {
             LOG_WARN("world", "Refusing to destroy the main world");
@@ -400,9 +400,7 @@ bool IWorldModule::DestroyWorldById(std::uint32_t world_id)
         }
         const std::string map_path = world->GetMapPath();
 
-        // Migrate while both controllers and the source handles are alive.
-        // If an entity is already being removed, world teardown explicitly
-        // schedules its player for respawn instead of retaining a raw pointer.
+        // 双方控制器和源句柄仍有效时迁移；已在移除的实体则安排玩家重生。
         CGameContext* context = world->GameContext();
         CGameWorld* destination = GetMainWorld();
         if (context)
@@ -413,8 +411,7 @@ bool IWorldModule::DestroyWorldById(std::uint32_t world_id)
                 CEntity* entity = player->GetEntity();
                 if (!entity || entity->GameWorld() != world) continue;
                 if (destination && world->TransferPlayerEntityToWorld(*player, *destination)) continue;
-                // Forced world teardown is a separate committed departure.
-                // A rejected transfer has not run any membership effects.
+                // 强制销毁世界单独提交离开事件；被拒绝的迁移尚未修改成员关系。
                 if (IGameController* controller = world->GetController())
                     controller->OnPlayerDepartureCommitted(*world, *player, entity);
                 entity = player->GetEntity();
@@ -422,7 +419,6 @@ bool IWorldModule::DestroyWorldById(std::uint32_t world_id)
             }
         }
 
-        // Unregister rooms pointing at this world, then drop the world.
         const SWorldRef destroyed_ref = MakeWorldRef(world);
         std::vector<SWorldRef> companion_worlds;
         for (auto it = m_rooms.begin(); it != m_rooms.end();)
@@ -448,8 +444,7 @@ bool IWorldModule::DestroyWorldById(std::uint32_t world_id)
         }
         m_worlds.erase(m_worlds.begin() + static_cast<std::ptrdiff_t>(i));
         LOG_INFO("world", "Destroyed world id=" + std::to_string(world_id) + " (" + map_path + ")");
-        // Close the room's retained waiting world through the same player
-        // migration path. Resolve the generation again after leave hooks.
+        // 等待世界沿用相同迁移清理路径；离开钩子后重新校验世界代数。
         for (const SWorldRef& companion : companion_worlds)
             if (CGameWorld* remaining = ResolveWorld(companion)) DestroyWorldById(remaining->GetId());
         return true;
@@ -484,8 +479,7 @@ void IWorldModule::UpdateRoomLifecycle(float dt)
         const size_t waiting_players = has_separate_waiting ? waiting_world->GetPlayerCount() : 0;
         const size_t player_count = (active_world ? active_world->GetPlayerCount() : 0) + waiting_players;
 
-        // Retiring an empty waiting room does not depend on whether its game
-        // is still occupied. Never tear down a waiting room with players in it.
+        // 空等待房间可独立回收，但不能清理仍有玩家的等待房间。
         if (has_separate_waiting && waiting_players == 0) retired_waiting_worlds.push_back(room_code);
 
         if (player_count > 0)

@@ -25,9 +25,7 @@ class CSnapshotService
         size_t packed_size = 0;
     };
 
-    // Reuse serialized entities only during one immutable snapshot pass.
-    // Keep this local to a worker job; do not retain it across world mutation
-    // or share it between threads. Standalone builds use their own batch.
+    // 序列化缓存只在单次不可变快照任务内复用，不跨世界修改或线程共享。
     class CBuildBatch
     {
       public:

@@ -1,9 +1,4 @@
-// A deterministic, screen-space rain field.
-//
-// RimWorld's rain reads as a quiet, continuous sheet: many short, thin,
-// similarly angled strokes over a subdued world. Keeping the field
-// deterministic avoids the noisy spawn/cull rhythm of particle sprites and
-// makes it cheap at high refresh rates.
+// 屏幕空间雨场采用确定的细短平行线，避免高刷新率下粒子生成/回收噪声。
 
 const TAU = Math.PI * 2;
 const DEFAULT_DROP_COUNT = 720;
@@ -33,8 +28,7 @@ function normalizedWindDirection(direction) {
 }
 
 export function getRainLean(windDirection = 0, windSpeed = 0) {
-  // The small base lean is intentional: calm rain is not perfectly vertical.
-  // The wire format uses 0° as north, matching the existing wind decoder.
+  // 无风雨保留轻微倾斜，协议零度朝北，与风向解码一致。
   const windX = Math.sin(normalizedWindDirection(windDirection));
   const windStrength = clamp((Number(windSpeed) || 0) / 18, 0, 1);
   return clamp(0.14 + windX * windStrength * 0.18, -0.12, 0.34);
@@ -67,8 +61,7 @@ export function createRainField({ seed = 0x6d2b79f5, maxDrops = DEFAULT_DROP_COU
       const amount = clamp(Number(intensity) || 0, 0, 1);
       if (amount <= MIN_INTENSITY) return 0;
 
-      // A gentle response keeps drizzle sparse while heavy rain becomes a
-      // sheet, without ever needing to allocate or splice during a frame.
+      // 雨量平滑调节密度，帧内无需分配或移除粒子。
       const activeCount = Math.min(
         drops.length,
         Math.max(1, Math.floor(drops.length * Math.pow(amount, 0.72))),
@@ -105,7 +98,6 @@ export function createRainField({ seed = 0x6d2b79f5, maxDrops = DEFAULT_DROP_COU
           : `rgba(218, 226, 226, ${0.105 + amount * 0.105})`;
         ctx.stroke();
       };
-      // Draw the distant veil first, then the slightly brighter short strokes.
       drawPath(farPath, true);
       drawPath(nearPath, false);
       ctx.restore();

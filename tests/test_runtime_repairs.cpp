@@ -1,4 +1,5 @@
 #include "test_framework.h"
+#include <SFML/Network/SocketSelector.hpp>
 #include "Server/server.h"
 #include "Server/Module/world_module.h"
 #include "Server/Module/network_module.h"
@@ -7,6 +8,8 @@
 #include "Server/Game/talent.h"
 #include "Server/Game/gamecontrollers/world_controller_factory.h"
 #include "Server/Game/gamecontrollers/pvp_controller.h"
+#include "Server/Game/gamecontrollers/opencontroller.h"
+#include "Server/Game/gamecontrollers/mutable_terrain_controller.h"
 #include "Server/Game/gamecontrollers/sandbox_controller.h"
 #include "Server/Game/gamecontrollers/ant_kingdom_controller.h"
 #include "Server/Game/gamecontrollers/deathmatch_controller.h"
@@ -17,18 +20,27 @@
 #include "Server/Game/entities/drop.h"
 #include "Server/Game/extensions/weather_extension.h"
 #include "Server/Game/extensions/squad_extension.h"
+#include "Server/Game/extensions/party_extension.h"
 #include "Server/Game/extensions/chat_extension.h"
 #include "Server/HotReload/hot_reload_snapshot.h"
 #include "Server/HotReload/mob_stats_snapshot.h"
 #include "Server/Persistence/account_store.h"
+#include "Server/Persistence/server_data_store.h"
 #include "Server/report.h"
+#include "Server/Auth/oauth_provider.h"
+#include "Server/Auth/account_link_service.h"
+#include "Server/Auth/email_verification_service.h"
+#include "Engine/json_value.h"
 #include <chrono>
 #include <filesystem>
 #include <future>
 #include <thread>
+#include <regex>
 
 namespace
 {
+struct SCraftInput { uint8_t petal_type = 0, rarity = 0; uint32_t count = 0; };
+struct SSlotInput { uint8_t slot_index = 0, petal_type = 0, rarity = 0; };
 struct STestSession
 {
     std::filesystem::path directory;
@@ -79,9 +91,9 @@ class CServerTestAccess
         auto network = std::make_unique<INetworkModule>(server);
         server.m_p_network_module = network.get();
         std::string extension_error;
-        CHECK(server.Extensions().Init(*network, *network, extension_error));
-        server.m_p_game_context = std::make_unique<CGameContext>(*network,
-            server, server, server.Extensions());
+        CHECK(server.Extensions().Init(*network, *network, *network, extension_error));
+        server.m_p_game_context = std::make_unique<CGameContext>(*network, *network, *network, *network,
+            server, server, server, server.Extensions());
         for (const auto& world : worlds->GetWorlds())
         {
             world->SetController(nullptr);
@@ -97,6 +109,198 @@ class CServerTestAccess
         for (CGameWorld* world : server.GetWorlds()) world->SetGameContext(nullptr);
     }
     CGameWorld& World() { return *server.GetMainWorld(); }
+    static void CheckFailureExitCodes()
+    {
+        struct CModule final : IModule
+        {
+            bool initialize = true, throws_on_tick = false, ticked = false;
+            bool Init() override { return initialize; }
+            void Tick(float) override { ticked = true; if (throws_on_tick) throw std::runtime_error("offline tick failure"); }
+            void ShutDown() override {}
+        };
+        struct CFailedStore final : IServerDataStore
+        {
+            bool Init(std::string&) override { return true; }
+            bool ShutDown(std::string& error) override { error = "offline persistence failure"; return false; }
+            IUniquePetalRegistry& UniquePetals() override { throw std::logic_error("unused fixture"); }
+            const IUniquePetalRegistry& UniquePetals() const override { throw std::logic_error("unused fixture"); }
+        };
+        {
+            CServer value; value.m_modules.clear();
+            auto module = std::make_unique<CModule>(); module->initialize = false; auto* observer = module.get();
+            value.m_modules.push_back(std::move(module));
+            CHECK(!value.InitializeModules()); CHECK(value.GetExitCode() != 0 && !value.IsRunning());
+            value.Run(); CHECK(!observer->ticked);
+            value.ShutDown(); CHECK(value.GetExitCode() != 0);
+        }
+        {
+            CServer value; value.m_modules.clear();
+            auto module = std::make_unique<CModule>(); module->throws_on_tick = true;
+            value.m_modules.push_back(std::move(module));
+            CHECK(value.InitializeModules()); value.Run();
+            CHECK(value.GetExitCode() != 0 && !value.IsRunning());
+        }
+        {
+            CServer value; value.m_modules.clear();
+            const auto fixed_dt = game_config::server_fixed_dt;
+            game_config::server_fixed_dt = 0; value.Run(); game_config::server_fixed_dt = fixed_dt;
+            CHECK(value.GetExitCode() != 0);
+        }
+        {
+            CServer value; value.m_modules.clear();
+            value.m_p_data_store = std::make_unique<CFailedStore>();
+            value.m_exit_code = CServer::hot_reload_exit_code;
+            value.ShutDown(); CHECK(value.GetExitCode() == 1);
+        }
+        {
+            CServer value; value.m_modules.clear();
+            value.RequestStop(); value.Run(); value.ShutDown();
+            CHECK(value.GetExitCode() == 0);
+            value.Fail("fixture", "restore rejected", CServer::restore_failed_exit_code);
+            value.Fail("fixture", "later cleanup failure");
+            CHECK(value.GetExitCode() == CServer::restore_failed_exit_code);
+        }
+    }
+    void TickModules(float dt) { server.TickModules(dt); }
+    void CheckAccountMenuDoesNotSpawnUntilStart()
+    {
+        auto& network = *server.GetNetworkModule();
+        auto pending = std::make_unique<CPlayer>(sf::TcpSocket{}, 1, "menu-fixture");
+        auto* player = pending.get(); CHECK(network.InsertRestoredPlayer(std::move(pending)));
+        ClientAuthRequest enter; enter.mode = ClientAuthRequest::Mode::EnterGame; enter.name = "runtime-player";
+        CHECK(network.HandleAuthRequest(*player, enter) == INetworkModule::EPlayerBufferResult::Continue);
+        CHECK(!player->IsAuthenticated() && !player->GetEntity());
+        player->m_send_buffer.clear(); player->m_send_offset = 0;
+        CHECK(network.ApplyAuthentication(*player, enter.name, true, EAuthResultCode::Authenticated, {}, {}, nullptr, true) ==
+              INetworkModule::EPlayerBufferResult::Continue);
+        CHECK(player->IsAuthenticated() && !player->GetEntity() && !player->HasOwnedEntity() && !player->NeedsRespawn());
+        CPlayerLifecycleService{}.RespawnDeadControlledEntities(network.GetPlayers(), World(), network);
+        CHECK(!player->GetEntity());
+        const auto lobby = QueuedMessages(*player);
+        CHECK(!lobby.empty() && lobby[0].type == ServerMessage::Type::AuthResult);
+        CHECK(std::any_of(lobby.begin(), lobby.end(), [](const auto& message) { return message.type == ServerMessage::Type::AccountLinks; }));
+        const auto inventory = std::find_if(lobby.begin(), lobby.end(), [](const auto& message) { return message.type == ServerMessage::Type::Inventory; });
+        CHECK(inventory != lobby.end());
+        if (inventory != lobby.end())
+        {
+            CHECK(inventory->inventory_scope == enter.name);
+            CHECK(inventory->inventory_actor_scope.empty());
+            CHECK(inventory->inventory == CAccountDataStore::GetInventory(enter.name));
+        }
+        CHECK(std::none_of(lobby.begin(), lobby.end(), [](const auto& message) { return message.type == ServerMessage::Type::OwnerState; }));
+        CHECK(std::none_of(lobby.begin(), lobby.end(), [](const auto& message) { return message.type == ServerMessage::Type::Welcome || message.type == ServerMessage::Type::Snapshot; }));
+        player->m_send_buffer.clear(); player->m_send_offset = 0;
+        // 离线 socket 可能在发送时断开；实际场景包由浏览器联网测试验证。
+        ClientOperate revive; revive.type = ClientOperate::Type::Chores; revive.agree = true;
+        uint8_t packet[3]{};
+        const auto packet_size = ClientOperate::pack(revive, packet);
+        player->m_receive_buffer.assign(packet, packet + packet_size);
+        CHECK(network.ProcessPlayerBuffer(*player) == INetworkModule::EPlayerBufferResult::Continue);
+        CHECK(!player->GetEntity() && !player->NeedsRespawn());
+        network.HandleAuthRequest(*player, enter);
+        auto* body = player->GetEntity(); CHECK(body && body->GameWorld() == &World());
+        CHECK(!player->GetUseNewPlayerSpawn());
+        CHECK(network.HandleAuthRequest(*player, enter) == INetworkModule::EPlayerBufferResult::Continue);
+        CHECK(player->GetEntity() == body);
+    }
+    static void ClearTestWalls(CGameWorld& world) { world.m_map->walls.clear(); world.BuildWallGrid(); }
+    void CheckEmailBindingBeforeEnteringWorld()
+    {
+        auto& network = *server.GetNetworkModule();
+        const auto policy = game_config::email_enabled;
+        const auto user = game_config::email_username, password = game_config::email_password;
+        game_config::email_enabled = 1; game_config::email_username = "sender@example.test"; game_config::email_password = "offline-fixture";
+        struct CRestore { int policy; std::string user, password; ~CRestore() {
+            game_config::email_enabled = policy; game_config::email_username = user; game_config::email_password = password;
+        } } restore{policy, user, password};
+        std::string error;
+        CHECK(CAccountDataStore::CommitRegistration("email-menu-fixture", "offline-fixture-hash", "", "127.0.0.1", &error));
+        auto pending = std::make_unique<CPlayer>(sf::TcpSocket{}, 1, "email-menu-fixture");
+        pending->Authenticate("email-menu-fixture"); pending->SetRemoteAddress("127.0.0.1");
+        auto* player = pending.get(); CHECK(network.InsertRestoredPlayer(std::move(pending)));
+        std::promise<std::string> sent; auto message = sent.get_future();
+        network.m_email_verification_service = std::make_unique<CEmailVerificationService>([&](const auto& mail, std::stop_token) {
+            sent.set_value(mail.message); return remote_transport::SResult{};
+        });
+        CHECK(network.m_email_verification_service->Start(error));
+        ClientAuthRequest request; request.mode = ClientAuthRequest::Mode::RequestBindingCode;
+        request.name = player->GetAccountName(); request.email = "receiver@example.test";
+        CHECK(network.HandleAuthRequest(*player, request) == INetworkModule::EPlayerBufferResult::Continue);
+        const bool ready = message.wait_for(std::chrono::seconds(5)) == std::future_status::ready; CHECK(ready);
+        if (!ready) { network.m_email_verification_service->ShutDown(); return; }
+        const auto mail = message.get(); std::smatch match;
+        CHECK(std::regex_search(mail, match, std::regex("Your FlorrBt verification code is ([0-9]+)")));
+        if (match.size() != 2) { network.m_email_verification_service->ShutDown(); return; }
+        for (int i = 0; i < 1000; ++i) {
+            network.ProcessEmailDeliveryResults();
+            if (network.m_email_delivery_requests.empty()) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        request.mode = ClientAuthRequest::Mode::ConfirmBinding; request.code = match[1].str();
+        CHECK(network.HandleAuthRequest(*player, request) == INetworkModule::EPlayerBufferResult::Continue);
+        SAccountEmailState state; CHECK(CAccountDataStore::GetEmailState(player->GetAccountName(), state));
+        CHECK(state.verified && state.email == request.email && !player->GetEntity() && !player->GetWorld());
+        CHECK(CAccountDataStore::Flush()); network.m_email_verification_service->ShutDown();
+    }
+    static void SendCraft(CServerTestAccess& fixture, CPlayer& player, const SCraftInput& request)
+    {
+        auto packet = EconomyRequest(fixture, player, EEconomyOperation::Craft);
+        packet.petal_type = request.petal_type; packet.rarity = request.rarity; packet.count = request.count;
+        SendEconomy(fixture, player, packet);
+    }
+    static void SendForge(CServerTestAccess& fixture, CPlayer& player, const SCraftInput& request)
+    {
+        auto packet = EconomyRequest(fixture, player, EEconomyOperation::Forge);
+        packet.petal_type = request.petal_type; packet.rarity = request.rarity; packet.count = request.count;
+        SendEconomy(fixture, player, packet);
+    }
+    static void SendSecondary(CServerTestAccess& fixture, CPlayer& player, const SSlotInput& request)
+    {
+        auto packet = EconomyRequest(fixture, player, EEconomyOperation::Loadout);
+        packet.primary = CAccountDataStore::GetSlots(player.GetInventoryAccountName());
+        packet.secondary = CAccountDataStore::GetSecondarySlots(player.GetInventoryAccountName());
+        if (auto* flower = dynamic_cast<CFlower*>(player.GetEntity())) {
+            packet.primary.resize(flower->GetSlots().size()); packet.secondary.resize(flower->GetSlots().size());
+        }
+        if (request.slot_index >= packet.secondary.size()) packet.secondary.resize(request.slot_index + 1);
+        packet.secondary[request.slot_index] = {request.petal_type, request.rarity, request.petal_type ? 1u : 0u};
+        SendEconomy(fixture, player, packet);
+    }
+    static ClientEconomyRequest EconomyRequest(CServerTestAccess& fixture, CPlayer& player, EEconomyOperation operation)
+    {
+        ClientEconomyRequest request; request.operation = operation;
+        request.context.inventory_scope = player.GetInventoryAccountName();
+        request.context.actor_scope = fixture.server.GetNetworkModule()->InventoryActorScope(player);
+        CAccountDataStore::GetEconomyCounters(request.context.inventory_scope, request.context.expected_revision, request.context.request_id);
+        ++request.context.request_id; return request;
+    }
+    static void SendEconomy(CServerTestAccess& fixture, CPlayer& player, const ClientEconomyRequest& request, bool flush = true)
+    {
+        fixture.server.GetNetworkModule()->HandleEconomyRequest(player, request);
+        if (flush) CHECK(CAccountDataStore::Flush());
+        fixture.server.GetNetworkModule()->ProcessEconomyReplies();
+    }
+    static void SendRespawn(CServerTestAccess& fixture, CPlayer& player)
+    {
+        ClientOperate op; op.type = ClientOperate::Type::Chores; op.agree = true;
+        std::array<uint8_t, 3> bytes{};
+        const auto size = ClientOperate::pack(op, bytes.data());
+        player.m_receive_buffer.assign(bytes.begin(), bytes.begin() + size);
+        fixture.server.GetNetworkModule()->ProcessPlayerBuffer(player);
+    }
+    static std::vector<ServerMessage> QueuedMessages(const CPlayer& player)
+    {
+        std::vector<ServerMessage> messages;
+        for (size_t offset = player.m_send_offset; offset + 2 <= player.m_send_buffer.size();)
+        {
+            const size_t length = player.m_send_buffer[offset] | (size_t(player.m_send_buffer[offset + 1]) << 8);
+            CHECK(length > 0 && offset + 2 + length <= player.m_send_buffer.size());
+            if (!length || offset + 2 + length > player.m_send_buffer.size()) break;
+            messages.push_back(ServerMessage::parse(player.m_send_buffer.data() + offset + 2, length));
+            offset += length + 2;
+        }
+        return messages;
+    }
     static void SetShortcutTestTerrain(CGameWorld& world)
     {
         world.m_map->walls.clear();
@@ -255,6 +459,979 @@ class CServerTestAccess
     }
 };
 
+TEST(AccountMenuAuthenticationWaitsForExplicitStart)
+{
+    CServerTestAccess fixture;
+    fixture.CheckAccountMenuDoesNotSpawnUntilStart();
+}
+
+TEST(AccountLinkEmailVerificationWorksInAccountMenuWithoutSpawning)
+{
+    CServerTestAccess fixture; fixture.CheckEmailBindingBeforeEnteringWorld();
+}
+
+TEST(ClientFeaturePoliciesGateOperationsWithoutChangingScenesOrInventory)
+{
+    CServerTestAccess fixture; auto& world = fixture.World(); auto* player = fixture.Player(world);
+    auto& runtime = fixture.server.Extensions(); const auto initial = player->GetEntity()->GetHandle();
+    auto config = world.ExtensionConfig(); config.features = {{"inventory", false, feature_access::all}, {"craft", true, 0}, {"talent", true, 0}};
+    world.ConfigureExtensions(config);
+    const auto entries = runtime.ClientFeatures(*player);
+    CHECK(entries.size() == 3);
+    CHECK(!entries[0].visible && (entries[0].access & feature_access::edit));
+    const auto inventory = CAccountDataStore::GetInventory(player->GetInventoryAccountName());
+    auto request = CServerTestAccess::EconomyRequest(fixture, *player, EEconomyOperation::Craft);
+    request.petal_type = static_cast<uint8_t>(EPetalType::Basic); request.rarity = 1; request.count = 5;
+    CServerTestAccess::SendEconomy(fixture, *player, request); SEconomyReceipt receipt;
+    CHECK(CAccountDataStore::FindEconomyReceipt(player->GetInventoryAccountName(), request.context.request_id, receipt));
+    CHECK(receipt.outcome == EEconomyOutcome::Forbidden && CAccountDataStore::GetInventory(player->GetInventoryAccountName()) == inventory);
+    CHECK(!runtime.CanUseFeature(*player, "talent", feature_access::edit));
+    CHECK(player->GetEntity()->GetHandle() == initial);
+    const auto messages = CServerTestAccess::QueuedMessages(*player);
+    CHECK(std::none_of(messages.begin(), messages.end(), [](const auto& message) { return message.type == ServerMessage::Type::Welcome; }));
+    config.features = {{"inventory", true, feature_access::view}}; world.ConfigureExtensions(config);
+    CHECK(runtime.CanUseFeature(*player, "inventory", feature_access::view));
+    CHECK(!runtime.CanUseFeature(*player, "inventory", feature_access::edit));
+    auto* flower = dynamic_cast<CPlayerFlower*>(player->GetEntity()); CHECK(flower); if (!flower) return;
+    CHECK(player->TryApplyLoadout({}, {}) == EEconomyOutcome::Forbidden);
+    config.features.clear(); world.ConfigureExtensions(config); flower->EnterDeathState();
+    CHECK(runtime.CanUseFeature(*player, "inventory", feature_access::edit));
+    std::string error; const auto path = Session().directory / "feature-policy.json";
+    config.features = {{"craft", false, 0}}; world.ConfigureExtensions(config);
+    CHECK(CHotReloadSnapshotService::Capture(fixture.server, path, error));
+    CHECK(CHotReloadSnapshotService::Restore(fixture.server, path, error));
+    CHECK(world.ExtensionConfig().features == config.features);
+}
+
+TEST(AccountLinkProvidersVerifyOpaqueIdentityUsingOnlyServerSideExchange)
+{
+    std::vector<remote_transport::SHttpRequest> calls;
+    COAuthProvider disabled({"discord", "", "", ""}); CHECK(!disabled.Config().Enabled() && disabled.AuthorizationUrl("nonce").empty());
+    COAuthProvider discord({"discord", "fixture-app", "fixture-secret", "https://game.example/oauth/callback/discord"},
+        [&](const auto& request, std::stop_token) {
+            calls.push_back(request); remote_transport::SResult result; result.status = 200;
+            result.body = calls.size() == 1 ? R"({"access_token":"fixture-token"})" : R"({"id":"123456789","username":"fixture-user"})";
+            return result;
+        });
+    const auto url = discord.AuthorizationUrl(std::string(32, 'a'));
+    CHECK(url.find("fixture-secret") == std::string::npos && url.find("scope=identify") != std::string::npos);
+    const auto result = discord.Exchange("a&b");
+    CHECK(result.success && result.identity.subject == "123456789" && result.identity.application == "fixture-app");
+    CHECK(calls.size() == 2 && calls[0].post && calls[0].body.find("code=a%26b") != std::string::npos);
+    CHECK(calls[1].bearer_token == "fixture-token" && result.identity.label == "fixture-user");
+    calls.clear();
+    COAuthProvider qq({"qq", "10001", "fixture-key", "https://game.example/oauth/callback/qq"},
+        [&](const auto& request, std::stop_token) {
+            calls.push_back(request); remote_transport::SResult result; result.status = 200;
+            result.body = calls.size() == 1 ? "access_token=fixture-token&expires_in=3600" :
+                "callback({\"client_id\":\"10001\",\"openid\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"});";
+            return result;
+        });
+    CHECK(qq.Exchange("code").identity.subject == std::string(32, 'a'));
+    COAuthProvider mismatch({"qq", "10002", "fixture-key", "https://game.example/oauth/callback/qq"},
+        [&](const auto& request, std::stop_token) {
+            remote_transport::SResult result; result.status = 200;
+            result.body = request.url.find("/token?") != std::string::npos ? R"({"access_token":"fixture"})" :
+                R"({"client_id":"other-app","openid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})"; return result;
+        });
+    CHECK(!mismatch.Exchange("code").success);
+}
+
+TEST(AccountLinkServiceBindsOnlyVerifiedAttemptsAndPersistsBeforeSuccess)
+{
+    CServerTestAccess fixture; auto* player = fixture.Player(fixture.World()); player->SetRemoteAddress("127.0.0.1");
+    SAccountAuthWork work; std::string error;
+    CHECK(CAccountDataStore::PrepareAuthentication("link-fixture", "fixture-password", "", "127.0.0.1", true, work, &error));
+    const auto registration = CAccountDataStore::ExecuteAuthentication(std::move(work));
+    CHECK(registration.success && CAccountDataStore::CommitRegistration(registration, &error)); player->Authenticate("link-fixture");
+    std::atomic<int> requests = 0;
+    CAccountLinkService service({{"discord", "fixture-app", "fixture-secret", "https://game.example/oauth/callback/discord"}},
+        [&](const auto& request, std::stop_token) {
+            ++requests; remote_transport::SResult response; response.status = 200;
+            response.body = request.post ? R"({"access_token":"fixture-token"})" : R"({"id":"987654321","username":"linked-fixture"})";
+            return response;
+        });
+    std::vector<std::string> replies; auto deliver = [&](CPlayer&, const std::string& payload) { replies.push_back(payload); return true; };
+    auto send = [&](const std::string& text) { auto request = CJsonValue::Parse(text); CHECK(request); if (request) service.Request(*player, *request, deliver); };
+    auto wait = [&](const std::string& kind) {
+        for (int i = 0; i < 2000; ++i) {
+            service.Tick(*fixture.server.GetNetworkModule(), deliver);
+            for (const auto& text : replies) { auto value = CJsonValue::Parse(text); if (value && value->Find("kind") && value->Find("kind")->AsString() == kind) return text; }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        CHECK(false); return std::string{};
+    };
+    send(R"({"request":1,"action":"begin","provider":"discord","password":"fixture-password"})");
+    const auto authorized = CJsonValue::Parse(wait("authorize")); CHECK(authorized); if (!authorized) return;
+    const auto state = authorized->Find("state")->AsString(); CHECK(state.size() == 32);
+    replies.clear();
+    send(R"({"request":2,"action":"complete","provider":"discord","state":"00000000000000000000000000000000","code":"fake"})");
+    CHECK(requests == 0 && !replies.empty() && replies[0].find("authorization_expired") != std::string::npos);
+    replies.clear();
+    send("{\"request\":3,\"action\":\"complete\",\"provider\":\"discord\",\"state\":\"" + state + "\",\"code\":\"valid-code\"}");
+    const auto terminal = CJsonValue::Parse(wait("result")); CHECK(terminal && terminal->Find("error")->AsString().empty());
+    CHECK(requests == 2 && CAccountDataStore::IsSaveCommitted(CAccountDataStore::CurrentSaveFence()));
+    std::string id; std::vector<SLinkedIdentity> links;
+    CHECK(CAccountDataStore::GetIdentityState("link-fixture", id, links) && links.size() == 1 && links[0].subject == "987654321");
+    replies.clear();
+    send("{\"request\":4,\"action\":\"complete\",\"provider\":\"discord\",\"state\":\"" + state + "\",\"code\":\"valid-code\"}");
+    CHECK(requests == 2 && !replies.empty() && replies[0].find("authorization_expired") != std::string::npos);
+    service.ShutDown();
+}
+
+TEST(AccountLinkServiceRejectsUnpreparedProvidersAndUnsolicitedCallbacks)
+{
+    CServerTestAccess fixture; auto* player = fixture.Player(fixture.World()); std::vector<std::string> replies;
+    const auto before = CAccountDataStore::SnapshotAccounts();
+    auto deliver = [&](CPlayer&, const std::string& payload) { replies.push_back(payload); return true; };
+    auto request = CJsonValue::Parse(R"({"request":1,"action":"complete","provider":"discord","state":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","code":"fake"})");
+    CHECK(request); if (!request) return;
+    fixture.server.AccountLinks().Request(*player, *request, deliver);
+    CHECK(replies.size() == 2 && (replies[0].find("not_configured") != std::string::npos || replies[0].find("authorization_expired") != std::string::npos));
+    CHECK(CAccountDataStore::SnapshotAccounts() == before);
+}
+
+TEST(ArchitectureCraftRejectionRepliesWithoutConsumingOrInventingReturns)
+{
+    CServerTestAccess fixture;
+    auto* player = fixture.Player(fixture.World());
+    const auto before = CAccountDataStore::GetInventory(player->GetProgressAccountName());
+    CServerTestAccess::SendCraft(fixture, *player, {static_cast<uint8_t>(EPetalType::Basic),
+        static_cast<uint8_t>(ERarity::Common), max_inventory_item_count + 5});
+    auto messages = CServerTestAccess::QueuedMessages(*player);
+    const auto result = std::find_if(messages.begin(), messages.end(), [](const auto& message) {
+        return message.type == ServerMessage::Type::EconomyResult;
+    });
+    CHECK(result != messages.end());
+    if (result != messages.end())
+    {
+        CHECK(result->craft_success == false && result->craft_consumed == 0);
+        CHECK(result->craft_petal_type == static_cast<uint8_t>(EPetalType::Basic));
+        CHECK(result->craft_items.empty());
+    }
+    CHECK(CAccountDataStore::GetInventory(player->GetProgressAccountName()) == before);
+    CHECK(std::any_of(messages.begin(), messages.end(), [](const auto& message) {
+        return message.type == ServerMessage::Type::Inventory;
+    }));
+
+    fixture.World().SetController(CreateWorldController(world_controller_keys::sandbox));
+    CHECK(player->HasIsolatedProgress());
+    player->m_send_buffer.clear(); player->m_send_offset = 0;
+    CServerTestAccess::SendForge(fixture, *player, {static_cast<uint8_t>(EPetalType::Basic),
+        static_cast<uint8_t>(ERarity::Super), 5});
+    messages = CServerTestAccess::QueuedMessages(*player);
+    CHECK(std::any_of(messages.begin(), messages.end(), [](const auto& message) {
+        return message.type == ServerMessage::Type::EconomyResult && message.craft_success == false &&
+               message.craft_consumed == 0 && message.craft_items.empty();
+    }));
+    CHECK(CAccountDataStore::GetInventory(player->GetAccountName()) == before);
+}
+
+TEST(ServerFailureExitCodesDistinguishStartupTickAndShutdownFromNormalStop)
+{
+    CServerTestAccess::CheckFailureExitCodes();
+}
+
+TEST(SandboxReentryUsesFreshInventoryIdentityAndReloadPreservesIt)
+{
+    CServerTestAccess fixture;
+    auto& world = fixture.World(); auto* player = fixture.Player(world);
+    world.SetController(CreateWorldController(world_controller_keys::sandbox));
+    const auto old_scope = player->GetInventoryAccountName();
+    const auto type = static_cast<uint8_t>(EPetalType::Basic), rarity = static_cast<uint8_t>(ERarity::Common);
+    CAccountDataStore::AddItem(old_scope, type, rarity, 5);
+    auto delayed = CServerTestAccess::EconomyRequest(fixture, *player, EEconomyOperation::Craft);
+    delayed.petal_type = type; delayed.rarity = rarity; delayed.count = 5;
+    world.SetController(CreateWorldController(world_controller_keys::open));
+    world.SetController(CreateWorldController(world_controller_keys::sandbox));
+    const auto next_scope = player->GetInventoryAccountName();
+    CHECK(next_scope != old_scope);
+    const auto before = CAccountDataStore::GetInventory(next_scope);
+    CServerTestAccess::SendEconomy(fixture, *player, delayed);
+    CHECK(CAccountDataStore::GetInventory(next_scope) == before);
+    SEconomyReceipt receipt; CHECK(!CAccountDataStore::FindEconomyReceipt(next_scope, delayed.context.request_id, receipt));
+    std::string error;
+    const auto path = Session().directory / "sandbox-instance-identity.json";
+    CHECK(CHotReloadSnapshotService::Capture(fixture.server, path, error));
+    CHECK(CHotReloadSnapshotService::Restore(fixture.server, path, error));
+    player = fixture.server.GetNetworkModule()->FindPlayerById(1);
+    CHECK(player && player->GetInventoryAccountName() == next_scope);
+    if (player) CHECK(CAccountDataStore::GetInventory(player->GetInventoryAccountName()) == before);
+}
+
+TEST(PvpRolesRejectOverlappingTeamsOverflowAndReusedSessions)
+{
+    CControllerParams params;
+    for (const auto* value : {"1", "255", "2147483647"})
+    {
+        params.Set("start_team", value);
+        CHECK(!CreateWorldController(world_controller_keys::pvp, params));
+    }
+    params.Set("start_team", "2"); params.Set("spectator_team", "3");
+    CHECK(!CreateWorldController(world_controller_keys::pvp, params));
+    params.Set("spectator_team", "200");
+    CServerTestAccess fixture; auto& world = fixture.World();
+    world.SetController(CreateWorldController(world_controller_keys::pvp, params));
+    auto* controller = dynamic_cast<CAntHelPvpController*>(world.GetController());
+    CHECK(controller); if (!controller) return;
+    auto* first = fixture.Player(world, 1); auto* second = fixture.Player(world, 2); auto* spectator = fixture.Player(world, 3);
+    for (auto* player : {first, second, spectator}) controller->OnPlayerArrivalCommitted(world, *player);
+    CHECK(controller->HasMatchTeam(*first) && controller->HasMatchTeam(*second));
+    CHECK(!controller->HasMatchTeam(*spectator) && controller->PlayerTeam(3) == 200);
+    CPlayer reused(sf::TcpSocket{}, 1, "runtime-player"); reused.Authenticate("runtime-player");
+    CHECK(!controller->HasMatchTeam(reused));
+    auto saved = MakeJsonObject(); CSnapshotWriter writer(saved.get()); controller->CaptureSnapshot(writer);
+    CAntHelPvpController restored(params); std::string error;
+    CHECK(restored.RestoreSnapshot(CSnapshotReader(saved.get()), controller->SnapshotVersion(), error));
+    CHECK(restored.HasMatchTeam(*first) && !restored.HasMatchTeam(*spectator) && !restored.HasMatchTeam(reused));
+    json_object_set_new(saved.get(), "player_role_3", json_integer(1));
+    CHECK(!restored.RestoreSnapshot(CSnapshotReader(saved.get()), controller->SnapshotVersion(), error));
+}
+
+TEST(AntennaeTalentUsesCurrentDefinitionWithoutReplacingStaticIdentity)
+{
+    auto& talents = AntennaeTalents();
+    auto* identity = &talents.back();
+    const float old_value = game_config::default_antennae_horizon_ultra;
+    game_config::default_antennae_horizon_ultra = 23.f;
+    CAntennaeBehavior behavior;
+    auto stats = EmptyFlowerStats(); STalentContext context; context.flower_stats = &stats;
+    talents.back().Apply(ETalentEvent::RebuildFlowerStats, context);
+    CHECK_NEAR(stats.horizon, behavior.GetStats(ERarity::Ultra).horizon, 0.001f);
+    CHECK(&AntennaeTalents().back() == identity);
+    stats = EmptyFlowerStats(); talents.front().Apply(ETalentEvent::RebuildFlowerStats, context);
+    CHECK_NEAR(stats.horizon, game_config::default_horizon * (1.f + 22.f / 3.f), 0.001f);
+    game_config::default_antennae_horizon_ultra = old_value;
+}
+
+TEST(WorldTerrainHistorySurvivesControllerReplacementAndSnapshotRestore)
+{
+    CServerTestAccess fixture;
+    auto* world = fixture.server.GetWorldModule()->CreateWorld("data/maps/test.tmj", world_controller_keys::mutable_terrain);
+    CHECK(world && world->GetMap() && !world->GetMap()->walls.empty()); if (!world || !world->GetMap()) return;
+    const auto id = world->GetId();
+    const auto wall = world->GetMap()->walls.front();
+    const auto before = world->GetMap()->walls.size();
+    world->Terrain().EraseTerrain({wall.center.x, wall.center.y}, 1.f);
+    const auto after = world->GetMap()->walls.size();
+    CHECK(after < before);
+    const auto revision = world->Terrain().Revision();
+    struct CWriter final : IPlayerSceneWriter
+    {
+        size_t tiles = 0, walls = 0;
+        bool TerrainTile(std::uint8_t, std::uint16_t, std::uint16_t, std::uint32_t) override { ++tiles; return true; }
+        bool RemoveWall(florrbt::Vector2f, florrbt::Vector2f) override { ++walls; return true; }
+    } first, second, restored;
+    CHECK(world->Terrain().WritePlayerScene(first)); CHECK(first.walls > 0);
+    world->SetController(CreateWorldController(world_controller_keys::open));
+    CHECK(world->Terrain().Revision() == revision && world->GetMap()->walls.size() == after);
+    CHECK(world->Terrain().WritePlayerScene(second));
+    CHECK(second.tiles == first.tiles && second.walls == first.walls);
+    const auto path = Session().directory / "world-terrain.json";
+    std::string error;
+    CHECK(CHotReloadSnapshotService::Capture(fixture.server, path, error));
+    CHECK(CHotReloadSnapshotService::Restore(fixture.server, path, error));
+    world = fixture.server.FindWorldById(id);
+    CHECK(world); if (!world) return;
+    CHECK(world->Terrain().WritePlayerScene(restored));
+    CHECK(world->GetMap()->walls.size() == after && world->Terrain().Revision() == revision);
+    CHECK(restored.tiles == first.tiles && restored.walls == first.walls);
+    auto invalid = MakeJsonObject(); CSnapshotWriter writer(invalid.get()); world->Terrain().CaptureSnapshot(writer);
+    json_object_set_new(invalid.get(), "terrain_dirty", json_pack("[[i,i]]", -1, 0));
+    CHECK(!world->Terrain().RestoreSnapshot(CSnapshotReader(invalid.get()), 1, error));
+    CHECK(world->GetMap()->walls.size() == after && world->Terrain().Revision() == revision);
+
+    auto legacy = LoadJsonFile(path, error); CHECK(legacy); if (!legacy) return;
+    auto* section = json_object_get(json_object_get(legacy.get(), "sections"), "worlds");
+    CHECK(json_integer_value(json_object_get(section, "version")) == 2);
+    auto* worlds = json_object_get(section, "data");
+    for (size_t i = 0; i < json_array_size(worlds); ++i)
+    {
+        auto* saved = json_array_get(worlds, i);
+        if (CSnapshotReader(saved).UInt32("world_id") != id) continue;
+        auto* controller = json_object_get(saved, "controller");
+        auto* controller_data = json_object_get(controller, "data");
+        auto* terrain = json_object_get(saved, "terrain");
+        CHECK(json_object_update(controller_data, terrain) == 0);
+        json_object_set_new(controller, "type", json_string("world_controller.mutable_terrain"));
+        json_object_set_new(controller, "version", json_integer(1));
+        json_object_del(saved, "terrain");
+    }
+    json_object_set_new(section, "version", json_integer(1));
+    const auto legacy_path = Session().directory / "legacy-controller-terrain.json";
+    CHECK(WriteJsonAtomically(legacy_path, legacy.get(), error));
+    CHECK(CHotReloadSnapshotService::Restore(fixture.server, legacy_path, error));
+    world = fixture.server.FindWorldById(id); CHECK(world);
+    if (world) CHECK(world->GetMap()->walls.size() == after);
+}
+
+TEST(ModePreparationFailurePreservesControllerBodiesAndProgressScopes)
+{
+    struct CPrevious final : COpenController
+    {
+        int departures = 0;
+        void OnPlayerDepartureCommitted(CGameWorld&, CPlayer&, CEntity*) override { ++departures; }
+    };
+    struct CRejected final : COpenController
+    {
+        bool PrepareActivation(CWorldPreparation&, std::string& error) const override
+        { error = "测试：准备失败"; return false; }
+    };
+    CServerTestAccess fixture; auto& world = fixture.World();
+    auto previous = std::make_unique<CPrevious>(); auto* original = previous.get();
+    CHECK(world.SetController(std::move(previous)));
+    auto* player = fixture.Player(world, 1); const auto body = player->GetEntity()->GetHandle();
+    const auto scope = player->GetInventoryAccountName();
+    const auto rejected = world.SetController(std::make_unique<CRejected>());
+    CHECK(!rejected && !rejected.recovering && world.GetController() == original && original->departures == 0);
+    CHECK(player->GetEntity()->GetHandle() == body && player->GetInventoryAccountName() == scope);
+    auto* missing = fixture.Player(world, 2); missing->Authenticate("missing-progress-record");
+    const auto accounts_before = CAccountDataStore::SnapshotAccounts().size();
+    const auto bad_scope = world.SetController(CreateWorldController(world_controller_keys::sandbox));
+    CHECK(!bad_scope && !world.IsRecovering() && world.GetController() == original && original->departures == 0);
+    CHECK(CAccountDataStore::SnapshotAccounts().size() == accounts_before);
+    CHECK(!player->HasIsolatedProgress());
+    auto* destination = fixture.server.GetWorldModule()->CreateWorld("data/maps/test.tmj", world_controller_keys::sandbox);
+    CHECK(destination); if (!destination) return;
+    const auto missing_body = missing->GetEntity()->GetHandle();
+    CHECK(!world.TransferPlayerEntityToWorld(*missing, *destination, florrbt::Vector2f{1024, 1024}));
+    CHECK(missing->GetWorld() == &world && missing->GetEntity()->GetHandle() == missing_body);
+    CHECK(original->departures == 0);
+    auto* npc = Spawn(*destination, EMobType::MechaFlower);
+    CHECK(!fixture.server.GetNetworkModule()->AssignPlayerEntity(missing->GetId(), *destination, npc->Id()));
+    CHECK(!npc->IsPlayerControlled() && missing->GetEntity()->GetHandle() == missing_body);
+}
+
+TEST(ModeCommitExceptionFreezesRoomAndBlocksSnapshotsAndEconomy)
+{
+    struct CBroken final : COpenController
+    {
+        void OnPlayerArrivalCommitted(CGameWorld&, CPlayer&) override { throw std::runtime_error("测试：进入回调失败"); }
+    };
+    CServerTestAccess fixture; auto& world = fixture.World(); auto* player = fixture.Player(world);
+    const auto result = world.SetController(std::make_unique<CBroken>());
+    CHECK(!result && result.committed && result.recovering && world.IsRecovering());
+    const auto pos = player->GetEntity()->Pos();
+    auto* mob = dynamic_cast<CMobBase*>(player->GetEntity()); mob->m_vel = {100, 0};
+    world.Tick(1.f); CHECK(player->GetEntity()->Pos() == pos);
+    CHECK(!fixture.server.GetNetworkModule()->QueueOwnerStateUpdate(*player));
+    const auto inventory = CAccountDataStore::GetInventory(player->GetInventoryAccountName());
+    auto request = CServerTestAccess::EconomyRequest(fixture, *player, EEconomyOperation::Craft);
+    request.petal_type = static_cast<uint8_t>(EPetalType::Basic); request.rarity = 1; request.count = 5;
+    CServerTestAccess::SendEconomy(fixture, *player, request);
+    SEconomyReceipt receipt;
+    CHECK(CAccountDataStore::FindEconomyReceipt(player->GetInventoryAccountName(), request.context.request_id, receipt));
+    CHECK(receipt.outcome == EEconomyOutcome::Forbidden && CAccountDataStore::GetInventory(player->GetInventoryAccountName()) == inventory);
+    std::string error;
+    CHECK(!CHotReloadSnapshotService::Capture(fixture.server, Session().directory / "recovery-incomplete.json", error));
+    CHECK(world.SetController(CreateWorldController(world_controller_keys::open)));
+    CHECK(!world.IsRecovering());
+}
+
+TEST(CommittedTransferFailureReportsRecoveryWithoutPretendingRollback)
+{
+    struct CBroken final : COpenController
+    {
+        void OnPlayerArrivalCommitted(CGameWorld&, CPlayer&) override { throw std::runtime_error("测试：迁移后回调失败"); }
+    };
+    CServerTestAccess fixture; auto& source = fixture.World(); auto* player = fixture.Player(source);
+    auto* destination = fixture.server.GetWorldModule()->CreateWorld("data/maps/test.tmj", world_controller_keys::open);
+    CHECK(destination); if (!destination) return;
+    CHECK(destination->SetController(std::make_unique<CBroken>()));
+    const auto result = source.TransferPlayerEntityToWorld(*player, *destination, florrbt::Vector2f{1024, 1024});
+    CHECK(result.committed && result.recovering);
+    CHECK(player->GetWorld() == destination && source.IsRecovering() && destination->IsRecovering());
+}
+
+TEST(EconomyLoadoutIsAtomicAndNpcRequestsCannotCrossControlScopes)
+{
+    CServerTestAccess fixture;
+    auto& world = fixture.World(); auto* player = fixture.Player(world);
+    const auto formal = CAccountDataStore::GetInventory(player->GetAccountName());
+    auto* npc = dynamic_cast<CFlower*>(Spawn(world, EMobType::MechaFlower));
+    CHECK(npc); if (!npc) return;
+    npc->LoadPetalSlot(0, FindPetalPrototype(EPetalType::Basic), ERarity::Common);
+    npc->LoadPetalSlot(1, FindPetalPrototype(EPetalType::Rose), ERarity::Common);
+    CHECK(fixture.server.GetNetworkModule()->AssignPlayerEntity(player->GetId(), world, npc->Id()));
+    auto request = CServerTestAccess::EconomyRequest(fixture, *player, EEconomyOperation::Loadout);
+    const auto original = CAccountDataStore::GetSlots(player->GetInventoryAccountName());
+    request.primary = original; request.secondary.resize(original.size());
+    npc->GetSlots()[0].SpawnCopy(0, npc);
+    auto* petal = npc->GetSlots()[0].m_p_petals[0]; CHECK(petal);
+    std::swap(request.primary[0], request.primary[1]);
+    request.primary.back() = {255, 1, 1};
+    CServerTestAccess::SendEconomy(fixture, *player, request);
+    CHECK(CAccountDataStore::GetSlots(player->GetInventoryAccountName()) == original);
+    CHECK(npc->GetSlots()[0].m_p_petals[0] == petal && petal && !petal->IsMarkedForDes());
+
+    request = CServerTestAccess::EconomyRequest(fixture, *player, EEconomyOperation::Loadout);
+    request.primary = original; request.secondary.resize(original.size());
+    std::swap(request.primary[0], request.primary[1]);
+    npc->GetSlots()[2].SetBanSource(777, true);
+    CServerTestAccess::SendEconomy(fixture, *player, request);
+    CHECK(CAccountDataStore::GetSlots(player->GetInventoryAccountName()) == request.primary);
+    CHECK(npc->GetSlots()[0].m_p_proto->m_type == EPetalType::Rose);
+    CHECK(npc->GetSlots()[2].IsBanned());
+    CHECK(petal->IsMarkedForDes());
+    npc->GetSlots()[0].SpawnCopy(0, npc);
+    auto* replacement = npc->GetSlots()[0].m_p_petals[0];
+    CServerTestAccess::SendEconomy(fixture, *player, request);
+    CHECK(npc->GetSlots()[0].m_p_petals[0] == replacement);
+
+    auto* second = Spawn(world, EMobType::MechaFlower);
+    const auto old_scope = player->GetInventoryAccountName();
+    CHECK(fixture.server.GetNetworkModule()->AssignPlayerEntity(player->GetId(), world, second->Id()));
+    const auto next = CAccountDataStore::GetSlots(player->GetInventoryAccountName());
+    CHECK(player->GetInventoryAccountName() != old_scope);
+    CServerTestAccess::SendEconomy(fixture, *player, request);
+    CHECK(CAccountDataStore::GetSlots(player->GetInventoryAccountName()) == next);
+    CHECK(CAccountDataStore::GetInventory(player->GetAccountName()) == formal);
+}
+
+TEST(DeathLoadoutPersistsWithoutSpawningAndSameWorldRespawnKeepsScene)
+{
+    CServerTestAccess fixture; auto& world = fixture.World(); auto* player = fixture.Player(world);
+    std::string error;
+    CHECK(CAccountDataStore::CommitRegistration("death-loadout", "offline-fixture-hash", "", "127.0.0.1", &error));
+    player->Authenticate("death-loadout"); player->RestoreSavedLoadout();
+    auto* corpse = dynamic_cast<CPlayerFlower*>(player->GetEntity()); CHECK(corpse); if (!corpse) return;
+    const auto type = static_cast<uint8_t>(EPetalType::Rose);
+    CAccountDataStore::AddItem(player->GetInventoryAccountName(), type, 1, 3);
+    const auto live_actor = CServerTestAccess::EconomyRequest(fixture, *player, EEconomyOperation::Loadout).context.actor_scope;
+    corpse->EnterDeathState();
+    auto request = CServerTestAccess::EconomyRequest(fixture, *player, EEconomyOperation::Loadout);
+    CHECK(!request.context.actor_scope.empty() && request.context.actor_scope == live_actor);
+    request.primary = CAccountDataStore::GetSlots(player->GetInventoryAccountName());
+    request.primary.resize(corpse->GetSlots().size()); request.secondary.resize(request.primary.size());
+    request.primary[0] = {type, 1, 1}; request.secondary[0] = {type, 1, 1};
+    CServerTestAccess::SendEconomy(fixture, *player, request);
+    SEconomyReceipt receipt;
+    CHECK(CAccountDataStore::FindEconomyReceipt(player->GetInventoryAccountName(), request.context.request_id, receipt));
+    CHECK(receipt.outcome == EEconomyOutcome::Completed);
+    CHECK(corpse->GetSlots()[0].m_p_proto->m_type == EPetalType::Rose);
+    const auto inventory = CAccountDataStore::GetInventory(player->GetInventoryAccountName());
+    CServerTestAccess::SendEconomy(fixture, *player, request);
+    CHECK(CAccountDataStore::GetInventory(player->GetInventoryAccountName()) == inventory);
+    for (int i = 0; i < 100; ++i) corpse->Tick(0.05f);
+    CHECK(corpse->m_is_dead && corpse->Health() == 0.f);
+    for (const auto& slot : corpse->GetSlots())
+        for (const auto* petal : slot.m_p_petals) CHECK(!petal);
+    CHECK(corpse->ReviveFromYggdrasil(0.5f));
+    CHECK(corpse->GetSlots()[0].m_p_proto->m_type == EPetalType::Rose);
+    corpse->EnterDeathState();
+
+    player->m_send_buffer.clear(); player->m_send_offset = 0;
+    CHECK(CPlayerLifecycleService{}.RespawnPlayer(*player, world, *fixture.server.GetNetworkModule()));
+    auto* revived = dynamic_cast<CPlayerFlower*>(player->GetEntity());
+    CHECK(revived && revived != corpse && !revived->IsDead()); if (!revived) return;
+    CHECK(revived->GetSlots()[0].m_p_proto->m_type == EPetalType::Rose);
+    CHECK(CAccountDataStore::GetSecondarySlots(player->GetInventoryAccountName())[0] == request.secondary[0]);
+    const auto messages = CServerTestAccess::QueuedMessages(*player);
+    CHECK(std::any_of(messages.begin(), messages.end(), [](const auto& msg) { return msg.type == ServerMessage::Type::OwnerState; }));
+    CHECK(std::any_of(messages.begin(), messages.end(), [](const auto& msg) { return msg.type == ServerMessage::Type::Inventory; }));
+    CHECK(std::none_of(messages.begin(), messages.end(), [](const auto& msg) {
+        return msg.type == ServerMessage::Type::Welcome || msg.type == ServerMessage::Type::TerrainDelta ||
+            msg.type == ServerMessage::Type::TerrainWallRemove;
+    }));
+    const auto saved = CAccountDataStore::GetSlots(player->GetInventoryAccountName());
+    auto stale = CServerTestAccess::EconomyRequest(fixture, *player, EEconomyOperation::Loadout);
+    CHECK(stale.context.actor_scope != live_actor);
+    stale.context.actor_scope = live_actor; stale.primary = request.primary; stale.secondary = request.secondary;
+    std::swap(stale.primary[0], stale.primary[1]);
+    CServerTestAccess::SendEconomy(fixture, *player, stale);
+    CHECK(CAccountDataStore::FindEconomyReceipt(player->GetInventoryAccountName(), stale.context.request_id, receipt));
+    CHECK(receipt.outcome == EEconomyOutcome::Forbidden);
+    CHECK(CAccountDataStore::GetSlots(player->GetInventoryAccountName()) == saved);
+}
+
+TEST(DeathLoadoutDoesNotActivateEquipmentAurasBeforeRevival)
+{
+    CServerTestAccess fixture; auto& world = fixture.World(); auto* player = fixture.Player(world);
+    std::string error;
+    CHECK(CAccountDataStore::CommitRegistration("death-aura", "offline-fixture-hash", "", "127.0.0.1", &error));
+    player->Authenticate("death-aura"); player->RestoreSavedLoadout();
+    auto* corpse = dynamic_cast<CPlayerFlower*>(player->GetEntity()); CHECK(corpse); if (!corpse) return;
+    corpse->EnterDeathState();
+    const auto max_health = corpse->GetFinalStats()->max_health;
+    const auto radius = corpse->Radius();
+    const auto type = static_cast<uint8_t>(EPetalType::Corruption), rarity = static_cast<uint8_t>(ERarity::Primordial);
+    CAccountDataStore::AddItem(player->GetInventoryAccountName(), type, rarity, 1);
+    auto request = CServerTestAccess::EconomyRequest(fixture, *player, EEconomyOperation::Loadout);
+    request.primary = CAccountDataStore::GetSlots(player->GetInventoryAccountName());
+    request.primary.resize(corpse->GetSlots().size()); request.secondary.resize(request.primary.size());
+    request.primary[0] = {type, rarity, 1};
+    CServerTestAccess::SendEconomy(fixture, *player, request);
+    SEconomyReceipt receipt;
+    CHECK(CAccountDataStore::FindEconomyReceipt(player->GetInventoryAccountName(), request.context.request_id, receipt));
+    CHECK(receipt.outcome == EEconomyOutcome::Completed);
+    corpse->RebuildFinalStats();
+    for (int i = 0; i < 20; ++i) corpse->Tick(0.05f);
+    CHECK(corpse->IsDead() && !corpse->HasState<CCorruptionState>());
+    CHECK(corpse->Health() == 0.f && corpse->GetFinalStats()->max_health == max_health && corpse->Radius() == radius);
+    CHECK(corpse->ReviveFromYggdrasil(0.5f));
+    corpse->Tick(0.05f);
+    CHECK(corpse->HasState<CCorruptionState>());
+}
+
+TEST(DeathLoadoutStillHonorsControllerLocksAndForbiddenForge)
+{
+    struct CLocked final : IGameController
+    {
+        void OnTick(CGameWorld&, float) override {}
+        std::string_view SnapshotKey() const override { return "test.death_loadout_locked"; }
+        bool LocksPetalLoadout() const override { return true; }
+    };
+    CServerTestAccess fixture; auto& world = fixture.World(); auto* player = fixture.Player(world);
+    auto* corpse = dynamic_cast<CPlayerFlower*>(player->GetEntity()); CHECK(corpse); if (!corpse) return;
+    corpse->EnterDeathState();
+    auto request = CServerTestAccess::EconomyRequest(fixture, *player, EEconomyOperation::Forge);
+    request.petal_type = static_cast<uint8_t>(EPetalType::Basic); request.rarity = static_cast<uint8_t>(ERarity::Super); request.count = 5;
+    CServerTestAccess::SendEconomy(fixture, *player, request);
+    SEconomyReceipt receipt;
+    CHECK(CAccountDataStore::FindEconomyReceipt(player->GetInventoryAccountName(), request.context.request_id, receipt));
+    CHECK(receipt.outcome == EEconomyOutcome::Forbidden);
+    CHECK(world.SetController(std::make_unique<CLocked>()));
+    request = CServerTestAccess::EconomyRequest(fixture, *player, EEconomyOperation::Loadout);
+    request.primary.resize(corpse->GetSlots().size()); request.secondary.resize(request.primary.size());
+    const auto inventory = CAccountDataStore::GetInventory(player->GetInventoryAccountName());
+    CServerTestAccess::SendEconomy(fixture, *player, request);
+    CHECK(CAccountDataStore::FindEconomyReceipt(player->GetInventoryAccountName(), request.context.request_id, receipt));
+    CHECK(receipt.outcome == EEconomyOutcome::Forbidden);
+    CHECK(CAccountDataStore::GetInventory(player->GetInventoryAccountName()) == inventory);
+}
+
+TEST(EconomyRepliesWaitForDurableReceiptAndReplayDoesNotConsumeAgain)
+{
+    CServerTestAccess fixture;
+    auto* player = fixture.Player(fixture.World());
+    const auto type = static_cast<uint8_t>(EPetalType::Basic), rarity = static_cast<uint8_t>(ERarity::Common);
+    CAccountDataStore::AddItem(player->GetInventoryAccountName(), type, rarity, 10);
+    CHECK(CAccountDataStore::Flush());
+    auto request = CServerTestAccess::EconomyRequest(fixture, *player, EEconomyOperation::Craft);
+    request.petal_type = type; request.rarity = rarity; request.count = 5;
+    {
+        CAccountDataStore::CSaveBatch hold;
+        CServerTestAccess::SendEconomy(fixture, *player, request, false);
+        const auto messages = CServerTestAccess::QueuedMessages(*player);
+        CHECK(std::none_of(messages.begin(), messages.end(), [](const auto& msg) {
+            return msg.type == ServerMessage::Type::EconomyResult;
+        }));
+    }
+    const auto after = CAccountDataStore::GetInventory(player->GetInventoryAccountName());
+    CHECK(CAccountDataStore::Flush());
+    CServerTestAccess::SendEconomy(fixture, *player, request);
+    const auto messages = CServerTestAccess::QueuedMessages(*player);
+    CHECK(std::any_of(messages.begin(), messages.end(), [&](const auto& msg) {
+        return msg.type == ServerMessage::Type::EconomyResult && msg.economy_request_id == request.context.request_id &&
+               msg.economy_recorded && msg.economy_outcome == EEconomyOutcome::Completed;
+    }));
+    CServerTestAccess::SendEconomy(fixture, *player, request);
+    CHECK(CAccountDataStore::GetInventory(player->GetInventoryAccountName()) == after);
+}
+
+TEST(OrderedTickConsumesInputBeforeWorldAndPublishesCommittedPositions)
+{
+    CServerTestAccess fixture;
+    auto& world = fixture.World(); CServerTestAccess::ClearTestWalls(world);
+    // An isolated loopback pair exercises the actual receive/send stages;
+    // no game server listener, auth service or real account database starts.
+    sf::TcpListener listener;
+    CHECK(listener.listen(0, sf::IpAddress::LocalHost) == sf::Socket::Status::Done);
+    sf::TcpSocket client, accepted;
+    CHECK(client.connect(sf::IpAddress::LocalHost, listener.getLocalPort(), sf::seconds(2.f)) == sf::Socket::Status::Done);
+    CHECK(listener.accept(accepted) == sf::Socket::Status::Done);
+    accepted.setBlocking(false);
+    auto player = std::make_unique<CPlayer>(std::move(accepted), 1, "runtime-player");
+    player->Authenticate("runtime-player");
+    player->SetVersionVerified(true); // This fixture starts after authentication.
+    auto* flower = dynamic_cast<CPlayerFlower*>(Spawn(world, EMobType::PlayerFlower));
+    CHECK(flower != nullptr); if (!flower) return;
+    player->SetOwnedEntity(flower); CPlayer* raw = player.get();
+    CHECK(fixture.server.GetNetworkModule()->InsertRestoredPlayer(std::move(player)));
+    // The legacy wire axes are intentionally transposed by both clients and
+    // the controller. wire move_y drives world X.
+    ClientOperate input; input.type = ClientOperate::Type::Input; input.move_x = 0; input.move_y = 127;
+    ClientOperate attack; attack.type = ClientOperate::Type::Chores; attack.is_attacking = true;
+    std::array<std::uint8_t, 8> request{};
+    size_t length = ClientOperate::pack(input, request.data());
+    length += ClientOperate::pack(attack, request.data() + length);
+    CHECK(client.send(request.data(), length) == sf::Socket::Status::Done);
+    client.setBlocking(false);
+    sf::SocketSelector ready; ready.add(raw->GetSocket()); CHECK(ready.wait(sf::seconds(2.f)));
+    struct SIntervalRestore { float old = game_config::network_snapshot_interval;
+        ~SIntervalRestore() { game_config::network_snapshot_interval = old; } } restore;
+    game_config::network_snapshot_interval = 0.f;
+    const float before = flower->Pos().x;
+    const auto flower_ref = flower->GetHandle();
+    fixture.TickModules(0.05f);
+    CHECK(world.ResolveEntity(flower_ref) == flower); if (world.ResolveEntity(flower_ref) != flower) return;
+    CHECK(flower->IsAttacking() && flower->Pos().x > before);
+    sf::SocketSelector output; output.add(client); CHECK(output.wait(sf::seconds(2.f)));
+    std::vector<std::uint8_t> received;
+    std::array<std::uint8_t, 65536> buffer{};
+    size_t count = 0;
+    while (client.receive(buffer.data(), buffer.size(), count) == sf::Socket::Status::Done)
+        received.insert(received.end(), buffer.begin(), buffer.begin() + count);
+    bool found = false;
+    for (size_t offset = 0; offset + 2 <= received.size();)
+    {
+        const size_t size = received[offset] | (size_t(received[offset + 1]) << 8);
+        CHECK(size > 0 && offset + 2 + size <= received.size());
+        if (!size || offset + 2 + size > received.size()) break;
+        const auto message = ServerMessage::parse(received.data() + offset + 2, size);
+        if (message.type == ServerMessage::Type::Snapshot)
+            for (const auto& entity : message.entities)
+                if (entity.entity_id == static_cast<net_entity_id>(flower->Id()))
+                { found = true; CHECK_NEAR(entity.pos.x, flower->Pos().x, 0.001f); }
+        offset += size + 2;
+    }
+    CHECK(found);
+}
+
+TEST(OrderedTickDefersNewWorldParticipationUntilNextFrame)
+{
+    class CCounter final : public IGameController
+    {
+      public:
+        explicit CCounter(int& count) : counter(count) {}
+        int& counter;
+        void OnTick(CGameWorld&, float) override { ++counter; }
+        std::string_view SnapshotKey() const override { return "test.new_world_counter"; }
+    };
+    class CCreator final : public IGameController
+    {
+      public:
+        IWorldModule& worlds; CGameWorld*& created; int& count;
+        CCreator(IWorldModule& w, CGameWorld*& c, int& n) : worlds(w), created(c), count(n) {}
+        void OnTick(CGameWorld&, float) override
+        {
+            if (created) return;
+            created = worlds.CreateWorld("data/maps/test.tmj", world_controller_keys::open);
+            CHECK(created != nullptr); if (!created) return;
+            created->SetController(std::make_unique<CCounter>(count));
+        }
+        std::string_view SnapshotKey() const override { return "test.world_creator"; }
+    };
+    CServerTestAccess fixture;
+    auto* worlds = fixture.server.GetWorldModule();
+    int count = 0; CGameWorld* created = nullptr;
+    fixture.World().SetController(std::make_unique<CCreator>(*worlds, created, count));
+    worlds->Tick(0.05f); CHECK(created && count == 0);
+    worlds->Tick(0.05f); CHECK(count == 1);
+}
+
+TEST(OrderedTickPoisonUsesOnlyItsRemainingLifetime)
+{
+    Session();
+    CGameWorld world("data/maps/test.tmj", 311); world.SetController(nullptr); world.ClearEntitiesForRestore();
+    auto* mob = Spawn(world, EMobType::Bee); mob->Health() = 1000.f;
+    auto poison = std::make_unique<CPoisonState>(mob, 0.01f, 100.f, ERarity::Common, nullptr);
+    auto* first = poison.get(); mob->AddState(std::move(poison));
+    first->Tick(0.05f);
+    CHECK_NEAR(mob->Health(), 999.f, 0.001f); CHECK_NEAR(first->m_timer, 0.f, 0.00001f);
+    mob->RemoveState(first);
+    poison = std::make_unique<CPoisonState>(mob, endless, 100.f, ERarity::Common, nullptr);
+    auto* permanent = poison.get(); mob->AddState(std::move(poison));
+    permanent->Tick(0.05f);
+    CHECK_NEAR(mob->Health(), 994.f, 0.001f); CHECK(permanent->m_timer == endless);
+}
+
+TEST(OrderedTickContactAttacksAreCapturedBeforeEitherDamageCallback)
+{
+    class CCounterHit final : public CMob<SMobStats>
+    {
+      public:
+        explicit CCounterHit(CGameWorld& world) : CMob(&world, {2000, 2000}, 30.f, EMobType::Bee, ERarity::Common, SMobStats{})
+        { m_base_stats.damage = m_final_stats.damage = 100.f; Health() = 1.f; TickMode() = EEntityTickMode::Always; }
+        void OnTickActions(float) override {}
+        void OnTakeDamage(float damage, CEntity* source, EDamageType type) override
+        {
+            m_base_stats.damage = m_final_stats.damage = 0.f;
+            CMob<SMobStats>::OnTakeDamage(damage, source, type);
+        }
+    };
+    Session();
+    CGameWorld world("data/maps/test.tmj", 312); world.SetController(nullptr); world.ClearEntitiesForRestore();
+    CServerTestAccess::ClearTestWalls(world);
+    auto* first = world.InsertEntity(std::make_unique<CCounterHit>(world));
+    auto* second = world.InsertEntity(std::make_unique<CCounterHit>(world));
+    const auto first_ref = first->GetHandle(), second_ref = second->GetHandle();
+    world.Tick(0.05f);
+    CHECK(world.ResolveEntity(first_ref) == nullptr && world.ResolveEntity(second_ref) == nullptr);
+}
+
+TEST(SourcedSlotBansDoNotReleaseOtherStatesOrModePolicy)
+{
+    CServerTestAccess fixture;
+    auto* flower = dynamic_cast<CFlower*>(fixture.Player(fixture.World())->GetEntity());
+    CHECK(flower != nullptr); if (!flower) return;
+    { CBanSlotState unattached(flower, 1.f, 0, ERarity::Common); CHECK(!flower->GetSlots()[0].IsBanned()); }
+    auto a = std::make_unique<CBanSlotState>(flower, 1.f, 0, ERarity::Common); auto* first = a.get();
+    auto b = std::make_unique<CBanSlotState>(flower, 3.f, 0, ERarity::Common); auto* second = b.get();
+    flower->AddState(std::move(a)); flower->AddState(std::move(b));
+    CHECK(flower->GetSlots()[0].IsBanned());
+    CHECK(flower->RemoveState(first)); CHECK(flower->GetSlots()[0].IsBanned());
+    flower->SetBanned(true, 0);
+    CHECK(flower->RemoveState(second)); CHECK(flower->GetSlots()[0].IsBanned());
+    flower->SetBanned(false, 0); CHECK(!flower->GetSlots()[0].IsBanned());
+}
+
+TEST(SourcedCorruptionRestoresCurrentBaseAfterLastSource)
+{
+    CServerTestAccess fixture;
+    auto* bee = Spawn(fixture.World(), EMobType::Bee); bee->SetTeam(2);
+    auto a = std::make_unique<CCorruptionState>(bee, 1.f, ERarity::Common); auto* first = a.get();
+    auto b = std::make_unique<CCorruptionState>(bee, 3.f, ERarity::Common); auto* second = b.get();
+    bee->AddState(std::move(a)); bee->AddState(std::move(b)); CHECK(bee->Team() == 0);
+    bee->RemoveState(first); CHECK(bee->Team() == 0);
+    bee->SetTeam(7); CHECK(bee->Team() == 0 && bee->BaseTeam() == 7);
+    bee->RemoveState(second); CHECK(bee->Team() == 7);
+}
+
+TEST(SourcedDiggingOnlyReloadsAfterLastSuppressionEnds)
+{
+    CServerTestAccess fixture;
+    auto* flower = dynamic_cast<CFlower*>(fixture.Player(fixture.World())->GetEntity());
+    CHECK(flower != nullptr); if (!flower) return;
+    flower->LoadPetalSlot(0, FindPetalPrototype(EPetalType::Basic), ERarity::Common);
+    auto a = std::make_unique<CDiggingState>(flower, 1.f, ERarity::Common); auto* first = a.get();
+    auto b = std::make_unique<CDiggingState>(flower, 3.f, ERarity::Common); auto* second = b.get();
+    flower->AddState(std::move(a)); flower->AddState(std::move(b)); flower->RefreshPetalSuppression();
+    const auto suspended_timers = flower->GetSlots()[0].m_reload_timers;
+    flower->RemoveState(first);
+    CHECK(flower->ArePetalsSuppressed() && flower->HasPendingPetalReload());
+    CHECK(flower->GetSlots()[0].m_reload_timers == suspended_timers);
+    flower->RemoveState(second);
+    CHECK(!flower->ArePetalsSuppressed() && !flower->HasPendingPetalReload());
+    CHECK(flower->GetSlots()[0].m_reload_timers == flower->GetSlots()[0].m_reload_durations);
+}
+
+TEST(SourcedEffectsRestoreAuthoredPolicySeparatelyFromRuntimeStates)
+{
+    CServerTestAccess fixture;
+    auto& world = fixture.World();
+    auto* flower = dynamic_cast<CFlower*>(fixture.Player(world)->GetEntity());
+    CHECK(flower != nullptr); if (!flower) return;
+    const auto ref = flower->GetHandle();
+    flower->SetTeam(2);
+    flower->AddState(std::make_unique<CCorruptionState>(flower, 3.f, ERarity::Common));
+    flower->AddState(std::make_unique<CNullificationState>(flower, 3.f, ERarity::Common));
+    flower->SetTeam(7);
+    flower->AddState(std::make_unique<CBanSlotState>(flower, 3.f, 0, ERarity::Common));
+    flower->SetBanned(true, 1);
+    flower->AddState(std::make_unique<CBanSlotState>(flower, 3.f, 1, ERarity::Common));
+    const auto path = Session().directory / "sourced-effects.json";
+    std::string error;
+    CHECK(CHotReloadSnapshotService::Capture(fixture.server, path, error));
+    CHECK(CHotReloadSnapshotService::Restore(fixture.server, path, error));
+    flower = dynamic_cast<CFlower*>(world.ResolveEntity(ref));
+    CHECK(flower != nullptr); if (!flower) return;
+    CHECK(flower->Team() == 0 && flower->BaseTeam() == 7);
+    CHECK(flower->FindFirstState<CCorruptionState>() && !flower->FindFirstState<CCorruptionState>()->IsRuleManaged());
+    CHECK(flower->FindFirstState<CNullificationState>() && !flower->FindFirstState<CNullificationState>()->IsRuleManaged());
+    for (auto* state : flower->FindStates<CBanSlotState>()) flower->RemoveState(state);
+    CHECK(!flower->GetSlots()[0].IsBanned() && flower->GetSlots()[1].IsBanned());
+    for (auto* state : flower->FindStates<CCorruptionState>()) flower->RemoveState(state);
+    CHECK(flower->Team() == 7);
+}
+
+TEST(ArchitectureBodylessSessionsKeepRoomRulesAndManualRespawnDestination)
+{
+    CServerTestAccess fixture;
+    auto* worlds = fixture.server.GetWorldModule();
+    auto* room = worlds->CreateRoomWorld("data/maps/test.tmj", world_controller_keys::open, 7801);
+    CHECK(room != nullptr); if (!room) return;
+    auto* player = fixture.Player(*room);
+    player->GetEntity()->MarkForDestroy(); room->FlushEntityRemovals();
+    CHECK(!player->GetEntity() && player->GetWorld() == room);
+    CHECK(room->Players().size() == 1 && room->GetPlayerCount() == 1);
+    const auto room_id = room->GetId();
+    worlds->Tick(game_config::room_idle_destroy_seconds + 1.f);
+    CHECK(worlds->FindWorldById(room_id) == room);
+    if (worlds->FindWorldById(room_id) != room) return;
+    room->SetController(CreateWorldController(world_controller_keys::waiting));
+    const auto secondary_before = CAccountDataStore::GetSecondarySlots(player->GetProgressAccountName());
+    CAccountDataStore::AddItem(player->GetProgressAccountName(), static_cast<uint8_t>(EPetalType::Basic),
+        static_cast<uint8_t>(ERarity::Common), 1);
+    SSlotInput equip;
+    equip.slot_index = 0; equip.petal_type = static_cast<uint8_t>(EPetalType::Basic);
+    equip.rarity = static_cast<uint8_t>(ERarity::Common);
+    CServerTestAccess::SendSecondary(fixture, *player, equip);
+    CHECK(CAccountDataStore::GetSecondarySlots(player->GetProgressAccountName()) == secondary_before);
+    CAccountDataStore::TakeItem(player->GetProgressAccountName(), equip.petal_type, equip.rarity, 1);
+    room->SetController(CreateWorldController(world_controller_keys::sandbox));
+    CHECK(player->HasIsolatedProgress());
+    CServerTestAccess::SendRespawn(fixture, *player);
+    CHECK(player->GetEntity() && player->GetEntity()->GameWorld() == room);
+    CHECK(player->HasIsolatedProgress());
+}
+
+TEST(ArchitectureSameWorldTeleportOnlyAppliesDestinationEnvironment)
+{
+    CServerTestAccess fixture;
+    auto& world = fixture.World(); CServerTestAccess::SetShortcutTestTerrain(world);
+    auto* player = fixture.Player(world);
+    auto* flower = dynamic_cast<CFlower*>(player->GetEntity());
+    flower->Pos() = {1900, 1000}; flower->SynchronizeEnvironment();
+    flower->LoadPetalSlot(0, FindPetalPrototype(EPetalType::Leaf), ERarity::Common);
+    auto& slot = flower->GetSlots()[0]; slot.SpawnCopy(0, flower);
+    auto* original_petal = slot.m_p_petals[0]; CHECK(original_petal != nullptr);
+    CHECK(world.TransferPlayerEntityToWorld(*player, world, florrbt::Vector2f{2200, 1000}));
+    flower->SynchronizeEnvironmentAfterDisplacement();
+    CHECK(!flower->IsInShortcut() && slot.m_p_petals[0] == original_petal);
+    CHECK(!original_petal->IsMarkedForDes());
+    CHECK(world.TransferPlayerEntityToWorld(*player, world, florrbt::Vector2f{2050, 1000}));
+    CHECK(flower->IsInShortcut() && flower->ArePetalsSuppressed() && slot.m_p_petals[0] == nullptr);
+    CHECK(world.TransferPlayerEntityToWorld(*player, world, florrbt::Vector2f{2200, 1000}));
+    CHECK(!flower->IsInShortcut() && slot.m_reload_timers[0] > 0.f);
+    const auto timers = slot.m_reload_timers;
+    flower->SynchronizeEnvironmentAfterDisplacement(); CHECK(slot.m_reload_timers == timers);
+}
+
+TEST(ArchitectureEouMatchAnnouncementsStayInTheirWorld)
+{
+    CServerTestAccess fixture;
+    auto* outside = fixture.Player(fixture.World(), 1);
+    auto* room = fixture.server.GetWorldModule()->CreateWorld("data/maps/eou_small.tmj", world_controller_keys::ant_kingdom);
+    CHECK(room != nullptr); if (!room) return;
+    auto* inside = fixture.Player(*room, 2);
+    auto* controller = dynamic_cast<CAntKingdomController*>(room->GetController());
+    CHECK(controller != nullptr); if (!controller) return;
+    controller->OnPlayerArrivalCommitted(*room, *inside);
+    auto* team = controller->FindTeam(controller->PlayerTeam(inside->GetId()));
+    CHECK(team != nullptr); if (!team) return;
+    const auto queen_ref = team->Queen();
+    auto* queen = room->GetEntity(queen_ref.id, queen_ref.generation);
+    CHECK(queen != nullptr); if (!queen) return;
+    outside->m_send_buffer.clear(); outside->m_send_offset = 0;
+    inside->m_send_buffer.clear(); inside->m_send_offset = 0;
+    queen->Health() = 0.f; queen->MarkForDestroy(EEntityRemovalReason::Defeated);
+    room->FlushEntityRemovals();
+    const auto has_announcement = [](const auto& messages) {
+        return std::any_of(messages.begin(), messages.end(), [](const auto& message) {
+            return message.type == ServerMessage::Type::Chat && message.chat.message.find("has fallen") != std::string::npos;
+        });
+    };
+    CHECK(has_announcement(CServerTestAccess::QueuedMessages(*inside)));
+    CHECK(!has_announcement(CServerTestAccess::QueuedMessages(*outside)));
+}
+
+TEST(ArchitectureSquadSurvivesRetainedReconnectAndAvatarReplacement)
+{
+    CServerTestAccess fixture;
+    auto& world = fixture.World(); world.ConfigureExtensions({true, false, false});
+    auto* first = fixture.Player(world, 1);
+    auto* second = fixture.Player(world, 2);
+    auto* squads = fixture.server.Extensions().Globals().Find<CPartyExtension>();
+    CHECK(squads != nullptr); if (!squads) return;
+    CHECK(squads->Invite(*first, *second)); CHECK(squads->Accept(*second, *first));
+    CHECK(squads->Members(*first).size() == 2);
+    second->DetachSocket(); fixture.server.Extensions().RefreshAllWorlds();
+    CHECK(squads->Members(*first).size() == 2);
+    second->GetEntity()->MarkForDestroy(); world.FlushEntityRemovals();
+    fixture.server.Extensions().RefreshAllWorlds();
+    CHECK(!second->GetEntity() && squads->Members(*first).size() == 2);
+    second->AttachSocket(sf::TcpSocket{});
+    CPlayerLifecycleService lifecycle;
+    CHECK(lifecycle.SpawnPlayer(*second, world, EPlayerSpawnReason::Respawn));
+    fixture.server.Extensions().RefreshAllWorlds();
+    CHECK(squads->Members(*first).size() == 2);
+    CHECK(fixture.server.GetNetworkModule()->KickPlayer(second->GetId(), "offline fixture cleanup"));
+    fixture.server.Extensions().RefreshAllWorlds();
+    CHECK(squads->Members(*first).size() == 1);
+}
+
+TEST(ArchitectureInternalProgressNamesCannotRegisterOrAuthenticate)
+{
+    Session();
+    SAccountAuthWork work;
+    std::string error;
+    CHECK(!CAccountDataStore::PrepareAuthentication("@sandbox:public", "test-password", "", "127.0.0.1", true, work, &error));
+    CHECK(!CAccountDataStore::CommitRegistration("@sandbox:public", "offline-fixture-hash", "", "127.0.0.1", &error));
+    const std::string temporary = "@sandbox:architecture-auth-boundary";
+    CHECK(CAccountDataStore::SandboxCloneAccount(temporary, "runtime-player"));
+    // Even a matching trusted IP must never authenticate a progress-store key.
+    CHECK(!CAccountDataStore::PrepareAuthentication(temporary, "", "", "127.0.0.1", false, work, &error));
+    CHECK(work.account_name.empty());
+    CAccountDataStore::RemoveSandboxAccount(temporary);
+}
+
+TEST(ArchitectureTilesetCollectionsAndMixedSourcesLoadWithoutMissingWalls)
+{
+    for (const auto* name : {"garden", "garden_walltest", "ant_hel", "eou_small", "test", "waiting_room"})
+    {
+        const auto map = LoadMapFromTmj(std::string("data/maps/") + name + ".tmj");
+        CHECK(map && map->width > 0 && map->height > 0);
+    }
+    std::string error;
+    auto root = LoadJsonFile("data/maps/test.tmj", error);
+    CHECK(root != nullptr); if (!root) return;
+    auto tilesets = MakeJsonArray();
+    CJsonOwner embedded(json_loads(R"({"firstgid":1,"columns":0,"name":"inline","tilecount":1,
+        "tilewidth":256,"tileheight":256,"tiles":[{"id":0,"image":"unused.svg",
+        "imagewidth":256,"imageheight":256,"objectgroup":{"draworder":"index","name":"",
+        "opacity":1,"type":"objectgroup","visible":true,"objects":[{"id":1,"name":"","type":"",
+        "visible":true,"x":0,"y":0,"width":256,"height":256,"rotation":0}]}}]})", 0, nullptr));
+    CHECK(embedded != nullptr); if (!embedded) return;
+    CHECK(AppendJson(tilesets.get(), embedded.release()));
+    const auto external = std::filesystem::absolute("data/tiles/tileset.tsj").generic_string();
+    CHECK(AppendJson(tilesets.get(), json_pack("{s:i,s:s}", "firstgid", 145, "source", external.c_str())));
+    json_object_set_new(root.get(), "tilesets", tilesets.release());
+    json_t* layers = json_object_get(root.get(), "layers");
+    bool first = true;
+    for (size_t i = 0; i < json_array_size(layers); ++i)
+    {
+        json_t* layer = json_array_get(layers, i);
+        if (CSnapshotReader(layer).String("type") != "tilelayer") continue;
+        const size_t count = json_array_size(json_object_get(layer, "data"));
+        auto data = MakeJsonArray();
+        for (size_t j = 0; j < count; ++j)
+            CHECK(AppendJson(data.get(), json_integer(first && j == 0 ? 1 : first && j == 1 ? 169 : 0)));
+        json_object_set_new(layer, "data", data.release()); first = false;
+    }
+    const auto path = Session().directory / "mixed-tilesets.tmj";
+    CHECK(WriteJsonAtomically(path, root.get(), error));
+    const auto map = LoadMapFromTmj(path.string());
+    CHECK(map != nullptr); if (!map) return;
+    CHECK(map->walls.size() == 2); // one inline + one external, each emitted exactly once
+}
+
+TEST(ArchitectureAccountSaveRetriesWithoutAnotherGameplayMutation)
+{
+    const auto directory = Session().directory;
+    std::string error;
+    CHECK(CAccountDataStore::Flush(&error));
+    const auto path = directory / "accounts.json", blocked_temp = directory / "accounts.json.tmp";
+    std::filesystem::create_directory(blocked_temp); // block only the fixture's temporary output
+    const int original_points = CAccountDataStore::GetTalentPoints("runtime-player");
+    int points = original_points + 7;
+    CAccountDataStore::SetTalentPoints("runtime-player", points);
+    CHECK(!CAccountDataStore::Flush(&error));
+    CHECK(!error.empty());
+    points += 5;
+    CAccountDataStore::SetTalentPoints("runtime-player", points);
+    CHECK(!CAccountDataStore::Flush(&error)); // a newer generation must supersede the failed one
+    const auto generation = CAccountDataStore::CurrentSaveFence();
+    std::filesystem::remove(blocked_temp);
+    // Poll the read-only durable fence rather than repeatedly opening the
+    // destination file. Windows readers can deny atomic replacement while
+    // JSON parsing holds that file open, perturbing the retry being tested.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!CAccountDataStore::IsSaveCommitted(generation) && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(CAccountDataStore::IsSaveCommitted(generation));
+    bool persisted = false;
+    const auto json = CJsonValue::LoadFromFile(path);
+    if (json)
+        if (const auto* accounts = json->Find("accounts"); accounts && accounts->IsArray())
+            for (const auto& account : accounts->AsArray())
+                if (const auto* name = account.Find("name"); name && name->AsString() == "runtime-player")
+                    if (const auto* value = account.Find("talent_points")) persisted = value->AsInt() == points;
+    CHECK(persisted); // no Save/Flush/new mutation after repairing the filesystem
+    CAccountDataStore::SetTalentPoints("runtime-player", original_points);
+    CHECK(CAccountDataStore::Flush(&error));
+}
+
 TEST(ShortcutQuarterTileGeometryAndCoverAreClassifiedAtLoad)
 {
     const auto map = LoadMapFromTmj("data/maps/garden.tmj");
@@ -363,6 +1540,428 @@ TEST(ShortcutSuspendsStatContributionsAndPetalsButPreservesStatesAndTalents)
     CHECK((service.BuildEntitySnap(*flower, *flower).flags & static_cast<uint16_t>(ServerEntityFlag::Shortcut)) == 0);
 }
 
+TEST(CombatStateBarrierKeepsTriggerDamageAndAllowsExplicitProtection)
+{
+    Session();
+    struct CShieldOnHit final : CMob<SMobStats>
+    {
+        EStateApplyTiming timing = EStateApplyTiming::EventBoundary;
+        bool visible_inside = false;
+        explicit CShieldOnHit(CGameWorld& world) : CMob(&world, {1000.f, 1000.f}, 10.f, EMobType::Bee, ERarity::Common, {})
+        { TickMode() = EEntityTickMode::Always; Health() = m_base_stats.max_health = m_final_stats.max_health = 100.f; }
+        void OnTakeDamage(float damage, CEntity* attacker, EDamageType type) override
+        {
+            AddState(std::make_unique<CInvincibleState>(this, 1.f, ERarity::Common), timing);
+            visible_inside = HasState<CInvincibleState>();
+            CMob<SMobStats>::OnTakeDamage(damage, attacker, type);
+        }
+    };
+    CGameWorld world("data/maps/test.tmj", 607); world.SetController(nullptr); world.ClearEntitiesForRestore();
+    CServerTestAccess::ClearTestWalls(world);
+    auto owned = std::make_unique<CShieldOnHit>(world); auto* mob = owned.get(); world.InsertEntity(std::move(owned));
+    mob->TakeDamage(20.f, nullptr, EDamageType::Poison);
+    CHECK(!mob->visible_inside && mob->HasState<CInvincibleState>()); CHECK_NEAR(mob->Health(), 80.f, 0.001);
+    mob->Tick(0.05f); CHECK_NEAR(mob->Health(), 80.f, 0.001);
+    for (auto* state : mob->FindStates<CInvincibleState>()) mob->RemoveState(state);
+    mob->Health() = 1.f; mob->m_base_stats.damage = mob->m_final_stats.damage = 100.f; mob->SetTeam(1);
+    auto peer = std::make_unique<CShieldOnHit>(world); peer->Health() = 1.f;
+    peer->m_base_stats.damage = peer->m_final_stats.damage = 100.f; peer->SetTeam(2);
+    const auto first_ref = mob->GetHandle(), second_ref = world.InsertEntity(std::move(peer))->GetHandle();
+    world.Tick(0.05f);
+    CHECK(!world.ResolveEntity(first_ref) && !world.ResolveEntity(second_ref));
+    auto protected_actor = std::make_unique<CShieldOnHit>(world); auto* protected_mob = protected_actor.get();
+    protected_mob->timing = EStateApplyTiming::DamageProtection; world.InsertEntity(std::move(protected_actor));
+    protected_mob->TakeDamage(20.f, nullptr, EDamageType::Poison);
+    CHECK(protected_mob->visible_inside); CHECK_NEAR(protected_mob->Health(), 100.f, 0.001);
+}
+
+TEST(StateConstructionIsPureAndMergingWaitsForTheEventBarrier)
+{
+    Session();
+    CGameWorld world("data/maps/test.tmj", 608); world.SetController(nullptr); world.ClearEntitiesForRestore();
+    auto* mob = Spawn(world, EMobType::Bee); mob->Health() = 100.f;
+    mob->AddState(std::make_unique<CPoisonState>(mob, 1.f, 10.f, ERarity::Common, nullptr));
+    auto* old = mob->FindFirstState<CPoisonState>(); CHECK(old); if (!old) return;
+    const auto old_source = old->EffectSourceId();
+    { auto discarded = std::make_unique<CPoisonState>(mob, 2.f, 20.f, ERarity::Rare, nullptr); }
+    CHECK(mob->FindStateBySource(old_source) == old && old->m_timer == 1.f);
+    { auto discarded = std::make_unique<CUndeadState>(mob, 1.f, ERarity::Common, -1); }
+    CHECK(mob->Health() == 100.f && !mob->IsMarkedForDes());
+    mob->AddState(std::make_unique<CPsionicConnectionState>(mob, 1.f, ERarity::Common));
+    auto* psi = mob->FindFirstState<CPsionicConnectionState>(); CHECK(psi); if (!psi) return;
+    { auto discarded = std::make_unique<CPsionicConnectionState>(mob, endless, ERarity::Super); }
+    CHECK(psi->m_timer == 1.f && psi->m_rarity == ERarity::Common);
+    {
+        CCombatEventScope event(&world.CombatEvents());
+        mob->AddState(std::make_unique<CPoisonState>(mob, 2.f, 20.f, ERarity::Rare, nullptr));
+        mob->AddState(std::make_unique<CPsionicConnectionState>(mob, endless, ERarity::Super));
+        CHECK(mob->FindStateBySource(old_source) == old && psi->m_timer == 1.f);
+    }
+    CHECK(!mob->FindStateBySource(old_source));
+    CHECK(mob->FindFirstState<CPoisonState>()->GetBasicDmg() == 20.f);
+    CHECK(psi->m_timer == endless && psi->m_rarity == ERarity::Super);
+    auto prototype = CreateMob(EMobType::PlayerFlower, &world, {2000.f, 2000.f}, ERarity::Common);
+    auto* flower = dynamic_cast<CMobBase*>(world.InsertEntity(std::move(prototype))); CHECK(flower); if (!flower) return;
+    CHECK(!flower->GetStates().empty());
+    for (const auto& state : flower->GetStates()) CHECK(state->ResolveOwner() == flower);
+}
+
+TEST(IndependentFlowerStatesSurviveLoadoutMaintenanceAndBansPublishAtBarrier)
+{
+    Session();
+    CGameWorld world("data/maps/test.tmj", 609); world.SetController(nullptr); world.ClearEntitiesForRestore();
+    SFlowerStats stats{}; stats.max_health = 100.f;
+    auto owned = std::make_unique<CFlower>(&world, florrbt::Vector2f{1000.f, 1000.f}, 30.f, EMobType::MechaFlower, ERarity::Common, stats);
+    auto* flower = owned.get(); world.InsertEntity(std::move(owned)); flower->SetTeam(5);
+    flower->SetPetalSlotCapacity(2); flower->SetPetalSlotCount(2);
+    flower->LoadPetalSlot(0, FindPetalPrototype(EPetalType::Nullification), ERarity::Common);
+    flower->AddState(std::make_unique<CNullificationState>(flower, 0.1f, ERarity::Super));
+    flower->AddState(std::make_unique<CCorruptionState>(flower, 0.1f, ERarity::Common));
+    flower->Tick(0.05f);
+    CHECK(flower->Team() == 0 && flower->FindStates<CNullificationState>().size() == 2);
+    flower->ForceUnequipPetal(0); flower->Tick(0.05f);
+    CHECK(flower->FindStates<CNullificationState>().size() == 1 && flower->Team() == 0);
+    CHECK(!flower->FindFirstState<CNullificationState>()->IsRuleManaged());
+    flower->Tick(0.05f);
+    CHECK(!flower->HasState<CNullificationState>() && !flower->HasState<CCorruptionState>() && flower->Team() == 5);
+    flower->LoadPetalSlot(0, FindPetalPrototype(EPetalType::Leaf), ERarity::Common);
+    auto& slot = flower->GetSlots()[0]; slot.SpawnCopy(0, flower); auto* petal = slot.m_p_petals[0]; CHECK(petal);
+    {
+        CCombatEventScope event(&world.CombatEvents());
+        flower->AddState(std::make_unique<CBanSlotState>(flower, 1.f, 0, ERarity::Common));
+        CHECK(!slot.IsBanned() && slot.m_p_petals[0] == petal);
+    }
+    CHECK(slot.IsBanned() && slot.m_p_petals[0] == nullptr);
+    CHECK(petal && petal->IsMarkedForDes() && petal->RemovalReason() == EEntityRemovalReason::OwnerRemoved);
+}
+
+TEST(BodyGeometryPublishesShortcutRestrictionsBeforeActionsAndDamagesOnce)
+{
+    Session();
+    struct SRestoreFloat { float& value; float old; ~SRestoreFloat() { value = old; } } push{
+        game_config::nonflower_mob_overlap_push_multiplier, game_config::nonflower_mob_overlap_push_multiplier};
+    struct SRestoreInt { int& value; int old; ~SRestoreInt() { value = old; } } max_hits{
+        game_config::entity_max_physical_hits_per_tick, game_config::entity_max_physical_hits_per_tick}, min_hits{
+        game_config::entity_mob_mob_hits_per_tick, game_config::entity_mob_mob_hits_per_tick};
+    game_config::nonflower_mob_overlap_push_multiplier = 1.f;
+    game_config::entity_max_physical_hits_per_tick = game_config::entity_mob_mob_hits_per_tick = 1;
+    struct CActor : CMob<SMobStats>
+    {
+        CActor(CGameWorld& world, florrbt::Vector2f pos, float radius) : CMob(&world, pos, radius, EMobType::Bee, ERarity::Common, {})
+        {
+            TickMode() = EEntityTickMode::Always;
+            Health() = m_base_stats.max_health = m_final_stats.max_health = 1000.f;
+            Mass() = m_base_stats.mass = m_final_stats.mass = 1.f;
+        }
+    };
+    struct CPusher final : CActor
+    {
+        using CActor::CActor;
+        bool IsCollisionPositionLocked() const override { return true; }
+        bool CollidesWithWalls() const override { return false; }
+    };
+    struct CObserve final : IController
+    {
+        const CEntity* other = nullptr;
+        bool shortcut = false;
+        float damage = 0.f, other_health = 0.f;
+        bool IsPlayerControlled() const override { return true; }
+        void OnTick(CMobBase*, float) override {}
+        void OnActions(CMobBase* mob, float) override
+        { shortcut = mob->IsInShortcut(); damage = mob->GetFinalStats()->damage; other_health = other->Health(); }
+        std::string_view SnapshotKey() const override { return "test.geometry_view"; }
+    };
+    for (bool reversed : {false, true})
+    {
+        CGameWorld world("data/maps/test.tmj", 606); world.SetController(nullptr); world.ClearEntitiesForRestore();
+        CServerTestAccess::SetShortcutTestTerrain(world);
+        auto owned = std::make_unique<CActor>(world, florrbt::Vector2f{1900.f, 1000.f}, 30.f);
+        owned->m_base_stats.damage = 1.f; owned->m_final_stats.damage = 99.f; owned->SetTeam(1);
+        auto pusher = std::make_unique<CPusher>(world, florrbt::Vector2f{1800.f, 1000.f}, 250.f); pusher->SetTeam(2);
+        auto* actor = owned.get(); auto* obstacle = pusher.get();
+        auto control = std::make_unique<CObserve>(); auto* observation = control.get(); control->other = obstacle;
+        actor->SetController(std::move(control));
+        if (reversed) { world.InsertEntity(std::move(pusher)); world.InsertEntity(std::move(owned)); }
+        else { world.InsertEntity(std::move(owned)); world.InsertEntity(std::move(pusher)); }
+        world.Tick(0.05f);
+        CHECK(actor->IsInShortcut() && observation->shortcut);
+        CHECK_NEAR(observation->damage, 1.f, 0.0001);
+        CHECK_NEAR(observation->other_health, 1000.f, 0.0001);
+        CHECK_NEAR(obstacle->Health(), 999.f, 0.0001);
+        CHECK(world.GetLastActiveEntityCount() >= 2);
+    }
+}
+
+TEST(NewbornEntitiesWaitUntilNextFrameForMovementAndContact)
+{
+    Session();
+    struct CActor final : CMob<SMobStats>
+    {
+        int ticks = 0;
+        CActor(CGameWorld& world, float damage) : CMob(&world, {1000.f, 1000.f}, 10.f, EMobType::Bee, ERarity::Common, {})
+        {
+            TickMode() = EEntityTickMode::Always;
+            Health() = m_base_stats.max_health = m_final_stats.max_health = 100.f;
+            m_base_stats.damage = m_final_stats.damage = damage;
+        }
+        void OnTickActions(float) override { ++ticks; }
+    };
+    struct CSpawner final : CEntity
+    {
+        SEntityHandle spawned;
+        explicit CSpawner(CGameWorld& world) : CEntity(&world, 0, 0, 0, MakeEntityType(EEntityType::Effect, 0))
+        { TickMode() = EEntityTickMode::Always; }
+        bool CanCollide() const override { return false; }
+        void OnTickActions(float) override
+        {
+            if (spawned.IsValid()) return;
+            auto actor = std::make_unique<CActor>(*GameWorld(), 200.f); actor->SetTeam(2);
+            spawned = GameWorld()->InsertEntity(std::move(actor))->GetHandle();
+        }
+    };
+    CGameWorld world("data/maps/test.tmj", 603); world.SetController(nullptr); world.ClearEntitiesForRestore();
+    CServerTestAccess::ClearTestWalls(world);
+    auto target = std::make_unique<CActor>(world, 0.f); target->SetTeam(1);
+    const auto victim = world.InsertEntity(std::move(target))->GetHandle();
+    auto spawner = std::make_unique<CSpawner>(world); auto* source = spawner.get(); world.InsertEntity(std::move(spawner));
+    world.Tick(0.05f);
+    CHECK(world.ResolveEntity(victim) && world.ResolveEntity(victim)->Health() == 100.f);
+    const auto* born = dynamic_cast<CActor*>(world.ResolveEntity(source->spawned));
+    CHECK(born && born->ticks == 0);
+    world.Tick(0.05f);
+    CHECK(world.ResolveEntity(victim) == nullptr);
+    born = dynamic_cast<CActor*>(world.ResolveEntity(source->spawned)); CHECK(born && born->ticks == 1);
+}
+
+TEST(PetalFrameDriverDoesNotDoubleAdvanceAfterDetachingAndNewCopiesWait)
+{
+    Session();
+    struct CDetachingPetal final : CPetal
+    {
+        int ticks = 0;
+        CDetachingPetal(CFlower& owner, const SPetalStats& stats) : CPetal(stats.radius, &owner, 0, stats, EPetalType::Basic)
+        { m_rarity = ERarity::Common; }
+        void OnTickActions(float dt) override
+        {
+            ++ticks; CPetal::OnTickActions(dt);
+            SkipWorldTick() = false; m_detach_from_slot = true;
+        }
+    };
+    CGameWorld world("data/maps/test.tmj", 604); world.SetController(nullptr); world.ClearEntitiesForRestore();
+    CServerTestAccess::ClearTestWalls(world);
+    SFlowerStats stats{}; stats.max_health = 100.f;
+    auto owned = std::make_unique<CFlower>(&world, florrbt::Vector2f{1000.f, 1000.f}, 30.f, EMobType::MechaFlower, ERarity::Common, stats);
+    owned->AllowSkipTick() = false; owned->SetPetalSlotCapacity(2); owned->SetPetalSlotCount(2);
+    auto* flower = owned.get(); world.InsertEntity(std::move(owned));
+    const auto* proto = FindPetalPrototype(EPetalType::Basic); CHECK(proto); if (!proto) return;
+    flower->LoadPetalSlot(0, proto, ERarity::Common); flower->LoadPetalSlot(1, proto, ERarity::Common);
+    auto custom = std::make_unique<CDetachingPetal>(*flower, proto->m_p_behavior->GetPetalStats(ERarity::Common));
+    auto* detached = custom.get(); world.InsertEntity(std::move(custom));
+    auto& slots = flower->GetSlots();
+    CHECK(slots.size() >= 2 && !slots[0].m_p_petals.empty() && !slots[1].m_p_petals.empty());
+    slots[0].m_p_petals[0] = detached; slots[0].m_reload_timers[0] = 0.f; slots[1].m_reload_timers[0] = 0.f;
+    world.Tick(0.05f);
+    CHECK(detached->ticks == 1 && slots[0].m_p_petals[0] == nullptr);
+    auto* born = slots[1].m_p_petals[0]; CHECK(born); if (!born) return;
+    CHECK_NEAR(born->m_lifetime, 0.f, 0.00001);
+    world.Tick(0.05f);
+    CHECK(detached->ticks == 2); CHECK_NEAR(born->m_lifetime, 0.05f, 0.00001);
+}
+
+TEST(ManualAttackInputSurvivesMobAnimationFlagsAndResetsExplicitly)
+{
+    Session();
+    struct CActor final : CAttackableMob<SMobStats>
+    {
+        int attacks = 0;
+        explicit CActor(CGameWorld& world) : CAttackableMob(&world, {1000.f, 1000.f}, 10.f, EMobType::Bee, ERarity::Common, {})
+        { Health() = m_base_stats.max_health = m_final_stats.max_health = 100.f; }
+        void OnTickActions(float) override { SetAttacking(false); }
+        bool TryAttack(CEntity*) override { ++attacks; return true; }
+    };
+    CGameWorld world("data/maps/test.tmj", 605); world.SetController(nullptr); world.ClearEntitiesForRestore();
+    CServerTestAccess::ClearTestWalls(world);
+    auto actor = std::make_unique<CActor>(world); auto* mob = actor.get(); world.InsertEntity(std::move(actor));
+    auto control = std::make_unique<CPlayerController>(); auto* input = control.get(); mob->SetController(std::move(control));
+    ClientOperate press; press.type = ClientOperate::Type::Chores; press.is_attacking = true;
+    input->PushOperate(press); mob->Tick(0.05f); CHECK(mob->attacks == 1);
+    mob->Tick(0.05f); CHECK(mob->attacks == 2);
+    input->ResetOperate(); mob->Tick(0.05f); CHECK(mob->attacks == 2);
+}
+
+TEST(AiActionEmissionUsesPostMovementPosition)
+{
+    Session();
+    struct SRestoreInterval { float& value; float old; ~SRestoreInterval() { value = old; } };
+    SRestoreInterval spider{game_config::mob_spider_web_interval, game_config::mob_spider_web_interval};
+    SRestoreInterval bumble{game_config::mob_bumblebee_pollen_interval, game_config::mob_bumblebee_pollen_interval};
+    game_config::mob_spider_web_interval = game_config::server_fixed_dt;
+    game_config::mob_bumblebee_pollen_interval = game_config::server_fixed_dt;
+    for (const auto type : {EMobType::Spider, EMobType::BumbleBee})
+    {
+        CGameWorld world("data/maps/test.tmj", 599); world.SetController(nullptr); world.ClearEntitiesForRestore();
+        CServerTestAccess::ClearTestWalls(world);
+        auto* mob = Spawn(world, type, ERarity::Legendary, {1000.f, 1000.f});
+        auto* target = Spawn(world, EMobType::Bee, ERarity::Common, {1600.f, 1000.f});
+        mob->SetTeam(1); target->SetTeam(2);
+        const auto before = mob->Pos(); const auto count = world.GetEntityCount();
+        mob->Tick(game_config::server_fixed_dt);
+        CHECK(mob->Pos() != before);
+        CHECK(world.GetEntityCount() == count + 1);
+        world.ForEachEntity([&](const CEntity* entity) {
+            if (entity != mob && entity != target) CHECK(entity->Pos() == mob->Pos());
+        });
+    }
+}
+
+TEST(PlayerSkillRequestsUsePostMovementPositionAndKeepTheirFullNewWindup)
+{
+    Session();
+    class CSkillProbe final : public CSkillCasterMob<SMobStats>
+    {
+      public:
+        int casts = 0;
+        float windup = 0.f;
+        bool die_during_actions = false;
+        florrbt::Vector2f cast_position;
+        explicit CSkillProbe(CGameWorld& world) : CSkillCasterMob(&world, {1000.f, 1000.f}, 10.f, EMobType::Bee, ERarity::Common, {})
+        {
+            Health() = m_base_stats.max_health = m_final_stats.max_health = 100.f;
+            m_base_stats.max_velocity = m_final_stats.max_velocity = 100.f;
+            m_base_stats.acceleration = m_final_stats.acceleration = 1000.f;
+        }
+        int GetSkillCount() const override { return 1; }
+        bool CanCastSkill(int index) const override { return index == 0 && windup <= 0.f; }
+        bool TryCastSkill(int index, CEntity*) override
+        {
+            if (!CanCastSkill(index)) return false;
+            ++casts; cast_position = Pos(); windup = 0.5f; return true;
+        }
+        void OnTickActions(float dt) override
+        {
+            CSkillCasterMob<SMobStats>::OnTickActions(dt);
+            windup = std::max(0.f, windup - dt);
+            if (die_during_actions) Health() = 0.f;
+        }
+    };
+    CGameWorld world("data/maps/test.tmj", 600); world.SetController(nullptr); world.ClearEntitiesForRestore();
+    CServerTestAccess::ClearTestWalls(world);
+    auto owned = std::make_unique<CSkillProbe>(world); auto* mob = owned.get(); world.InsertEntity(std::move(owned));
+    auto controller = std::make_unique<CPlayerController>(); auto* input = controller.get(); mob->SetController(std::move(controller));
+    ClientOperate movement; movement.type = ClientOperate::Type::Input;
+    movement.move_y = static_cast<std::int8_t>(game_config::player_input_axis_max);
+    ClientOperate skill; skill.type = ClientOperate::Type::Skill; skill.skill_index = 0;
+    input->PushOperate(movement); input->PushOperate(skill);
+    const auto before = mob->Pos(); mob->Tick(0.05f);
+    CHECK(mob->casts == 1 && mob->cast_position == mob->Pos() && mob->Pos() != before);
+    CHECK_NEAR(mob->windup, 0.5f, 0.00001);
+    mob->Tick(0.05f); CHECK(mob->casts == 1); CHECK_NEAR(mob->windup, 0.45f, 0.00001);
+    CServerTestAccess::SetShortcutTestTerrain(world);
+    mob->Pos() = {2050.f, 1000.f}; mob->SynchronizeEnvironment();
+    CHECK(mob->IsInShortcut()); mob->windup = 0.f; input->PushOperate(skill); mob->Tick(0.05f);
+    CHECK(mob->casts == 2 && mob->IsInShortcut());
+    mob->windup = 0.f; input->PushOperate(skill); input->ResetOperate(); mob->Tick(0.05f);
+    CHECK(mob->casts == 2);
+    mob->die_during_actions = true; input->PushOperate(skill); mob->Tick(0.05f);
+    CHECK(mob->IsDead() && mob->casts == 2);
+    mob->die_during_actions = false; mob->Health() = 100.f; mob->Tick(0.05f);
+    CHECK(mob->casts == 2);
+}
+
+TEST(PoisonReplacementKeepsTheAlreadyScheduledContinuousDamage)
+{
+    Session();
+    struct CAlwaysMob final : CMob<SMobStats>
+    {
+        CAlwaysMob(CGameWorld& world, florrbt::Vector2f position) : CMob(&world, position, 10.f, EMobType::Bee, ERarity::Common, {})
+        { TickMode() = EEntityTickMode::Always; Health() = m_base_stats.max_health = m_final_stats.max_health = 100.f; }
+    };
+    struct CRefresh final : IController
+    {
+        SEntityHandle target;
+        void OnTick(CMobBase*, float) override {}
+        std::string_view SnapshotKey() const override { return "test.poison_refresh"; }
+        void OnActions(CMobBase* owner, float) override
+        {
+            auto* victim = dynamic_cast<CMobBase*>(owner->GameWorld()->ResolveEntity(target));
+            if (!victim) return;
+            auto poison = std::make_unique<CPoisonState>(victim, 1.f, 20.f, ERarity::Common, owner);
+            if (poison->IsValid()) victim->AddState(std::move(poison));
+        }
+    };
+    for (bool reversed : {false, true})
+    {
+        CGameWorld world("data/maps/test.tmj", 602); world.SetController(nullptr); world.ClearEntitiesForRestore();
+        CServerTestAccess::ClearTestWalls(world);
+        auto a = std::make_unique<CAlwaysMob>(world, florrbt::Vector2f{500.f, 500.f});
+        auto b = std::make_unique<CAlwaysMob>(world, florrbt::Vector2f{1000.f, 1000.f});
+        auto* source = a.get(); auto* target = b.get();
+        if (reversed) { world.InsertEntity(std::move(b)); world.InsertEntity(std::move(a)); }
+        else { world.InsertEntity(std::move(a)); world.InsertEntity(std::move(b)); }
+        auto refresh = std::make_unique<CRefresh>(); refresh->target = target->GetHandle(); source->SetController(std::move(refresh));
+        target->AddState(std::make_unique<CPoisonState>(target, 1.f, 10.f, ERarity::Common, source));
+        world.Tick(0.05f); CHECK_NEAR(target->Health(), 99.5f, 0.0001);
+        world.Tick(0.05f); CHECK_NEAR(target->Health(), 98.5f, 0.0001);
+        world.Tick(0.05f); CHECK_NEAR(target->Health(), 97.5f, 0.0001);
+    }
+}
+
+TEST(StateFrameExpiresBeforeIntentAndDoesNotAgeNewEffectsByEntityOrder)
+{
+    Session();
+    struct CAlwaysMob final : CMob<SMobStats>
+    {
+        CAlwaysMob(CGameWorld& world, florrbt::Vector2f position)
+            : CMob(&world, position, 10.f, EMobType::Bee, ERarity::Common, {})
+        {
+            TickMode() = EEntityTickMode::Always;
+            m_base_stats.max_health = m_final_stats.max_health = Health() = 100.f;
+            m_base_stats.damage = m_final_stats.damage = 0.f;
+        }
+    };
+    struct CProbeController final : IController
+    {
+        std::function<void(CMobBase*)> action;
+        void OnTick(CMobBase* mob, float) override { action(mob); }
+        std::string_view SnapshotKey() const override { return "test.state_frame"; }
+    };
+    for (bool reversed : {false, true})
+    {
+        CGameWorld world("data/maps/test.tmj", 601); world.SetController(nullptr); world.ClearEntitiesForRestore();
+        CServerTestAccess::ClearTestWalls(world);
+        auto first = std::make_unique<CAlwaysMob>(world, florrbt::Vector2f{500.f, 500.f});
+        auto second = std::make_unique<CAlwaysMob>(world, florrbt::Vector2f{1000.f, 1000.f});
+        auto* source = first.get(); auto* target = second.get();
+        if (reversed) { world.InsertEntity(std::move(second)); world.InsertEntity(std::move(first)); }
+        else { world.InsertEntity(std::move(first)); world.InsertEntity(std::move(second)); }
+        source->AddState(std::make_unique<CInvincibleState>(source, 0.f, ERarity::Common));
+        target->AddState(std::make_unique<CInvincibleState>(target, 0.01f, ERarity::Common));
+        bool emitted = false;
+        auto controller = std::make_unique<CProbeController>();
+        controller->action = [&](CMobBase* mob) {
+            CHECK(!mob->HasState<CInvincibleState>());
+            if (emitted) return;
+            emitted = true;
+            target->AddState(std::make_unique<CPoisonState>(target, 0.02f, 20.f, ERarity::Common, source));
+        };
+        source->SetController(std::move(controller));
+        world.Tick(0.05f);
+        CHECK(emitted && target->HasState<CInvincibleState>());
+        const auto* poison = target->FindFirstState<CPoisonState>();
+        CHECK(poison); if (!poison) continue;
+        CHECK_NEAR(poison->m_timer, 0.02, 0.00001);
+        CHECK_NEAR(target->Health(), 100.f, 0.0001);
+        world.Tick(0.05f);
+        CHECK(!target->HasState<CInvincibleState>());
+        CHECK_NEAR(target->Health(), 99.6f, 0.0001);
+        poison = target->FindFirstState<CPoisonState>();
+        CHECK(poison && poison->m_timer == 0.f);
+        world.Tick(0.05f);
+        CHECK(!target->HasState<CPoisonState>());
+        CHECK_NEAR(target->Health(), 99.6f, 0.0001);
+    }
+}
+
 TEST(ShortcutDiggingOverlapAndSweptCrossingReloadOnlyAfterLastRestriction)
 {
     CServerTestAccess fixture;
@@ -375,6 +1974,8 @@ TEST(ShortcutDiggingOverlapAndSweptCrossingReloadOnlyAfterLastRestriction)
     flower->RefreshPetalSuppression();
     const auto timers = slot.m_reload_timers;
     flower->TickStates(0.3f);
+    CHECK(flower->HasState<CDiggingState>());
+    flower->BeginStateTick();
     CHECK(!flower->HasState<CDiggingState>() && flower->ArePetalsSuppressed());
     CHECK(slot.m_reload_timers == timers);
     flower->Pos() = {2200, 1000}; flower->SynchronizeEnvironment();
@@ -389,7 +1990,10 @@ TEST(ShortcutDiggingOverlapAndSweptCrossingReloadOnlyAfterLastRestriction)
     flower->RefreshPetalSuppression();
     flower->Pos() = {2200, 1000}; flower->SynchronizeEnvironment();
     CHECK(flower->ArePetalsSuppressed());
+    flower->BeginStateTick();
     flower->TickStates(0.3f);
+    CHECK(flower->ArePetalsSuppressed());
+    flower->BeginStateTick();
     CHECK(!flower->ArePetalsSuppressed() && slot.m_reload_timers[0] > 0.f);
 }
 
@@ -754,14 +2358,14 @@ TEST(TerrainEditsAndNativeWallMessagesStayInTheirWorld)
         {
             flower->Pos() = {float(col * second->GetMap()->tile_width), float(row * second->GetMap()->tile_height)};
             second->GetController()->OnTick(*second, 1.f);
-            auto data = MakeJsonObject(); CSnapshotWriter writer(data.get()); second->GetController()->CaptureSnapshot(writer);
+            auto data = MakeJsonObject(); CSnapshotWriter writer(data.get()); second->Terrain().CaptureSnapshot(writer);
             edited = json_array_size(json_object_get(data.get(), "terrain_dirty")) > 0 ||
                 json_array_size(json_object_get(data.get(), "terrain_wall_removes")) > 0;
         }
     CHECK(edited);
     CHECK(!has_terrain_message(*observer));
     first.GetController()->OnTick(first, 1.f);
-    auto data = MakeJsonObject(); CSnapshotWriter writer(data.get()); first.GetController()->CaptureSnapshot(writer);
+    auto data = MakeJsonObject(); CSnapshotWriter writer(data.get()); first.Terrain().CaptureSnapshot(writer);
     CHECK(json_array_size(json_object_get(data.get(), "terrain_dirty")) == 0);
     CHECK(first.GetMap()->walls.size() == wall_count);
 
@@ -833,7 +2437,7 @@ TEST(WorldSimulationDefersTransfersAndTicksMovedEntitiesOncePerFrame)
       public:
         int ticks = 0;
         explicit CCounter(CGameWorld& world) : CMob(&world, {1000, 1000}, 1.f, EMobType::Bee, ERarity::Common, SMobStats{}) {}
-        void Tick(float) override { ++ticks; }
+        void OnTickActions(float) override { ++ticks; }
         bool CanCollide() const override { return false; }
         bool CollidesWithWalls() const override { return false; }
     };
@@ -1096,7 +2700,7 @@ TEST(PlayerHornetExecutesDashAndReleasesCarriedMobOnDeath)
     carrier->SetController(std::make_unique<CPlayerController>());
     auto* carried = Spawn(world, EMobType::Hornet, ERarity::Ultra, {5100.f, 5000.f});
     auto* enemy = Spawn(world, EMobType::Bee, ERarity::Common, {5400.f, 5000.f});
-    enemy->Team() = 123;
+    enemy->SetTeam(123);
     CHECK(dynamic_cast<ISkillCasterMob*>(carrier)->TryCastSkill(3, enemy));
     CHECK(carried->SkipWorldTick());
     carrier->MarkForDestroy(); world.FlushEntityRemovals();
@@ -1110,7 +2714,7 @@ TEST(LightningFindsLargeTargetByItsEdge)
     auto& world = fixture.World();
     auto* source = Spawn(world, EMobType::Bee);
     auto* target = Spawn(world, EMobType::QueenAnt, ERarity::Primordial, {2400.f, 1000.f});
-    source->Team() = 123; target->Team() = 456;
+    source->SetTeam(123); target->SetTeam(456);
     const float health = target->Health();
     world.ChainLightning(*source, health * 0.01f, 1, source);
     CHECK(target->Health() < health);
@@ -1603,6 +3207,324 @@ TEST(PossessionRejectsOtherPlayersAndKeepsSameWorldMembership)
     CHECK(target->GetController() == controller);
 }
 
+TEST(PossessionSameWorldKeepsSceneAndControlThroughCleanupAndTicks)
+{
+    CServerTestAccess fixture; auto& world = fixture.World(); auto* player = fixture.Player(world);
+    auto* network = fixture.server.GetNetworkModule();
+    CServerTestAccess::ClearTestWalls(world);
+    auto* target = Spawn(world, EMobType::Bee, ERarity::Super, {1500.f, 1000.f});
+    const auto handle = target->GetHandle();
+    CHECK(network->AssignPlayerEntity(player->GetId(), world, target->Id()));
+    auto messages = CServerTestAccess::QueuedMessages(*player);
+    CHECK(std::any_of(messages.begin(), messages.end(), [](const auto& msg) { return msg.type == ServerMessage::Type::Inventory; }));
+    CHECK(std::any_of(messages.begin(), messages.end(), [](const auto& msg) { return msg.type == ServerMessage::Type::OwnerState; }));
+    CHECK(std::none_of(messages.begin(), messages.end(), [](const auto& msg) {
+        return msg.type == ServerMessage::Type::Welcome || msg.type == ServerMessage::Type::TerrainDelta || msg.type == ServerMessage::Type::TerrainWallRemove;
+    }));
+    world.FlushEntityRemovals();
+    for (int i = 0; i < 40; ++i)
+    {
+        target->Tick(0.05f);
+        CPlayerLifecycleService{}.RespawnDeadControlledEntities(network->GetPlayers(), world, *network);
+        CHECK(player->GetEntity() == world.ResolveEntity(handle));
+    }
+    CHECK(player->IsConnected() && target->IsPlayerControlled() && player->HasNpcInventory());
+    player->m_send_buffer.clear(); player->m_send_offset = 0;
+    CHECK(world.TransferPlayerEntityToWorld(*player, world, florrbt::Vector2f{1600.f, 1000.f}));
+    messages = CServerTestAccess::QueuedMessages(*player);
+    CHECK(std::none_of(messages.begin(), messages.end(), [](const auto& msg) { return msg.type == ServerMessage::Type::Welcome; }));
+    CHECK(player->GetEntity() == target);
+}
+
+TEST(PossessionCrossWorldStillInitializesDestinationScene)
+{
+    CServerTestAccess fixture; auto* player = fixture.Player(fixture.World());
+    auto* destination = fixture.server.GetWorldModule()->CreateWorld("data/maps/test.tmj", world_controller_keys::open);
+    CHECK(destination); if (!destination) return;
+    auto* target = Spawn(*destination, EMobType::MechaFlower, ERarity::Super);
+    CHECK(fixture.server.GetNetworkModule()->AssignPlayerEntity(player->GetId(), *destination, target->Id()));
+    const auto messages = CServerTestAccess::QueuedMessages(*player);
+    const auto welcome = std::find_if(messages.begin(), messages.end(), [](const auto& msg) { return msg.type == ServerMessage::Type::Welcome; });
+    CHECK(welcome != messages.end());
+    if (welcome != messages.end())
+        CHECK(welcome->world_id == destination->GetId() && welcome->owner_entity_id == target->Id());
+    CHECK(player->GetEntity() == target && target->IsPlayerControlled() && player->HasNpcInventory());
+}
+
+TEST(LarvaControlUsesTheHeadForEverySegmentAndPreservesInventory)
+{
+    CServerTestAccess fixture; auto& world = fixture.World(); auto* player = fixture.Player(world);
+    auto* network = fixture.server.GetNetworkModule();
+    CServerTestAccess::ClearTestWalls(world);
+    auto* root = Spawn(world, EMobType::FireflyLarva, ERarity::Super, {2000.f, 1000.f});
+    auto* assembly = dynamic_cast<IMultiSegmentRootMob*>(root);
+    CHECK(assembly && assembly->GetSegmentReferences().size() == 5); if (!assembly) return;
+    const auto parts = assembly->GetSegmentReferences();
+    const auto root_ref = root->GetHandle();
+    const auto* original_ai = root->GetController();
+    CHECK(network->AssignPlayerEntity(player->GetId(), world, parts.front().entity_ref.id));
+    CHECK(player->GetEntity() == root && root->IsPlayerControlled());
+    CHECK(root->SuspendedController() == original_ai);
+    const auto scope = player->GetInventoryAccountName();
+    const auto* player_controller = root->GetController();
+    for (const auto& part : parts)
+    {
+        CHECK(network->AssignPlayerEntity(player->GetId(), world, part.entity_ref.id));
+        CHECK(player->GetEntity() == root && root->GetController() == player_controller);
+        CHECK(player->GetInventoryAccountName() == scope);
+        auto* body = dynamic_cast<CMobBase*>(world.ResolveEntity(part.entity_ref));
+        CHECK(body && !body->IsPlayerControlled() && !body->HasPlayerControlLease());
+    }
+    CHECK(network->AssignPlayerEntity(player->GetId(), world, root->Id()));
+    ClientOperate move; move.type = ClientOperate::Type::Input; move.move_y = 127; move.move_x = 0;
+    CHECK(player->HandleOperate(move));
+    const auto before = root->Pos();
+    for (int i = 0; i < 40; ++i)
+    {
+        world.Tick(0.05f);
+        CPlayerLifecycleService{}.RespawnDeadControlledEntities(network->GetPlayers(), world, *network);
+        CHECK(player->GetEntity() == world.ResolveEntity(root_ref));
+    }
+    CHECK(DistanceSq(before, root->Pos()) > 100.f);
+    CHECK(assembly->GetSegmentReferences().size() == parts.size());
+    for (const auto& part : parts) CHECK(world.ResolveEntity(part.entity_ref) != nullptr);
+    const auto* skills = dynamic_cast<ISkillCasterMob*>(root); CHECK(skills && skills->GetSkillCount() == 1);
+    CHECK(network->KickPlayer(player->GetId(), "offline larva release"));
+    world.FlushEntityRemovals();
+    CHECK(world.ResolveEntity(root_ref) == root && root->GetController() == original_ai);
+    for (const auto& part : parts) CHECK(world.ResolveEntity(part.entity_ref) != nullptr);
+}
+
+TEST(LarvaControlCannotStealAnotherPlayersHeadOrLegacyBody)
+{
+    CServerTestAccess fixture; auto& world = fixture.World();
+    auto* first = fixture.Player(world, 1); auto* second = fixture.Player(world, 2);
+    auto* network = fixture.server.GetNetworkModule();
+    auto* root = Spawn(world, EMobType::FireflyLarva);
+    auto* assembly = dynamic_cast<IMultiSegmentRootMob*>(root); CHECK(assembly); if (!assembly) return;
+    const auto parts = assembly->GetSegmentReferences();
+    CHECK(network->AssignPlayerEntity(first->GetId(), world, root->Id()));
+    auto* second_original = second->GetEntity();
+    for (const auto& part : parts) CHECK(!network->AssignPlayerEntity(second->GetId(), world, part.entity_ref.id));
+    CHECK(second->GetEntity() == second_original && !second_original->IsMarkedForDes());
+    // 兼容旧会话已经单独持有体节的情况，不能从另一部位抢占整条生物。
+    first->SetOwnedEntity(world.ResolveEntity(parts.front().entity_ref));
+    CHECK(!network->AssignPlayerEntity(second->GetId(), world, root->Id()));
+    CHECK(!network->AssignPlayerEntity(second->GetId(), world, parts.back().entity_ref.id));
+    CHECK(second->GetEntity() == second_original);
+}
+
+TEST(LarvaLegacyBodyControlSurvivesReloadNormalizationAndLogout)
+{
+    CServerTestAccess fixture; auto& world = fixture.World(); auto* player = fixture.Player(world);
+    auto* network = fixture.server.GetNetworkModule();
+    auto* root = Spawn(world, EMobType::FireflyLarva);
+    const auto root_ref = root->GetHandle();
+    auto* assembly = dynamic_cast<IMultiSegmentRootMob*>(root); CHECK(assembly); if (!assembly) return;
+    const auto parts = assembly->GetSegmentReferences();
+    auto* body = dynamic_cast<CMobBase*>(world.ResolveEntity(parts.front().entity_ref)); CHECK(body); if (!body) return;
+    auto* old_flower = player->GetEntity();
+    player->SetOwnedEntity(body); body->AcquirePlayerControl(std::make_unique<CPlayerController>(), {});
+    old_flower->MarkForDestroy(EEntityRemovalReason::Replaced); world.FlushEntityRemovals();
+    const auto path = Session().directory / "legacy-larva-control.json"; std::string error;
+    CHECK(CHotReloadSnapshotService::Capture(fixture.server, path, error));
+    CHECK(CHotReloadSnapshotService::Restore(fixture.server, path, error));
+    player = network->FindPlayerById(1);
+    root = dynamic_cast<CMobBase*>(world.ResolveEntity(root_ref));
+    body = dynamic_cast<CMobBase*>(world.ResolveEntity(parts.front().entity_ref));
+    CHECK(player && root && body); if (!player || !root || !body) return;
+    CHECK(player->GetEntity() == body && body->IsPlayerControlled());
+    CHECK(network->AssignPlayerEntity(player->GetId(), world, parts.back().entity_ref.id));
+    world.FlushEntityRemovals();
+    CHECK(player->GetEntity() == root && root->IsPlayerControlled());
+    CHECK(!body->IsPlayerControlled() && !body->HasPlayerControlLease());
+    for (const auto& part : parts) CHECK(world.ResolveEntity(part.entity_ref) != nullptr);
+    // 旧体节会话直接登出也必须只撤销控制，不能触发整个多节体的级联删除。
+    root->ReleasePlayerControl(FindMobPrototype(EMobType::FireflyLarva)->m_controller_factory(root->GetRarity()));
+    player->SetOwnedEntity(body); body->AcquirePlayerControl(std::make_unique<CPlayerController>(), {});
+    CHECK(network->KickPlayer(player->GetId(), "offline legacy larva logout"));
+    world.FlushEntityRemovals();
+    CHECK(world.ResolveEntity(root_ref) == root && !root->IsMarkedForDes());
+    for (const auto& part : parts) CHECK(world.ResolveEntity(part.entity_ref) != nullptr);
+}
+
+TEST(PossessionReleaseRestoresOriginalAiAndRemovesPlayerBodyWithoutDefeat)
+{
+    struct CRemovalProbe final : IGameController
+    {
+        int defeated = 0;
+        std::vector<EEntityRemovalReason> removed;
+        std::string_view SnapshotKey() const override { return "test.control_release"; }
+        void OnTick(CGameWorld&, float) override {}
+        void OnMobDefeated(CGameWorld&, CMobBase&) override { ++defeated; }
+        void OnEntityRemoved(CGameWorld&, CEntity&, EEntityRemovalReason reason) override { removed.push_back(reason); }
+    };
+    CServerTestAccess fixture;
+    auto& world = fixture.World();
+    auto* player = fixture.Player(world);
+    auto probe = std::make_unique<CRemovalProbe>(); auto* observer = probe.get();
+    world.SetController(std::move(probe), false);
+    auto* original = player->GetEntity(); const auto original_ref = original->GetHandle();
+    const auto inventory = CAccountDataStore::GetInventory(player->GetProgressAccountName());
+    auto* bee = Spawn(world, EMobType::Bee); bee->SetTeam(27);
+    auto* original_ai = bee->GetController();
+    CHECK(original_ai && !original_ai->IsPlayerControlled());
+    auto* network = fixture.server.GetNetworkModule();
+    CHECK(network->AssignPlayerEntity(player->GetId(), world, bee->Id()));
+    CHECK(bee->IsPlayerControlled() && bee->HasPlayerControlLease());
+    CHECK(bee->SuspendedController() == original_ai);
+    CHECK(original->IsMarkedForDes() && original->RemovalReason() == EEntityRemovalReason::Replaced);
+    world.FlushEntityRemovals();
+    CHECK(world.ResolveEntity(original_ref) == nullptr && observer->defeated == 0);
+    CHECK(CAccountDataStore::GetInventory(player->GetProgressAccountName()) == inventory);
+    bee->SetTeam(99);
+    auto* next = Spawn(world, EMobType::Bee);
+    CHECK(network->AssignPlayerEntity(player->GetId(), world, next->Id()));
+    CHECK(!bee->IsMarkedForDes() && !bee->IsPlayerControlled() && !bee->HasPlayerControlLease());
+    CHECK(bee->GetController() == original_ai && bee->Team() == 27);
+    CHECK(observer->defeated == 0 && player->GetEntity() == next);
+}
+
+TEST(PossessionReleaseWithoutDefaultAiIsNotAKill)
+{
+    CServerTestAccess fixture;
+    auto& world = fixture.World();
+    auto* player = fixture.Player(world);
+    auto* egg = Spawn(world, EMobType::AntEgg);
+    CHECK(egg->GetController() == nullptr);
+    auto* network = fixture.server.GetNetworkModule();
+    CHECK(network->AssignPlayerEntity(player->GetId(), world, egg->Id()));
+    const auto egg_ref = egg->GetHandle(); const float health = egg->Health();
+    const auto inventory = CAccountDataStore::GetInventory(player->GetProgressAccountName());
+    auto* next = Spawn(world, EMobType::Bee);
+    CHECK(network->AssignPlayerEntity(player->GetId(), world, next->Id()));
+    CHECK(egg->IsMarkedForDes() && egg->RemovalReason() == EEntityRemovalReason::Replaced);
+    CHECK(egg->Health() == health && egg->HasTag(EEntityTag::NoDefeatRewards));
+    world.FlushEntityRemovals();
+    CHECK(world.ResolveEntity(egg_ref) == nullptr);
+    CHECK(CAccountDataStore::GetInventory(player->GetProgressAccountName()) == inventory);
+    CHECK(player->GetEntity() == next);
+}
+
+TEST(PossessionSuspendedAiSurvivesHotReload)
+{
+    CServerTestAccess fixture;
+    auto& world = fixture.World();
+    auto* player = fixture.Player(world);
+    auto* bee = Spawn(world, EMobType::Bee);
+    bee->Tick(0.01f); bee->SetTeam(23);
+    const auto reference = bee->GetHandle();
+    const std::string original_key(bee->GetController()->SnapshotKey());
+    CJsonOwner before = MakeJsonObject(); CSnapshotWriter before_writer(before.get());
+    bee->GetController()->CaptureSnapshot(before_writer);
+    CHECK(fixture.server.GetNetworkModule()->AssignPlayerEntity(player->GetId(), world, bee->Id()));
+    const auto path = Session().directory / "control-lease.json";
+    std::string error;
+    CHECK(CHotReloadSnapshotService::Capture(fixture.server, path, error));
+    CHECK(CHotReloadSnapshotService::Restore(fixture.server, path, error));
+    bee = dynamic_cast<CMobBase*>(world.ResolveEntity(reference));
+    CHECK(bee && bee->HasPlayerControlLease() && bee->SuspendedController());
+    if (!bee || !bee->SuspendedController()) return;
+    CJsonOwner after = MakeJsonObject(); CSnapshotWriter after_writer(after.get());
+    bee->SuspendedController()->CaptureSnapshot(after_writer);
+    CHECK(json_equal(before.get(), after.get()) && bee->ControlReturnTeam() == 23);
+    player = nullptr;
+    for (const auto& candidate : fixture.server.GetNetworkModule()->GetPlayers())
+        if (candidate && candidate->GetId() == 1) player = candidate.get();
+    auto* next = Spawn(world, EMobType::Bee);
+    CHECK(player && fixture.server.GetNetworkModule()->AssignPlayerEntity(player->GetId(), world, next->Id()));
+    CHECK(!bee->IsMarkedForDes() && !bee->IsPlayerControlled() && bee->GetController()->SnapshotKey() == original_key);
+    CHECK(bee->Team() == 23);
+}
+
+TEST(NpcInventorySeparatesPresetCardsAndLootFromFormalAccount)
+{
+    CServerTestAccess fixture;
+    auto& world = fixture.World(); auto* player = fixture.Player(world);
+    auto* npc = dynamic_cast<CFlower*>(Spawn(world, EMobType::MechaFlower));
+    CHECK(npc != nullptr); if (!npc) return;
+    npc->LoadPetalSlot(0, FindPetalPrototype(EPetalType::Basic), ERarity::Common);
+    CAccountDataStore::AddItem(player->GetAccountName(), static_cast<uint8_t>(EPetalType::Leaf), static_cast<uint8_t>(ERarity::Super), 1);
+    const auto formal_inventory = CAccountDataStore::GetInventory(player->GetAccountName());
+    const auto formal_slots = CAccountDataStore::GetSlots(player->GetAccountName());
+    CHECK(fixture.server.GetNetworkModule()->AssignPlayerEntity(player->GetId(), world, npc->Id()));
+    CHECK(player->HasNpcInventory() && player->HasIsolatedInventory() && !player->HasIsolatedProgress());
+    const auto temporary = player->GetInventoryAccountName();
+    CHECK(temporary != player->GetAccountName() && CAccountDataStore::GetInventory(temporary).empty());
+    CHECK(!player->TryEquipPetal(0, static_cast<uint8_t>(EPetalType::Leaf), static_cast<uint8_t>(ERarity::Super)));
+    CHECK(player->TryUnequipPetal(0));
+    CHECK(CAccountDataStore::HasItem(temporary, static_cast<uint8_t>(EPetalType::Basic), static_cast<uint8_t>(ERarity::Common)));
+    auto drop = std::make_unique<CDrop>(&world, npc->Pos(), EPetalType::Rose, ERarity::Common);
+    drop->RestoreRuntime(0.f, 0.f, 30.f);
+    auto* loot = static_cast<CDrop*>(world.InsertEntity(std::move(drop)));
+    CHECK(loot->PickUpTo(*player));
+    CHECK(CAccountDataStore::HasItem(temporary, static_cast<uint8_t>(EPetalType::Rose), static_cast<uint8_t>(ERarity::Common)));
+    auto* next = Spawn(world, EMobType::Bee);
+    CHECK(fixture.server.GetNetworkModule()->AssignPlayerEntity(player->GetId(), world, next->Id()));
+    SPlayerAccount discarded; CHECK(!CAccountDataStore::CaptureSandboxAccount(temporary, discarded));
+    CHECK(npc->GetSlots()[0].m_p_proto && npc->GetSlots()[0].m_p_proto->m_type == EPetalType::Basic);
+    CHECK(!npc->IsPlayerControlled() && !npc->IsMarkedForDes());
+    CHECK(CAccountDataStore::GetInventory(player->GetAccountName()) == formal_inventory);
+    CHECK(CAccountDataStore::GetSlots(player->GetAccountName()) == formal_slots);
+    CAccountDataStore::TakeItem(player->GetAccountName(), static_cast<uint8_t>(EPetalType::Leaf), static_cast<uint8_t>(ERarity::Super), 1);
+}
+
+TEST(NpcInventorySurvivesRetainedSessionAndReloadThenEndsOnLogout)
+{
+    CServerTestAccess fixture;
+    auto& world = fixture.World(); auto* player = fixture.Player(world);
+    auto* npc = dynamic_cast<CFlower*>(Spawn(world, EMobType::MechaFlower));
+    CHECK(npc != nullptr); if (!npc) return;
+    npc->LoadPetalSlot(0, FindPetalPrototype(EPetalType::Basic), ERarity::Common);
+    CHECK(fixture.server.GetNetworkModule()->AssignPlayerEntity(player->GetId(), world, npc->Id()));
+    const auto npc_ref = npc->GetHandle(); const auto scope = player->GetInventoryAccountName();
+    CHECK(player->TryUnequipPetal(0));
+    CAccountDataStore::AddItem(scope, static_cast<uint8_t>(EPetalType::Rose), static_cast<uint8_t>(ERarity::Rare), 3);
+    std::uint64_t revision = 0, last = 0; CHECK(CAccountDataStore::GetEconomyCounters(scope, revision, last));
+    const auto receipt = CAccountDataStore::ExecuteEconomyRequest(scope, {1, revision, scope}, EEconomyOperation::Loadout, "00",
+        [](SCraftResult&) { return EEconomyOutcome::Completed; });
+    CHECK(receipt.has_receipt);
+    const auto inventory = CAccountDataStore::GetInventory(scope);
+    player->DetachSocket(); CHECK(player->GetInventoryAccountName() == scope);
+    const auto path = Session().directory / "npc-inventory.json"; std::string error;
+    CHECK(CHotReloadSnapshotService::Capture(fixture.server, path, error));
+    CHECK(CHotReloadSnapshotService::Restore(fixture.server, path, error));
+    player = fixture.server.GetNetworkModule()->FindPlayerById(1);
+    npc = dynamic_cast<CFlower*>(world.ResolveEntity(npc_ref));
+    CHECK(player && npc); if (!player || !npc) return;
+    CHECK(player->HasNpcInventory() && player->GetInventoryAccountName() == scope);
+    CHECK(CAccountDataStore::GetInventory(scope) == inventory);
+    SEconomyReceipt restored; CHECK(CAccountDataStore::FindEconomyReceipt(scope, 1, restored));
+    CHECK(CAccountDataStore::EconomyReceiptCommitted(restored));
+    CHECK(!npc->GetSlots()[0].m_p_proto && npc->ControlReturnEquipment());
+    CHECK(fixture.server.GetNetworkModule()->KickPlayer(1, "offline NPC cleanup test"));
+    CHECK(world.ResolveEntity(npc_ref) == npc && !npc->IsPlayerControlled());
+    CHECK(npc->GetSlots()[0].m_p_proto && npc->GetSlots()[0].m_p_proto->m_type == EPetalType::Basic);
+    SPlayerAccount expired; CHECK(!CAccountDataStore::CaptureSandboxAccount(scope, expired));
+}
+
+TEST(NpcInventoryRejectsOldDropsAndOldDamageScopeAfterControlChanges)
+{
+    CServerTestAccess fixture;
+    auto& world = fixture.World(); auto* player = fixture.Player(world);
+    auto owned = std::make_unique<CDrop>(&world, player->GetEntity()->Pos(), EPetalType::Basic, ERarity::Common, player->GetId());
+    auto* formal_drop = static_cast<CDrop*>(world.InsertEntity(std::move(owned)));
+    CHECK(formal_drop->IsOwnedBy(*player));
+    auto* npc = Spawn(world, EMobType::Bee);
+    CHECK(fixture.server.GetNetworkModule()->AssignPlayerEntity(player->GetId(), world, npc->Id()));
+    CHECK(!formal_drop->IsOwnedBy(*player));
+    CDamageData credit{player->GetAccountName(), 10.f, 120.f, player->GetProgressAccountName(), player->GetInventoryAccountName()};
+    CHECK(credit.MatchesInventoryScope(*player));
+    auto local = std::make_unique<CDrop>(&world, npc->Pos(), EPetalType::Basic, ERarity::Common, player->GetId());
+    auto* npc_drop = static_cast<CDrop*>(world.InsertEntity(std::move(local)));
+    CHECK(npc_drop->IsOwnedBy(*player));
+    auto* native = Spawn(world, EMobType::PlayerFlower);
+    CHECK(fixture.server.GetNetworkModule()->AssignPlayerEntity(player->GetId(), world, native->Id()));
+    CHECK(!player->HasNpcInventory() && player->GetInventoryAccountName() == player->GetAccountName());
+    CHECK(formal_drop->IsOwnedBy(*player) && !npc_drop->IsOwnedBy(*player));
+    CHECK(!credit.MatchesInventoryScope(*player));
+}
+
 TEST(StandaloneSnapshotBuildDoesNotRetainPreviousWorldState)
 {
     Session();
@@ -1637,6 +3559,36 @@ TEST(SnapshotMandatoryOwnerIsUniqueAndRemovedOwnersAreRejected)
     CHECK(result.visible_count == 1);
     owner->MarkForDestroy();
     CHECK(!service.BuildSnapshot(player, 44, result));
+}
+
+TEST(SnapshotVisibilityAuthorizationPrecedesSquadAndTitanPriority)
+{
+    struct CVisibilityProbe final : IGameController
+    {
+        bool allow = false;
+        void OnTick(CGameWorld&, float) override {}
+        std::string_view SnapshotKey() const override { return "test.visibility"; }
+        bool SnapshotEntityVisibleToPlayer(CGameWorld&, const CPlayer&, const CEntity&) const override { return allow; }
+    };
+    CServerTestAccess fixture;
+    auto& world = fixture.World(); world.ConfigureExtensions({true, false, false});
+    auto* player = fixture.Player(world, 1); auto* teammate = fixture.Player(world, 2);
+    auto* squads = fixture.server.Extensions().Globals().Find<CPartyExtension>();
+    CHECK(squads && squads->Invite(*player, *teammate) && squads->Accept(*teammate, *player));
+    auto* titan = Spawn(world, EMobType::Titan, ERarity::Common, player->GetEntity()->Pos());
+    auto policy = std::make_unique<CVisibilityProbe>(); auto* visibility = policy.get();
+    world.SetController(std::move(policy), false);
+    CSnapshotService service; CSnapshotService::SBuildResult result;
+    CHECK(service.BuildSnapshot(*player, 1, result));
+    CHECK(result.message.entities.size() == 1 && result.visible_count == 1);
+    CHECK(result.message.entities.front().entity_id == static_cast<net_entity_id>(player->GetEntity()->Id()));
+    visibility->allow = true;
+    CHECK(service.BuildSnapshot(*player, 2, result));
+    const auto present = [&](int id) {
+        return std::any_of(result.message.entities.begin(), result.message.entities.end(),
+                           [&](const auto& entity) { return entity.entity_id == static_cast<net_entity_id>(id); });
+    };
+    CHECK(present(teammate->GetEntity()->Id()) && present(titan->Id()));
 }
 
 namespace
@@ -1879,16 +3831,17 @@ TEST(SnapshotsKeepDeadPlayerFlowersVisibleUntilRemoval)
 
 namespace
 {
-struct SExtensionTestHost : IPlayerDirectory, IChatDelivery
+struct SExtensionTestHost : IPlayerDirectory, IChatDelivery, IPartyDelivery
 {
     std::vector<std::unique_ptr<CPlayer>> players;
     std::vector<std::pair<std::uint32_t, SChatEntry>> delivered;
+    std::unordered_map<std::uint32_t, SPartyState> party_delivered;
     CExtensionRuntime runtime;
     explicit SExtensionTestHost(std::function<void(CExtensionRuntime&)> configure = {})
     {
         Session(); std::string error;
         if (configure) configure(runtime);
-        CHECK(runtime.Init(*this, *this, error));
+        CHECK(runtime.Init(*this, *this, *this, error));
     }
     const std::vector<std::unique_ptr<CPlayer>>& GetPlayers() const override { return players; }
     CPlayer* FindPlayerById(std::uint32_t id) const override
@@ -1898,6 +3851,8 @@ struct SExtensionTestHost : IPlayerDirectory, IChatDelivery
     }
     bool DeliverChat(CPlayer& player, const SChatEntry& entry) override
     { delivered.emplace_back(player.GetId(), entry); return true; }
+    bool DeliverParty(CPlayer& player, const SPartyState& state) override
+    { party_delivered.insert_or_assign(player.GetId(), state); return true; }
     CPlayer& Player(CGameWorld& world, std::uint32_t id, const std::string& name)
     {
         auto player = std::make_unique<CPlayer>(sf::TcpSocket{}, id, name);
@@ -1911,6 +3866,100 @@ struct SExtensionTestHost : IPlayerDirectory, IChatDelivery
         std::sort(ids.begin(), ids.end()); return ids;
     }
 };
+}
+
+TEST(DummyReportsDoNotSurvivePlayerIdReuseAndLegacyUnqualifiedReportsAreDiscarded)
+{
+    CServerTestAccess fixture;
+    auto& world = fixture.World();
+    auto* first = fixture.Player(world, 1);
+    auto* dummy = Spawn(world, EMobType::Dummy);
+    dummy->TakeDamage(100.f, first->GetEntity(), EDamageType::Poison);
+    auto state = MakeJsonObject(); CSnapshotWriter writer(state.get()); dummy->CaptureRuntimeSnapshot(writer);
+    const auto* reports = json_object_get(state.get(), "reports");
+    CHECK(json_array_size(reports) == 1);
+    CHECK(CSnapshotReader(json_array_get(reports, 0)).UInt64("session_generation") == first->SessionGeneration());
+    const auto old_generation = first->SessionGeneration();
+    CHECK(fixture.server.GetNetworkModule()->KickPlayer(1, "fixture session replacement"));
+    auto* second = fixture.Player(world, 1); CHECK(second->SessionGeneration() != old_generation);
+    second->m_send_buffer.clear();
+    dummy->Tick(30.f);
+    CHECK(second->m_send_buffer.empty());
+    std::string error;
+    auto legacy = MakeJsonObject(); CSnapshotWriter legacy_writer(legacy.get());
+    legacy_writer.Field("anchor_pos", dummy->Pos());
+    legacy_writer.Node("reports", json_pack("[{s:i,s:f,s:b}]", "player_id", 1, "total_damage", 200.0, "pending", 1));
+    CHECK(dummy->RestoreRuntimeSnapshot(CSnapshotReader(legacy.get()), 1, error));
+    state = MakeJsonObject(); CSnapshotWriter restored_writer(state.get()); dummy->CaptureRuntimeSnapshot(restored_writer);
+    CHECK(json_array_size(json_object_get(state.get(), "reports")) == 0);
+}
+
+TEST(NaturalSpawnPopulationIsInstanceScopedAndInvalidatesWithinTheSameTick)
+{
+    Session();
+    struct SResolver final : IGameWorldResolver
+    {
+        CGameWorld* world;
+        explicit SResolver(CGameWorld& value) : world(&value) {}
+        CGameWorld* FindWorldById(std::uint32_t id) const override { return world->GetId() == id ? world : nullptr; }
+        CGameWorld* GetMainWorld() const override { return world; }
+        std::vector<CGameWorld*> GetWorlds() const override { return {world}; }
+        std::vector<CGameWorld*> FindWorldsByMapName(const std::string&) const override { return {world}; }
+        CGameWorld* CreateRoomGameWorld(int) override { return nullptr; }
+        std::uint64_t GetTick() const override { return 0; }
+    };
+    CGameWorld first("data/maps/test.tmj", 1), second("data/maps/test.tmj", 1);
+    first.SetController(nullptr); second.SetController(nullptr);
+    first.ClearEntitiesForRestore(); second.ClearEntitiesForRestore();
+    SResolver a(first), b(second); CNaturalSpawnPopulation left(a), right(b);
+    auto* bee = Spawn(first, EMobType::Bee, ERarity::Eternal); bee->SetNaturallySpawned(true);
+    std::unordered_set<int> types;
+    left.Collect(types); CHECK(types.contains(static_cast<int>(EMobType::Bee)));
+    right.Collect(types); CHECK(types.empty());
+    bee->MarkForDestroy(); first.FlushEntityRemovals(); left.Invalidate();
+    left.Collect(types); CHECK(types.empty());
+    bee = Spawn(first, EMobType::Bee, ERarity::Eternal); bee->SetNaturallySpawned(true);
+    left.Remember(*bee); left.Collect(types); CHECK(types.contains(static_cast<int>(EMobType::Bee)));
+}
+
+TEST(PartyPublicationUsesSessionAndEntityIdentityWithoutLeakingOtherWorldEntities)
+{
+    SExtensionTestHost host;
+    CGameWorld first("data/maps/test.tmj", 401), second("data/maps/test.tmj", 402);
+    first.SetController(nullptr); second.SetController(nullptr);
+    host.runtime.AttachWorld(first, {true, false, false});
+    host.runtime.AttachWorld(second, {true, false, false});
+    auto& one = host.Player(first, 70000, "one"); auto& two = host.Player(first, 70001, "two");
+    auto* party = host.runtime.Globals().Find<CPartyExtension>();
+    CHECK(party->Invite(one, two)); CHECK(party->ConsumeInvite(two) == &one); CHECK(party->Accept(two, one));
+    CHECK(party->PublishPlayerState(one));
+    auto state = host.party_delivered.at(one.GetId());
+    CHECK(state.members.size() == 2 && state.leader_generation == one.SessionGeneration());
+    CHECK(state.members[1].has_entity && state.members[1].entity_generation == two.GetEntity()->Generation());
+    CHECK(state.members[1].session_generation == two.SessionGeneration());
+    auto* old_body = two.GetEntity();
+    two.SetOwnedEntity(Spawn(second, EMobType::Bee));
+    CHECK(party->PublishPlayerState(one));
+    state = host.party_delivered.at(one.GetId());
+    CHECK(state.members[1].world_id == second.GetId() && !state.members[1].has_entity);
+    CHECK(state.members[1].entity_id == 0 && state.members[1].entity_generation == 0);
+    two.SetOwnedEntity(old_body); two.DetachSocket();
+    CHECK(party->PublishPlayerState(one));
+    CHECK(!host.party_delivered.at(one.GetId()).members[1].connected);
+    two.AttachSocket(sf::TcpSocket{});
+    CHECK(party->PublishPlayerState(one));
+    CHECK(host.party_delivered.at(one.GetId()).members[1].session_generation == two.SessionGeneration());
+    auto saved = MakeJsonObject(); CSnapshotWriter writer(saved.get()); party->CaptureSnapshot(writer);
+    party->BeginRestore(); std::string error;
+    CHECK(party->RestoreSnapshot(CSnapshotReader(saved.get()), 1, error));
+    CHECK(party->PublishPlayerState(one) && host.party_delivered.at(one.GetId()).members.size() == 2);
+    auto stale = host.runtime.Globals().Find<IChatService>()->Submit(&first, {}, EChatFlag::Squad, two.GetId(), two.GetName(), "old session");
+    host.players.erase(host.players.begin() + 1);
+    auto& replacement = host.Player(first, 70001, "replacement");
+    party->Refresh();
+    CHECK(party->Members(one).size() == 1 && party->Members(replacement).size() == 1);
+    host.delivered.clear(); host.runtime.Globals().Find<IChatService>()->Broadcast(stale);
+    CHECK(host.delivered.empty());
 }
 
 TEST(ExtensionsShareGlobalWeatherButIsolateWorldSquadsAndStaleViews)
@@ -1928,8 +3977,11 @@ TEST(ExtensionsShareGlobalWeatherButIsolateWorldSquadsAndStaleViews)
     CHECK_NEAR(weather->GetWeatherDiurnalSnapshot().simulation_seconds - before.simulation_seconds, 0.05, 0.00001);
     auto& one = host.Player(first, 1, "one"); auto& two = host.Player(first, 2, "two");
     auto& outsider = host.Player(second, 3, "outsider");
-    auto* commands = a.Find<ISquadCommands>();
-    CHECK(!commands->Invite(one, outsider));
+    auto* commands = host.runtime.Parties();
+    CHECK(commands->Invite(one, outsider));
+    CHECK(commands->ConsumeInvite(outsider) == &one); CHECK(commands->Accept(outsider, one));
+    CHECK(a.Find<ISquadView>()->Members(one).size() == 1 && b.Find<ISquadView>()->Members(outsider).size() == 1);
+    CHECK(host.runtime.Parties()->Members(one).size() == 2);
     CHECK(commands->Invite(one, two)); CHECK(commands->ConsumeInvite(two) == &one); CHECK(commands->Accept(two, one));
     CHECK(a.Find<ISquadView>()->Members(one).size() == 2);
     auto updated = host.runtime.AttachWorld(first, {true, true, true});
@@ -1939,6 +3991,41 @@ TEST(ExtensionsShareGlobalWeatherButIsolateWorldSquadsAndStaleViews)
     CHECK(a.Find<ISquadView>() == nullptr && a.Find<IChatService>() == nullptr);
     CHECK(b.Find<ISquadView>() != nullptr);
     host.runtime.ShutDown(); CHECK(b.Find<IChatService>() == nullptr);
+}
+
+TEST(ClientFeatureExtensionTopologyRetainsStateAndPublishesGlobalsOnce)
+{
+    struct CProbe : CExtension, IPlayerStateExtension
+    {
+        int kind, published = 0, value = 0; std::array<int, 3>& detached;
+        CProbe(int k, std::array<int, 3>& counts) : kind(k), detached(counts) {}
+        const SExtensionDescriptor& Descriptor() const override {
+            static const std::array<SExtensionDescriptor, 3> values{{
+                {"test.publisher", EExtensionScope::Server, 1}, {"test.retained", EExtensionScope::World, 1}, {"test.optional", EExtensionScope::World, 1}}};
+            return values[kind];
+        }
+        bool PublishPlayerState(CPlayer&) override { ++published; return true; }
+        void OnDetach() noexcept override { ++detached[kind]; }
+    };
+    std::array<int, 3> detached{};
+    SExtensionTestHost host([&](CExtensionRuntime& runtime) {
+        std::string error;
+        for (int kind = 0; kind < 3; ++kind) CHECK(runtime.RegisterFactory(CProbe(kind, detached).Descriptor(),
+            [&, kind](SWorldHandle, const SWorldExtensionConfig& config) -> std::unique_ptr<CExtension> {
+                if (kind == 2 && !config.weather_spawns) return {};
+                return std::make_unique<CProbe>(kind, detached);
+            }, error));
+    });
+    CGameWorld world("data/maps/test.tmj", 802); world.SetController(nullptr); world.ConfigureExtensions({});
+    auto view = host.runtime.AttachWorld(world, {}); auto* kept = view.Find<CProbe>(); CHECK(kept); if (!kept) return;
+    kept->value = 42;
+    auto& player = host.Player(world, 1, "feature-fixture");
+    CHECK(host.runtime.PublishPlayerState(player));
+    CHECK(kept->published == 1 && host.runtime.Globals().Find<CProbe>()->published == 1);
+    host.runtime.AttachWorld(world, {false, false, true});
+    CHECK(view.Find<CProbe>() == kept && kept->value == 42 && detached[1] == 0);
+    host.runtime.AttachWorld(world, {});
+    CHECK(view.Find<CProbe>() == kept && kept->value == 42 && detached[1] == 0 && detached[2] == 1);
 }
 
 TEST(RegisteredExtensionCapabilitiesTickMaintainAndPersistInBothScopes)
@@ -1977,7 +4064,14 @@ TEST(RegisteredExtensionCapabilitiesTickMaintainAndPersistInBothScopes)
     CHECK(global->ticks == 1 && local->ticks == 1);
     CHECK(global->maintenance == 1 && local->maintenance == 1);
     auto state = MakeJsonObject(); CSnapshotWriter writer(state.get()); host.runtime.CaptureSnapshot(writer);
-    CHECK(json_array_size(json_object_get(state.get(), "globals")) == 2);
+    const auto* globals = json_object_get(state.get(), "globals");
+    const auto saved_key = [&](std::string_view key) {
+        for (size_t i = 0; i < json_array_size(globals); ++i)
+            if (CSnapshotReader(json_array_get(globals, i)).String("key") == key) return true;
+        return false;
+    };
+    CHECK(saved_key(global->Descriptor().key));
+    CHECK(saved_key("extension.weather") && saved_key("extension.party"));
     host.runtime.Tick(0.05f);
     std::string error;
     CHECK(host.runtime.RestoreSnapshot(CSnapshotReader(state.get()), 1, {&world}, error));
@@ -1985,6 +4079,113 @@ TEST(RegisteredExtensionCapabilitiesTickMaintainAndPersistInBothScopes)
     CHECK(!host.runtime.RegisterFactory(CCounter(true).Descriptor(), [](SWorldHandle, const SWorldExtensionConfig&) {
         return std::make_unique<CCounter>(true);
     }, error));
+}
+
+TEST(ExtensionDependenciesAttachInOrderAndRejectCyclesBeforeCallbacks)
+{
+    class CDependency final : public CExtension
+    {
+      public:
+        std::string key; std::vector<std::string_view> dependencies; SExtensionDescriptor descriptor;
+        std::vector<std::string>* order;
+        CDependency(std::string name, std::vector<std::string_view> deps, std::vector<std::string>& output)
+            : key(std::move(name)), dependencies(std::move(deps)),
+              descriptor{key, EExtensionScope::Server, 1, dependencies}, order(&output) {}
+        const SExtensionDescriptor& Descriptor() const override { return descriptor; }
+        bool OnAttach(CExtensionContext&, std::string&) override { order->push_back(key); return true; }
+    };
+    std::vector<std::string> order;
+    SExtensionTestHost host([&](CExtensionRuntime& runtime) {
+        std::string error;
+        CDependency dependent("test.second", {"test.first"}, order), first("test.first", {}, order);
+        CHECK(runtime.RegisterFactory(dependent.Descriptor(), [&](SWorldHandle, const SWorldExtensionConfig&) {
+            return std::make_unique<CDependency>("test.second", std::vector<std::string_view>{"test.first"}, order);
+        }, error));
+        CHECK(runtime.RegisterFactory(first.Descriptor(), [&](SWorldHandle, const SWorldExtensionConfig&) {
+            return std::make_unique<CDependency>("test.first", std::vector<std::string_view>{}, order);
+        }, error));
+    });
+    CHECK(order == (std::vector<std::string>{"test.first", "test.second"}));
+    host.runtime.ShutDown(); order.clear();
+    std::string error;
+    CDependency a("test.cycle.a", {"test.cycle.b"}, order), b("test.cycle.b", {"test.cycle.a"}, order);
+    CHECK(host.runtime.RegisterFactory(a.Descriptor(), [&](SWorldHandle, const SWorldExtensionConfig&) {
+        return std::make_unique<CDependency>("test.cycle.a", std::vector<std::string_view>{"test.cycle.b"}, order);
+    }, error));
+    CHECK(host.runtime.RegisterFactory(b.Descriptor(), [&](SWorldHandle, const SWorldExtensionConfig&) {
+        return std::make_unique<CDependency>("test.cycle.b", std::vector<std::string_view>{"test.cycle.a"}, order);
+    }, error));
+    CHECK(!host.runtime.Init(host, host, host, error));
+    CHECK(error.find("cycle") != std::string::npos && order.empty());
+}
+
+TEST(ExtensionOptionalRestoreExplicitlyResetsMissingStateAndRejectsRequiredLoss)
+{
+    class COptional final : public CExtension, public IPersistentExtension
+    {
+      public:
+        int value = 17;
+        const SExtensionDescriptor& Descriptor() const override
+        { static const SExtensionDescriptor descriptor{"test.optional", EExtensionScope::Server, 1, {}, false}; return descriptor; }
+        void CaptureSnapshot(CSnapshotWriter& writer) const override { writer.Field("value", value); }
+        bool RestoreSnapshot(const CSnapshotReader& reader, uint32_t version, std::string&) override
+        { value = reader.Int("value"); return version == 1; }
+        bool RestoreDefaultState(std::string&) override { value = 17; return true; }
+    };
+    SExtensionTestHost host([](CExtensionRuntime& runtime) {
+        std::string error;
+        CHECK(runtime.RegisterFactory(COptional{}.Descriptor(), [](SWorldHandle, const SWorldExtensionConfig&) {
+            return std::make_unique<COptional>();
+        }, error));
+    });
+    auto snapshot = MakeJsonObject(); CSnapshotWriter writer(snapshot.get()); host.runtime.CaptureSnapshot(writer);
+    auto* optional = host.runtime.Globals().Find<COptional>(); CHECK(optional != nullptr); if (!optional) return;
+    auto* globals = json_object_get(snapshot.get(), "globals");
+    for (size_t i = 0; i < json_array_size(globals); ++i)
+        if (CSnapshotReader(json_array_get(globals, i)).String("key") == "test.optional") { json_array_remove(globals, i); break; }
+    optional->value = 99;
+    std::string error;
+    CHECK(host.runtime.RestoreSnapshot(CSnapshotReader(snapshot.get()), 1, {}, error));
+    CHECK(optional->value == 17);
+    auto unknown = MakeJsonObject(); CSnapshotWriter unknown_writer(unknown.get());
+    unknown_writer.Field("key", "test.removed.optional"); unknown_writer.Field("version", 1u);
+    unknown_writer.Field("required", false); unknown_writer.Node("data", json_object());
+    AppendJson(globals, unknown.release());
+    CHECK(host.runtime.RestoreSnapshot(CSnapshotReader(snapshot.get()), 1, {}, error));
+    json_object_set_new(json_array_get(globals, json_array_size(globals) - 1), "required", json_true());
+    CHECK(!host.runtime.RestoreSnapshot(CSnapshotReader(snapshot.get()), 1, {}, error));
+    CHECK(error.find("Unknown required") != std::string::npos);
+    json_array_clear(globals);
+    CHECK(!host.runtime.RestoreSnapshot(CSnapshotReader(snapshot.get()), 1, {}, error));
+    CHECK(error.find("Missing required") != std::string::npos);
+}
+
+TEST(ExtensionSelfDetachWaitsUntilDispatchCompletes)
+{
+    class CDetach final : public CExtension, public ITickExtension
+    {
+      public:
+        CExtensionRuntime& runtime; SWorldHandle world; bool& finished; bool& detached;
+        CDetach(CExtensionRuntime& r, SWorldHandle w, bool& f, bool& d) : runtime(r), world(w), finished(f), detached(d) {}
+        const SExtensionDescriptor& Descriptor() const override
+        { static const SExtensionDescriptor descriptor{"test.detach", EExtensionScope::World, 1}; return descriptor; }
+        void Tick(float) override
+        { runtime.DetachWorld(world); CHECK(!detached); finished = true; }
+        void OnDetach() noexcept override { CHECK(finished); detached = true; }
+    };
+    bool finished = false, detached = false;
+    SExtensionTestHost host([&](CExtensionRuntime& runtime) {
+        std::string error;
+        CDetach prototype(runtime, {}, finished, detached);
+        CHECK(runtime.RegisterFactory(prototype.Descriptor(), [&](SWorldHandle world, const SWorldExtensionConfig&) {
+            return std::make_unique<CDetach>(runtime, world, finished, detached);
+        }, error));
+    });
+    CGameWorld world("data/maps/test.tmj", 303); world.SetController(nullptr); world.ConfigureExtensions({});
+    const auto view = host.runtime.AttachWorld(world, {});
+    CHECK(view.Find<CDetach>() != nullptr);
+    host.runtime.Tick(0.05f);
+    CHECK(finished && detached && view.Find<CDetach>() == nullptr);
 }
 
 TEST(WhisperCommandsHonorMuteAndChatHistoryCapturesSessionIdentity)
@@ -2010,7 +4211,7 @@ TEST(SquadQueriesAreReadOnlyAndMembershipRejectsRecycledSessions)
     CGameWorld world("data/maps/test.tmj", 203); world.SetController(nullptr);
     auto view = host.runtime.AttachWorld(world, {true, false, false});
     auto& first = host.Player(world, 1, "first"); auto& second = host.Player(world, 2, "second");
-    auto* squads = view.Find<CSquadExtension>();
+    auto* squads = host.runtime.Globals().Find<CPartyExtension>();
     CHECK(squads->Invite(first, second)); CHECK(squads->ConsumeInvite(second) == &first); CHECK(squads->Accept(second, first));
     auto before = MakeJsonObject(); CSnapshotWriter before_writer(before.get()); squads->CaptureSnapshot(before_writer);
     for (int i = 0; i < 10; ++i) { CHECK(squads->Members(first).size() == 2); CHECK(squads->RootId(second) == 1); }
@@ -2049,19 +4250,22 @@ TEST(ChatExtensionPreservesChannelRoutingAndNeverLeaksUnavailableSquadChat)
     CHECK(host.Recipients() == (std::vector<std::uint32_t>{1, 2})); host.delivered.clear();
     CHECK(host.runtime.HandleCommand(first, {"whisper", "remote", "private"}));
     CHECK(host.Recipients() == (std::vector<std::uint32_t>{1, 3})); host.delivered.clear();
-    CHECK(chat->History().size() == 2); // private messages retain old history policy
+    CHECK(chat->History().size() == 2); // 私聊保留原有不入公共历史的规则。
     CHECK(host.runtime.HandleCommand(first, {"invite", "second"})); host.delivered.clear();
     CHECK(host.runtime.HandleCommand(second, {"invite", "accept"})); host.delivered.clear();
     CHECK(host.runtime.HandleCommand(first, {"sq", "group-only"}));
     CHECK(host.Recipients() == (std::vector<std::uint32_t>{1, 2})); host.delivered.clear();
+    chat->HandleMessage(first, EChatFlag::Squad, "raw-group-only");
+    CHECK(host.Recipients() == (std::vector<std::uint32_t>{1, 2})); host.delivered.clear();
     CHECK(host.runtime.HandleCommand(remote, {"sq", "do-not-broadcast"}));
     CHECK(host.Recipients() == (std::vector<std::uint32_t>{3}));
-    CHECK(host.delivered.front().second.message == "squad is unavailable in this world"); host.delivered.clear();
+    CHECK(host.delivered.front().second.flag == EChatFlag::Server);
+    CHECK(host.delivered.front().second.message.find("do-not-broadcast") == std::string::npos); host.delivered.clear();
     first.MuteFor(10.f); chat->HandleMessage(first, EChatFlag::Global, "muted");
     CHECK(host.Recipients() == (std::vector<std::uint32_t>{1})); host.delivered.clear();
     chat->Broadcast(chat->Submit(&world, {}, EChatFlag::Server, 0, "Server", "world-only"));
     CHECK(host.Recipients() == (std::vector<std::uint32_t>{1, 2})); host.delivered.clear();
-    CHECK(scope.Find<ISquadCommands>()->Leave(second));
+    CHECK(host.runtime.Parties()->Leave(second));
     CHECK(scope.Find<ISquadView>()->Members(first).size() == 1);
 }
 
@@ -2070,7 +4274,7 @@ TEST(ExtensionControllerReplacementDoesNotDestroySquads)
     CServerTestAccess fixture;
     auto& world = fixture.World();
     auto* first = fixture.Player(world, 1); auto* second = fixture.Player(world, 2);
-    auto* commands = world.Extensions().Find<ISquadCommands>();
+    auto* commands = fixture.server.Extensions().Parties();
     CHECK(commands != nullptr); if (!commands) return;
     CHECK(commands->Invite(*first, *second)); CHECK(commands->ConsumeInvite(*second) == first); CHECK(commands->Accept(*second, *first));
     const auto* view = world.Extensions().Find<ISquadView>();
@@ -2086,7 +4290,7 @@ TEST(ExtensionSnapshotRoundTripAndLegacyControllerWeatherMigration)
     auto& world = fixture.World();
     world.SetController(CreateWorldController(world_controller_keys::open));
     auto* first = fixture.Player(world, 1); auto* second = fixture.Player(world, 2);
-    auto* squads = world.Extensions().Find<ISquadCommands>();
+    auto* squads = fixture.server.Extensions().Parties();
     CHECK(squads->Invite(*first, *second)); CHECK(squads->ConsumeInvite(*second) == first); CHECK(squads->Accept(*second, *first));
     std::string error;
     auto* weather = fixture.server.Extensions().Globals().Find<CWeatherExtension>();
@@ -2108,13 +4312,22 @@ TEST(ExtensionSnapshotRoundTripAndLegacyControllerWeatherMigration)
     CHECK(world.Extensions().Find<ISquadView>()->Members(*first).size() == 2);
     CHECK(weather->IsWeatherForced());
 
-    // Convert the captured v2 topology to the old v1 controller-owned layout.
+    // 模拟旧版将队伍保存在控制器中的格式。
     json_object_set_new(root.get(), "container_version", json_integer(1));
     json_object_set_new(json_object_get(sections, "players"), "version", json_integer(1));
     json_t* extensions = json_object_get(json_object_get(sections, "extensions"), "data");
-    json_t* weather_record = json_array_get(json_object_get(extensions, "globals"), 0);
+    json_t* weather_record = nullptr;
+    json_t* party_record = nullptr;
+    auto* globals = json_object_get(extensions, "globals");
+    for (size_t i = 0; i < json_array_size(globals); ++i)
+    {
+        auto* record = json_array_get(globals, i);
+        const auto key = CSnapshotReader(record).String("key");
+        if (key == CWeatherExtension{}.Descriptor().key) weather_record = record;
+        if (key == "extension.party") party_record = record;
+    }
+    CHECK(weather_record && party_record); if (!weather_record || !party_record) return;
     json_object_set(sections, "weather_diurnal", weather_record);
-    const json_t* scopes = json_object_get(extensions, "worlds");
     json_t* worlds = SavedWorlds(root.get());
     for (size_t i = 0; i < json_array_size(worlds); ++i)
     {
@@ -2125,13 +4338,9 @@ TEST(ExtensionSnapshotRoundTripAndLegacyControllerWeatherMigration)
         if (!json_is_object(controller)) continue;
         if (world_reader.UInt32("world_id") == world.GetId())
             json_object_set_new(controller, "type", json_string("world_controller.weather_diurnal_open"));
-        for (size_t j = 0; j < json_array_size(scopes); ++j)
+        if (world_reader.UInt32("world_id") == world.GetId())
         {
-            CSnapshotReader scope(json_array_get(scopes, j));
-            if (scope.UInt32("world_id") != world_reader.UInt32("world_id")) continue;
-            const json_t* instances = scope.Node("instances");
-            if (!json_array_size(instances)) continue;
-            const json_t* data = json_object_get(json_array_get(instances, 0), "data");
+            auto* data = json_object_get(party_record, "data");
             json_object_set(json_object_get(controller, "data"), "squads", json_object_get(data, "squads"));
         }
     }
@@ -2173,7 +4382,7 @@ TEST(SquadSnapshotValidationIsAtomicAndRejectsMissingOrCyclicState)
     CGameWorld world("data/maps/test.tmj", 206); world.SetController(nullptr);
     auto view = host.runtime.AttachWorld(world, {true, false, false});
     auto& one = host.Player(world, 1, "one"); auto& two = host.Player(world, 2, "two");
-    auto* squads = view.Find<CSquadExtension>();
+    auto* squads = host.runtime.Globals().Find<CPartyExtension>();
     CHECK(squads->Invite(one, two)); CHECK(squads->ConsumeInvite(two) == &one); CHECK(squads->Accept(two, one));
     auto saved = MakeJsonObject(); CSnapshotWriter writer(saved.get()); squads->CaptureSnapshot(writer);
     std::string error;
@@ -2332,12 +4541,20 @@ TEST(HotReloadCanReplaceMainWorldMapAndIdentityWithoutPinnedReferences)
         if (CSnapshotReader(entry).UInt32("id") == selected_id)
             json_object_set_new(entry, "map_path", json_string("data/maps/test.tmj"));
     }
+    CGameWorld replacement("data/maps/test.tmj", selected_id);
+    auto replacement_terrain = MakeJsonObject();
+    CSnapshotWriter terrain_writer(replacement_terrain.get());
+    replacement.Terrain().CaptureSnapshot(terrain_writer);
     worlds = SavedWorlds(root.get());
     for (size_t i = 0; i < json_array_size(worlds); ++i)
     {
         json_t* entry = json_array_get(worlds, i);
         if (CSnapshotReader(entry).UInt32("world_id") == selected_id)
+        {
             json_object_set_new(entry, "map_path", json_string("data/maps/test.tmj"));
+            // 显式替换地图时一并替换地形基线，不能把旧地图修改套到新资源。
+            json_object_set(entry, "terrain", replacement_terrain.get());
+        }
     }
     CHECK(WriteJsonAtomically(path, root.get(), error));
     CHECK(CHotReloadSnapshotService::Restore(fixture.server, path, error));
@@ -2369,6 +4586,31 @@ TEST(SameWorldCompoundTeleportRollsBackEveryPositionOnStagingFailure)
     CHECK(world.TransferPlayerEntityToWorld(player, world, florrbt::Vector2f{500.f, 500.f}));
     const auto delta = root->Pos() - before;
     for (const auto& [entity, pos] : positions) CHECK(entity->Pos() == pos + delta);
+}
+
+TEST(WorldTransferCostSeparatesDependencyWorkFromCheckpointCopies)
+{
+    Session();
+    for (const size_t count : {size_t{0}, size_t{1000}, size_t{10000}})
+    {
+        CGameWorld source("data/maps/test.tmj", 501), destination("data/maps/test.tmj", 502);
+        source.SetController(nullptr); destination.SetController(nullptr);
+        source.ClearEntitiesForRestore(); destination.ClearEntitiesForRestore();
+        for (size_t i = 0; i < count; ++i)
+            Spawn(source, EMobType::Bee, ERarity::Common, {float(i % 100) * 20.f, float(i / 100) * 20.f});
+        CPlayer player(sf::TcpSocket{}, 1, "runtime-player"); player.Authenticate("runtime-player");
+        auto* controlled = Spawn(source, EMobType::Bee); player.SetOwnedEntity(controlled);
+        const auto same = CWorldTransfer::Move(player, source, source, {500.f, 500.f});
+        CHECK(same.committed && !same.recovering);
+        CHECK(same.cost.dependencies == 1 && same.cost.dependency_candidates == count + 1);
+        CHECK(same.cost.entity_index_entries_copied == 0 && same.cost.spatial_entries_copied == count + 1);
+        const auto moved = CWorldTransfer::Move(player, source, destination, {600.f, 600.f});
+        CHECK(moved.committed && !moved.recovering && player.GetEntity() == controlled);
+        CHECK(moved.cost.dependencies == 1 && moved.cost.dependency_candidates == count + 1);
+        CHECK(moved.cost.spatial_entries_copied == count + 1 && moved.cost.entity_index_entries_copied >= count + 1);
+        std::printf("TRANSFER_COST entities=%zu same_ms=%.3f cross_ms=%.3f checkpoint_ms=%.3f copied_indices=%zu\n",
+            count + 1, same.cost.total_ms, moved.cost.total_ms, moved.cost.checkpoint_ms, moved.cost.entity_index_entries_copied);
+    }
 }
 
 TEST(CommittedNotificationsCannotReenterOrDestroyTransitionParticipants)
@@ -2445,8 +4687,96 @@ TEST(TransferredRelicClearsSourceZoneAndRebindsBannedSlotState)
     CHECK(zone_ptr->IsMarkedForDes());
     CHECK(ban_ptr->ResolveOwner() == flower);
     flower->RemoveState(ban_ptr);
-    CHECK(!flower->GetSlots()[0].m_banned);
+    CHECK(!flower->GetSlots()[0].IsBanned());
     source.FlushEntityRemovals(); target.FlushEntityRemovals();
     CHECK(source.ResolveEntity(zone_ref) == nullptr && source.GetEntityCount() == 0);
     CHECK(player.GetEntity() == flower);
+}
+
+TEST(EconomyForgeTransfersEquippedUniqueOnceAndPublishesAfterSave)
+{
+    CServerTestAccess fixture;
+    auto& world = fixture.World(); auto* player = fixture.Player(world);
+    const auto type = static_cast<uint8_t>(EPetalType::Basic);
+    const auto super = static_cast<uint8_t>(ERarity::Super), unique = static_cast<uint8_t>(ERarity::Unique);
+    std::string error;
+    CHECK(CAccountDataStore::InitializeUniqueOwnership(Session().directory / "forge-legacy-absent.json", &error));
+    CHECK(CAccountDataStore::CommitRegistration("forge-old-owner", "offline-fixture-hash", "", "", &error));
+    CAccountDataStore::AddItem("forge-old-owner", type, super, 5);
+    CHECK(CAccountDataStore::ExchangeUniquePetal("forge-old-owner", 5, type));
+    CHECK(CAccountDataStore::TakeItem("forge-old-owner", type, unique, 1));
+    CAccountDataStore::SetSlot("forge-old-owner", 0, type, unique);
+    auto previous = std::make_unique<CPlayer>(sf::TcpSocket{}, 2, "forge-old-owner");
+    previous->Authenticate("forge-old-owner");
+    auto* previous_flower = dynamic_cast<CFlower*>(Spawn(world, EMobType::PlayerFlower));
+    previous->SetOwnedEntity(previous_flower);
+    previous->LoadSavedSlots();
+    CHECK(fixture.server.GetNetworkModule()->InsertRestoredPlayer(std::move(previous)));
+    CHECK(previous_flower->GetSlots()[0].m_p_proto != nullptr);
+    CHECK(Spawn(world, EMobType::Titan, ERarity::Common, player->GetEntity()->Pos()) != nullptr);
+    CAccountDataStore::AddItem(player->GetAccountName(), type, super, 5);
+    CHECK(CAccountDataStore::Flush());
+    auto request = CServerTestAccess::EconomyRequest(fixture, *player, EEconomyOperation::Forge);
+    request.petal_type = type; request.rarity = super; request.count = 5;
+    auto* chat = fixture.server.Extensions().Globals().Find<IChatService>();
+    CHECK(chat != nullptr); if (!chat) return;
+    const auto history_size = chat->History().size();
+    {
+        CAccountDataStore::CSaveBatch hold;
+        CServerTestAccess::SendEconomy(fixture, *player, request, false);
+        fixture.server.PublishCommittedPetalReports();
+        CHECK(chat->History().size() == history_size);
+    }
+    CHECK(!previous_flower->GetSlots()[0].m_p_proto);
+    CHECK(CAccountDataStore::GetSlots("forge-old-owner")[0].petal_type == 0);
+    CHECK(CAccountDataStore::HasItem("forge-old-owner", type, super, 4));
+    const auto* owner = CAccountDataStore::FindUniqueOwner(EPetalType::Basic);
+    CHECK(owner && owner->owner == player->GetAccountName());
+    const auto inventory = CAccountDataStore::GetInventory(player->GetAccountName());
+    const auto previous_inventory = CAccountDataStore::GetInventory("forge-old-owner");
+    const auto cooldown = fixture.server.GetTitanForgeCooldowns();
+    CHECK(CAccountDataStore::Flush());
+    fixture.server.PublishCommittedPetalReports();
+    CHECK(chat->History().size() == history_size + 1);
+    CServerTestAccess::SendEconomy(fixture, *player, request);
+    CServerTestAccess::SendEconomy(fixture, *player, request);
+    fixture.server.PublishCommittedPetalReports();
+    CHECK(CAccountDataStore::GetInventory(player->GetAccountName()) == inventory);
+    CHECK(CAccountDataStore::GetInventory("forge-old-owner") == previous_inventory);
+    CHECK(fixture.server.GetTitanForgeCooldowns() == cooldown);
+    CHECK(chat->History().size() == history_size + 1);
+
+    // Even a preset Unique on a possessed NPC belongs exclusively to that
+    // temporary bag. It cannot transfer or forge the formal ledger entry.
+    auto* npc = dynamic_cast<CFlower*>(Spawn(world, EMobType::MechaFlower));
+    CHECK(npc); if (!npc) return;
+    npc->LoadPetalSlot(0, FindPetalPrototype(EPetalType::Basic), ERarity::Unique);
+    CHECK(fixture.server.GetNetworkModule()->AssignPlayerEntity(player->GetId(), world, npc->Id()));
+    const auto temporary_scope = player->GetInventoryAccountName();
+    CHECK(player->TryUnequipPetal(0));
+    CHECK(CAccountDataStore::HasItem(temporary_scope, type, unique, 1));
+    CHECK(CAccountDataStore::GetInventory(player->GetAccountName()) == inventory);
+    auto forbidden = CServerTestAccess::EconomyRequest(fixture, *player, EEconomyOperation::Forge);
+    forbidden.petal_type = type; forbidden.rarity = super; forbidden.count = 5;
+    CServerTestAccess::SendEconomy(fixture, *player, forbidden);
+    SEconomyReceipt rejected;
+    CHECK(CAccountDataStore::FindEconomyReceipt(temporary_scope, forbidden.context.request_id, rejected));
+    CHECK(rejected.outcome == EEconomyOutcome::Forbidden);
+    owner = CAccountDataStore::FindUniqueOwner(EPetalType::Basic);
+    CHECK(owner && owner->owner == player->GetAccountName());
+    auto* next = Spawn(world, EMobType::Bee);
+    CHECK(fixture.server.GetNetworkModule()->AssignPlayerEntity(player->GetId(), world, next->Id()));
+    CHECK(npc->GetSlots()[0].m_p_proto && npc->GetSlots()[0].m_stored_rarity == ERarity::Unique);
+    SPlayerAccount discarded; CHECK(!CAccountDataStore::CaptureSandboxAccount(temporary_scope, discarded));
+    CHECK(CAccountDataStore::GetInventory(player->GetAccountName()) == inventory);
+}
+
+TEST(ServerCommandRegistrationSurvivesStaticLibraryLinking)
+{
+    CConsole console;
+    console.InstallCommands();
+    CHECK(console.CommandUsage("set").has_value());
+    CHECK(console.CommandUsage("quit").has_value());
+    CHECK(console.CommandUsage("world_controller").has_value());
+    CHECK(console.CommandUsage("tele").has_value());
 }

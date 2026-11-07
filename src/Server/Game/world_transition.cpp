@@ -9,12 +9,12 @@
 #include "entities/flower.h"
 #include "entities/petals/petal.h"
 #include "entities/projectile.h"
-#include "../Module/network_module.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <unordered_set>
+#include <chrono>
 
 namespace
 {
@@ -52,9 +52,7 @@ SPlayerTransitionResult Reject(std::string error)
 bool Finite(florrbt::Vector2f value) { return std::isfinite(value.x) && std::isfinite(value.y); }
 }
 
-// Index/allocator copies are prepared before the first mutation. Restoring
-// them is by move assignment, not by allocation or replaying entity hooks.
-// Original entity objects remain owned throughout a failed staged move.
+// 修改前保存索引与分配器；失败时移动恢复，原实体始终保有所有权。
 struct CWorldTransfer::CWorldCheckpoint
 {
     CGameWorld& world;
@@ -98,9 +96,39 @@ struct CWorldTransfer::CWorldCheckpoint
     }
 };
 
+CWorldPreparation::CWorldPreparation(CGameWorld& world) : m_world(world) {}
+CWorldPreparation::~CWorldPreparation() = default;
+const FlorrBtMap* CWorldPreparation::Map() const { return m_world.GetMap(); }
+bool CWorldPreparation::RequireTerrain(std::string& error)
+{
+    if (!Map()) { error = "玩法缺少地图资源"; return false; }
+    try { m_world.Terrain().EnsureLoaded(); return true; }
+    catch (const std::exception& exception) { error = exception.what(); return false; }
+}
+bool CWorldPreparation::RequireDigBoard(std::string& error)
+{
+    if (!RequireTerrain(error)) return false;
+    try { m_board = m_world.Terrain().PrepareDigBoard(); return true; }
+    catch (const std::exception& exception) { error = exception.what(); return false; }
+}
+void CWorldPreparation::Commit() noexcept { m_world.Terrain().InstallDigBoard(std::move(m_board)); }
+
 SPlayerTransitionResult CWorldTransfer::Move(CPlayer& player, CGameWorld& source, CGameWorld& destination,
                                             florrbt::Vector2f position)
 {
+    const auto started = std::chrono::steady_clock::now();
+    SWorldTransferCost cost;
+    auto result = MovePrepared(player, source, destination, position, cost);
+    cost.total_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    result.cost = cost;
+    return result;
+}
+
+SPlayerTransitionResult CWorldTransfer::MovePrepared(CPlayer& player, CGameWorld& source, CGameWorld& destination,
+                                                    florrbt::Vector2f position, SWorldTransferCost& cost)
+{
+    if (CAccountDataStore::IsEconomyOperationActive()) return Reject("Cannot transfer during an economy operation");
+    if (destination.IsRecovering()) return Reject("目标房间正在恢复");
     if (player.IsTransitionActive() || source.IsTransitionActive() || destination.IsTransitionActive())
         return Reject("Nested world transition is not allowed");
     if (source.m_spatial_grid.HasActiveQueries() || destination.m_spatial_grid.HasActiveQueries())
@@ -113,26 +141,30 @@ SPlayerTransitionResult CWorldTransfer::Move(CPlayer& player, CGameWorld& source
         {destination.GetId(), destination.GetInstanceGeneration()}, controlled->GetHandle(), position}))
         return {false, {}, {}, true};
 
+    if (source.IsTicking() || destination.IsTicking() || source.IsCombatEventActive() || destination.IsCombatEventActive())
+        return Reject("迁移必须在世界模拟屏障提交");
+
     CTransitionGuard guard(player.m_transition_active, source.m_transition_active, destination.m_transition_active);
     struct SRecord
     {
         CEntity* entity;
         SEntityHandle before, after;
         florrbt::Vector2f position, previous;
-        std::uint64_t active_marker, collision_marker;
+        std::uint64_t active_marker, collision_marker, birth_marker;
         bool moved = false;
     };
     std::vector<SRecord> records;
     std::vector<std::pair<SEntityHandle, SEntityHandle>> mapping;
     std::vector<SEntityHandle> chain_refs;
+    std::unique_ptr<CPlayer::SPreparedGameplayScope> progress;
     std::string error;
     const int fault_after = std::exchange(source.m_transfer_fault_after_insert, -1);
     try
     {
-        // Index structural ownership once, rather than scanning the whole
-        // world for every body segment, petal and attached ammunition item.
+        // 一次建立附属实体索引，避免为每个部件重新扫描世界。
         std::unordered_map<SEntityHandle, std::vector<SEntityHandle>, SEntityHandleHash> attached;
         source.ForEachEntity([&](CEntity* candidate) {
+            ++cost.dependency_candidates;
             auto* projectile = dynamic_cast<CProjectile*>(candidate);
             if (!projectile || projectile->IsMarkedForDes()) return;
             const auto* missile = dynamic_cast<const CMissile*>(projectile);
@@ -149,7 +181,8 @@ SPlayerTransitionResult CWorldTransfer::Move(CPlayer& player, CGameWorld& source
             if (!visited.insert(entity->GetHandle()).second) continue;
             if (!Finite(entity->Pos()) || !Finite(entity->PrevPos())) return Reject("Non-finite compound entity position");
             records.push_back({entity, entity->GetHandle(), {}, entity->Pos(), entity->PrevPos(),
-                               entity->ActiveTickMarker(), entity->CollisionSyncMarker()});
+                               entity->ActiveTickMarker(), entity->CollisionSyncMarker(), entity->BirthTickMarker()});
+            cost.dependencies = records.size();
             entity->CollectTransferDependencies(pending);
             if (auto* root = dynamic_cast<IMultiSegmentRootMob*>(entity))
             {
@@ -175,8 +208,7 @@ SPlayerTransitionResult CWorldTransfer::Move(CPlayer& player, CGameWorld& source
                         return Reject("Compound segment link leaves its assembly");
                 }
             }
-            // Attached ammo and petal slots are structural ownership, unlike
-            // fired projectiles, grabbed targets or independently summoned AI.
+            // 花瓣和未发射弹药随所有者迁移；已发射投射物、被搬运目标和独立召唤物不在此列。
             if (const auto found = attached.find(entity->GetHandle()); found != attached.end())
                 pending.insert(pending.end(), found->second.begin(), found->second.end());
         }
@@ -198,7 +230,12 @@ SPlayerTransitionResult CWorldTransfer::Move(CPlayer& player, CGameWorld& source
 
         if (&source == &destination)
         {
-            CWorldCheckpoint saved(source);
+            // 同世界传送只改位置和空间索引，无需复制实体列表、ID 分配器和玩法索引。
+            const auto checkpoint_started = std::chrono::steady_clock::now();
+            auto saved_spatial = source.m_spatial_grid;
+            cost.spatial_entries_copied = source.m_spatial_grid.TrackedCount();
+            cost.checkpoint_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - checkpoint_started).count();
             try
             {
                 int inserted = 0;
@@ -213,10 +250,19 @@ SPlayerTransitionResult CWorldTransfer::Move(CPlayer& player, CGameWorld& source
             catch (...)
             {
                 for (const auto& record : records) { record.entity->Pos() = record.position; record.entity->PrevPos() = record.previous; }
-                saved.Restore(); return Reject("Teleport staging failed and was rolled back");
+                source.m_spatial_grid = std::move(saved_spatial);
+                return Reject("Teleport staging failed and was rolled back");
             }
-            return {true, controlled->GetHandle(), {}};
+            // 传送只采样落点，不能把路径上的地形当成实际经过。
+            for (const auto& record : records)
+                if (auto* mob = dynamic_cast<CMobBase*>(source.ResolveEntity(record.before)))
+                    mob->SynchronizeEnvironment();
+            CEntity* current = player.GetEntity();
+            return {true, current ? current->GetHandle() : SEntityHandle{}, {}};
         }
+
+        progress = player.PrepareGameplayScope(destination, destination.GetController(), controlled, error);
+        if (!progress) return Reject(error);
 
         if (records.size() >= UINT64_MAX - destination.m_next_generation ||
             destination.m_next_id > std::numeric_limits<int>::max() - static_cast<int>(records.size()))
@@ -228,7 +274,17 @@ SPlayerTransitionResult CWorldTransfer::Move(CPlayer& player, CGameWorld& source
                     if (chain->HasEndpoint(*record.entity) || chain->HasLease(*record.entity))
                     { chain_refs.push_back(chain->GetHandle()); break; }
 
+        const auto checkpoint_started = std::chrono::steady_clock::now();
         CWorldCheckpoint before_source(source), before_destination(destination);
+        cost.checkpoint_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - checkpoint_started).count();
+        cost.spatial_entries_copied = source.m_spatial_grid.TrackedCount() + destination.m_spatial_grid.TrackedCount();
+        const auto index_size = [](const CGameWorld& world) {
+            return world.m_live_entities.size() + world.m_cleanup_entities.size() + world.m_always_tick_entities.size() +
+                world.m_conditional_tick_entities.size() + world.m_large_entities.size() + world.m_chains.size() +
+                world.m_spawn_habitat_cache.size() + world.m_free_ids.size() + world.m_id_in_use.size();
+        };
+        cost.entity_index_entries_copied = index_size(source) + index_size(destination);
         try
         {
             source.m_free_ids.reserve(source.m_free_ids.size() + records.size());
@@ -264,6 +320,7 @@ SPlayerTransitionResult CWorldTransfer::Move(CPlayer& player, CGameWorld& source
                 record.entity->SetGameWorld(&source);
                 record.entity->ActiveTickMarker() = record.active_marker;
                 record.entity->CollisionSyncMarker() = record.collision_marker;
+                record.entity->m_birth_tick_marker = record.birth_marker;
                 record.entity->Pos() = record.position; record.entity->PrevPos() = record.previous;
             }
             before_source.Restore(); before_destination.Restore();
@@ -272,8 +329,7 @@ SPlayerTransitionResult CWorldTransfer::Move(CPlayer& player, CGameWorld& source
             catch (...) { return Reject("Transfer rolled back after an unknown staging failure"); }
         }
 
-        // No fallible acceptance checks or external callbacks beyond here.
-        // Remapping only rewrites existing handles; no allocating graph rebuild.
+        // 结构提交只改已分配的身份和句柄，外部回调在提交后执行。
         for (const auto& record : records) record.entity->RemapTransferredReferences(mapping);
         for (const auto& record : records) source.FreeID(record.before.id);
         player.CommitOwnedEntity(controlled);
@@ -282,13 +338,13 @@ SPlayerTransitionResult CWorldTransfer::Move(CPlayer& player, CGameWorld& source
     }
     catch (const std::exception& exception)
     {
-        // Preparation/copy failures occur before any world mutation. All
-        // failures inside the staged move have their own rollback above.
+        // 准备失败尚未改动世界；结构修改阶段的异常已在上方回滚。
         return Reject(exception.what());
     }
 
-    // Committed cleanup uses old qualified handles, not owner resolution in
-    // a world the owner has already left. External relations end here.
+    try
+    {
+    // 使用源世界的完整旧句柄清理外部关系。
     for (const auto& record : records)
     {
         CEntity* live = destination.ResolveEntity(record.after);
@@ -304,8 +360,7 @@ SPlayerTransitionResult CWorldTransfer::Move(CPlayer& player, CGameWorld& source
         }
         source.DestroyProjectilesOwnedBy(record.before);
         source.DestroySummonedMobsOwnedBy(record.before);
-        // Relic zones are world-local effects, not moving entities. Their
-        // normal petal-clear callback now runs against the destination world.
+        // Relic 区域留在源世界清理，不能随花瓣搬走。
         if (auto* relic = dynamic_cast<CRelicPetal*>(live))
         {
             if (CEntity* zone = source.ResolveEntity(relic->m_state_zone_ref))
@@ -323,8 +378,7 @@ SPlayerTransitionResult CWorldTransfer::Move(CPlayer& player, CGameWorld& source
         if (auto* chain = dynamic_cast<CChainEntity*>(source.ResolveEntity(ref))) chain->Break();
     player.ResetControlledMob();
     if (source.GetController()) source.GetController()->OnPlayerDepartureCommitted(source, player, controlled);
-    // Flower petals retain the existing world-change reload rule. Moving
-    // their ownership first makes OnPetalCleared resolve the correct flower.
+    // 先迁移所有权再清理花瓣，使清理回调能解析正确的所有者。
     for (const auto& record : records)
     {
         CEntity* live = destination.ResolveEntity(record.after);
@@ -332,32 +386,67 @@ SPlayerTransitionResult CWorldTransfer::Move(CPlayer& player, CGameWorld& source
         if (auto* flower = dynamic_cast<CFlower*>(live)) flower->DestroyPetalEntities();
         if (auto* petal = dynamic_cast<CPetal*>(live)) { petal->NotifyCleared(); petal->MarkForDestroy(EEntityRemovalReason::OwnerRemoved); }
     }
-    if (!player.SynchronizeGameplayScope(destination))
-        throw std::runtime_error("Cannot initialize committed player progress scope");
+    progress->Commit();
     if (destination.GetController()) destination.GetController()->OnPlayerArrivalCommitted(destination, player);
     for (const auto& record : records)
         if (auto* mob = dynamic_cast<CMobBase*>(destination.ResolveEntity(record.after))) mob->SynchronizeEnvironment();
     if (CEntity* current = player.GetEntity())
         for (const auto& record : records)
-            if (CEntity* live = destination.ResolveEntity(record.after)) live->Team() = current->Team();
-    if (CGameContext* context = destination.GameContext()) context->Network().NotifyPlayerWorldChanged(player);
+            if (CEntity* live = destination.ResolveEntity(record.after)) live->SetTeam(current->Team());
+    if (CGameContext* context = destination.GameContext())
+    {
+        if (&source == &destination) context->Scenes().NotifyPlayerStateChanged(player);
+        else context->Scenes().NotifyPlayerWorldChanged(player);
+    }
     CEntity* current = player.GetEntity();
     return {true, current ? current->GetHandle() : SEntityHandle{}, {}};
+    }
+    catch (const std::exception& exception)
+    {
+        if (&source != &destination) source.EnterRecovery(exception.what());
+        destination.EnterRecovery(exception.what());
+    }
+    catch (...)
+    {
+        if (&source != &destination) source.EnterRecovery("迁移提交回调发生未知异常");
+        destination.EnterRecovery("迁移提交回调发生未知异常");
+    }
+    const auto* remaining = player.GetEntity();
+    return {true, remaining ? remaining->GetHandle() : SEntityHandle{}, destination.RecoveryError(), false, true};
+
 }
 
-SPlayerTransitionResult CWorldTransfer::Possess(CPlayer& player, CGameWorld& destination, const SEntityHandle& target_ref)
+SPlayerTransitionResult CWorldTransfer::Possess(CPlayer& player, CGameWorld& destination, const SEntityHandle& requested_ref)
 {
+    if (CAccountDataStore::IsEconomyOperationActive()) return Reject("Cannot change control during an economy operation");
+    if (destination.IsRecovering()) return Reject("目标房间正在恢复");
     CEntity* previous = player.GetEntity();
     CGameWorld* source = previous ? previous->GameWorld() : nullptr;
-    auto* target = dynamic_cast<CMobBase*>(destination.ResolveEntity(target_ref));
+    if (destination.IsTicking() || destination.IsCombatEventActive() || (source && (source->IsTicking() || source->IsCombatEventActive())))
+        return Reject("控制权切换必须在模拟帧边界提交");
+    auto* target = dynamic_cast<CMobBase*>(destination.ResolveEntity(requested_ref));
     if (!player.IsAuthenticated() || !target || target->IsMarkedForDes() || target->IsDead()) return Reject("Invalid control target");
+    if (const auto* body = dynamic_cast<const IMultiSegmentBodyMob*>(target))
+    {
+        auto* root = ResolveMultiSegmentRoot(&destination, body->RootHandle());
+        const auto* assembly = dynamic_cast<const IMultiSegmentRootMob*>(root);
+        if (!assembly || root->IsDead() ||
+            std::none_of(assembly->GetSegmentReferences().begin(), assembly->GetSegmentReferences().end(),
+                [&](const auto& part) { return part.index == body->SegmentIndex() && part.entity_ref.RefersTo(requested_ref); }))
+            return Reject("Control target has no valid assembly root");
+        // 体节由根统一驱动；接管任意部位都必须控制整条生物。
+        target = root;
+    }
+    const auto target_ref = target->GetHandle();
     if (player.IsTransitionActive() || destination.IsTransitionActive() || (source && source->IsTransitionActive()))
         return Reject("Nested control transition is not allowed");
     if (destination.m_spatial_grid.HasActiveQueries() || (source && source->m_spatial_grid.HasActiveQueries()))
         return Reject("Cannot change control during a spatial query");
     if (CGameContext* context = destination.GameContext())
         for (const auto& other : context->Players())
-            if (other && other.get() != &player && other->GetEntity() == target) return Reject("Control target is occupied");
+            if (other && other.get() != &player &&
+                (other->GetEntity() == target || ShareMultiSegmentAssembly(other->GetEntity(), target)))
+                return Reject("Control target is occupied");
     if (previous == target) return {true, target_ref, {}};
     bool absent_source = false;
     CTransitionGuard guard(player.m_transition_active, source ? source->m_transition_active : absent_source,
@@ -371,25 +460,64 @@ SPlayerTransitionResult CWorldTransfer::Possess(CPlayer& player, CGameWorld& des
     if (player.GetEntity() != previous || destination.ResolveEntity(target_ref) != target || target->IsMarkedForDes())
         return Reject("Control target changed during preflight");
     std::unique_ptr<CPlayerController> controller;
-    try { controller = std::make_unique<CPlayerController>(); }
+    std::unique_ptr<IController> release_controller;
+    std::unique_ptr<SControlEquipment> equipment;
+    std::unique_ptr<CPlayer::SPreparedGameplayScope> progress;
+    struct SPreparedInventory
+    {
+        std::string key; std::uint64_t epoch = 0; bool committed = false;
+        ~SPreparedInventory() { if (!committed && !key.empty()) CAccountDataStore::RemoveSandboxAccount(key); }
+    } inventory;
+    try
+    {
+        progress = player.PrepareGameplayScope(destination, destination.GetController(), target, error);
+        if (!progress) return Reject(error);
+        controller = std::make_unique<CPlayerController>();
+        equipment = target->CaptureControlEquipment();
+        if (!player.PrepareNpcInventory(*target, inventory.key, inventory.epoch, error)) return Reject(error);
+        if (auto* body = dynamic_cast<CMobBase*>(previous); body && !body->IsMarkedForDes())
+            if (const auto* prototype = FindMobPrototype(body->GetMobType()); prototype && prototype->m_controller_factory)
+                release_controller = prototype->m_controller_factory(body->GetRarity());
+    }
     catch (const std::exception& exception) { return Reject(exception.what()); }
+    try
+    {
     player.ResetControlledMob();
     player.CommitOwnedEntity(target);
-    target->SetController(std::move(controller));
+    player.CommitNpcInventory(std::move(inventory.key), inventory.epoch); inventory.committed = true;
+    target->AcquirePlayerControl(std::move(controller), std::move(equipment));
+    if (auto* body = dynamic_cast<CMobBase*>(previous)) body->ReleasePlayerControl(std::move(release_controller));
     if (source != &destination)
     {
         player.m_cp_stack.clear(); player.m_cp_check_phase = static_cast<uint8_t>(player.GetId() & 7);
         if (source && source->GetController()) source->GetController()->OnPlayerDepartureCommitted(*source, player, previous);
     }
-    if (!player.SynchronizeGameplayScope(destination, source ? source->ResolveEntity(view.previous_entity) : nullptr))
-        throw std::runtime_error("Cannot initialize committed player progress scope");
+    progress->Commit(source ? source->ResolveEntity(view.previous_entity) : nullptr);
     if (destination.GetController()) destination.GetController()->OnPlayerArrivalCommitted(destination, player);
-    // Arrival callbacks may remove the controlled entity. Never retain the
-    // pre-callback pointer across that committed notification boundary.
+    // 进入回调可能删除实体，必须重新解析句柄。
     if (auto* live = dynamic_cast<CMobBase*>(destination.ResolveEntity(target_ref)))
         live->SynchronizeEnvironment();
     player.m_logged_missing_entity = false;
-    if (CGameContext* context = destination.GameContext()) context->Network().NotifyPlayerWorldChanged(player);
+    if (CGameContext* context = destination.GameContext())
+    {
+        // 同世界附身只更新身体和背包；跨世界仍需完整场景屏障。
+        if (source == &destination) context->Scenes().NotifyPlayerStateChanged(player);
+        else context->Scenes().NotifyPlayerWorldChanged(player);
+    }
     CEntity* current = player.GetEntity();
     return {true, current ? current->GetHandle() : SEntityHandle{}, {}};
+    }
+    catch (const std::exception& exception)
+    {
+        if (source && source != &destination) source->EnterRecovery(exception.what());
+        destination.EnterRecovery(exception.what());
+    }
+    catch (...)
+    {
+        if (source && source != &destination) source->EnterRecovery("迁移提交回调发生未知异常");
+        destination.EnterRecovery("迁移提交回调发生未知异常");
+    }
+    const auto* remaining = player.GetEntity();
+    return {true, remaining ? remaining->GetHandle() : SEntityHandle{}, destination.RecoveryError(), false, true};
+
 }

@@ -76,7 +76,7 @@ void SendRconPrivateMessageImpl(CServer& server, INetworkModule& network, CPlaye
         if (!chat.message.empty()) server.Extensions().Globals().Find<IChatService>()->SendTo(player, chat);
     }
 }
-} // namespace
+}
 
 void SendRconPrivateMessage(CServer& server, INetworkModule& network, CPlayer& player, const std::string& message)
 {

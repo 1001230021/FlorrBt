@@ -16,11 +16,7 @@ CEntity* CPickupController::GetCarried(const CMobBase* mob) const
     CEntity* entity = world->ResolveEntity(m_carried_ref);
     if (!entity || entity->IsMarkedForDes() || entity->IsDead()) return nullptr;
 
-    // Legacy snapshots did not carry world identity. ResolveEntity can still
-    // safely find the entity by id+generation, but retaining that incomplete
-    // key would make the carried-entity registry (which uses canonical
-    // handles) impossible to unregister later. Canonicalize lazily because a
-    // controller may be restored before the referenced entity is inserted.
+    // 旧句柄缺少世界身份，需在目标可解析时补全；否则无法从使用完整句柄的携带登记表中注销。
     if (!m_carried_ref.HasWorldIdentity()) m_carried_ref = entity->GetHandle();
     return entity;
 }
@@ -52,8 +48,7 @@ bool CPickupController::TryPickup(CMobBase* mob, CEntity* candidate)
 
 void CPickupController::DropCarried(CMobBase* mob)
 {
-    // Teardown must work even after the carrier/target is marked or dead.
-    // GetCarried intentionally excludes those for gameplay target selection.
+    // 销毁清理必须能处理已死亡或标记移除的对象，不能沿用正常目标筛选。
     CEntity* carried = mob && mob->GameWorld() ? mob->GameWorld()->ResolveEntity(m_carried_ref) : nullptr;
     OnCarryChanged(mob, carried, false);
     if (mob && mob->GameWorld())

@@ -10,6 +10,8 @@
 #include "gamecontroller.h"
 #include "extensions/extension_runtime.h"
 #include "systems/environment_system.h"
+#include "systems/world_terrain.h"
+#include "systems/combat_events.h"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -48,10 +50,17 @@ class CGameWorld
     enum class ETickPhase : std::uint8_t
     {
         ActiveCollection,
-        EntityUpdate,
-        ControllerAndSync,
-        WallResolution,
+        Rules,
+        Begin,
+        Intent,
+        Forces,
+        Motion,
+        Constraints,
+        Environment,
+        Actions,
+        Requests,
         EntityCollision,
+        Effects,
         Cleanup,
         Count,
     };
@@ -76,8 +85,7 @@ class CGameWorld
     explicit CGameWorld(const std::string& path, std::uint32_t world_id = 0);
     ~CGameWorld();
     std::uint32_t GetId() const { return m_world_id; }
-    // World IDs can be reused after deleting the last room. Debug/editor
-    // references additionally carry this process-local instance identity.
+    // 房间 ID 可复用，调试与编辑引用须同时携带实例代数。
     std::uint64_t GetInstanceGeneration() const { return m_instance_generation; }
     bool RestoreInstanceGeneration(std::uint64_t generation);
     std::uint64_t NextEntityGeneration() const { return m_next_generation; }
@@ -93,8 +101,15 @@ class CGameWorld
     void ConfigureExtensions(SWorldExtensionConfig config);
 
     IGameController* GetController() const { return m_p_controller.get(); }
-    void SetController(std::unique_ptr<IGameController> controller, bool notify_players = true);
-    // Borrowed phase-local view, including disconnected sessions still in this world.
+    CWorldTerrain& Terrain() { return m_terrain; }
+    const CWorldTerrain& Terrain() const { return m_terrain; }
+    CCombatEventSystem& CombatEvents() { return m_combat_events; }
+    bool IsCombatEventActive() const { return m_combat_events.IsActive(); }
+    SControllerChangeResult SetController(std::unique_ptr<IGameController> controller, bool notify_players = true);
+    bool IsRecovering() const { return !m_recovery_error.empty(); }
+    const std::string& RecoveryError() const { return m_recovery_error; }
+    void EnterRecovery(std::string error);
+    // 借用会话视图，包含身体已移除、等待重生的玩家。
     std::vector<CPlayer*> Players() const;
 
     CEntity* InsertEntity(std::unique_ptr<CEntity> entity);
@@ -103,8 +118,10 @@ class CGameWorld
     void ClearEntitiesForRestore();
     bool ReloadMapForRestore(std::string& error);
     void FinalizeEntityRestore();
-    // Complete cascading removals before publishing a persistent snapshot.
-    void FlushEntityRemovals() { Cleanup(); }
+    // 持久化快照发布前完成级联移除。
+    void FlushEntityRemovals();
+    bool CanSimulateThisTick(const CEntity& entity) const
+    { return entity.GameWorld() == this && (!m_tick_active || entity.BirthTickMarker() != m_active_tick_marker); }
 
     void RemoveEntity(int id);
     void DestroyProjectilesOwnedBy(const SEntityHandle& owner_ref);
@@ -150,7 +167,7 @@ class CGameWorld
     void CollectEntities(std::vector<CEntity*>& result) const;
     std::vector<CEntity*> GetAllEntities() const;
     std::size_t GetEntityCount() const { return m_live_entities.size(); }
-    std::size_t GetLastActiveEntityCount() const { return m_active_entities.size(); }
+    std::size_t GetLastActiveEntityCount() const { return m_last_active_entity_count; }
     const STickPhaseTelemetry& GetTickPhaseTelemetry() const { return m_tick_phase_telemetry; }
 
     const entity_spatial_grid& GetSpatialGrid() const { return m_spatial_grid; }
@@ -187,26 +204,14 @@ class CGameWorld
     bool SweptCircleBlockedByWall(florrbt::Vector2f start, florrbt::Vector2f end, float radius,
                                   EWallQuery mask = EWallQuery::All) const;
     std::optional<florrbt::Vector2f> NearestUnblockedPosition(florrbt::Vector2f from, float radius) const;
-    // Removes native map walls whose bounding box intersects the given world
-    // rect and rebuilds the wall grid. Returns the number of walls removed.
+    // 删除与矩形相交的墙体，记录世界级历史并重建碰撞索引。
     int RemoveWallsInRect(florrbt::Vector2f min_pos, florrbt::Vector2f max_pos);
-    // Precise wall removal by id (used by the wall board). Re-numbers the
-    // remaining walls and rebuilds the wall grid. Returns the removed count.
-    int RemoveWallsByIds(const std::vector<int>& ids);
 
-    // Chain lightning: starting at `origin`, repeatedly strikes the closest mob
-    // matching the filter (default: enemy mobs without nullification, not struck
-    // yet, edge distance at most one world tile) up to `bounces` times. Each hit
-    // deals `damage` Lightning damage attributed to `owner`. The chain's node
-    // positions are broadcast to the world's players for the client visual.
+    // 从 origin 逐次命中最近的合格目标，每个目标只命中一次；伤害归属 owner，视效只广播本世界。
     void ChainLightning(CEntity& origin, float damage, int bounces, CEntity* owner,
                         const std::function<bool(const CMobBase&)>& target_filter = {});
-    // Blue magic chain lightning has two independent budgets. A boost bounce
-    // reads lightning power from a matching entity into the accumulated
-    // damage; hostile boost sources first take the chain's current damage. A
-    // damage bounce strikes a matching hostile mob. Boost targets are always
-    // attempted first while boost budget remains; damage targets are the
-    // fallback for that hop.
+    // 魔法闪电分别限制增幅跳数和伤害跳数，优先寻找增幅源，找不到时尝试敌方伤害目标。
+    // 敌方增幅源先承受当前伤害，再把自身闪电强度加到链上。
     void MagicChainLightning(CEntity& origin, float damage, int boost_bounces, int damage_bounces, CEntity* owner,
                              const std::function<bool(const CEntity&)>& boost_filter = {},
                              const std::function<float(const CEntity&)>& boost_reader = {},
@@ -217,7 +222,8 @@ class CGameWorld
     friend class CServerTestAccess;
     bool m_transition_active = false;
     bool m_tick_active = false;
-    // Fault injection is private to the offline regression fixture.
+    std::string m_recovery_error;
+    // 故障注入仅供离线回归夹具使用。
     int m_transfer_fault_after_insert = -1;
     CExtensionView m_extensions;
     SWorldExtensionConfig m_extension_config;
@@ -308,15 +314,17 @@ class CGameWorld
     void BuildWallGrid();
     void CollectActiveEntitiesForTick();
     void RetireInactiveMobs(float elapsed);
-    void TickActiveEntities(float dt);
+    void TickEntityPhase(CEntity::ETickPhase phase, float dt);
     void FlushPendingPsionicDamage();
     void RemoveTransferredActiveEntities();
-    void ResolveWallCollisions(std::span<CEntity* const> entities);
+    void ResolveWallCollisions(std::span<CEntity* const> entities, bool sweep_motion = true);
+    void ResolveBodyGeometry(const std::vector<CEntity*>& entities, float dt);
     void ResolveCollisions(const std::vector<CEntity*>& entities, float dt);
     void SyncSpatialPositions(const std::vector<CEntity*>& entities);
     void SyncSpatialPositionsAndLargeMemberships(const std::vector<CEntity*>& entities);
     void SyncSpatialPositionsAndMemberships(const std::vector<CEntity*>& entities);
     void Cleanup();
+    void ClearFrameViews();
 
     std::vector<int> m_free_ids;
     std::vector<std::uint8_t> m_id_in_use;
@@ -326,6 +334,8 @@ class CGameWorld
     CGameContext* m_p_game_context = nullptr;
 
     std::unique_ptr<FlorrBtMap> m_map;
+    CWorldTerrain m_terrain{*this};
+    CCombatEventSystem m_combat_events{*this};
     std::string m_map_path;
     std::vector<florrbt::SpawnZoneBounds> m_spawn_zone_bounds;
     struct SHabitatCache
@@ -342,9 +352,7 @@ class CGameWorld
     CEnvironmentSystem m_environment;
     std::unique_ptr<IGameController> m_p_controller = nullptr;
 
-    // Owning storage is m_p_entities. The following vectors are non-owning
-    // same-world indexes; membership is maintained only by the Register*/
-    // Unregister* helpers and must never outlive an entity cleanup pass.
+    // m_p_entities 是唯一所有权容器；下列同世界索引只借用指针，统一由注册/注销入口维护。
     std::vector<std::unique_ptr<CEntity>> m_p_entities;
     std::vector<CEntity*> m_live_entities;
     std::vector<CChainEntity*> m_chains;
@@ -353,6 +361,8 @@ class CGameWorld
     std::vector<CEntity*> m_conditional_tick_entities;
     std::vector<CEntity*> m_large_entities;
     std::vector<CEntity*> m_active_entities;
+    std::size_t m_last_active_entity_count = 0;
+    std::vector<CEntity*> m_owner_driven_entities;
     std::vector<CActiveTickView> m_active_tick_views;
     std::vector<CPlayerTickView> m_player_tick_views;
     std::vector<CEntity*> m_collision_inactive_entities;
@@ -366,6 +376,14 @@ class CGameWorld
         float prefix_max_x = 0.f;
     };
     std::vector<SContactSweepEntry> m_contact_sweep;
+    struct SBodyContactSweepEntry : SContactSweepEntry
+    {
+        SEntityHandle handle;
+        florrbt::Vector2f position;
+        float radius = 0.f;
+    };
+    // 只保存每个参与者的几何快照，密集接触不会占用 O(接触对数) 的缓存。
+    std::vector<SBodyContactSweepEntry> m_body_contact_sweep;
     std::vector<SEntityHandle> m_clear_owned_owner_keys;
     std::vector<SEntityHandle> m_clear_summon_owner_keys;
     std::unordered_map<SPsionicReceiverKey, SPendingPsionicDamage, SPsionicReceiverKeyHash>

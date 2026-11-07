@@ -9,9 +9,7 @@ class CGameWorld;
 
 class CChainEntity;
 
-// A Linker petal implements this lease. The chain never stores a raw pointer
-// to it; it resolves the id/generation pair and calls this interface once when
-// the chain is broken.
+// 链条按完整句柄解析 Linker；断链时通过租约接口通知一次，不长期借用花瓣指针。
 class IChainLease
 {
   public:
@@ -27,11 +25,11 @@ class CChainEntity final : public CEntity
     CChainEntity(CGameWorld* world, CEntity& first, CEntity& second, float max_length, float integrity,
                  float elasticity, CEntity* lease_owner);
 
-    void Tick(float) override {}
+    void OnTickActions(float) override {}
     bool CanCollide() const override { return false; }
     bool CollidesWithWalls() const override { return false; }
     bool IsVisible() const override { return !IsMarkedForDes(); }
-    void TakeDamage(float, CEntity*, EDamageType) override {}
+    void OnTakeDamage(float, CEntity*, EDamageType) override {}
     void OnBeforeRemoved(EEntityRemovalReason) override;
 
     void ApplyConstraint(float dt);
@@ -68,7 +66,7 @@ class CChainEntity final : public CEntity
     SChainEndpointRef m_lease_ref;
     float m_max_length = 0.f;
     float m_max_integrity = 1.f;
-    // 0 = hard fixed-length constraint, >0 = soft spring, <0 = one-sided rope.
+    // 零为定长约束，正值为弹簧，负值为单向绳索。
     float m_elasticity = -1.f;
     float m_tension = 0.f;
     bool m_lease_notified = false;

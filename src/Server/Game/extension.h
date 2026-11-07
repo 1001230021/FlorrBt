@@ -1,4 +1,5 @@
 #pragma once
+#include "../../Shared/client_features.h"
 
 #include <cstdint>
 #include <span>
@@ -9,6 +10,7 @@
 class CPlayer;
 class IPlayerDirectory;
 class IChatDelivery;
+class IPartyDelivery;
 class IChatService;
 class ISquadDirectory;
 class CSnapshotReader;
@@ -36,6 +38,7 @@ struct SWorldExtensionConfig
     bool squads = false;
     bool weather_visuals = false;
     bool weather_spawns = false;
+    std::vector<SFeatureRule> features;
     bool operator==(const SWorldExtensionConfig&) const = default;
 };
 
@@ -45,12 +48,15 @@ struct SExtensionDescriptor
     EExtensionScope scope;
     std::uint32_t state_version;
     std::span<const std::string_view> dependencies{};
+    // 旧描述符默认要求恢复状态，避免缺项时静默丢失数据。
+    bool required_state = true;
 };
 
 struct CExtensionContext
 {
     IPlayerDirectory& players;
     IChatDelivery& chat_delivery;
+    IPartyDelivery& party_delivery;
     IChatService* chat = nullptr;
     const ISquadDirectory* squads = nullptr;
 };
@@ -71,7 +77,7 @@ class ITickExtension
     virtual void Tick(float dt) = 0;
 };
 
-// Main-thread publication barrier before read-only consumers (snapshots).
+// 在快照等只读消费者运行前，于主线程发布派生状态。
 class IMaintainedExtension
 {
   public:
@@ -93,4 +99,29 @@ class IPersistentExtension
     virtual ~IPersistentExtension() = default;
     virtual void CaptureSnapshot(CSnapshotWriter&) const = 0;
     virtual bool RestoreSnapshot(const CSnapshotReader&, std::uint32_t, std::string&) = 0;
+    // 可选状态须定义缺项时的重置，不能沿用上一场景的数据。
+    virtual bool RestoreDefaultState(std::string& error)
+    { error = "Extension has no default-state migration"; return false; }
+};
+
+class IRestoreBoundaryExtension
+{
+  public:
+    virtual ~IRestoreBoundaryExtension() = default;
+    virtual void BeginRestore() = 0;
+};
+
+class IPlayerStateExtension
+{
+  public:
+    virtual ~IPlayerStateExtension() = default;
+    virtual bool PublishPlayerState(CPlayer&) = 0;
+};
+
+class IClientFeatureExtension
+{
+  public:
+    virtual ~IClientFeatureExtension() = default;
+    virtual std::span<const std::string_view> FeatureKeys() const = 0;
+    virtual void DescribeFeatures(const CPlayer&, std::vector<SClientFeature>&) const = 0;
 };

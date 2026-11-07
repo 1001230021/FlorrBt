@@ -1,14 +1,12 @@
-cmake_minimum_required(VERSION 3.11)
-# Select the CRT via target properties before any language is enabled.
-# libtmj customizes CMAKE_C_FLAGS_DEBUG/RELEASE; under the old policy that
-# silently discarded /MD[d] and made tmj use the incompatible default /MT.
+cmake_minimum_required(VERSION 3.24)
+# 启用语言前固定动态 CRT，避免 libtmj 的自定义编译参数回落到不兼容的 /MT。
 if(POLICY CMP0091)
     cmake_policy(SET CMP0091 NEW)
-    # Older subprojects call cmake_minimum_required(3.11), which otherwise
-    # unset this policy again and select a different CRT on a clean build.
+    # 旧子项目重设最低版本时也须沿用同一 CRT 策略。
     set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
 endif()
-project(FlorrBt VERSION 1.0.5)
+project(FlorrBt VERSION 1.0.9)
+include(cmake/MsvcIncludePrefix.cmake)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,6 +15,7 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
 if(MSVC)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
+    add_compile_options(/utf-8)
 endif()
 
 find_package(SFML 3 COMPONENTS Graphics Network System QUIET)
@@ -36,15 +35,25 @@ endif()
 add_subdirectory(externals/libtmj)
 add_subdirectory(externals/argon2)
 
+# 独立配置传输依赖，避免 curl 的选项污染其他库。
+add_subdirectory(cmake/curl)
+
 file(GLOB_RECURSE SHARED_SOURCES CONFIGURE_DEPENDS "src/Shared/*.cpp" "src/Engine/*.cpp")
 file(GLOB_RECURSE SERVER_SOURCES CONFIGURE_DEPENDS "src/Server/*.cpp")
 
 list(REMOVE_ITEM SERVER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/Server/main.cpp")
+list(REMOVE_ITEM SERVER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/Server/commands.cpp")
 add_library(${PROJECT_NAME}_ServerCore STATIC ${SERVER_SOURCES} ${SHARED_SOURCES})
 target_include_directories(${PROJECT_NAME}_ServerCore PUBLIC src)
-target_link_libraries(${PROJECT_NAME}_ServerCore PUBLIC SFML::Graphics SFML::Network SFML::System tmj argon2)
+target_link_libraries(${PROJECT_NAME}_ServerCore PUBLIC SFML::Graphics SFML::Network SFML::System tmj argon2 CURL::libcurl)
 add_executable(${PROJECT_NAME}_Server src/Server/main.cpp)
 target_link_libraries(${PROJECT_NAME}_Server PRIVATE ${PROJECT_NAME}_ServerCore)
+# 静态命令注册没有供外部引用的符号，必须直接链接，不能依赖静态库按需抽取。
+target_sources(${PROJECT_NAME}_Server PRIVATE src/Server/commands.cpp)
+if(WIN32)
+    add_custom_command(TARGET ${PROJECT_NAME}_Server POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:CURL::libcurl> $<TARGET_FILE_DIR:${PROJECT_NAME}_Server>)
+endif()
 
 # Optional MySQL/MariaDB client for the account persistence backend
 # (account_backend mysql in server.cfg). Works with libmysql (MySQL zip) and
@@ -127,9 +136,23 @@ add_subdirectory(tests)
 
 option(FLORRBT_BUILD_RUNTIME_TESTS "Build headless server lifecycle/snapshot regressions" OFF)
 if(FLORRBT_BUILD_RUNTIME_TESTS)
+    # Persistence regressions need neither a running server nor the world/
+    # renderer libraries. Keep their disk fixtures isolated under artifacts.
+    add_executable(FlorrBt_AccountTests tests/test_main.cpp tests/test_account_transactions.cpp
+        src/Server/Persistence/account_store.cpp src/Server/Persistence/mysql_account_backend.cpp
+        src/Server/Persistence/economy_codec.cpp src/Server/Persistence/account_identity_codec.cpp src/Engine/json_value.cpp)
+    target_include_directories(FlorrBt_AccountTests PRIVATE src tests)
+    target_link_libraries(FlorrBt_AccountTests PRIVATE argon2)
+    if(WIN32)
+        target_compile_definitions(FlorrBt_AccountTests PRIVATE NOMINMAX)
+    endif()
+    enable_testing()
+    add_test(NAME account_transactions COMMAND FlorrBt_AccountTests)
+    set_tests_properties(account_transactions PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
     add_executable(FlorrBt_RuntimeTests tests/test_main.cpp tests/test_runtime_repairs.cpp)
     target_include_directories(FlorrBt_RuntimeTests PRIVATE src tests)
     target_link_libraries(FlorrBt_RuntimeTests PRIVATE ${PROJECT_NAME}_ServerCore)
+    target_sources(FlorrBt_RuntimeTests PRIVATE src/Server/commands.cpp)
     if(WIN32)
         target_compile_definitions(FlorrBt_RuntimeTests PRIVATE NOMINMAX)
     endif()
@@ -138,6 +161,18 @@ if(FLORRBT_BUILD_RUNTIME_TESTS)
     set_tests_properties(runtime_repairs PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
     if(WIN32)
         set_tests_properties(runtime_repairs PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:SFML::Graphics>;PATH=path_list_prepend:$<TARGET_FILE_DIR:tmj>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:SFML::Graphics>;PATH=path_list_prepend:$<TARGET_FILE_DIR:tmj>;PATH=path_list_prepend:$<TARGET_FILE_DIR:CURL::libcurl>")
+    endif()
+    add_executable(FlorrBt_TransportTests tests/test_main.cpp tests/test_remote_transport.cpp
+        src/Server/Transport/remote_transport.cpp src/Server/Transport/report_review.cpp
+        src/Server/Auth/email_verification_service.cpp src/Engine/json_value.cpp)
+    target_include_directories(FlorrBt_TransportTests PRIVATE src tests)
+    target_link_libraries(FlorrBt_TransportTests PRIVATE CURL::libcurl SFML::Network SFML::System)
+    add_test(NAME remote_transport COMMAND FlorrBt_TransportTests)
+    set_tests_properties(remote_transport PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    if(WIN32)
+        target_compile_definitions(FlorrBt_TransportTests PRIVATE NOMINMAX)
+        set_tests_properties(remote_transport PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:SFML::System>;PATH=path_list_prepend:$<TARGET_FILE_DIR:CURL::libcurl>")
     endif()
 endif()

@@ -102,7 +102,7 @@ float WeatherInfluence(const std::vector<EWeatherType>& accepted, const SWeather
     }
     return best;
 }
-} // namespace
+}
 
 void CSpawnRuleSet::Clear()
 {
@@ -310,14 +310,13 @@ const SResolvedSpawnProfile* CSpawnRuleSet::Resolve(const std::string& name,
     if (profile_it == m_profiles.end()) return nullptr;
 
     SCachedProfile& cache = m_cache[name];
-    // Time modifiers are smooth, but spawn decisions do not need per-tick cache invalidation.
+    // 时间修正平滑变化，刷怪决策无需逐帧使缓存失效。
     constexpr double time_cache_slots_per_day = 24.0 * 60.0;
     const std::uint16_t time_slot = environment
                                         ? static_cast<std::uint16_t>(environment->time_of_day *
                                                                      time_cache_slots_per_day)
                                         : 0;
-    // Weather intensities move continuously; quantized signatures keep the cache useful across zones
-    // while ensuring material weather changes cannot leave stale mixed weights behind.
+    // 天气签名量化以复用区域缓存，同时响应足以改变权重的强度变化。
     std::uint32_t intensity_signature = 0;
     if (environment)
     {

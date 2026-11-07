@@ -1,6 +1,4 @@
-// Death presentation is separate from authoritative position / physics. Use
-// the last observed velocity once, then an analytic exponential coast; never
-// integrate dead input, collisions or a new snapshot's zero velocity.
+// 死亡表现只使用最后速度并解析减速，不推进死后输入、碰撞或新快照的零速度。
 const finitePoint = value => !!value && Number.isFinite(value.x) && Number.isFinite(value.y);
 const damping = 5.5;
 const coastSeconds = 0.8;
@@ -10,7 +8,7 @@ export function beginDeathMotion(entity, now, { velocity = null, resting = false
   const anchor = finitePoint(entity.snapshot?.pos) ? entity.snapshot.pos : { x: 0, y: 0 };
   const radius = Math.max(1, Number(entity.snapshot?.radius) || 1);
   const visible = finitePoint(entity.renderPos) ? entity.renderPos : anchor;
-  // A discontinuous world transfer is not a velocity sample.
+  // 跨世界跳变不能当作速度采样。
   const continuous = Math.hypot(visible.x - anchor.x, visible.y - anchor.y) <= Math.max(160, radius * 6);
   const origin = continuous ? visible : anchor;
   const source = finitePoint(velocity) ? velocity : entity.snapshotVelocity;

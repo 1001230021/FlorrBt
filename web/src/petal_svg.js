@@ -1,7 +1,4 @@
-// Petal SVG text-label surgery. Petal icon SVGs carry their name baked in as
-// vector label paths (an outline/fill pair) plus optional <text> nodes; the
-// card pipeline strips or extracts those labels to compose icons freely.
-// Pure string -> string transforms, safe to import from any layer.
+// 以纯字符串变换移除/提取 SVG 内置文字路径，供卡片自由组合。
 
 export function stripLivePetalLabel(svgText) {
   if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined")
@@ -113,9 +110,7 @@ export function extractMimicLabelSvg(svgText) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="24 68 64 22">${body}</svg>`;
 }
 
-// Measures the rendered content bounds of an SVG markup string (getBBox needs
-// the element attached, so it briefly joins the DOM hidden). Returns null when
-// there is nothing measurable — callers fall back to the full frame.
+// 测量需要暂时挂入隐藏 DOM；无法测量时返回空值，由调用方回退整框。
 export function measureSvgContentBox(svgMarkup) {
   if (typeof document === "undefined" || !document.body) return null;
   const host = document.createElement("div");
@@ -146,8 +141,7 @@ export function getCenteredSvgViewBox(box, paddingRatio = 0.04) {
   return `${(cx - side / 2).toFixed(3)} ${(cy - side / 2).toFixed(3)} ${side.toFixed(3)} ${side.toFixed(3)}`;
 }
 
-// Only run on label-stripped equipment art, once when the cached image loads.
-// Card padding and baked-in group translations must not become body offsets.
+// 装备去标签后只在缓存图加载时测量一次，留白和内置平移不能变成身体偏移。
 export function centerPetalArtSvg(svgMarkup) {
   if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svgMarkup;
   const doc = new DOMParser().parseFromString(svgMarkup, "image/svg+xml");

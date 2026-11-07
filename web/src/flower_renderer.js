@@ -1,7 +1,4 @@
-// One geometry for world flowers and HUD portraits. Coordinates follow the
-// supplied Flower.cc (25-unit body), with video-measured neutral proportions.
-// Body/face use native canvas paths; equipment uses cached SVG images, with
-// no per-flower filters or SVG decoding.
+// 世界花朵和头像共用 25 单位几何；身体/脸使用画布路径，装备使用缓存 SVG。
 export const flowerGeometry = Object.freeze({
   radius: 25, outline: 2.4, eyeX: 7, eyeY: -5, eyeRX: 3, eyeRY: 6,
   pupilRadius: 3, mouthX: 6, mouthY: 10, mouthWidth: 1.5,
@@ -9,9 +6,7 @@ export const flowerGeometry = Object.freeze({
   attackBrow: 0.35,
 });
 
-// Measured from the native Titan reference: the face disc is 720px across
-// inside a 900px gear, and each of the 20 teeth spans one 18-degree sector.
-// The collision radius maps to the tooth tips; no artwork extends past it.
+// Titan 参考图为 900px 齿轮内含 720px 脸盘，20 齿各占 18 度；碰撞半径对齐齿尖。
 export const titanGeometry = Object.freeze({
   toothCount: 20,
   coreRadiusRatio: 0.8,
@@ -36,8 +31,7 @@ export function stepFlowerFace(previous, target, dt) {
   face.brow += (brow - face.brow) * follow;
   face.eyeX += (x * 2.6 - face.eyeX) * follow;
   face.eyeY += (y * 3.2 - face.eyeY) * follow;
-  // Corpse roll is an inertial presentation value, not an unconditional
-  // upside-down face. Portraits can request the same small, settled tilt.
+  // 尸体倾斜取惯性表现值，头像也可使用同样的轻微最终倾斜。
   const deadTilt = Number.isFinite(target.deadTilt) ? target.deadTilt : 0.25;
   face.tilt += ((dead ? deadTilt : 0) - face.tilt) * (1 - Math.exp(-9 * Math.max(0, Math.min(0.1, dt))));
   face.dead = dead;
@@ -56,14 +50,11 @@ export function getFlowerPalette({ poisoned = false, undead = false, corrupted =
   titan = false } = {}) {
   let fill = titan ? "#666666" : dummy ? "#99918f" : portrait ? "#edD35f" : "#ffe763";
   let border = titan ? "#535353" : dummy ? "#7b7472" : portrait ? "#c8b24f" : "#cfbc50";
-  // Relic's psionic connection is the dark-flower state. It must win over
-  // the generic pale psionic tint and remain visible even when another
-  // support modifier (for example anti-heal) is present.
+  // Relic 暗花状态优先于普通灵能浅色，并在存在其他辅助修正时保留。
   if (psionic) { fill = "#3e4748"; border = "#202829"; }
   else if (poisoned) { fill = "#ce76db"; border = "#a55faF"; }
   else if (undead) { fill = "#c5d476"; border = "#9eaa5e"; }
   else if (corrupted) { fill = "#c65165"; border = "#9e4051"; }
-  // Dandelion/anti-heal is a pale body, not a shifted muddy hue.
   if (antiHeal && !poisoned && !psionic) {
     const pale = titan ? "#969696" : dummy ? "#c7c2c1" : "#fff1a1";
     fill = pale;
@@ -94,8 +85,7 @@ export function drawTitanBody(ctx, radius, palette, heavyRim = false) {
   const rootRadius = radius * titanGeometry.toothRootRadiusRatio;
   const tipHalfAngle = sector * titanGeometry.toothTipHalfSectorRatio;
 
-  // Fill the root ring and all teeth as one path so adjacent trapezoids cannot
-  // expose antialiasing seams while the camera is zooming or moving quickly.
+  // 齿根和全部齿共用一条填充路径，避免缩放/移动时相邻梯形露出抗锯齿缝隙。
   ctx.fillStyle = palette.border;
   ctx.beginPath();
   ctx.arc(0, 0, rootRadius, 0, Math.PI * 2);
@@ -177,9 +167,7 @@ export function drawFlowerFace(ctx, radius, face, palette, { dummy = false, magi
     }
     ctx.fill(); ctx.restore();
   }
-  // Only trim the upper eye edge. The previous full-depth V reached the
-  // pupil centres and left two tiny, angry white triangles. Derive the mask
-  // from the eye bounds so changing eye size cannot misalign the expression.
+  // 眼部遮罩从眼睛边界推导，只裁上沿，避免改尺寸后错位。
   if (face.brow > 0.001 && !face.dead && !dummy) {
     ctx.fillStyle = palette.fill;
     const brow = Math.max(0, Math.min(flowerGeometry.attackBrow, face.brow));
@@ -191,9 +179,7 @@ export function drawFlowerFace(ctx, radius, face, palette, { dummy = false, magi
     ctx.lineTo(outerX, top); ctx.lineTo(0, top + 6); ctx.lineTo(-outerX, top);
     ctx.closePath(); ctx.fill();
 
-    // The body-colored attack mask trims the oval outline too. Restore only
-    // the newly exposed sloped edge, clipped to the two enlarged eye sockets,
-    // so Magic Eye follows the expression instead of drawing a floating oval.
+    // 攻击遮罩后仅补绘新斜边，并裁到眼窝内，让魔眼轮廓跟随表情。
     if (magicEye) {
       ctx.save();
       ctx.beginPath();
@@ -222,14 +208,11 @@ export function drawFlowerFace(ctx, radius, face, palette, { dummy = false, magi
   ctx.restore();
 }
 
-// The attachment coordinates share the body's 25-unit frame. Art is fitted
-// by its actual content bounds, never by the old 110-unit petal-card canvas.
+// 装备与身体共用 25 单位坐标，按实际内容边界适配。
 export const flowerAttachmentLayout = Object.freeze({
-  // Include the fitted SVG's 4% padding and let strip ends reach the outer
-  // body rim. Clipping below keeps the enlarged art inside the silhouette.
+  // 计入 SVG 的 4% 留白，再由身体轮廓裁剪扩大的贴图。
   bandage: Object.freeze({ size: 2.3, y: 0, angle: 0, clipToBody: true }),
-  // The reference's roots sit inside the forehead (about -0.74R), not on
-  // top of the rim. Preserve the SVG's curved, tapered shape and aspect.
+  // 触角根部位于额头内约 -0.74R，保持曲线和宽高比。
   antennae: Object.freeze({ size: 1.3, y: -1.25, angle: 0 }),
   thirdEye: Object.freeze({ size: 0.32, y: -14 / 25, angle: 0 }),
   douli: Object.freeze({ size: 2.65, y: -0.95, angle: 0 }),
@@ -252,8 +235,7 @@ function drawFlowerAttachment(ctx, radius, image, layout, drawImage) {
   return true;
 }
 
-// Pass the world's sprite-raster draw callback to reuse its high-DPI cache;
-// HUD/death canvases can draw the very same fitted SVG and geometry directly.
+// 世界绘制复用高分辨率缓存回调，头像直接使用相同贴图和几何。
 export function drawFlowerBandage(ctx, radius, image, drawImage = drawAttachmentImage) {
   return drawFlowerAttachment(ctx, radius, image, flowerAttachmentLayout.bandage, drawImage);
 }

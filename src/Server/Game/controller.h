@@ -14,6 +14,7 @@ class IController
     virtual ~IController() = default;
     virtual bool IsPlayerControlled() const { return false; }
     virtual void OnTick(CMobBase* mob, float dt) = 0;
+    virtual void OnActions(CMobBase*, float) {}
     virtual void OnDamaged(CMobBase*, CEntity*) {}
     virtual void OnWorldChanged(CMobBase*) {}
     virtual std::string_view SnapshotKey() const = 0;

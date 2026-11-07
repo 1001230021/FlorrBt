@@ -79,6 +79,8 @@
     <ClInclude Include="src\Engine\map_tools.h" />
     <ClInclude Include="src\Engine\spatial_hash_grid.h" />
     <ClInclude Include="src\Shared\circle_contact.h" />
+    <ClInclude Include="src\Shared\source_effects.h" />
+    <ClInclude Include="src\Shared\economy.h" />
     <ClInclude Include="src\Shared\drop_stack.h" />
     <ClInclude Include="src\Shared\spawn_dominance.h" />
     <ClInclude Include="src\Shared\petal_motion.h" />
@@ -93,6 +95,7 @@
     <ClInclude Include="src\Shared\mod_mob_type.h" />
     <ClInclude Include="src\Shared\mod_petal_type.h" />
     <ClInclude Include="src\Shared\network_msg.h" />
+    <ClInclude Include="src\Shared\party.h" />
     <ClInclude Include="src\Shared\petal_type.h" />
     <ClInclude Include="src\Shared\rarity.h" />
     <ClInclude Include="src\Shared\shared.h" />
@@ -133,4 +136,8 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
+  <ItemGroup>
+    <ClInclude Include="src\Shared\client_features.h" />
+    <ClInclude Include="src\Shared\account_identity.h" />
+  </ItemGroup>
 </Project>

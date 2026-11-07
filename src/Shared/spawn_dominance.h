@@ -12,8 +12,7 @@
 
 namespace florrbt
 {
-// Polygon distance, not center distance: this also handles long, concave and
-// adjacent spawn areas. A boundary point belongs to the polygon.
+// 按多边形边界计算距离，兼容狭长、凹形及相邻刷怪区；边界点视为区域内。
 template <typename TPoints> float DistanceSquaredToSpawnPolygon(Vector2f point, const TPoints& points)
 {
     if (points.size() < 3) return std::numeric_limits<float>::infinity();
@@ -71,8 +70,7 @@ std::optional<float> FindSpawnHabitatDifficulty(const TZones& zones, Vector2f po
         }
         const float distance = DistanceSquaredToSpawnPolygon(point, zone.vertices);
         if (!std::isfinite(distance)) continue;
-        // For overlaps/equidistant areas use the harder one, never depending
-        // on Tiled's serialization order to decide whether a mob retires.
+        // 重叠或等距区域取更高难度，使回收判定不依赖地图序列化顺序。
         if (!difficulty || distance < nearest || (distance == nearest && zone.difficulty > *difficulty))
         {
             difficulty = zone.difficulty;
@@ -114,14 +112,13 @@ inline float MeasureSpawnPressure(Vector2f position, const std::vector<SpawnInfl
         if (distance_sq >= source.radius * source.radius) continue;
         const float t = std::sqrt(distance_sq) / source.radius;
         const float falloff = 1.f - t * t * (3.f - 2.f * t);
-        // Overlapping auras don't multiply into a permanently empty region.
+        // 重叠光环不连乘，避免形成永久空白刷怪区。
         strongest = std::max(strongest, source.strength * falloff);
     }
     return strongest;
 }
 
-// Grid narrows pressure queries; extremely large auras use a small fallback
-// list instead of allocating an unbounded number of grid cells.
+// 网格缩小压力查询范围；超大光环放入独立列表，避免分配过量网格单元。
 class SpawnInfluenceIndex
 {
   public:

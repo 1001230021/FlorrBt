@@ -4,8 +4,7 @@ import { parseSvgPathEndpoints, prepareSvgImage, whenVisualReady } from "./visua
 
 const CRAB_ASSET = "./assets/crab.svg";
 const CRAB_VIEWBOX = 110;
-// The supplied artwork points toward the upper-left (its two claws), so use
-// that diagonal as the source-facing direction before rotating to server aim.
+// 原图钳子朝左上，以该方向为基准旋转到权威朝向。
 const CRAB_BASE_FACE_ANGLE = -Math.PI * 0.75;
 const CRAB_SPRITE_SCALE = 4.9;
 const CRAB_CACHE = { started: false, body: null, limbs: [] };

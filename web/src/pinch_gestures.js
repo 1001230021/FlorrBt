@@ -1,6 +1,4 @@
-// Pointer-based pinch recognizer shared by the game camera and talent tree.
-// A single touch remains available to the surrounding joystick/pan handler;
-// the recognizer claims the gesture only after a second touch appears.
+// 第二指出现后才接管双指缩放，单指留给摇杆/平移。
 export function bindPinchGesture(element, { onStart, onChange, onEnd } = {}) {
   if (!element?.addEventListener) return () => {};
 
@@ -21,8 +19,7 @@ export function bindPinchGesture(element, { onStart, onChange, onEnd } = {}) {
     const distance = distanceOf();
     gesture = { startCenter: center, lastDistance: distance, startDistance: distance };
     onStart?.({ center, distance, event });
-    // onStart may release a one-finger joystick/pan capture. Re-capture both
-    // pointers only after that cleanup has completed.
+    // onStart 可能先释放单指捕获，待清理完成后重新捕获双指。
     for (const id of pointers.keys()) element.setPointerCapture?.(id);
     event.preventDefault();
   };

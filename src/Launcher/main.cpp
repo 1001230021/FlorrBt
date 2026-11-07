@@ -194,7 +194,7 @@ std::filesystem::path ResolveCandidate(const std::filesystem::path& requested,
     std::cerr << "[launcher] Candidate " << candidate.string() << " does not exist; reloading current binary\n";
     return current;
 }
-} // namespace
+}
 
 int main(int argc, char** argv)
 {

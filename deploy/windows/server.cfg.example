@@ -49,7 +49,6 @@ set email_smtp_starttls_port 587
 set email_smtp_security ssl
 set email_imap_host imap.feishu.cn
 set email_imap_ssl_port 993
-set email_curl_path curl.exe
 set email_connect_timeout_seconds 10
 set email_send_timeout_seconds 20
 set email_verification_code_digits 6

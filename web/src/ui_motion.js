@@ -1,9 +1,4 @@
-// Small, dependency-free helpers for reversible UI transitions.
-//
-// A plain `display: none` toggle cannot be animated and also makes a fast
-// open/close sequence race with delayed cleanup. These helpers keep the node
-// mounted while it fades, then apply the existing hidden class after the
-// transition. Calling the same helper again reverses the transition safely.
+// 节点淡出后再隐藏，重复调用可安全逆转过渡，避免快速开关与延迟清理竞争。
 
 const activeVisibilityMotions = new WeakMap();
 const activeMotionPhases = new WeakMap();
@@ -39,14 +34,10 @@ function cancelVisibilityMotion(motion) {
   motion.frame = null;
 }
 
-// Entrances and exits deliberately run at different speeds; see the
-// --m-enter-dur / --m-exit-dur tokens in styles.css for the rationale.
 const DEFAULT_ENTER_MS = 200;
 const DEFAULT_EXIT_MS = 90;
 
-// Publish the phase's duration *and* curve so a component can declare a single
-// transition against these vars and still decelerate on the way in while
-// snapping out on the way back.
+// 同时发布阶段时长和曲线，让进入减速、退出快速响应。
 function applyMotionPhaseVars(element, milliseconds, entering) {
   element.style.setProperty("--ui-motion-duration", `${milliseconds}ms`);
   element.style.setProperty(
@@ -55,13 +46,7 @@ function applyMotionPhaseVars(element, milliseconds, entering) {
   );
 }
 
-/**
- * Animate an element between its normal state and an existing hidden-class
- * state. The hidden class is applied only after the exit animation completes.
- *
- * `duration` still works as a symmetric override; pass `enterDuration` /
- * `exitDuration` to keep the asymmetric rhythm while retuning one side.
- */
+/* 退出过渡结束后才应用隐藏类；可统一覆盖时长或分别设置进入/退出时长。 */
 export function setAnimatedVisibility(
   element,
   visible,
@@ -81,7 +66,7 @@ export function setAnimatedVisibility(
   if (!motion) {
     motion = { targetVisible: null, timer: null, frame: null };
     activeVisibilityMotions.set(element, motion);
-    // Do not animate the initial state. Animate only an actual transition.
+    // 初始状态不播放过渡。
     if ((targetVisible && !currentlyHidden) || (!targetVisible && currentlyHidden)) {
       motion.targetVisible = targetVisible;
       element.classList.add("ui-motion-target");
@@ -140,10 +125,7 @@ export function setAnimatedVisibility(
   return true;
 }
 
-/**
- * Add a short enter/exit phase to a component whose visibility is controlled
- * by another class (for example UiPanel's `open` class).
- */
+/* 为由其他可见性类控制的组件附加短暂进入/退出阶段。 */
 export function runMotionPhase(
   element,
   phase,
@@ -177,9 +159,7 @@ export function runMotionPhase(
     return;
   }
   if (phase === "entering") {
-    // Let the browser paint the initial phase once, then the normal state
-    // transition starts on the following frame instead of waiting for the
-    // whole animation duration.
+    // 先绘制一次初始姿态，下一帧开始正常过渡。
     motion.frame = requestMotionFrame(() => {
       motion.frame = requestMotionFrame(() => {
         motion.frame = null;

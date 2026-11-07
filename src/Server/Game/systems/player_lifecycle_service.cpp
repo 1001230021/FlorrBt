@@ -310,7 +310,7 @@ florrbt::Vector2f PickRespawnPosition(CPlayer& player, CGameWorld& world)
     }
     return PickRespawnAreaPosition(player, world);
 }
-} // namespace
+}
 
 void CPlayerLifecycleService::ProcessDropPickups(const std::vector<std::unique_ptr<CPlayer>>& players,
                                                  IPlayerLifecycleNotifier& notifier) const
@@ -329,6 +329,7 @@ void CPlayerLifecycleService::ProcessDropPickups(const std::vector<std::unique_p
 
 CEntity* CPlayerLifecycleService::SpawnPlayer(CPlayer& player, CGameWorld& world, EPlayerSpawnReason reason) const
 {
+    if (world.IsRecovering()) return nullptr;
     const bool entering_world = player.GetWorld() != &world;
     std::vector<SPlayerCheckpointEntry> checkpoint_stack_before;
     if (reason == EPlayerSpawnReason::Respawn) checkpoint_stack_before = player.m_cp_stack;
@@ -353,7 +354,20 @@ CEntity* CPlayerLifecycleService::SpawnPlayer(CPlayer& player, CGameWorld& world
         return nullptr;
     }
 
-    auto* old_flower = dynamic_cast<CPlayerFlower*>(player.GetEntity());
+    auto* old_mob = dynamic_cast<CMobBase*>(player.GetEntity());
+    auto* old_flower = dynamic_cast<CPlayerFlower*>(old_mob);
+    std::string scope_error;
+    auto progress = player.PrepareGameplayScope(world, world.GetController(), raw_flower, scope_error);
+    if (!progress)
+    {
+        LOG_WARN("player", scope_error);
+        restore_checkpoint_stack();
+        return nullptr;
+    }
+    std::unique_ptr<IController> released_ai;
+    if (old_mob && !old_flower && !old_mob->IsMarkedForDes() && !old_mob->IsDead())
+        if (const auto* prototype = FindMobPrototype(old_mob->GetMobType()); prototype && prototype->m_controller_factory)
+            released_ai = prototype->m_controller_factory(old_mob->GetRarity());
     raw_flower->m_name = player.GetName();
     raw_flower = dynamic_cast<CPlayerFlower*>(world.InsertEntity(std::move(entity)));
     if (!raw_flower)
@@ -364,11 +378,8 @@ CEntity* CPlayerLifecycleService::SpawnPlayer(CPlayer& player, CGameWorld& world
 
     if (old_flower) old_flower->PrepareRespawnDestroy(EEntityRemovalReason::Replaced);
     player.SetOwnedEntity(raw_flower);
-    if (!player.SynchronizeGameplayScope(world, old_flower))
-        throw std::runtime_error("Cannot initialize spawned player progress scope");
-    player.ApplySavedProgress();
-    player.LoadSavedTalents();
-    player.LoadSavedSlots();
+    if (old_mob && !old_flower) old_mob->ReleasePlayerControl(std::move(released_ai));
+    progress->Commit(old_flower);
     raw_flower->SynchronizeEnvironment();
 
     if (auto* controller = world.GetController())
@@ -386,6 +397,23 @@ CEntity* CPlayerLifecycleService::SpawnPlayer(CPlayer& player, CGameWorld& world
     return ready_flower;
 }
 
+bool CPlayerLifecycleService::RespawnPlayer(CPlayer& player, CGameWorld& world,
+                                           IPlayerLifecycleNotifier& notifier) const
+{
+    const auto* previous_world = player.GetWorld();
+    const auto previous_generation = previous_world ? previous_world->GetInstanceGeneration() : 0;
+    if (!SpawnPlayer(player, world, EPlayerSpawnReason::Respawn)) return false;
+    if (player.IsConnected())
+    {
+        const auto* current_world = player.GetWorld();
+        if (current_world && current_world->GetInstanceGeneration() == previous_generation)
+            notifier.QueuePlayerState(player);
+        else
+            notifier.QueueWelcome(player);
+    }
+    return true;
+}
+
 void CPlayerLifecycleService::RespawnDeadControlledEntities(const std::vector<std::unique_ptr<CPlayer>>& players,
                                                             CGameWorld& respawn_world,
                                                             IPlayerLifecycleNotifier& notifier) const
@@ -399,8 +427,7 @@ void CPlayerLifecycleService::RespawnDeadControlledEntities(const std::vector<st
         {
             if (!player->HasOwnedEntity() && !player->NeedsRespawn()) continue;
             CGameWorld& destination = player->GetWorld() ? *player->GetWorld() : respawn_world;
-            if (SpawnPlayer(*player, destination, EPlayerSpawnReason::Respawn) && player->IsConnected())
-                NotifyPlayerWorldChanged(*player, notifier);
+            RespawnPlayer(*player, destination, notifier);
             continue;
         }
         if (dynamic_cast<CPlayerFlower*>(entity)) continue;
@@ -408,8 +435,7 @@ void CPlayerLifecycleService::RespawnDeadControlledEntities(const std::vector<st
 
         CGameWorld* current_world = entity->GameWorld();
         if (!current_world) current_world = &respawn_world;
-        if (SpawnPlayer(*player, *current_world, EPlayerSpawnReason::Respawn) && player->IsConnected())
-            NotifyPlayerWorldChanged(*player, notifier);
+        RespawnPlayer(*player, *current_world, notifier);
     }
 }
 

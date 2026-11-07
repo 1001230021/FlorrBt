@@ -1,20 +1,9 @@
-// Unified petal-card vanish animation.
-//
-// Every place a petal card disappears routes through the same pose function:
-// over the given duration the card spins one full turn (2π) while fading to
-// transparent and shrinking to nothing. Consumers:
-//   - canvas world drop cards (game.js drawEntityVisual, dying drops), driven
-//     by the entity appearance/exit timeline (entity_motion.js);
-//   - DOM cards leaving the UI (failed-craft losses, future card removals),
-//     driven by animatePetalCardVanish below.
+// 世界掉落和界面卡片共用消失姿态：旋转一周、淡出并缩小。
+// 世界掉落由实体离场时间线驱动，界面由下方动画入口驱动。
 
 import { clientRuntimeConfig } from "./client_config.js";
 
-/**
- * The single source of truth for the vanish motion. `progress` runs 0..1 over
- * the chosen duration. Smooth radial/angular endpoints keep the card
- * readable at first and prevent an abrupt spin start/stop; the turn is 2π.
- */
+/* 统一消失姿态：进度 0..1，旋转一周，径向和角度端点平滑。 */
 export function petalCardVanishPose(progress) {
   const p = Number.isFinite(progress) ? Math.max(0, Math.min(1, progress)) : 0;
   const eased = p * p * (3 - 2 * p);
@@ -31,11 +20,7 @@ function prefersReducedMotion() {
   return !!globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
 }
 
-/**
- * Drive the unified vanish pose on a DOM card element via inline transform
- * and opacity. `baseTransform` preserves the element's layout centering
- * (petal stacks center themselves with translate(-50%, -50%)).
- */
+/* 对界面卡片应用消失姿态，保留 baseTransform 中原有居中布局。 */
 export function animatePetalCardVanish(
   element,
   {

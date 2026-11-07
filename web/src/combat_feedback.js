@@ -1,4 +1,4 @@
-// Bounded, visual-only presentation of authoritative server damage events.
+// 只展示权威伤害反馈，并限制视觉对象数量。
 export function formatCombatAmount(value) {
   if (!Number.isFinite(value) || value <= 0) return "";
   if (value < 0.05) return "<0.1";

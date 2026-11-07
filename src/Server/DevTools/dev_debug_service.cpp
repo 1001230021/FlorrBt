@@ -1,4 +1,4 @@
-// Privileged observer service, separate from gameplay player connections.
+// 独立于玩家连接的特权观察服务。
 #include "dev_debug_service.h"
 #include "../../Engine/logger.h"
 #include "../../Shared/dev_debug_protocol.h"
@@ -75,9 +75,7 @@ SEntityHandle ReadDebugEntityHandle(json_t* object, const CGameWorld& world)
     const int id = static_cast<int>(Int(object, "id", 0, INT32_MAX));
     const std::uint64_t generation = Generation(object);
 
-    // Entity references normally inherit the world selected by the request.
-    // If a caller sends the optional qualified fields, validate them too so a
-    // stale selection cannot be transplanted into another world by numeric ID.
+    // 实体引用默认使用请求选中的世界；可选世界身份也须验证，防止旧选择命中另一个房间的同号实体。
     const json_t* world_value = json_object_get(object, "world");
     const json_t* world_generation_value = json_object_get(object, "worldGeneration");
     if (world_value || world_generation_value)
@@ -108,8 +106,7 @@ void ApplyDebugKill(CEntity& entity)
 {
     double pool = std::max(0.0, static_cast<double>(entity.Health()));
     if (const auto* flower = dynamic_cast<const CFlower*>(&entity)) pool += std::max(0.0, static_cast<double>(flower->GetShield()));
-    // Do not inject FLT_MAX into damage sharing/feedback arithmetic. Normal
-    // invulnerability and death/drop handling still apply to this damage.
+    // 避免把 FLT_MAX 注入伤害分摊和反馈计算；仍沿用正常无敌、死亡与掉落规则。
     const float damage = static_cast<float>(std::min(static_cast<double>(std::numeric_limits<float>::max()) / 8.0,
                                                     std::max(1.0, pool * 2.0 + 1.0)));
     entity.TakeDamage(damage, nullptr, EDamageType::Poison);
@@ -223,7 +220,7 @@ json_t* SerializeEntityJson(const CEntity& entity, const CSnapshotService& snaps
     }
     return out;
 }
-} // namespace
+}
 
 bool EditDebugInventory(CServer& server, CPlayer& player, const std::string& operation,
                         std::uint8_t type, std::uint8_t rarity, std::uint32_t count, std::string& result)
@@ -232,7 +229,7 @@ bool EditDebugInventory(CServer& server, CPlayer& player, const std::string& ope
         !IsKnownRarity(static_cast<ERarity>(rarity)) || count > max_inventory_item_count ||
         (operation != "add" && operation != "remove" && operation != "set"))
     { result = "Invalid inventory operation/type/rarity/count"; return false; }
-    const std::string account = player.GetProgressAccountName();
+    const std::string account = player.GetInventoryAccountName();
     int level = 0; std::int64_t exp = 0;
     if (account.empty() || !CAccountDataStore::GetProgress(account, level, exp))
     { result = "Account is unavailable"; return false; }
@@ -445,9 +442,9 @@ json_t* CDevDebugService::Impl::PlayerJson(const CPlayer& player, bool detailed)
     }
     if (detailed)
     {
-        Set(out, "inventory", Items(CAccountDataStore::GetInventory(player.GetProgressAccountName())));
-        Set(out, "slots", Items(CAccountDataStore::GetSlots(player.GetProgressAccountName())));
-        Set(out, "secondarySlots", Items(CAccountDataStore::GetSecondarySlots(player.GetProgressAccountName())));
+        Set(out, "inventory", Items(CAccountDataStore::GetInventory(player.GetInventoryAccountName())));
+        Set(out, "slots", Items(CAccountDataStore::GetSlots(player.GetInventoryAccountName())));
+        Set(out, "secondarySlots", Items(CAccountDataStore::GetSecondarySlots(player.GetInventoryAccountName())));
         Set(out, "secondChanceCooldown", Num(player.GetSecondChanceCooldown()));
         Set(out, "reportDisabled", json_boolean(player.IsReportDisabled()));
         auto* talents = json_array();
@@ -523,9 +520,7 @@ void CDevDebugService::Impl::SendSnapshot(Session& session)
         const float reach = session.radius + std::max(0.f, entity->Radius());
         if (distance <= reach * reach) candidates.push_back({ entity, distance });
     };
-    // Include hidden/passive objects that need not inhabit the gameplay
-    // spatial index. Work is bounded by actual population, not camera area:
-    // zooming out must never walk millions of empty spatial cells.
+    // 遍历实际实体以包含隐藏对象，避免缩远镜头时查询大量空网格。
     world->ForEachEntity(collect);
     const auto closer = [](const Candidate& a, const Candidate& b) {
         return a.distance != b.distance ? a.distance < b.distance : a.entity->Id() < b.entity->Id();
@@ -634,7 +629,7 @@ void CDevDebugService::Impl::EntityAction(Session& session, json_t* request)
                 throw std::runtime_error("Group would move outside the map; nothing was changed");
         }
     }
-    // All references and parameters are validated before the first mutation.
+    // 首次修改前完成全部引用和参数校验。
     std::size_t applied = 0;
     for (auto* entity : targets)
     {
@@ -644,7 +639,7 @@ void CDevDebugService::Impl::EntityAction(Session& session, json_t* request)
         else if (action == "team")
         {
             if (auto* mob = dynamic_cast<CMobBase*>(entity)) mob->ClearTeamOverrideStates();
-            entity->Team() = team;
+            entity->SetTeam(team);
         }
         else if (action == "heal") HealDebugEntity(*entity);
         else if (action == "teleport")
@@ -699,7 +694,7 @@ void CDevDebugService::Impl::PlayerAction(Session& session, json_t* request)
         else HealDebugEntity(*entity);
     }
     else throw std::runtime_error("Unknown player action");
-    // A kick/teleport may invalidate the CPlayer/entity; use copied identity.
+    // 踢出或传送会使玩家/实体引用失效，后续只使用复制的身份。
     LOG_INFO("dev", session.grant.account + " player " + action + " player=" + std::to_string(id) + " account=" + account + audit);
     Reply(session, request, true, result); session.last_status = session.last_snapshot = 0;
 }
@@ -794,7 +789,7 @@ void CDevDebugService::Impl::Handle(Session& session, json_t* request)
         const auto command = ReadDebugText(request, "line", 2048);
         if (command.empty() || command.find('\0') != std::string::npos) throw std::runtime_error("Empty/invalid command");
         session.last_command = Now();
-        // Audit command names, not potential passwords in their arguments.
+        // 审计只记录命令名，避免参数中的密码进入日志。
         LOG_INFO("dev", session.grant.account + " console " + command.substr(0, command.find_first_of(" \t\r\n")));
         server.GetConsole().ExecuteLine(command);
         Reply(session, request, true, "Command executed; output is in the console stream");
@@ -840,8 +835,7 @@ void CDevDebugService::Accept(sf::TcpSocket&& socket, std::string remote, std::v
     auto session = std::make_unique<Impl::Session>();
     session->socket = std::move(socket); session->socket.setBlocking(false);
     session->remote = std::move(remote); session->receive = std::move(received);
-    // Do not reserve an observer slot for an idle/unauthorized peer. The
-    // pre-connection gate delivered a complete, small hello frame already.
+    // 完整 hello 已由连接门禁接收，不为未授权或空闲连接保留观察者名额。
     std::size_t size = 0;
     if (dev_debug::ReadFrameSize(session->receive.data(), session->receive.size(), dev_debug::hello_limit, size) !=
         dev_debug::FrameStatus::Ready) return;
@@ -892,10 +886,9 @@ void CDevDebugService::Tick(float)
             }
         }
         if (!session.authorized || session.closed) continue;
-        // A command may kick its own authorizer or rotate the RCON password.
-        // Do not emit another snapshot/log after that authority is revoked.
+        // 命令可能踢出授权者或更改 RCON 密码；权限撤销后立即停止后续快照与日志。
         if (!m_impl->Valid(session.grant)) { session.closed = true; continue; }
-        // Do not build more snapshots while a slow connection is backed up.
+        // 慢连接积压时暂停构建新快照。
         if (session.send.size() - session.send_offset < 512 * 1024)
         {
             if (now - session.last_snapshot >= 0.1) { m_impl->SendSnapshot(session); session.last_snapshot = now; }

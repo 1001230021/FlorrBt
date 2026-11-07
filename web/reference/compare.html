@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FlorrBt 视频对照</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#202724;color:#eee;font:14px system-ui}
+    header{display:flex;align-items:center;gap:16px;padding:16px;flex-wrap:wrap}h1{font-size:18px;margin:0}
+    a{color:#a4e4b0}main{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:0 12px}
+    section{min-width:0}h2{font-size:14px;font-weight:500}video{width:100%;max-height:80vh;background:#121614}
+    .client{width:100%;aspect-ratio:1910/884;overflow:hidden;position:relative;background:#111}
+    iframe{width:1910px;height:884px;transform-origin:top left;border:0}
+    input,select,button{font:inherit}p{padding:0 16px;color:#bec9c1}
+    @media(max-width:900px){main{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <header><h1>视频对照</h1><label>本地参考视频 <input id="file" type="file" accept="video/*"></label>
+    <label>播放速度 <select id="speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option></select></label>
+    <a href="../reference.html" target="_blank" rel="noopener">打开完整参考客户端</a>
+  </header>
+  <main><section><h2>录制视频 · 文件仅在本机读取</h2><video id="video" controls playsinline></video></section>
+    <section><h2>FBT · 点击游戏区域后可使用键盘操作</h2><div class="client"><iframe src="../reference.html" title="FBT 参考客户端" allow="fullscreen"></iframe></div></section></main>
+  <p>右侧固定为 1910×884 内容区，整体缩放以便比较。视频中的浏览器栏需要在比较时扣除；实际地图、库存与角色状态来自连接的 FBT 服务器。</p>
+  <script type="module">
+    const video = document.querySelector('video'); let objectUrl;
+    document.querySelector('#file').addEventListener('change', event => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      const file = event.target.files[0];
+      if (file) { objectUrl = URL.createObjectURL(file); video.src = objectUrl; }
+    });
+    document.querySelector('#speed').addEventListener('change', event => { video.playbackRate = Number(event.target.value); });
+    const host = document.querySelector('.client'), frame = document.querySelector('iframe');
+    new ResizeObserver(() => { frame.style.transform = `scale(${host.clientWidth / 1910})`; }).observe(host);
+  </script>
+</body></html>

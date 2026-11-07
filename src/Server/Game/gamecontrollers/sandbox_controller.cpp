@@ -4,7 +4,6 @@
 #include "../../../Shared/petal_type.h"
 #include "../../../Shared/rarity.h"
 #include "../../HotReload/snapshot_archive.h"
-#include "../../Module/network_module.h"
 #include "../../Persistence/account_store.h"
 #include "../controller_params.h"
 #include "../entities/flower.h"
@@ -14,7 +13,6 @@
 #include "../gameworld.h"
 #include "../player.h"
 #include "../zone_mob_tools.h"
-#include "../../server.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -91,7 +89,7 @@ const CPetalPrototype* SandboxFindPetalByText(std::string_view text)
     }
     return nullptr;
 }
-} // namespace
+}
 
 CSandboxController::CSandboxController(CControllerParams params)
 {
@@ -144,15 +142,18 @@ void CSandboxController::SendSystem(CGameWorld& world, CPlayer& player, const st
 
 CPlayer* CSandboxController::FindSandboxPlayer(CGameWorld& world, std::string_view name) const
 {
-    CGameContext* context = world.GameContext();
-    if (!context) return nullptr;
     const std::string lower = SandboxLower(name);
-    for (const auto& player : context->Players())
+    CPlayer* target = nullptr;
+    for (auto* player : world.Players())
     {
         if (!player || !player->IsConnected() || !IsMember(world, *player)) continue;
-        if (player->GetName() == name || SandboxLower(player->GetName()) == lower) return player.get();
+        if (player->GetName() == name || SandboxLower(player->GetName()) == lower)
+        {
+            if (target) return nullptr;
+            target = player;
+        }
     }
-    return nullptr;
+    return target;
 }
 
 bool CSandboxController::IsMember(const CGameWorld& world, const CPlayer& player) const
@@ -173,7 +174,7 @@ void CSandboxController::PruneAdmins(CGameWorld& world)
 {
     const auto* context = world.GameContext();
     std::erase_if(m_admin_sessions, [&](const auto& entry) {
-        CPlayer* member = context ? context->Network().FindPlayerById(entry.first) : nullptr;
+        CPlayer* member = context ? context->PlayerDirectory().FindPlayerById(entry.first) : nullptr;
         return !member || member->SessionGeneration() != entry.second || !IsMember(world, *member);
     });
 }
@@ -195,7 +196,7 @@ void CSandboxController::OnMobDefeated(CGameWorld& world, CMobBase& mob)
 {
     if (!m_enable_loot)
     {
-        // Keep the spawn-director bookkeeping but skip reward generation.
+        // 保留刷怪簿记，跳过奖励生成。
         SpawnDirector().OnEntityRemoved(mob);
         return;
     }
@@ -345,7 +346,6 @@ bool CSandboxController::HandleSandboxCommand(CGameWorld& world, CPlayer& player
 
     if (name == "add")
     {
-        // /add [player] <petal> <rarity> [count]  (player defaults to self)
         CPlayer* target = &player;
         size_t petal_index = 1;
         if (args.size() >= 4 && !SandboxFindPetalByText(args[1]))
@@ -376,9 +376,9 @@ bool CSandboxController::HandleSandboxCommand(CGameWorld& world, CPlayer& player
             { SendSystem(world, player, "count must be in [1, 9999]"); return true; }
             count = static_cast<uint32_t>(parsed);
         }
-        CAccountDataStore::AddItem(target->GetProgressAccountName(), static_cast<uint8_t>(proto->m_type),
+        CAccountDataStore::AddItem(target->GetInventoryAccountName(), static_cast<uint8_t>(proto->m_type),
                                    static_cast<uint8_t>(*rarity), count);
-        if (context) context->Network().QueueInventoryUpdate(*target);
+        if (context) context->PlayerUpdates().QueueInventoryUpdate(*target);
         return true;
     }
 
@@ -386,7 +386,6 @@ bool CSandboxController::HandleSandboxCommand(CGameWorld& world, CPlayer& player
     {
         if (args.size() < 2 || args.size() > 4)
         { SendSystem(world, player, "Usage: /tele [player] <x,y>"); return true; }
-        // /tele [player] <x,y>
         CPlayer* target = &player;
         florrbt::Vector2f position{};
         if (!SandboxParsePosition(args, 1, position))
@@ -414,7 +413,6 @@ bool CSandboxController::HandleSandboxCommand(CGameWorld& world, CPlayer& player
     if (name == "kill")
     {
         if (args.size() > 2) { SendSystem(world, player, "Usage: /kill [player]"); return true; }
-        // /kill [player] (defaults to the sender)
         CPlayer* target = &player;
         if (args.size() >= 2)
         {
@@ -437,7 +435,6 @@ bool CSandboxController::HandleSandboxCommand(CGameWorld& world, CPlayer& player
 
     if (name == "spawn")
     {
-        // /spawn <mob> <rarity> <x,y>
         if (args.size() < 4)
         {
             SendSystem(world, player, "Usage: /spawn <mob> <rarity> <x,y>");

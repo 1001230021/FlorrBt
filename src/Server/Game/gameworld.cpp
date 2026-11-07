@@ -5,7 +5,6 @@
 #include "../../Shared/circle_contact.h"
 #include "../../Shared/petal_motion.h"
 #include "../../Shared/spawn_dominance.h"
-#include "../Module/network_module.h"
 #include "controllers/melee_controller.h"
 #include "controllers/pickup_controller.h"
 #include "entities/drop.h"
@@ -21,6 +20,7 @@
 #include "states/states.h"
 #include "systems/lightning_humidity.h"
 #include "extensions/weather_view.h"
+#include "extensions/extension_services.h"
 #include "zone_mob_tools.h"
 #include <algorithm>
 #include <cctype>
@@ -177,10 +177,7 @@ bool CollisionPairUsableForPetalContact(const CEntity* lhs, const CEntity* rhs);
 void ApplyPhysicalDamageHits(CEntity* target, float damage, CEntity* attacker, int hit_count,
                              const CEntity* collision_source = nullptr);
 
-// A fast projectile can travel farther than its diameter in one server tick.
-// Testing only the final positions then lets it tunnel through mobs. Compare
-// the relative-motion segment against the combined radii so contact anywhere
-// along the tick is still dispatched to the normal collision/damage path.
+// 高速投射物可能一帧越过整个目标；按相对运动线段与合并半径检测扫掠命中。
 bool SweptProjectileTouches(const CEntity& lhs, const CEntity& rhs)
 {
     if (!dynamic_cast<const CProjectile*>(&lhs) && !dynamic_cast<const CProjectile*>(&rhs)) return false;
@@ -372,9 +369,7 @@ void ConstrainContactDisplacement(CEntity& entity, florrbt::Vector2f before)
     CGameWorld* world = entity.GameWorld();
     const FlorrBtMap* map = world ? world->GetMap() : nullptr;
     if (!map || map->walls.empty() || !entity.CollidesWithWalls() || entity.Pos() == before) return;
-    // A huge body may separate a tiny mob by an entire corridor width. The
-    // normal wall pass ran before mob contact, so don't let this push tunnel
-    // through a wall between ticks. No damage/bounce callback is replayed.
+    // 大体型推挤也须检查途中墙体，不能把小生物推穿走廊；校正不重放伤害或反弹。
     if (world->SweptCircleBlockedByWall(before, entity.Pos(), std::max(0.f, entity.WallCollisionRadius()),
                                       entity.WallCollisionMask()))
         entity.Pos() = before;
@@ -498,8 +493,7 @@ void BuildActiveTickViews(CGameWorld& world, std::vector<active_tick_view>& view
 const float horizon = std::max(0.f, stats->horizon);
         player_views.push_back({ owner->Pos(), horizon, std::max(0.f, owner->Radius()) });
 
-        // Load range == the client's view circle: every mob inside the view is
-        // activated, with no extra padding and no cap.
+        // 按客户端视野圆激活生物，不额外填充范围或截断数量。
         AddActiveTickView(views, { owner->Pos(), horizon });
     }
 }
@@ -642,7 +636,7 @@ bool ShouldIgnoreFriendlyCollision(const collision_pair_context& pair)
 {
     if (pair.team_heal) return false;
     if (!pair.same_team) return false;
-    // Summons phase through same-team flowers: they only block enemies.
+    // 召唤物穿过同队花朵，只阻挡敌人。
     if (pair.lhs.flower && HasSummonOwnerLink(pair.rhs_summon)) return true;
     if (pair.rhs.flower && HasSummonOwnerLink(pair.lhs_summon)) return true;
     return false;
@@ -660,7 +654,7 @@ bool ResolveWaxMobHardCollision(const collision_entity_view& lhs, const collisio
 bool CanResolvePhysicalCollision(const collision_pair_context& pair)
 {
     if (pair.team_heal || pair.HasGlass()) return false;
-    // Wax is a physical obstacle: it collides with every flower regardless of team.
+    // Wax 与所有花朵发生物理碰撞，不按阵营过滤。
     if (pair.HasWax() && (pair.lhs.flower || pair.rhs.flower)) return true;
     return pair.lhs.entity->CanPhysicallyCollideWith(pair.rhs.entity) &&
            pair.rhs.entity->CanPhysicallyCollideWith(pair.lhs.entity);
@@ -675,12 +669,10 @@ void ResolvePhysicalCollision(const collision_pair_context& pair)
         return;
     }
 
-    // Wax uses mob mass weighting, with extra passive resistance. Flowers
-    // retain their mass-independent right of way through Wax.
+    // Wax 使用质量权重与额外阻力；花朵穿行时保留优先权。
     if (ResolveWaxMobHardCollision(pair.lhs, pair.rhs)) return;
 
-    // All mobs transfer relative normal momentum, rather than destroying each
-    // body's inward speed regardless of mass. Swarms keep softer separation.
+    // 传递相对法向动量，保留群体较柔和的分离效果。
     if (pair.lhs.mob && pair.rhs.mob)
     {
         const bool nonflower_mob_pair = !pair.lhs.flower && !pair.rhs.flower;
@@ -759,7 +751,7 @@ bool ResolveWaxMobHardCollision(const collision_entity_view& lhs, const collisio
 
     if (flower)
     {
-        // Flowers push wax: only the wax moves out of the way, the flower stays put.
+        // 花朵推开 Wax 时只移动 Wax。
         wax->Pos() -= normal * (overlap + game_config::entity_collision_epsilon);
         florrbt::Vector2f wax_vel = GetEntityVelocity(*wax);
         float wax_inward_speed = Dot(wax_vel, normal);
@@ -770,12 +762,7 @@ bool ResolveWaxMobHardCollision(const collision_entity_view& lhs, const collisio
     const auto wax_velocity = GetEntityVelocity(*wax);
     const float wax_approach = Dot(wax_velocity, normal);
     const float mob_approach = Dot(mob->m_vel, -normal);
-    // Wax-Mob contact keeps ordinary raw-mass weighting.  The stronger
-    // mass-exponent processing is for regular mob contacts and must not make
-    // a high-rarity Wax behave like an effectively immovable body here.
-    // Whenever either body is driving into the contact, Wax gets priority:
-    // Mob absorbs most of the separation and impulse, while Wax is moved only
-    // by the small configured fraction.
+    // Wax 使用原始质量权重，不套用普通生物的质量指数；主动挤入接触时由生物承担主要分离和冲量。
     const auto weights = florrbt::ComputeWaxContactWeights(wax->Mass(), mob->Mass(),
         mob->IsCollisionPositionLocked(), 1.f,
         wax_approach > 0.f || mob_approach > 0.f, game_config::default_wax_passive_push_fraction);
@@ -958,12 +945,7 @@ void ApplyPetalMobContact(CPetal* petal, CMobBase* mob, float dt)
     {
         if (!CollisionPairUsableForPetalContact(petal, mob)) break;
 
-        // Decide both sides of this contact before applying either side's
-        // damage.  A lethal Stinger hit marks the mob for destruction
-        // immediately; checking CollisionPairAlive between the two damage
-        // calls used to skip the mob's retaliation and made the Stinger
-        // survive some one-shot contacts for free.  MarkForDestroy prevents
-        // subsequent contacts, but must not erase the current exchange.
+        // 先确定双方伤害，再结算；致死 Stinger 命中不能取消当前接触中已经成立的反击。
         float petal_damage = 0.f;
         if (petal_can_deal_damage && hit < petal_hit_count)
         {
@@ -975,9 +957,7 @@ void ApplyPetalMobContact(CPetal* petal, CMobBase* mob, float dt)
                                      ? mob_stats->damage
                                      : 0.f;
 
-        // Both values were decided while the pair was alive.  Apply both
-        // sides even if the first TakeDamage call marks one endpoint for
-        // removal; the pair is filtered out at the top of the next iteration.
+        // 即使第一侧伤害标记端点移除，仍完成本次双向交换；下一次接触重新筛选。
         if (petal_damage > 0.f) mob->TakeDamage(petal_damage, petal->GetOwner(), EDamageType::Normal);
         if (mob_damage > 0.f) petal->TakeDamage(mob_damage, mob, EDamageType::Normal);
     }
@@ -1011,7 +991,7 @@ void ApplyPetalPetalContact(CPetal* lhs, CPetal* rhs, float dt)
             if (rhs_damage <= 0.f) rhs_can_deal_damage = false;
         }
 
-        // Both attacks are decided before either side takes damage, so lethal contacts remain symmetric.
+        // 双方攻击先于伤害回调确定，保证致死接触对称。
         if (lhs_damage > 0.f) rhs->TakeDamage(lhs_damage, lhs->GetOwner(), EDamageType::Normal);
         if (rhs_damage > 0.f) lhs->TakeDamage(rhs_damage, rhs->GetOwner(), EDamageType::Normal);
     }
@@ -1142,15 +1122,16 @@ bool IsPetalMobContactPair(const CEntity* lhs, const CEntity* rhs)
            (dynamic_cast<const CMobBase*>(lhs) && dynamic_cast<const CPetal*>(rhs));
 }
 
-// A mob marked for removal is no longer a live physical participant, but it
-// must still finish a flower-petal contact that was already detected this
-// tick. Keep this exception narrow: marked entities do not re-enter normal
-// mob collision, seeking, or physics.
+// 移除中的实体不能重新参与寻路或物理；已成立接触中的反击仍需完成。
 bool CollisionPairUsableForPetalContact(const CEntity* lhs, const CEntity* rhs)
 {
     if (!lhs || !rhs || lhs == rhs || !lhs->CanCollide() || !rhs->CanCollide() || !lhs->GameWorld() ||
         lhs->GameWorld() != rhs->GameWorld())
         return false;
+    const auto removed_by_owner = [](const CEntity* entity) {
+        return entity->IsMarkedForDes() && entity->RemovalReason() == EEntityRemovalReason::OwnerRemoved;
+    };
+    if (removed_by_owner(lhs) || removed_by_owner(rhs)) return false;
     if ((lhs->IsMarkedForDes() || rhs->IsMarkedForDes()) && !IsPetalMobContactPair(lhs, rhs)) return false;
     return true;
 }
@@ -1185,24 +1166,25 @@ void ApplyBodyPoison(CMobBase* attacker, CFlower* attacker_flower, CMobBase* tar
 }
 
 void ResolveOverlappingEntityPair(CEntity* entity, CEntity* other, float dt, bool resolve_physical_collision,
-                                  std::vector<std::pair<CMobBase*, CMobBase*>>* mob_contacts)
+                                  std::vector<std::pair<CMobBase*, CMobBase*>>* mob_contacts,
+                                  bool allow_damage = true)
 {
     if (!CollisionPairUsableForPetalContact(entity, other)) return;
 
+    auto* events = allow_damage ? &entity->GameWorld()->CombatEvents() : nullptr;
+    CCombatEventScope event(events);
+    if (events) { events->Touch(*entity); events->Touch(*other); }
+
     const collision_pair_context pair = BuildCollisionPairContext(entity, other);
 
-    // 1. World-state filters run before every physical or damage response.
     if (ShouldIgnorePhaseCollision(pair)) return;
 
-    // 2. Constraint and ownership filters: bound entities cannot collide with their anchors or owners.
     if (ShouldIgnoreConstraintCollision(pair) || ShouldIgnoreOwnershipCollision(pair)) return;
 
-    // 3. Team filters: friendlies phase unless the pair is an explicit team-heal interaction.
     if (ShouldIgnoreFriendlyCollision(pair)) return;
 
     SetLastCollisionCrashContext(entity, other);
-    // Bound only the extra pressure work; normal contact/damage still runs for
-    // every pair if this budget is exhausted in an unusually dense scene.
+    // 预算只限制额外压力迭代，耗尽时不丢弃正常接触伤害。
     if (mob_contacts && mob_contacts->size() < 65536 && resolve_physical_collision && pair.lhs.mob && pair.rhs.mob &&
         CanResolvePhysicalCollision(pair))
         mob_contacts->emplace_back(pair.lhs.mob, pair.rhs.mob);
@@ -1213,14 +1195,12 @@ void ResolveOverlappingEntityPair(CEntity* entity, CEntity* other, float dt, boo
         return;
     }
 
-    // 4. Physical response is independent from damage eligibility.
-    // A marked mob may finish the current petal damage exchange, but it must
-    // not be pushed or participate in another physical collision before
-    // Cleanup removes it.
+    // 物理响应独立于伤害资格，标记移除后不再施加位置推挤。
     if (resolve_physical_collision && !entity->IsMarkedForDes() && !other->IsMarkedForDes())
         ResolvePhysicalCollision(pair);
 
-    // 5. Damage dispatch only runs for hostile pairs or an explicitly targeted team heal.
+    if (!allow_damage) return;
+    // 伤害只用于敌对接触或明确的队友治疗交互。
     if (!CanResolveCollisionDamage(pair)) return;
 
     CPetal* entity_petal = pair.lhs.petal;
@@ -1291,15 +1271,17 @@ void ResolveOverlappingEntityPair(CEntity* entity, CEntity* other, float dt, boo
     {
         const SMobStats* entity_stats = entity_mob->GetFinalStats();
         const SMobStats* other_stats = other_mob->GetFinalStats();
+        const float entity_damage = entity_stats ? entity_stats->damage : 0.f;
+        const float other_damage = other_stats ? other_stats->damage : 0.f;
         const int mob_hits_per_tick = std::max(1, game_config::entity_mob_mob_hits_per_tick);
         const int entity_hit_count = std::max(PhysicalHitCountForTick(entity, other), mob_hits_per_tick);
         const int other_hit_count = std::max(PhysicalHitCountForTick(other, entity), mob_hits_per_tick);
 
-        // Snapshot both attacks first so ID/order cannot suppress a lethal counter-hit.
-        if (entity_stats && entity_stats->damage > 0.f)
-            ApplyPhysicalDamageHits(other, entity_stats->damage, entity, entity_hit_count);
-        if (other_stats && other_stats->damage > 0.f)
-            ApplyPhysicalDamageHits(entity, other_stats->damage, other, other_hit_count);
+        // 先保存双方攻击，避免实体顺序抹掉致死反击。
+        if (entity_damage > 0.f)
+            ApplyPhysicalDamageHits(other, entity_damage, entity, entity_hit_count);
+        if (other_damage > 0.f)
+            ApplyPhysicalDamageHits(entity, other_damage, other, other_hit_count);
 
         if (!other->IsDead() && !other->IsMarkedForDes()) ApplyBodyPoison(entity_mob, pair.lhs.flower, other_mob);
         if (!entity->IsDead() && !entity->IsMarkedForDes()) ApplyBodyPoison(other_mob, pair.rhs.flower, entity_mob);
@@ -1658,7 +1640,7 @@ bool PushEntityOutOfWall(CEntity& entity, const FlorrBtMap::Wall& wall)
     return true;
 }
 
-} // namespace
+}
 
 std::string GetLastServerCrashContext()
 {
@@ -1692,6 +1674,7 @@ CGameWorld::CGameWorld(const std::string& path, std::uint32_t world_id)
                  game_config::default_horizon * game_config::spatial_grid_large_radius_horizon_multiplier);
     if (!m_map) LOG_ERROR("gameworld", "Failed to load map: " + path);
     if (m_map) m_spawn_zone_bounds = florrbt::BuildSpawnZoneBounds(m_map->zones);
+    m_terrain.ResetForMap();
     BuildWallGrid();
     SpawnMapPortals();
     m_extension_config = map_declarations::ExtensionsForMap(m_map_path);
@@ -1700,19 +1683,14 @@ CGameWorld::CGameWorld(const std::string& path, std::uint32_t world_id)
 
 CGameWorld::~CGameWorld()
 {
-    // Controller teardown belongs to the world lifetime, not to whichever
-    // module happened to erase the world. This keeps room destruction,
-    // admin destruction and server shutdown on the same lifecycle path.
+    // 玩法停用由世界析构统一负责，房间删除和服务器退出遵循同一路径。
     if (m_p_controller)
     {
         m_p_controller->OnDeactivate(*this);
         m_p_controller.reset();
     }
 
-    // A player stores the world used to resolve its owned entity.  Detach it
-    // before this world frees its entities; otherwise the player can retain a
-    // dangling CGameWorld pointer and the next network/talent tick may call
-    // into freed world storage.
+    // 实体存储释放前先解除玩家的世界绑定，避免后续网络或天赋更新解析已释放世界。
     if (m_p_game_context)
     {
         for (const auto& player : m_p_game_context->Players())
@@ -1728,15 +1706,23 @@ CGameWorld::~CGameWorld()
     m_live_entities.clear();
     m_p_entities.clear();
     if (m_p_game_context)
+    {
+        m_p_game_context->NaturalSpawnPopulation().Invalidate();
         m_p_game_context->Extensions().DetachWorld({GetId(), GetInstanceGeneration()});
+    }
 }
 
 void CGameWorld::SetGameContext(CGameContext* context)
 {
     if (m_transition_active) return;
     if (m_p_game_context == context) return;
-    if (m_p_game_context) m_p_game_context->Extensions().DetachWorld({GetId(), GetInstanceGeneration()});
+    if (m_p_game_context)
+    {
+        m_p_game_context->NaturalSpawnPopulation().Invalidate();
+        m_p_game_context->Extensions().DetachWorld({GetId(), GetInstanceGeneration()});
+    }
     m_p_game_context = context;
+    if (context) context->NaturalSpawnPopulation().Invalidate();
     m_extensions = context ? context->Extensions().AttachWorld(*this, m_extension_config) : CExtensionView{};
 }
 
@@ -1752,14 +1738,15 @@ std::vector<CPlayer*> CGameWorld::Players() const
     std::vector<CPlayer*> result;
     if (m_p_game_context)
         for (const auto& player : m_p_game_context->Players())
-            if (player && player->GetEntity() && player->GetEntity()->GameWorld() == this)
+            if (player && player->GetWorld() == this)
                 result.push_back(player.get());
     return result;
 }
 
-void CGameWorld::SetController(std::unique_ptr<IGameController> controller, bool notify_players)
+SControllerChangeResult CGameWorld::SetController(std::unique_ptr<IGameController> controller, bool notify_players)
 {
-    if (m_transition_active) return;
+    if (m_tick_active || IsCombatEventActive()) return {false, false, "玩法切换必须在模拟帧边界提交"};
+    if (m_transition_active) return {false, false, "玩法切换不能重入"};
     const auto players = notify_players ? Players() : std::vector<CPlayer*>{};
     std::vector<bool*> participants{&m_transition_active};
     participants.reserve(players.size() + 1);
@@ -1767,22 +1754,62 @@ void CGameWorld::SetController(std::unique_ptr<IGameController> controller, bool
     struct CGuard
     {
         const std::vector<bool*>& flags;
-        CGuard(const std::vector<bool*>& values) : flags(values) { for (auto* value : flags) *value = true; }
+        explicit CGuard(const std::vector<bool*>& values) : flags(values) { for (auto* value : flags) *value = true; }
         ~CGuard() { for (auto* value : flags) *value = false; }
     } guard(participants);
-    if (m_p_controller)
-        for (auto* player : players)
-            m_p_controller->OnPlayerDepartureCommitted(*this, *player, player->GetEntity());
-    if (m_p_controller) m_p_controller->OnDeactivate(*this);
-    m_p_controller = std::move(controller);
-    if (m_p_controller) m_p_controller->OnActivate(*this);
-    for (auto* player : players)
+    CWorldPreparation preparation(*this);
+    std::vector<std::unique_ptr<CPlayer::SPreparedGameplayScope>> progress;
+    try
     {
-        if (!player->SynchronizeGameplayScope(*this))
-            throw std::runtime_error("Cannot initialize controller progress scope");
-        if (m_p_controller) m_p_controller->OnPlayerArrivalCommitted(*this, *player);
-        if (m_p_game_context) m_p_game_context->Network().NotifyPlayerRulesChanged(*player);
+        std::string error;
+        if (controller && !controller->PrepareActivation(preparation, error))
+            return {false, false, error.empty() ? "无法准备玩法资源" : error};
+        progress.reserve(players.size());
+        for (auto* player : players)
+        {
+            auto prepared = player->PrepareGameplayScope(*this, controller.get(), player->GetEntity(), error);
+            if (!prepared) return {false, false, error};
+            progress.push_back(std::move(prepared));
+        }
     }
+    catch (const std::exception& error) { return {false, false, error.what()}; }
+    catch (...) { return {false, false, "玩法准备发生未知异常"}; }
+
+    bool committed = false;
+    try
+    {
+        if (m_p_controller)
+            for (auto* player : players)
+                m_p_controller->OnPlayerDepartureCommitted(*this, *player, player->GetEntity());
+        if (m_p_controller) m_p_controller->OnDeactivate(*this);
+        m_p_controller = std::move(controller);
+        preparation.Commit();
+        committed = true;
+        if (m_p_controller) m_p_controller->OnActivate(*this);
+        for (auto& prepared : progress) prepared->Commit();
+        for (auto* player : players)
+            if (m_p_controller) m_p_controller->OnPlayerArrivalCommitted(*this, *player);
+        m_recovery_error.clear();
+        for (auto* player : players)
+            if (m_p_game_context) m_p_game_context->Scenes().NotifyPlayerRulesChanged(*player);
+        return {true, false, {}};
+    }
+    catch (const std::exception& error) { EnterRecovery(error.what()); }
+    catch (...) { EnterRecovery("玩法提交回调发生未知异常"); }
+    return {committed, true, m_recovery_error};
+}
+
+void CGameWorld::EnterRecovery(std::string error)
+{
+    m_recovery_error = error.empty() ? "房间状态需要恢复" : std::move(error);
+    LOG_ERROR("world", "房间 " + std::to_string(GetId()) + " 已停止模拟：" + m_recovery_error);
+    if (!m_p_game_context) return;
+    if (auto* chat = m_p_game_context->Extensions().Globals().Find<IChatService>())
+        for (auto* player : Players())
+        {
+            player->ResetControlledMob();
+            chat->SendSystem(*player, "房间暂不可用，请等待管理员恢复。");
+        }
 }
 
 int CGameWorld::GetNewID()
@@ -1821,6 +1848,7 @@ void CGameWorld::FreeID(int id)
 void CGameWorld::RegisterLiveEntity(CEntity* entity)
 {
     if (!entity) return;
+    entity->m_birth_tick_marker = m_tick_active ? m_active_tick_marker : 0;
     if (auto* chain = dynamic_cast<CChainEntity*>(entity)) m_chains.push_back(chain);
     entity->LiveIndex() = m_live_entities.size();
     m_live_entities.push_back(entity);
@@ -2016,11 +2044,9 @@ CEntity* CGameWorld::InsertEntity(std::unique_ptr<CEntity> entity)
     if (m_next_generation == 0) m_next_generation = 1;
     m_p_entities[id] = std::move(entity);
     RegisterLiveEntity(raw_entity);
-    // Multi-segment roots need a stable world-qualified handle before their
-    // body entities can be linked.  Restore insertion intentionally skips this
-    // hook; hot-reload restores all serialized entities first and resolves the
-    // links in its dedicated reference phase.
-    if (auto* mob = dynamic_cast<CMobBase*>(raw_entity)) AssembleMultiSegmentMob(*mob);
+    // 多节根取得完整身份后才能装配；恢复插入跳过此钩子，由专门引用阶段重建。
+    if (auto* mob = dynamic_cast<CMobBase*>(raw_entity))
+    { mob->RebindStateOwners(); AssembleMultiSegmentMob(*mob); }
     return raw_entity;
 }
 
@@ -2048,9 +2074,7 @@ bool CGameWorld::RestoreNextEntityGeneration(std::uint64_t generation)
 CEntity* CGameWorld::InsertEntityWithIdentity(std::unique_ptr<CEntity> entity, int id, std::uint64_t generation)
 {
     constexpr int max_restore_entity_id = 1000000;
-    // UINT64_MAX cannot be incremented to produce the next generation.  Do
-    // not admit it from a snapshot or a debug tool, otherwise the next ID
-    // reuse could wrap back to generation 1 and resurrect a stale handle.
+    // 拒绝 UINT64_MAX，避免下一代回绕使旧句柄复活。
     if (!entity || id < 0 || id > max_restore_entity_id || generation == 0 ||
         generation == std::numeric_limits<std::uint64_t>::max())
         return nullptr;
@@ -2085,6 +2109,7 @@ CEntity* CGameWorld::InsertEntityWithIdentity(std::unique_ptr<CEntity> entity, i
         if (m_next_generation == 0) m_next_generation = 1;
     }
     RegisterLiveEntity(raw_entity);
+    if (auto* mob = dynamic_cast<CMobBase*>(raw_entity)) mob->RebindStateOwners();
     return raw_entity;
 }
 
@@ -2096,18 +2121,17 @@ bool CGameWorld::ReloadMapForRestore(std::string& error)
     m_map = std::move(map);
     m_spawn_zone_bounds = florrbt::BuildSpawnZoneBounds(m_map->zones);
     m_spawn_habitat_cache.clear();
+    m_terrain.ResetForMap();
     BuildWallGrid();
     return true;
 }
 
 void CGameWorld::ClearEntitiesForRestore()
 {
+    if (m_tick_active || IsCombatEventActive()) throw std::logic_error("Cannot replace entities during a simulation or combat event");
     if (m_transition_active) throw std::logic_error("Cannot restore a world during a transition");
-    // Restore replaces the owning entity array in-place. Detach every player
-    // controlled by this world before destroying that array; otherwise the
-    // player keeps a pointer to this world plus an old handle while the
-    // world's entity storage is already being torn down. The subsequent
-    // player restore phase will attach canonical handles again.
+    if (m_p_game_context) m_p_game_context->NaturalSpawnPopulation().Invalidate();
+    // 替换实体容器前解除本世界玩家的旧绑定，玩家恢复阶段再连接规范句柄。
     if (m_p_game_context)
     {
         for (const auto& player : m_p_game_context->Players())
@@ -2122,12 +2146,10 @@ void CGameWorld::ClearEntitiesForRestore()
     m_always_tick_entities.clear();
     m_conditional_tick_entities.clear();
     m_large_entities.clear();
-    m_active_entities.clear();
+    ClearFrameViews();
+    m_last_active_entity_count = 0;
     m_active_tick_views.clear();
     m_player_tick_views.clear();
-    m_contact_sweep.clear();
-    m_collision_mob_contacts.clear();
-    m_collision_inactive_entities.clear();
     m_clear_owned_owner_keys.clear();
     m_clear_summon_owner_keys.clear();
     m_pending_psionic_damage.clear();
@@ -2227,7 +2249,7 @@ void CGameWorld::FlushPendingPsionicDamage()
             pending_damage.erase(pending_it);
         }
 
-        // The anchor can disappear between receiving damage and this flush, while nearby linked mobs remain valid.
+        // 锚点可能在分摊前消失，但附近连接成员仍可有效。
         auto stale_anchor = pending_damage.find(anchor_key);
         if (stale_anchor != pending_damage.end())
         {
@@ -2250,7 +2272,19 @@ void CGameWorld::FlushPendingPsionicDamage()
         }
     }
 
-    for (const auto& [target, damage] : distributed_damage)
+    std::vector<std::pair<SPsionicDamageKey, float>> ordered_damage(distributed_damage.begin(), distributed_damage.end());
+    std::sort(ordered_damage.begin(), ordered_damage.end(), [](const auto& first, const auto& second) {
+        const auto& a = first.first; const auto& b = second.first;
+        if (a.entity_ref.id != b.entity_ref.id) return a.entity_ref.id < b.entity_ref.id;
+        if (a.entity_ref.generation != b.entity_ref.generation) return a.entity_ref.generation < b.entity_ref.generation;
+        if (a.attacker_ref.world_id != b.attacker_ref.world_id) return a.attacker_ref.world_id < b.attacker_ref.world_id;
+        if (a.attacker_ref.world_instance_generation != b.attacker_ref.world_instance_generation)
+            return a.attacker_ref.world_instance_generation < b.attacker_ref.world_instance_generation;
+        if (a.attacker_ref.id != b.attacker_ref.id) return a.attacker_ref.id < b.attacker_ref.id;
+        if (a.attacker_ref.generation != b.attacker_ref.generation) return a.attacker_ref.generation < b.attacker_ref.generation;
+        return static_cast<unsigned>(a.damage_type) < static_cast<unsigned>(b.damage_type);
+    });
+    for (const auto& [target, damage] : ordered_damage)
     {
         CEntity* entity = ResolveEntity(target.entity_ref);
         if (!entity || !entity->IsEntityType(EEntityType::Mob)) continue;
@@ -2272,11 +2306,7 @@ void CGameWorld::FinalizeEntityRestore()
         if (!m_id_in_use[id]) m_free_ids.push_back(id);
     }
 
-    // Carrying is a world-level invariant, not merely controller state.
-    // Rebuild the registry after all entities and controller snapshots exist;
-    // otherwise a restored leaf piece/hornet target is visible through the
-    // controller but is not protected from a second carrier until the next
-    // controller tick.
+    // 所有实体和控制器恢复后统一重建携带登记，避免旧目标在下一 Tick 前被第二个携带者占用。
     m_carried_entities.clear();
     ForEachEntity([this](CEntity* entity) {
         auto* mob = dynamic_cast<CMobBase*>(entity);
@@ -2401,8 +2431,7 @@ float ChainMassPullMultiplier(const CEntity* first, const CEntity* second)
 {
     const double first_mass = ChainPullMass(first);
     const double second_mass = ChainPullMass(second);
-    // Twice the reduced mass is the harmonic mean. It depends on both ends,
-    // grows when both are heavy, and remains limited by a very light endpoint.
+    // 两倍约化质量即调和平均质量，同时受两个端点影响，并受较轻端点限制。
     const double pair_mass = 2.0 / (1.0 / first_mass + 1.0 / second_mass);
     const double reference_mass = std::max(0.001, static_cast<double>(game_config::default_linker_mass));
     const double exponent = std::max(0.0, static_cast<double>(game_config::default_linker_chain_mass_pull_exponent));
@@ -2412,7 +2441,7 @@ float ChainMassPullMultiplier(const CEntity* first, const CEntity* second)
     if (!std::isfinite(raw_multiplier)) return maximum;
     return std::clamp(static_cast<float>(raw_multiplier), minimum, maximum);
 }
-} // namespace
+}
 
 CChainEntity::CChainEntity(CGameWorld* world, CEntity& first, CEntity& second, float max_length, float integrity,
                            float elasticity, CEntity* lease_owner)
@@ -2423,7 +2452,7 @@ CChainEntity::CChainEntity(CGameWorld* world, CEntity& first, CEntity& second, f
       m_max_integrity(std::isfinite(integrity) ? std::max(1.f, integrity) : 1.f),
       m_elasticity(std::isfinite(elasticity) ? elasticity : -1.f)
 {
-    Team() = 0;
+    SetTeam(0);
     Mass() = std::numeric_limits<float>::max();
     Health() = m_max_integrity;
     TickMode() = EEntityTickMode::Always;
@@ -2533,10 +2562,7 @@ void CChainEntity::ApplyConstraint(float dt)
     UpdateGeometry(first, second);
     const florrbt::Vector2f delta = second->Pos() - first->Pos();
     const float center_distance = Length(delta);
-    // m_max_length is the visible/free span of the chain between the two
-    // entity surfaces.  Its actual allowed center-to-center length therefore
-    // includes both endpoint radii, evaluated every tick so resized entities
-    // do not retain a stale limit.
+    // 链长表示实体表面净空，中心距离上限每帧加上双方实际半径。
     const float first_radius = std::max(0.f, first->Radius());
     const float second_radius = std::max(0.f, second->Radius());
     const float max_center_distance = m_max_length + first_radius + second_radius;
@@ -2554,9 +2580,7 @@ void CChainEntity::ApplyConstraint(float dt)
 
     if (!(center_distance > game_config::entity_collision_epsilon))
     {
-        // A coincident pair has no geometric normal.  A hard chain still
-        // needs to separate it, so use a deterministic fallback direction;
-        // slack chains have no work to do in this state.
+        // 重合端点使用确定性方向满足硬约束，松弛绳索无需处理。
         if (!hard_constraint || max_center_distance <= game_config::entity_collision_epsilon)
         {
             m_tension = 0.f;
@@ -2567,9 +2591,7 @@ void CChainEntity::ApplyConstraint(float dt)
     const florrbt::Vector2f normal = center_distance > game_config::entity_collision_epsilon
                                          ? delta / center_distance
                                          : florrbt::Vector2f{1.f, 0.f};
-    // A rope and a spring are one-sided constraints: they are slack below
-    // their rest length.  Only the zero-elasticity mode also resists
-    // compression, because it represents a rigid bar of exactly this length.
+    // 绳索和弹簧仅在拉长时施力，零弹性定长杆才同时抵抗压缩。
     if ((!hard_constraint && length_error <= game_config::entity_collision_epsilon) ||
         (hard_constraint && std::abs(length_error) <= game_config::entity_collision_epsilon &&
          std::abs(relative_speed) <= game_config::entity_collision_epsilon))
@@ -2590,9 +2612,7 @@ void CChainEntity::ApplyConstraint(float dt)
     const float mass_pull_multiplier = ChainMassPullMultiplier(first, second);
     const float base_stiffness = std::max(0.f, game_config::default_linker_chain_stiffness);
     const float base_damping = std::max(0.f, game_config::default_linker_chain_damping);
-    // Positive elasticity is deliberately inverse to stiffness: larger
-    // values make the chain softer.  It still grows its restoring force with
-    // stretch, but never snaps the endpoints back with a positional teleport.
+    // 正弹性越大，刚度越低；回复力随伸长增加，不通过瞬移校正软弹簧。
     const float spring_scale = spring_constraint ? 1.f / (1.f + std::max(0.f, m_elasticity)) : 1.f;
     const float hard_stiffness = std::max(1024.f, base_stiffness * 128.f);
     const float effective_stiffness = hard_constraint ? hard_stiffness : base_stiffness * spring_scale;
@@ -2615,15 +2635,12 @@ void CChainEntity::ApplyConstraint(float dt)
         float correction = 0.f;
         if (hard_constraint)
         {
-            // A hard chain is allowed to correct both sides of its target;
-            // this keeps it close to exactly the configured length even when
-            // one endpoint is stationary or very massive.
+            // 硬链允许双向校正，以在固定或极重端点存在时维持长度。
             correction = std::abs(length_error);
         }
         else if (!spring_constraint)
         {
-            // Preserve the old rope behavior: remove a substantial part of
-            // an over-stretch while leaving shorter distances untouched.
+            // 单向绳索只修正过度拉长，不改变较短距离。
             correction = std::min(std::max(0.f, length_error) * 0.8f,
                                   std::max(0.f, game_config::default_linker_chain_max_correction));
         }
@@ -2634,8 +2651,7 @@ void CChainEntity::ApplyConstraint(float dt)
         }
     }
 
-    // The chain is damaged by both endpoints trying to pull apart. It never
-    // deals contact damage to either endpoint.
+    // 端点相互拉扯消耗链条完整度，链条本身不造成接触伤害。
     if (dt > 0.f)
     {
         const double endpoint_stress = ChainPullMass(first) * std::max(0.f, -ChainDot(first_v, normal)) +
@@ -2677,6 +2693,7 @@ void CGameWorld::BreakChainsForEndpoint(const CEntity& endpoint)
 
 void CGameWorld::Tick(float dt)
 {
+    if (IsRecovering()) return;
     if (!std::isfinite(dt) || dt <= 0.f) return;
     if (m_tick_active) throw std::logic_error("Cannot recursively tick a world");
     struct STickScope
@@ -2685,7 +2702,8 @@ void CGameWorld::Tick(float dt)
         explicit STickScope(bool& value) : active(value) { active = true; }
         ~STickScope() { active = false; }
     } tick_scope(m_tick_active);
-auto run_tick_phases = [this, dt](auto&& phase_done) {
+    auto run_tick_phases = [this, dt](auto&& phase_done) {
+        Cleanup();
         CollectActiveEntitiesForTick();
         phase_done(ETickPhase::ActiveCollection);
 
@@ -2696,25 +2714,48 @@ auto run_tick_phases = [this, dt](auto&& phase_done) {
             m_retire_sweep_timer = 0.f;
         }
 
-        TickActiveEntities(dt);
-        FlushPendingPsionicDamage();
-        phase_done(ETickPhase::EntityUpdate);
-
-        SyncSpatialPositionsAndLargeMemberships(m_active_entities);
         if (m_p_controller) m_p_controller->OnTick(*this, dt);
         RemoveTransferredActiveEntities();
+        phase_done(ETickPhase::Rules);
+
+        TickEntityPhase(CEntity::ETickPhase::Begin, dt);
+        phase_done(ETickPhase::Begin);
+        TickEntityPhase(CEntity::ETickPhase::Intent, dt);
+        phase_done(ETickPhase::Intent);
+        TickEntityPhase(CEntity::ETickPhase::Forces, dt);
+        phase_done(ETickPhase::Forces);
+        TickEntityPhase(CEntity::ETickPhase::Motion, dt);
+        SyncSpatialPositionsAndLargeMemberships(m_active_entities);
+        phase_done(ETickPhase::Motion);
+
+        TickEntityPhase(CEntity::ETickPhase::Constraints, dt);
         FlushPendingPsionicDamage();
         ApplyChainConstraints(dt);
-        phase_done(ETickPhase::ControllerAndSync);
-
+        RefreshAttachedMissileTransforms(m_active_entities);
         ResolveWallCollisions(m_active_entities);
         ResolveCarryConstraints(m_active_entities);
-        for (auto* entity : m_active_entities)
-            if (auto* mob = dynamic_cast<CMobBase*>(entity); mob && mob->GameWorld() == this)
-                mob->SynchronizeEnvironmentAfterDisplacement();
-        SyncSpatialPositions(m_active_entities);
-        phase_done(ETickPhase::WallResolution);
+        RefreshAttachedMissileTransforms(m_active_entities);
+        ResolveBodyGeometry(m_active_entities, dt);
+        ResolveWallCollisions(m_active_entities, false);
+        ResolveCarryConstraints(m_active_entities);
+        RefreshAttachedMissileTransforms(m_active_entities);
+        phase_done(ETickPhase::Constraints);
 
+        TickEntityPhase(CEntity::ETickPhase::Environment, dt);
+        SyncSpatialPositions(m_active_entities);
+        phase_done(ETickPhase::Environment);
+
+        TickEntityPhase(CEntity::ETickPhase::Actions, dt);
+        m_owner_driven_entities.clear();
+        for (auto* entity : m_active_entities)
+            if (entity && !entity->FrameUsesWorldTick() && entity->GetProjectileType() == EProjectileType::Petal)
+                m_owner_driven_entities.push_back(entity);
+        ResolveWallCollisions(m_owner_driven_entities);
+        RefreshAttachedMissileTransforms(m_active_entities);
+        SyncSpatialPositionsAndMemberships(m_active_entities);
+        phase_done(ETickPhase::Actions);
+        TickEntityPhase(CEntity::ETickPhase::Requests, dt);
+        phase_done(ETickPhase::Requests);
         ResolveCollisions(m_active_entities, dt);
         FlushPendingPsionicDamage();
         ResolveCarryConstraints(m_active_entities);
@@ -2725,6 +2766,12 @@ auto run_tick_phases = [this, dt](auto&& phase_done) {
         SyncSpatialPositionsAndMemberships(m_active_entities);
         phase_done(ETickPhase::EntityCollision);
 
+        TickEntityPhase(CEntity::ETickPhase::Effects, dt);
+        FlushPendingPsionicDamage();
+        SyncSpatialPositionsAndMemberships(m_active_entities);
+        phase_done(ETickPhase::Effects);
+
+        ClearFrameViews();
         Cleanup();
         phase_done(ETickPhase::Cleanup);
     };
@@ -2759,8 +2806,7 @@ void CGameWorld::RecordCombatDamage(const CEntity& target, float amount, EDamage
     if (!std::isfinite(amount) || amount <= 0.f || target.Id() < 0 || !target.IsVisible()) return;
     const uint8_t kind = static_cast<uint8_t>(BaseDamageType(damage_type));
     const uint64_t key = (static_cast<uint64_t>(target.Id()) << 8) | kind;
-    // Only this unsent batch is retained. Bounded even in an empty world or
-    // while every client is backed up, and cleared after the snapshot batch.
+    // 只保留尚未发送的有界反馈批次，快照批次结束后清空。
     auto found = m_combat_feedback_indices.find(key);
     if (found == m_combat_feedback_indices.end())
     {
@@ -2809,13 +2855,14 @@ void CGameWorld::CollectActiveEntitiesForTick()
     {
         m_active_tick_marker = 1;
         for (CEntity* entity : m_live_entities)
-            if (entity) entity->ActiveTickMarker() = 0;
+            if (entity) { entity->ActiveTickMarker() = 0; entity->m_birth_tick_marker = 0; }
     }
 
     auto add_active_entity = [this](CEntity* entity) {
-        if (!entity) return;
+        if (!entity || entity->GameWorld() != this || !CanSimulateThisTick(*entity)) return;
         if (entity->ActiveTickMarker() == m_active_tick_marker) return;
         entity->ActiveTickMarker() = m_active_tick_marker;
+        entity->m_frame_world_tick = !entity->SkipWorldTick();
         entity->PrevPos() = entity->Pos();
         m_active_entities.push_back(entity);
     };
@@ -2842,10 +2889,21 @@ void CGameWorld::CollectActiveEntitiesForTick()
             const float player_sees_entity = player_view.horizon + std::max(0.f, entity->Radius());
             const float activation_radius = std::max(entity_sees_player, player_sees_entity);
             if (DistanceSq(entity->Pos(), player_view.center) > activation_radius * activation_radius) continue;
-add_active_entity(entity);
+            add_active_entity(entity);
             break;
         }
     }
+    std::vector<SEntityHandle> dependencies;
+    for (size_t index = 0; index < m_active_entities.size(); ++index)
+    {
+        dependencies.clear();
+        m_active_entities[index]->CollectTickDependencies(dependencies);
+        for (const auto& handle : dependencies) add_active_entity(ResolveEntity(handle));
+    }
+    std::sort(m_active_entities.begin(), m_active_entities.end(), [](const CEntity* first, const CEntity* second) {
+        return first->Id() < second->Id();
+    });
+    m_last_active_entity_count = m_active_entities.size();
 }
 
 void CGameWorld::RetireInactiveMobs(float elapsed)
@@ -2878,13 +2936,17 @@ void CGameWorld::RetireInactiveMobs(float elapsed)
     }
 }
 
-void CGameWorld::TickActiveEntities(float dt)
+void CGameWorld::TickEntityPhase(CEntity::ETickPhase phase, float dt)
 {
     for (CEntity* entity : m_active_entities)
     {
         if (!entity || entity->IsMarkedForDes()) continue;
         if (entity->GameWorld() != this) continue;
-        if (!entity->SkipWorldTick()) entity->Tick(dt);
+        if (!CanSimulateThisTick(*entity)) continue;
+        const bool passive_mob_phase = entity->IsEntityType(EEntityType::Mob) &&
+            (phase == CEntity::ETickPhase::Begin || phase == CEntity::ETickPhase::Environment || phase == CEntity::ETickPhase::Effects);
+        if ((!entity->FrameUsesWorldTick() || entity->SkipWorldTick()) && !passive_mob_phase) continue;
+        entity->TickPhase(phase, dt);
     }
 }
 
@@ -3107,9 +3169,7 @@ std::size_t CGameWorld::GetPlayerCount() const
     std::size_t count = 0;
     for (const auto& player : m_p_game_context->Players())
     {
-        if (!player) continue;
-        const CEntity* entity = player->GetEntity();
-        if (entity && entity->GameWorld() == this && !entity->IsMarkedForDes()) ++count;
+        if (player && player->GetWorld() == this) ++count;
     }
     return count;
 }
@@ -3155,7 +3215,8 @@ void CGameWorld::BuildWallGrid()
 
 int CGameWorld::RemoveWallsInRect(florrbt::Vector2f min_pos, florrbt::Vector2f max_pos)
 {
-    if (!m_map) return 0;
+    if (!m_map || !std::isfinite(min_pos.x) || !std::isfinite(min_pos.y) ||
+        !std::isfinite(max_pos.x) || !std::isfinite(max_pos.y)) return 0;
     const float min_x = std::min(min_pos.x, max_pos.x);
     const float min_y = std::min(min_pos.y, max_pos.y);
     const float max_x = std::max(min_pos.x, max_pos.x);
@@ -3163,6 +3224,11 @@ int CGameWorld::RemoveWallsInRect(florrbt::Vector2f min_pos, florrbt::Vector2f m
 
     size_t removed = 0;
     auto& walls = m_map->walls;
+    const bool any = std::any_of(walls.begin(), walls.end(), [&](const auto& wall) {
+        return wall.max_x >= min_x && wall.min_x <= max_x && wall.max_y >= min_y && wall.min_y <= max_y;
+    });
+    if (!any) return 0;
+    m_terrain.RecordGeometryRemoval({min_x, min_y}, {max_x, max_y});
     for (size_t i = 0; i < walls.size();)
     {
         const FlorrBtMap::Wall& wall = walls[i];
@@ -3187,38 +3253,6 @@ int CGameWorld::RemoveWallsInRect(florrbt::Vector2f min_pos, florrbt::Vector2f m
     return static_cast<int>(removed);
 }
 
-int CGameWorld::RemoveWallsByIds(const std::vector<int>& ids)
-{
-    if (!m_map || ids.empty()) return 0;
-
-    std::vector<bool> remove(m_map->walls.size(), false);
-    for (const int id : ids)
-        if (id >= 0 && id < static_cast<int>(remove.size())) remove[static_cast<size_t>(id)] = true;
-
-    size_t removed = 0;
-    auto& walls = m_map->walls;
-    for (size_t i = 0; i < walls.size();)
-    {
-        if (!remove[i])
-        {
-            ++i;
-            continue;
-        }
-        walls[i] = walls.back();
-        walls.pop_back();
-        remove[i] = remove.back();
-        remove.pop_back();
-        ++removed;
-    }
-
-    if (removed > 0)
-    {
-        for (size_t i = 0; i < walls.size(); ++i)
-            walls[i].id = static_cast<int>(i);
-        BuildWallGrid();
-    }
-    return static_cast<int>(removed);
-}
 
 bool CGameWorld::SweptCircleBlockedByWall(florrbt::Vector2f start, florrbt::Vector2f end, float radius, EWallQuery mask) const
 {
@@ -3254,8 +3288,7 @@ std::optional<florrbt::Vector2f> CGameWorld::NearestUnblockedPosition(florrbt::V
     std::optional<florrbt::Vector2f> best;
     float best_distance = std::numeric_limits<float>::max();
     const float padding = std::max(0.f, radius) + 1.f;
-    // Rare control-loss path, not a per-frame scan. Candidate points lie just
-    // outside polygon edges; test against the entire union, not one tile.
+    // 仅控制权丢失时扫描安全位置；候选在边缘外侧，并按整个区域联合验证。
     for (const auto& wall : m_map->walls)
         for (int i = 0; i < WallSegmentCount(wall); ++i)
         {
@@ -3291,7 +3324,7 @@ void CGameWorld::ConstrainControlledMotion(CMobBase& mob, florrbt::Vector2f star
     mob.PrevPos() = previous;
 }
 
-void CGameWorld::ResolveWallCollisions(std::span<CEntity* const> entities)
+void CGameWorld::ResolveWallCollisions(std::span<CEntity* const> entities, bool sweep_motion)
 {
     if (!m_map || m_map->walls.empty()) return;
 
@@ -3359,7 +3392,7 @@ void CGameWorld::ResolveWallCollisions(std::span<CEntity* const> entities)
 
     for (CEntity* entity : entities)
     {
-        if (!entity || entity->GameWorld() != this || !entity->CanCollide()) continue;
+        if (!entity || entity->GameWorld() != this || !entity->CanCollide() || !CanSimulateThisTick(*entity)) continue;
         if (!entity->CollidesWithWalls()) continue;
         if (auto* raw_missile = dynamic_cast<CMissile*>(entity); raw_missile && raw_missile->IsAttachedToOwner())
             continue;
@@ -3372,7 +3405,7 @@ void CGameWorld::ResolveWallCollisions(std::span<CEntity* const> entities)
         bool swept_hit = false;
         const FlorrBtMap::Wall* blocking_wall = nullptr;
         int blocking_segment = -1;
-        if (travel > game_config::entity_collision_epsilon)
+        if (sweep_motion && travel > game_config::entity_collision_epsilon)
             swept_hit = find_swept_wall_hit(start, end, wall_radius, entity->WallCollisionMask(), blocking_wall, blocking_segment);
 
         if (swept_hit)
@@ -3412,10 +3445,7 @@ void CGameWorld::ResolveWallCollisions(std::span<CEntity* const> entities)
                         florrbt::Vector2f slide_end = slide_start + slide_vel * game_config::server_fixed_dt;
                         const FlorrBtMap::Wall* slide_wall = nullptr;
                         int slide_segment = -1;
-                        // The slide test runs on the circle-center path (radius
-                        // 0): slide_start already rests the circle against the
-                        // wall, so a full-radius test would always hit the wall
-                        // it is sliding along and kill tangential motion.
+                        // 滑动起点已贴墙，后续检查圆心路径即可；再次使用完整半径会误挡切向运动。
                         if (!find_swept_wall_hit(slide_start, slide_end, 0.f, entity->WallCollisionMask(), slide_wall, slide_segment))
                         {
                             entity->Pos() = slide_end;
@@ -3436,8 +3466,9 @@ void CGameWorld::ResolveWallCollisions(std::span<CEntity* const> entities)
     }
 }
 
-void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float dt)
+void CGameWorld::ResolveBodyGeometry(const std::vector<CEntity*>& entities, float dt)
 {
+    if (entities.empty()) { m_body_contact_sweep.clear(); return; }
     const int velocity_passes = std::clamp(game_config::mob_contact_velocity_passes, 1, 8);
     auto& mob_contacts = m_collision_mob_contacts;
     mob_contacts.clear();
@@ -3452,24 +3483,22 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
             if (entity) entity->CollisionSyncMarker() = 0;
     }
 
-    // Build actual swept bounds once, instead of probing a fixed, oversized
-    // endpoint circle per active entity. Both participants' motion matters.
-    auto& sweep = m_contact_sweep;
+    // 固定移动后的身体几何，推挤不会改变本帧已建立的接触候选。
+    auto& sweep = m_body_contact_sweep;
     sweep.clear();
     sweep.reserve(m_live_entities.size());
     for (CEntity* entity : m_live_entities)
     {
-        if (!entity || entity->GameWorld() != this || !entity->CanCollide()) continue;
-        // Keep marked mobs in the contact broadphase so an already lethal
-        // petal contact can still finish its pending retaliation. Other
-        // marked entities remain excluded from collision processing.
-        if (entity->IsMarkedForDes() && !dynamic_cast<CMobBase*>(entity)) continue;
+        if (!entity || !entity->IsEntityType(EEntityType::Mob) || entity->GameWorld() != this ||
+            entity->IsMarkedForDes() || !entity->CanCollide() || !CanSimulateThisTick(*entity)) continue;
         const bool active = entity->ActiveTickMarker() == m_active_tick_marker;
-        const auto from = active ? entity->PrevPos() : entity->Pos();
-        const auto bounds = florrbt::MakeSweptCircleBounds(from, entity->Pos(), entity->Radius());
+        const auto bounds = florrbt::MakeSweptCircleBounds(entity->Pos(), entity->Pos(), entity->Radius());
         if (!std::isfinite(bounds.min.x) || !std::isfinite(bounds.min.y) ||
             !std::isfinite(bounds.max.x) || !std::isfinite(bounds.max.y)) continue;
-        sweep.push_back({ bounds, entity, entity->Id(), active });
+        SBodyContactSweepEntry entry;
+        entry.bounds = bounds; entry.entity = entity; entry.id = entity->Id(); entry.active = active;
+        entry.handle = entity->GetHandle(); entry.position = entity->Pos(); entry.radius = std::max(0.f, entity->Radius());
+        sweep.push_back(entry);
     }
     florrbt::VisitSweptCirclePairs(sweep, [&](const auto& first, const auto& second) {
         CEntity* entity = first.entity;
@@ -3482,11 +3511,9 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
         }
         if (entity->GameWorld() != this || other->GameWorld() != this) return;
         if (!other_active) other->PrevPos() = other->Pos();
-        const bool overlapping = entity->IsCollision(*other);
-        const bool swept_contact = !overlapping && SweptProjectileTouches(*entity, *other);
-        if (!overlapping && !swept_contact) return;
+        if (!entity->IsCollision(*other)) return;
         const bool unloaded_mob = !other_active && other->IsEntityType(EEntityType::Mob);
-        ResolveOverlappingEntityPair(entity, other, dt, !unloaded_mob, velocity_passes > 1 ? &mob_contacts : nullptr);
+        ResolveOverlappingEntityPair(entity, other, dt, !unloaded_mob, velocity_passes > 1 ? &mob_contacts : nullptr, false);
         if (!other_active && other->CollisionSyncMarker() != m_collision_sync_marker)
         {
             other->CollisionSyncMarker() = m_collision_sync_marker;
@@ -3494,9 +3521,7 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
         }
     });
 
-    // Reuse only the eligible contacts found by the broadphase. Alternate
-    // sweep direction so pressure reaches through a crowd in either ID order.
-    // Never re-run contact damage, poison, spawning or position correction.
+    // 交替方向传播接触压力，仅修正速度，不重复位置修正或伤害。
     auto transfer_contact_velocity = [this](const auto& contact) {
         CMobBase* lhs = contact.first;
         CMobBase* rhs = contact.second;
@@ -3524,10 +3549,81 @@ void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float 
     }
 }
 
+void CGameWorld::ResolveCollisions(const std::vector<CEntity*>& entities, float dt)
+{
+    if (entities.empty()) return;
+    florrbt::VisitPreparedSweptCirclePairs(m_body_contact_sweep, [&](const auto& first, const auto& second) {
+        const auto difference = first.position - second.position;
+        const float radius = first.radius + second.radius;
+        if (LengthSq(difference) > radius * radius) return;
+        CEntity* entity = ResolveEntity(first.handle);
+        CEntity* other = ResolveEntity(second.handle);
+        if (!entity || !other) return;
+        if (!first.active || (second.active && entity->Id() > other->Id())) std::swap(entity, other);
+        ResolveOverlappingEntityPair(entity, other, dt, false, nullptr);
+    });
+    m_body_contact_sweep.clear();
+
+    auto& inactive = m_collision_inactive_entities;
+    inactive.clear();
+    if (++m_collision_sync_marker == 0)
+    {
+        m_collision_sync_marker = 1;
+        for (auto* entity : m_live_entities) if (entity) entity->CollisionSyncMarker() = 0;
+    }
+    auto& sweep = m_contact_sweep;
+    sweep.clear(); sweep.reserve(m_live_entities.size());
+    for (auto* entity : m_live_entities)
+    {
+        if (!entity || entity->GameWorld() != this || !entity->CanCollide() || !CanSimulateThisTick(*entity)) continue;
+        if (entity->IsMarkedForDes() && !entity->IsEntityType(EEntityType::Mob)) continue;
+        const bool active = entity->ActiveTickMarker() == m_active_tick_marker;
+        const auto from = active ? entity->PrevPos() : entity->Pos();
+        const auto bounds = florrbt::MakeSweptCircleBounds(from, entity->Pos(), entity->Radius());
+        if (!std::isfinite(bounds.min.x) || !std::isfinite(bounds.min.y) ||
+            !std::isfinite(bounds.max.x) || !std::isfinite(bounds.max.y)) continue;
+        sweep.push_back({bounds, entity, entity->Id(), active});
+    }
+    florrbt::VisitSweptCirclePairs(sweep, [&](const auto& first, const auto& second) {
+        CEntity* entity = first.entity;
+        CEntity* other = second.entity;
+        if (entity->IsEntityType(EEntityType::Mob) && other->IsEntityType(EEntityType::Mob)) return;
+        bool other_active = second.active;
+        if (!first.active || (second.active && entity->Id() > other->Id()))
+        { std::swap(entity, other); other_active = first.active; }
+        if (entity->GameWorld() != this || other->GameWorld() != this) return;
+        if (!other_active) other->PrevPos() = other->Pos();
+        const bool overlapping = entity->IsCollision(*other);
+        if (!overlapping && !SweptProjectileTouches(*entity, *other)) return;
+        const bool unloaded_mob = !other_active && other->IsEntityType(EEntityType::Mob);
+        ResolveOverlappingEntityPair(entity, other, dt, !unloaded_mob, nullptr);
+        if (!other_active && other->CollisionSyncMarker() != m_collision_sync_marker)
+        { other->CollisionSyncMarker() = m_collision_sync_marker; inactive.push_back(other); }
+    });
+    for (auto* entity : inactive)
+        if (entity && entity->GameWorld() == this && !entity->IsMarkedForDes()) m_spatial_grid.UpdateTracked(entity);
+}
+
+void CGameWorld::ClearFrameViews()
+{
+    m_active_entities.clear();
+    m_owner_driven_entities.clear();
+    m_contact_sweep.clear();
+    m_body_contact_sweep.clear();
+    m_collision_inactive_entities.clear();
+    m_collision_mob_contacts.clear();
+}
+
+void CGameWorld::FlushEntityRemovals()
+{
+    if (m_tick_active || IsCombatEventActive()) throw std::logic_error("Cannot flush entity removals during a simulation or combat event");
+    ClearFrameViews();
+    Cleanup();
+}
+
 void CGameWorld::Cleanup()
 {
-    // Removal hooks and owner cleanup can enqueue more entities. Drain the
-    // whole dependency closure, including chains, before returning to callers.
+    // 移除回调可能继续标记附属实体，须耗尽包含链条在内的整个级联闭包。
     do
     {
         auto &clear_owned_owner_keys = m_clear_owned_owner_keys;
@@ -3679,10 +3775,7 @@ float DefaultMagicLightningBoostReader(const CEntity& entity)
 
 ERarity ResolveMagicLightningSourceRarity(const CEntity& origin, const CEntity* owner)
 {
-    // A Magic Lightning petal is the origin, so its rarity must win over the
-    // flower that owns it. For mob-triggered magic chains the mob is the
-    // origin instead. The owner fallback covers projectiles and future chain
-    // emitters without making the chain depend on a concrete caller type.
+    // 魔法闪电优先使用发起花瓣自身稀有度，宿主仅作通用回退来源。
     if (const auto* mob = dynamic_cast<const CMobBase*>(&origin)) return mob->GetRarity();
     if (const auto* petal = dynamic_cast<const CPetal*>(&origin)) return petal->m_rarity;
     if (owner)
@@ -3769,7 +3862,7 @@ florrbt::Vector2f RandomLightningPathPoint(const std::vector<florrbt::Vector2f>&
     const float step = base_step * GetLimitedRng(0.72f, 1.08f);
     return points.back() + heading * std::min(step, max_step);
 }
-} // namespace
+}
 
 void CGameWorld::ChainLightning(CEntity& origin, float damage, int bounces, CEntity* owner,
                                 const std::function<bool(const CMobBase&)>& target_filter)
@@ -3793,7 +3886,7 @@ void CGameWorld::ChainLightning(CEntity& origin, float damage, int bounces, CEnt
     std::unordered_set<SEntityHandle, SEntityHandleHash> struck;
     const SEntityHandle origin_ref = origin.GetHandle();
     const SEntityHandle owner_ref = owner ? owner->GetHandle() : SEntityHandle{};
-    const float one_tile = game_config::WorldUnits(256.f); // one world tile
+    const float one_tile = game_config::WorldUnits(256.f);
 
     bounces = std::min(bounces, k_max_network_lightning_hops);
     for (int bounce = 0; bounce < bounces; ++bounce)
@@ -3842,9 +3935,7 @@ void CGameWorld::ChainLightning(CEntity& origin, float damage, int bounces, CEnt
     if (chain.size() <= 1) return;
     CGameContext* context = GameContext();
     if (!context) return;
-    auto* network = dynamic_cast<INetworkModule*>(&context->Network());
-    if (!network) return;
-    network->BroadcastLightningChain(*this, chain, 0);
+    context->WorldEffects().BroadcastLightningChain(*this, chain, 0);
 }
 
 void CGameWorld::MagicChainLightning(CEntity& origin, float damage, int boost_bounces, int damage_bounces,
@@ -3929,9 +4020,7 @@ void CGameWorld::MagicChainLightning(CEntity& origin, float damage, int boost_bo
         return best;
     };
 
-    // Add in a wider type: both budgets are configurable and an overflowing
-    // signed sum must never turn the loop bound negative. One byte is used by
-    // the origin node, leaving this many network-safe hops.
+    // 用宽整数累加可配置跳数，防止有符号溢出；协议预算需为起点预留一项。
     const std::int64_t requested_hops =
         static_cast<std::int64_t>(boost_bounces) + static_cast<std::int64_t>(damage_bounces);
     const int max_hops = static_cast<int>(
@@ -3969,10 +4058,7 @@ void CGameWorld::MagicChainLightning(CEntity& origin, float damage, int boost_bo
         visited.insert(target->GetHandle());
         if (is_boost)
         {
-            // Enemy boost sources are struck by the chain's accumulated
-            // damage before their lightning value is read into the chain.
-            // This ordering is observable when the hit destroys or otherwise
-            // changes the source, so keep TakeDamage ahead of read_boost.
+            // 敌方增幅源先承受当前伤害，再读取其增幅；命中可能改变或销毁来源，顺序不能颠倒。
             if (!CheckTeam(owner_team, target->Team()) && damage > 0.f)
             {
                 target->TakeDamage(damage * damage_multiplier, owner, EDamageType::Lighting);
@@ -3998,7 +4084,5 @@ void CGameWorld::MagicChainLightning(CEntity& origin, float damage, int boost_bo
     if (chain.size() <= 1) return;
     CGameContext* context = GameContext();
     if (!context) return;
-    auto* network = dynamic_cast<INetworkModule*>(&context->Network());
-    if (!network) return;
-    network->BroadcastLightningChain(*this, chain, 1);
+    context->WorldEffects().BroadcastLightningChain(*this, chain, 1);
 }

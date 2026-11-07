@@ -1,5 +1,4 @@
-// Resize only mobile chrome for the software keyboard. Translating <body>
-// also moves the canvas/fixed joystick and breaks client-coordinate hit tests.
+// 软键盘只调整移动端界面，移动 body 会连带画布/摇杆并破坏坐标命中。
 export function bindMobileViewport({ onTyping = () => {} } = {}) {
   let frame = 0, wasTyping = false;
   const visualViewport = window.visualViewport;

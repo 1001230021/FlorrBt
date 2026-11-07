@@ -1,18 +1,5 @@
-// Freeze watchdog: pins down the "picture frozen for 1-20s" reports.
-//
-// Two independent failure modes look identical on screen and need different
-// fixes, so the watchdog tells them apart and records evidence for both:
-//   - CLIENT stall: the main thread blocked, rAF stopped firing. Detected as
-//     a gap between consecutive animation frames; long tasks observed in the
-//     same window point at the blocking script.
-//   - SERVER/NETWORK stall: frames keep rendering but no snapshot arrives,
-//     so the world stands still. Detected as snapshot silence while the
-//     socket stays open and the tab is visible.
-//
-// Events are kept in a ring buffer on `window.__freezeEvents` (inspect from
-// devtools) and echoed to the in-game console once they exceed the print
-// threshold, with a context sample (entity count, chunk queue, heap, dpr)
-// captured at detection time.
+// 冻结检测区分主线程停顿与快照断流：前者观察动画帧间隔/长任务，后者要求仍在渲染且连接打开。
+// 事件及检测上下文保存于 window.__freezeEvents，明显停顿同步到游戏控制台。
 
 const stallThresholdMs = 300;
 const printThresholdMs = 500;
@@ -66,13 +53,12 @@ function report(kind, durationMs, context, detail = "") {
     `[freeze] ${kind} ${Math.round(durationMs)}ms` +
     (detail ? ` ${detail}` : "") +
     ` | ${formatContext(context)}`;
-  // Browser console always; in-game console only for clearly visible stalls.
   console.warn(line, event);
   if (durationMs >= printThresholdMs && noteConsoleLine) {
     try {
       noteConsoleLine(line);
     } catch {
-      /* console UI not ready yet */
+      /* 控制台界面尚未就绪。 */
     }
   }
 }
@@ -102,8 +88,7 @@ function onAnimationFrame(now) {
       );
     }
 
-    // Snapshot silence while frames keep flowing = the world stalled on the
-    // server/network side, not in this tab.
+    // 持续渲染但无快照到达时记录服务器/网络侧断流。
     if (lastSnapshotAt > 0 && now - lastSnapshotAt < serverGapArmWindowMs) {
       const silence = now - lastSnapshotAt;
       if (silence >= serverGapThresholdMs && serverGapOpenedAt === 0)
@@ -154,12 +139,12 @@ export function initFreezeWatchdog(options = {}) {
       });
       observer.observe({ entryTypes: ["longtask"] });
     } catch {
-      /* longtask observation unsupported: gap detection still works */
+      /* 不支持长任务观测时仍检测帧间隔。 */
     }
   }
 
   document.addEventListener("visibilitychange", () => {
-    // Tab switches legitimately pause rAF; do not count them as stalls.
+    // 后台标签页暂停动画属正常行为，不记作冻结。
     lastFrameAt = 0;
     if (lastSnapshotAt > 0) lastSnapshotAt = performance.now();
     serverGapOpenedAt = 0;

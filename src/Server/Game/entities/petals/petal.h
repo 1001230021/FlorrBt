@@ -32,7 +32,7 @@ inline bool KeepsBonusDuringReload(EPetalBonusMode mode)
 }
 inline bool LosesBonusDuringReload(EPetalBonusMode mode) { return mode == EPetalBonusMode::AliveOnly; }
 
-// Registered stats describe the whole base stack; each base copy receives an equal share.
+// 注册属性描述整组基础副本，各副本均分。
 inline void NormalizePetalStatsPerCopy(SPetalStats& stats)
 {
     const int count = std::max(1, stats.copy);
@@ -48,12 +48,10 @@ class CPetalBehavior
     virtual ~CPetalBehavior() = default;
 
     virtual bool IsOpen() const { return false; }
-    // Released/hidden auxiliary petals (Egg, Linker) stay in their slot for
-    // reload ownership but must not consume an orbit/layout position.
+    // 已释放或隐藏的辅助花瓣保留重载归属，但不占轨道位置。
     virtual bool CountsForPetalLayout(const CPetal*) const { return true; }
     virtual EPetalBonusMode GetBonusMode() const { return EPetalBonusMode::AliveOnly; }
-    // Charged once before a missing copy may advance its preload/reload timer.
-    // A failed payment leaves the copy idle at the start of the cycle.
+    // 缺失副本推进预加载或重载前只扣费一次；支付失败则停在周期起点。
     virtual float GetSpawnManaCost(ERarity) const { return 0.f; }
 
     virtual SFlowerStats GetStats(ERarity rarity) const = 0;
@@ -109,21 +107,19 @@ class CPetal : public CProjectile
 {
   public:
     CPetal(float r, CFlower* owner, int slot, SPetalStats petal_stats, EPetalType type);
-    void Tick(float dt) override;
+    void OnTickActions(float dt) override;
     void NotifyCleared();
     void OnBeforeRemoved(EEntityRemovalReason reason) override;
     void RefreshOrbitAnchor(CFlower* flower);
     CEntity* GetOrbitAnchor() const;
 
-    void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
+    void OnTakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
     const SEntityStats& GetEntityStats() const override { return m_final_petal_stats; }
     EPetalType GetPetalType() const { return m_petal_type; }
     void SetPetalType(EPetalType type)
     {
         m_petal_type = type;
-        // The eou pheromone petal disguises itself as Honey on the wire so
-        // clients render the vanilla sprite without client-side mod support
-        // (same idea as mod mob visual proxies).
+        // 信息素使用 Honey 的协议视觉代理，客户端无需识别扩展类型。
         const EPetalType wire_type =
             type == ToPetalType(EModPetalType::EouPheromone) ? EPetalType::Honey : type;
         SetNetworkType(PetalNetworkType(static_cast<std::uint8_t>(wire_type)));
@@ -140,16 +136,12 @@ class CPetal : public CProjectile
     int m_copy_index = 0;
     int m_slot_index = 0;
     SEntityHandle m_target_ref;
-    // Absorption/healing petals follow a short Hermite path into their target.
-    // Capturing the starting position and velocity preserves the orbit's
-    // tangent instead of snapping the petal onto a radial line.
+    // 治疗和吸收花瓣沿短 Hermite 曲线靠近目标，起点速度保留原轨道切线。
     florrbt::Vector2f m_attraction_start_pos = {};
     florrbt::Vector2f m_attraction_start_velocity = {};
     float m_attraction_elapsed = 0.f;
     bool m_attraction_active = false;
-    // A target that was just contacted is temporarily suppressed from the
-    // homing search.  Keeping its identity separately lets behaviors such as
-    // Heavy still inspect the last contact while the petal is returning.
+    // 短暂屏蔽刚命中的目标，同时保留其身份供 Heavy 等行为读取最后接触。
     SEntityHandle m_target_release_ref;
     float m_target_release_timer = 0.f;
     float m_lifetime = 0.f;
@@ -166,9 +158,7 @@ class CPetal : public CProjectile
     float m_growth_base_radius = 0.f;
     std::uint64_t m_growth_stats_revision = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t m_applied_flower_stats_revision = std::numeric_limits<std::uint64_t>::max();
-    // Lightning petal: contact-session hit accumulator. While the petal
-    // touches a target each damage event increments m_chain_hit_count; when
-    // the contact ends the stored chain fires once with damage*count.
+    // Lightning 按连续接触累计命中次数，接触结束后按伤害乘次数释放一次连锁。
     SEntityHandle m_chain_target_ref;
     int m_chain_hit_count = 0;
     std::unordered_map<SEntityHandle, float, SEntityHandleHash> m_hit_credits;
@@ -178,7 +168,7 @@ class CMoonPetal : public CPetal
 {
   public:
     using CPetal::CPetal;
-    void Tick(float dt) override;
+    void OnTickMotion(float dt) override;
     florrbt::Vector2f m_orbit_center{};
     florrbt::Vector2f m_orbit_velocity{};
     float m_orbit_phase = game_config::pi;
@@ -190,7 +180,7 @@ class CBeetleEggPetal : public CPetal
   public:
     using CPetal::CPetal;
 
-    void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
+    void OnTakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
 
     SEntityHandle m_summon_ref;
     bool m_has_spawned_summon = false;
@@ -201,15 +191,14 @@ class CLinkerPetal final : public CPetal, public IChainLease
   public:
     using CPetal::CPetal;
 
-    void TakeDamage(float, CEntity*, EDamageType) override {}
+    void OnTakeDamage(float, CEntity*, EDamageType) override {}
     void OnChainBroken(CChainEntity& chain) override;
     void ResetMissingChain();
 
     SEntityHandle m_first_target_ref;
     SEntityHandle m_chain_ref;
     float m_saved_chain_health = 0.f;
-    // Released Linkers no longer consume a layout slot, so retain the angle
-    // of their former slot relative to the flower's rotating orbit.
+    // 释放后的 Linker 不再占槽位，单独保留相对轨道角。
     float m_released_orbit_angle_offset = 0.f;
     int m_charges_remaining = 2;
     bool m_released_from_slot = false;
@@ -230,12 +219,12 @@ class CThrownPetal : public CPetal
   public:
     using CPetal::CPetal;
 
-    void Tick(float dt) override;
+    void OnTickMotion(float dt) override;
+    void OnTickEffects(float dt) override;
     void BeginThrow(florrbt::Vector2f direction, float speed, float deceleration_time, bool destroy_when_stopped,
                     bool tick_from_world, bool decelerates = true);
     void StopThrow(bool destroy);
 
-    // Called once when a throw finishes decelerating to a full stop.
     virtual void OnThrowStopped() {}
 
     bool m_thrown = false;
@@ -253,7 +242,7 @@ class CMissilePetal : public CThrownPetal
   public:
     using CThrownPetal::CThrownPetal;
 
-    void Tick(float dt) override;
+    void OnTickActions(float dt) override;
     bool CollidesWithWalls() const override { return m_fired || CPetal::CollidesWithWalls(); }
 
     bool m_fired = false;
@@ -262,9 +251,7 @@ class CMissilePetal : public CThrownPetal
     float m_fired_lifetime = 0.f;
 };
 
-// Eou pheromone petal: a honey-like petal that collides with nothing. When a
-// throw fully decelerates it reports its position to the bound pheromone
-// group (team + group are stamped on spawn). Disguised as Honey on the wire.
+// 信息素不参与碰撞，投掷减速停止后向绑定分组报告位置；协议视觉使用 Honey。
 class CEouPheromonePetal final : public CThrownPetal
 {
   public:
@@ -314,7 +301,7 @@ class CGlassPetal : public CPetal
   public:
     using CPetal::CPetal;
 
-    void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
+    void OnTakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
 
     std::unordered_map<SEntityHandle, float, SEntityHandleHash> m_hit_cooldowns;
 };
@@ -387,10 +374,7 @@ class CYggdrasilPetal : public CPetal
     float m_revive_timer = 0.f;
 };
 
-// Registry slots cover the natives plus the reserved mod petal range
-// (mod_petal_type.h). Slots from kModPetalTypeBase up are optional at
-// Finalize (mod content plus native Magnet, which sits inside the pinned
-// mod window at id 71 and is still registered unconditionally below).
+// 注册表覆盖基础及扩展花瓣；预留区可选，固定编号 71 的 Magnet 仍无条件注册。
 using CPetalRegistry = TPrototypeRegistry<EPetalType, CPetalPrototype, static_cast<std::size_t>(kPetalIdCapacity),
                                           static_cast<std::size_t>(kModPetalTypeBase)>;
 namespace petal_registry_detail
@@ -400,7 +384,7 @@ inline CPetalRegistry& MutableRegistry()
     static CPetalRegistry registry("petal", static_cast<CPetalRegistry::name_function>(GetPetalTypeName));
     return registry;
 }
-} // namespace petal_registry_detail
+}
 
 inline const CPetalRegistry& GetPetalRegistry() { return petal_registry_detail::MutableRegistry(); }
 
@@ -432,7 +416,7 @@ template <typename TPetal> bool RegisterPetalPrototype(EPetalType type, CPetalPr
         auto petal = std::make_unique<TPetal>(petal_stats.radius, flower, slot, petal_stats, raw_ptr->m_type);
         petal->m_rarity = rarity;
         petal->m_slot_index = slot;
-        petal->Team() = flower->Team();
+        petal->SetTeam(flower->Team());
         return petal;
     };
     return petal_registry_detail::MutableRegistry().Add(type, std::move(ptr));
@@ -448,10 +432,7 @@ template <EPetalType Type, class TBehavior, class TPetal = CPetal> bool Register
     return RegisterPetalPrototype<TPetal>(Type, std::move(prototype));
 }
 
-// Registers a controller-specific petal from the mod id space
-// (mod_petal_type.h). Unlike mod mobs these ids are client-visible wire ids,
-// so the manifest pins them forever and the id generator ships them to the
-// client tables.
+// 扩展花瓣使用客户端可见的固定编号，生成器须将它们同步到客户端表。
 template <EModPetalType Type, class TBehavior, class TPetal = CPetal> bool RegisterModPetalDefinition()
 {
     static_assert(IsModPetalTypeId(static_cast<int>(Type)), "mod petals must live in the reserved mod id range");

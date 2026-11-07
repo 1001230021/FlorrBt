@@ -1,3 +1,4 @@
+import { UI_FONT_FAMILY } from "./ui_typography.js";
 import { ASSET_MANIFEST } from "./asset_manifest.js";
 import { loadVisualImage, prepareSvgImage, whenVisualReady, readSvgSource, assignVisualImage } from "./visual_assets.js";
 import { getPetalLabelFontSize, getPetalLabelContainerSize } from "./petal_card_layout.js";
@@ -129,9 +130,7 @@ const magicPetalIconIds = Object.freeze({
   [petalMagicCactusType]: "cactus_cyan",
 });
 
-// Display-name map: multi-word petal names resolve to their most
-// representative word. Entries here win over the automatic last-word rule;
-// every entry also has its localized form in the locales (petals.*).
+// 多词花瓣名优先使用显式代表词映射，其次取末词；显示名另有本地化。
 export const PETAL_DISPLAY_EN = {
   HallucinogenicMushroom: "Mushroom",
   BeetleEgg: "Egg",
@@ -226,23 +225,16 @@ export function canDuplicatorAffect(petalType, copy) {
   return copy > 0 && !nonStackPetalTypes.has(petalType);
 }
 
-// ---- Server-derived copy counts ---------------------------------------------
-// The owner snapshot carries one entry per copy for every primary slot
-// (recharging copies included, see snapshot_service.cpp), so equipped cards
-// render the exact copy count the server runs instead of predicting it with
-// the local rules below. Counts seen live are remembered per type+rarity for
-// surfaces without live data (inventory, craft, ground drops); the legacy
-// formula only covers petals never observed live in this session.
-const livePetalCopyCounts = new Map(); // "type:rarity" -> { count, leftmost }
+// 优先采用服务器槽位中的副本数量，含加载中副本。
+// 按类型/稀有度记忆以供背包等界面使用；本会话未观测时才用本地规则估计。
+const livePetalCopyCounts = new Map();
 
 export function recordLivePetalCopyCount(petalType, rarity, count, slotIndex) {
   if (!petalType || !rarity || !(count > 0)) return false;
   const key = `${petalType}:${rarity}`;
   const leftmost = slotIndex === 0;
   const previous = livePetalCopyCounts.get(key);
-  // Leftmost-slot talents can grant slot 0 an extra copy: a non-leftmost
-  // observation is the shared base value and always wins over one that may
-  // carry that bonus.
+  // 最左槽天赋可能额外增加副本，通用基线优先采用非最左槽的观测。
   if (previous && !previous.leftmost && leftmost) return false;
   if (previous && previous.leftmost === leftmost && previous.count === count)
     return false;
@@ -269,7 +261,6 @@ export function effectivePetalCardCopy(petalType, rarity, options = {}) {
   const observed = livePetalCopyCount(petalType, rarity);
   if (observed > 0) return observed;
 
-  // Never seen live this session: predict with the legacy rules.
   let copy = getPetalBaseCopy(petalType, rarity);
   if (!canDuplicatorAffect(petalType, copy)) return copy;
 
@@ -380,8 +371,6 @@ export function movePetalInfoTooltip(event) {
 export function renderPetalInfoTooltip(info) {
   petalInfoTooltip.replaceChildren();
 
-  // Same structure as the bestiary floating card: title, rarity line, then
-  // rows (stats as plain numbers instead of loot cards).
   const title = document.createElement("div");
   title.className = "petal-info-title";
   title.textContent = petalTypeName(info.petalType);
@@ -931,9 +920,7 @@ export function pollenCopy(rarity) {
   return rarityLevel(rarity) <= 1 ? 1 : rarityLevel(rarity) <= 3 ? 2 : 3;
 }
 
-// Mirrors the server's MagnetAbsorbBonus: the pick-up absorb range grows
-// linearly with rarity — Common grants nothing, Mythic reaches the full
-// magnetism-talent range. Active only while the petal is alive.
+// 磁铁吸收范围按稀有度线性增加：Common 为零，Mythic 达到磁力天赋范围；只在花瓣存活时生效。
 export function magnetAbsorbBonus(rarity) {
   return (1024 * Math.max(0, rarityValueLevel(rarity) - 1)) / 5;
 }
@@ -1177,10 +1164,7 @@ export function petalCopyMaxRadius(visualCopies, petalType, singleRadius) {
   return 10.5;
 }
 
-// Multi-copy ring distance comes from each petal's svg (`data-copy-distance`
-// on the root element, in 110-unit frame coordinates; 0 = use the dynamic
-// layout formula). Loaded once by ensurePetalCopyDistanceData(). Retune a
-// petal by editing its .svg (or via tools/write_petal_copy_distance.mjs).
+// 多副本环距来自 SVG 根的 data-copy-distance，以 110 单位画框计；零表示使用动态布局。
 const petalCopyDistanceByType = new Map();
 
 export function petalCopyDistanceOverride(petalType) {
@@ -1205,7 +1189,7 @@ export async function ensurePetalCopyDistanceData() {
         petalCopyDistanceByType.set(petalType, value);
     }
   } catch {
-    // Silent fallback: dynamic radius formulas keep working.
+    // 加载失败时继续用动态半径公式。
   }
 }
 
@@ -1214,8 +1198,6 @@ export function getPetalCopyLayout(copy, petalType = 0) {
   if (visualCopies === 1) return [{ x: 0, y: 0, angle: 0, scale: 1 }];
 
   const scale = petalCopyVisualScale(visualCopies, petalType);
-  // A per-petal fixed ring distance comes only from the svg attribute now;
-  // petals without one (the default) use the dynamic formula below.
   const fixedRadius = petalCopyDistanceOverride(petalType);
   let radius = fixedRadius;
   if (radius <= 0) {
@@ -1274,7 +1256,7 @@ export function makePetalStack(
   for (let copyIndex = 0; copyIndex < layout.length; copyIndex += 1) {
     const part = layout[copyIndex];
     const icon = makePetalIcon(iconPetalType, rarity, {
-      // The DOM label below is the sole name layer, even for a single copy.
+      // 名称只由界面标签绘制，单副本也不保留素材内名称。
       stripped: true,
     });
     if (!icon) continue;
@@ -1293,8 +1275,7 @@ export function makePetalStack(
     stack.appendChild(icon);
   }
   stack.appendChild(makePetalDisplayName(iconPetalType));
-  // A single card needs no quantity badge. Keep a reusable hidden node when
-  // requested by retained grids so 1 <-> multiple does not rebuild the card.
+  // 单卡隐藏数量角标，保留网格复用节点以避免数量变化时重建。
   if (count > 1 || options.showCount === true) {
     const badge = document.createElement("span");
     badge.className = "petal-count";
@@ -1305,7 +1286,7 @@ export function makePetalStack(
   return stack;
 }
 
-// One label, measured in reference-card units, scales with the actual stack.
+// 标签按参考卡片单位计算，随实际堆叠缩放。
 function makePetalDisplayName(petalType) {
   const span = document.createElement("span");
   span.className = "petal-card-name";
@@ -1344,7 +1325,7 @@ function labelFontSizePx(text) {
       const canvas = typeof OffscreenCanvas === "function" ? new OffscreenCanvas(16, 16) : document.createElement("canvas");
       cardMeasureContext = canvas.getContext("2d");
     }
-    cardMeasureContext.font = "900 100px 'Florr UI', 'Sarasa SC', sans-serif";
+    cardMeasureContext.font = `900 100px ${UI_FONT_FAMILY}`;
     const widthAt100 = Math.max(1, cardMeasureContext.measureText(text).width);
     const font = getPetalLabelFontSize(widthAt100, maxFont, maxWidth);
     if (fontsReady) labelFontSizeCache.set(cacheKey, font);
@@ -1431,7 +1412,7 @@ export function getPetalBasePath(rarity) {
 }
 
 export function getPetalIconPath(petalType, rarity = 0, options = {}) {
-  // The brush and eraser have no art of their own; cards use the basic look.
+  // 刷子和橡皮没有专属素材，卡片使用基础外观。
   if (petalType === petalBrushType || petalType === petalEraserType)
     petalType = petalBasicType;
   if (
@@ -1483,8 +1464,7 @@ export function imageReady(image) {
   return image && !image.failed && image.complete && image.naturalWidth > 0;
 }
 
-// Kicks off loading every texture asset from the manifest; resolves when all
-// have finished (failures resolve too so the game can never hang forever).
+// 预热资源清单；失败也结束等待，避免加载永久挂起。
 export async function preloadAssets({ concurrency = 8 } = {}) {
   const workerCount = Math.max(
     1,

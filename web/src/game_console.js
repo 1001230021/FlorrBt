@@ -53,7 +53,6 @@ function fallbackCopy(text) {
   try {
     document.execCommand("copy");
   } catch {
-    // ignore
   }
   holder.remove();
 }
@@ -137,8 +136,7 @@ export function createGameConsole({
   let completionIndex = -1;
   let completionOffset = 0;
   let completionTarget = 0;
-  // Input snapshot the current candidate list was computed from. Tab-cycling
-  // reuses the list as long as the input hasn't changed.
+  // 保存候选列表对应的输入，Tab 轮换时复用。
   let completionSnapshotValue = null;
   let completionSnapshotCursor = -1;
 
@@ -158,7 +156,6 @@ export function createGameConsole({
 
   let touchLastY = null;
 
-  // ------------------------------------------------------------------ helpers
 
   function t(key, params = {}, fallback = "") {
     return translate(key, params, { defaultValue: fallback });
@@ -313,13 +310,11 @@ export function createGameConsole({
     );
   }
 
-  // ------------------------------------------------------------------ completion
 
   function updateCompletion(resetChosen = true) {
     const value = input.value;
     const cursor = input.selectionStart ?? value.length;
-    // Keep the current candidate list while the input hasn't changed, so
-    // tabbing through candidates never recomputes/reorders them.
+    // 输入未变时复用候选，避免轮换过程中重排。
     if (completion && completionSnapshotValue === value && completionSnapshotCursor === cursor)
       return;
     completion = null;
@@ -381,7 +376,6 @@ export function createGameConsole({
     dirty = true;
   }
 
-  // ------------------------------------------------------------------ search
 
   function setSearching(value) {
     if (searching === value) return;
@@ -451,11 +445,8 @@ export function createGameConsole({
     scrollToMatch(currentMatchIndex);
   }
 
-  // ------------------------------------------------------------------ scrolling
 
-  // Vertical space reserved above the input row for the suggestion strip
-// (candidate row / search status / help block). The backlog bottom moves up
-// by this amount so console messages never overlap the suggestions.
+  // 为建议/搜索/帮助条预留高度，日志区向上收缩，避免文字重叠。
 function suggestionReservedHeight() {
   if (searching) return LINE_HEIGHT + PROMPT_GAP + 4;
   if (!completion) return 0;
@@ -493,7 +484,6 @@ function backlogCapacity() {
     return Math.max(MIN_INPUT_HEIGHT, segments.length * LINE_HEIGHT + 6);
   }
 
-  // ------------------------------------------------------------------ backlog
 
   function addLine(text, kind = "") {
     backlog.push({
@@ -508,8 +498,6 @@ function backlogCapacity() {
       backlog.splice(0, backlog.length - maxBacklogEntries);
     }
     wrapDirty = true;
-    // Chat-like behavior: new messages always insert at the bottom and push
-    // older content up, so the view always follows the newest lines.
     scrollUp = 0;
     selection = null;
     dirty = true;
@@ -551,7 +539,6 @@ function backlogCapacity() {
     executeLine(input.value);
   }
 
-  // ------------------------------------------------------------------ selection
 
   function lineFromY(y) {
     const bottom =
@@ -561,8 +548,7 @@ function backlogCapacity() {
     const firstLine = Math.max(0, totalLines - capacity - scrollUp);
     const lastLine = Math.min(totalLines, firstLine + capacity);
     if (lastLine <= firstLine) return -1;
-    // Inverse of the bottom-anchored render formula: the row closest to the
-    // input row is the newest rendered line (lastLine - 1).
+    // 按底部锚定绘制的逆变换计算行号，最靠近输入框的是最新行。
     const offset = Math.floor((bottom - y) / LINE_HEIGHT);
     const index = lastLine - 1 - offset;
     if (index < firstLine || index >= totalLines) return -1;
@@ -639,7 +625,6 @@ function backlogCapacity() {
     dirty = true;
   }
 
-  // ------------------------------------------------------------------ input
 
   function inputSegments() {
     if (!input.value) return [{ text: "", offset: 0 }];
@@ -713,7 +698,6 @@ function backlogCapacity() {
     dirty = true;
   }
 
-  // ------------------------------------------------------------------ render
 
   function backlogBottomY() {
     return (
@@ -738,9 +722,6 @@ function backlogCapacity() {
     if (maxScroll <= 0) return null;
     const thumbH = Math.max(24, track.h * Math.min(1, capacity / totalLines));
     const movable = track.h - thumbH;
-    // Standard mapping: scrollUp == 0 means the view is at the BOTTOM of the
-    // backlog, so the thumb sits at the bottom of the track; scrollUp == max
-    // (view at the top) puts the thumb at the top.
     const y = track.y + movable - (movable * scrollUp) / maxScroll;
     return { x: track.x, y, w: track.w, h: thumbH };
   }
@@ -824,8 +805,7 @@ function backlogCapacity() {
 
     for (let line = firstLine; line < lastLine; line += 1) {
       const { entry, segment } = visualLines[line];
-      // Bottom-anchored: the newest line sits just above the input row and
-      // older lines stack above it (canvas y grows downward).
+      // 底部锚定，最新行紧邻输入框，旧行向上排列。
       const y = backlogBottom - (lastLine - 1 - line) * LINE_HEIGHT;
 
       for (const rect of selectedRects(line)) {
@@ -1039,7 +1019,6 @@ function backlogCapacity() {
     context.closePath();
   }
 
-  // ------------------------------------------------------------------ loop
 
   function loop(now) {
     rafId = requestAnimationFrame(loop);
@@ -1064,7 +1043,6 @@ function backlogCapacity() {
     }
   }
 
-  // ------------------------------------------------------------------ events
 
   function handleInputEvent() {
     updateCompletion();
@@ -1210,7 +1188,6 @@ function backlogCapacity() {
     if (!open || event.button !== 0) return;
     const { x, y } = canvasPointerPosition(event);
 
-    // Scrollbar takes priority over backlog selection.
     if (scrollbarVisible()) {
       const track = scrollbarTrackRect();
       const hit =
@@ -1274,7 +1251,6 @@ function backlogCapacity() {
       const thumb = scrollbarThumbRect(track);
       const movable = track.h - (thumb ? thumb.h : 0);
       if (movable > 0) {
-        // Dragging the thumb UP moves the view up (toward older lines).
         const ratio = (scrollbarDragStartY - y) / movable;
         scrollUp = clamp(
           Math.round(scrollbarDragStartScrollUp + ratio * maxScroll),
@@ -1370,7 +1346,6 @@ function backlogCapacity() {
     dirty = true;
   }
 
-  // ------------------------------------------------------------------ setup
 
   input.addEventListener("input", handleInputEvent);
   input.addEventListener("keydown", handleKeyDown);

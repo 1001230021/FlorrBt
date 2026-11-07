@@ -6,11 +6,12 @@ for (const [name, prop, defaultValue] of [
   ["movement_arrow", "movementArrow", 1],
   ["screen_shake", "screenShakeEnabled", 1],
   ["live_icons", "liveIcons", 1],
+  ["menu_petals", "menuPetals", 1],
 ]) registerClientConfig(name, { prop, defaultValue, min: 0, max: 1 });
 
 registerClientConfig("auto_register", {
   prop: "autoRegister",
-  // Opt-in trusted-IP login attempt with an empty password.
+  // 手动登录可选择使用当前页凭据；自动重连也使用凭据，不依赖 IP。
   defaultValue: 0,
   min: 0,
   max: 1,
@@ -47,8 +48,7 @@ registerClientConfig("petal_label_max_font_px", {
 
 registerClientConfig("petal_label_max_width_px", {
   prop: "petalLabelMaxWidthPx",
-  // Name width at a standard 56px card. Font and width limit scale together
-  // with primary/reserve/flight cards; longer localized names shrink to fit.
+  // 标准卡片宽 56px，名称字体与宽度随卡片缩放；长译名按需缩小。
   defaultValue: 45,
   min: 16,
   max: 300,
@@ -220,21 +220,13 @@ const minimapMaterialColors = Object.freeze({
 export const clientRuntimeConfig = Object.freeze({
   serverTickInterval: 0.05,
   expectedSnapshotInterval: 0.05,
-  // Match the 20 Hz server simulation. Hold state changes still send
-  // immediately; steady keyboard holds no longer enqueue 30 Hz duplicates.
+  // 发送频率匹配服务端 20Hz；按住状态变化仍立即发送。
   packetInterval: 1 / 20,
   deathFadeDuration: 0.25,
   deathScaleBoost: 0.72,
-  // Unified petal-card vanish (rotate 2π + fade + shrink to 0), used by the
-  // DOM card consumers (result dismiss, failed-craft losses). Canvas drop
-  // cards run the same pose over deathFadeDuration so the entity removal
-  // timing stays in sync.
+  // 界面卡片共用旋转/淡出/缩小动画；世界掉落使用相同姿态和实体死亡时间线。
   petalCardVanishDurationMs: 700,
-  // Craft gamble spin: rounds of craftSpinRoundMs, each spinning the card
-  // formation craftSpinRevolutionsPerRound full turns at constant angular
-  // velocity. The suspense length is a uniformly random round count in
-  // [craftSpinMinRounds, craftSpinMaxRounds]; craftSpinRampMs eases the
-  // spin-up so the start does not snap.
+  // 合成按随机轮数匀速旋转，起步短暂缓动；轮数及每轮角度由配置控制。
   craftSpinRoundMs: 600,
   craftSpinRevolutionsPerRound: 2,
   craftSpinMinRounds: 0,
@@ -245,8 +237,7 @@ export const clientRuntimeConfig = Object.freeze({
   hurtFlashInterval: 0.25,
   hurtFlashMinDelta: 0.002,
   missingEntityViewEdgeGrace: 48,
-  // Client-only camera field of view. 100% is the normal view; lower values
-  // shrink the visible world radius without changing network snapshots.
+  // 仅调整相机视野，不改变网络快照范围。
   viewZoomMinPercent: 25,
   viewZoomMaxPercent: 100,
   viewZoomStepPercent: 5,
@@ -254,7 +245,7 @@ export const clientRuntimeConfig = Object.freeze({
   mouseMoveFullSpeedRadiusRatio: 0.105,
   entityFrameMinScreenRadius: 8,
   entityNameMinScreenRadius: 4,
-  // Only labels use readability thresholds. Entity bodies have no size LOD.
+  // 仅标签按可读性阈值裁剪，实体本体没有尺寸分级。
   bloodSacrificeDrawPhaseEnd: 0.5,
   bloodSacrificeInitialHeading: Math.PI * 0.5,
   bloodSacrificeInnerRadiusScale: 0.5,
@@ -292,29 +283,9 @@ export const clientRuntimeConfig = Object.freeze({
   renderSnapBaseDistance: 220,
   ownerRenderSnapBaseDistance: 120,
   serverFixedDt: 0.05,
-  ownerBaseMaxVelocity: 150 * 1.25,
-  ownerBaseAcceleration: 900 * 1.25,
-  ownerDiggingSpeedMultiplier: 0.5,
-  ownerStopDampingPerTick: 0.9,
-  ownerStopVelocityEpsilon: 0.00001,
-  ownerSlowToMaxVelocityTime: 0.35,
-  ownerPredictionTeleportDistance: 320,
-  ownerPredictionHardCorrectionDistance: 144,
-  ownerPredictionCorrectionDeadzone: 0.5,
-  ownerPredictionSoftCorrectionRate: 4,
-  ownerPredictionHardCorrectionRate: 18,
-  ownerPredictionSpeedSampleMinDt: 0.005,
-  ownerPredictionSnapshotStaleMin: 0.22,
-  ownerPredictionTimingSampleCount: 7,
-  ownerPredictionMinTickScale: 0.2,
   entitySnapshotVelocityBlend: 0.35,
-  entityExtrapolateMaxSeconds: 0.05,
-  entityExtrapolateMaxDistance: 32,
   petalRenderLerpRate: 18,
   petalAngleLerpRate: 16,
-  petalExtrapolateMaxSeconds: 0.05,
-  petalExtrapolateMaxDistance: 10,
-  slotTransactionTimeoutMs: 3500,
   bossBarBandTopRatio: 1 / 32,
   bossBarBandBottomRatio: 1 / 3,
   bossBarWidthRatio: 0.31,
@@ -329,10 +300,9 @@ export const clientRuntimeConfig = Object.freeze({
   bossBarRarityOutlinePx: 6,
   bossBarRadiusPx: 8,
   loginMapDefaultName: "waiting_room.tmj",
-  // Center of the lightweight waiting-room login backdrop.
   loginMapDefaultX: 2048,
   loginMapDefaultY: 2048,
-  // WorldUnits(256) * the Super Antennae horizon multiplier (4).
+  // 世界单位 256 乘以 Super 触角的四倍视距。
   loginMapDefaultHorizon: 2048,
   titanForgeRange: 2048,
   minimapMarginPx: 12,

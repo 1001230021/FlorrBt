@@ -7,7 +7,6 @@ export function getMobFrameLayout(radius, uiScale = 1) {
   const r = Number.isFinite(radius) ? Math.max(0, radius) : 0;
   const scale = Number.isFinite(uiScale) ? Math.max(0.5, Math.min(1.5, uiScale)) : 1;
   return {
-    // Boss bars must span the body, not shrink to a 105px nameplate.
     width: Math.max(28, r * 2.08),
     barHeight: Math.max(3, Math.min(6 * scale, r * 0.14)),
     y: r + Math.max(4, Math.min(12 * scale, r * 0.2)),

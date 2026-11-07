@@ -1,8 +1,9 @@
 #include "player.h"
 #include "../Persistence/account_store.h"
 #include "../../Shared/game_config.h"
+#include "../../Shared/tools.h"
 #include "../../Shared/petal_card_exp.h"
-#include "../server.h"
+#include "gamecontext.h"
 #include "controllers/player_controller.h"
 #include "entities/drop.h"
 #include "entities/flower.h"
@@ -31,7 +32,7 @@ CPlayerController* GetPlayerController(CPlayer& player)
     return mob ? dynamic_cast<CPlayerController*>(mob->GetController()) : nullptr;
 }
 
-} // namespace
+}
 
 CPlayer::CPlayer(sf::TcpSocket&& socket, uint32_t id, const std::string& name)
     : m_socket(std::move(socket)), m_player_id(id), m_name(name)
@@ -40,7 +41,7 @@ CPlayer::CPlayer(sf::TcpSocket&& socket, uint32_t id, const std::string& name)
 
 bool CPlayer::HandleOperate(const ClientOperate& op)
 {
-    if (!m_authenticated) return false;
+    if (!m_authenticated || (GetWorld() && GetWorld()->IsRecovering())) return false;
 
     if (op.type == ClientOperate::Type::Equip)
     {
@@ -63,19 +64,85 @@ bool CPlayer::HandleOperate(const ClientOperate& op)
 
 CPlayer::~CPlayer()
 {
+    ClearNpcInventory();
     CAccountDataStore::RemoveSandboxAccount(m_progress_account);
 }
 
-std::string CPlayer::ProgressKey(SWorldHandle world) const
+std::string CPlayer::NpcInventoryPrefix(std::uint64_t epoch) const
 {
-    return "@sandbox:" + std::to_string(world.id) + ":" + std::to_string(world.generation) + ":" +
-        std::to_string(SessionGeneration()) + ":" + m_account_name;
+    return "@sandbox:npc:" + std::to_string(SessionGeneration()) + ":" + std::to_string(epoch) + ":" + m_account_name + ":";
 }
 
-bool CPlayer::RestoreIsolatedProgress(SWorldHandle world, const SPlayerAccount& state)
+bool CPlayer::PrepareNpcInventory(const CMobBase& target, std::string& key, std::uint64_t& epoch, std::string& error) const
+{
+    key.clear(); epoch = m_npc_inventory_epoch;
+    if (dynamic_cast<const CPlayerFlower*>(&target)) return true;
+    if (!IsAuthenticated() || epoch >= UINT64_MAX - 1) { error = "Invalid NPC inventory identity"; return false; }
+    std::string nonce;
+    if (!GenerateOpaqueId(nonce)) { error = "Cannot allocate NPC inventory identity"; return false; }
+    ++epoch; key = NpcInventoryPrefix(epoch) + nonce;
+    SPlayerAccount inventory;
+    if (const auto* flower = dynamic_cast<const CFlower*>(&target))
+        for (const auto& slot : flower->GetSlots())
+            inventory.slots.push_back(slot.m_p_proto ? SInventoryItem{static_cast<uint8_t>(slot.m_p_proto->m_type),
+                static_cast<uint8_t>(slot.m_stored_rarity), 1} : SInventoryItem{});
+    if (!CAccountDataStore::RestoreSandboxAccount(key, inventory)) { error = "Cannot prepare NPC inventory"; return false; }
+    return true;
+}
+
+void CPlayer::ClearNpcInventory()
+{
+    if (!m_npc_inventory_account.empty()) CAccountDataStore::RemoveSandboxAccount(m_npc_inventory_account);
+    m_npc_inventory_account.clear();
+}
+
+void CPlayer::CommitNpcInventory(std::string key, std::uint64_t epoch)
+{
+    if (key != m_npc_inventory_account) ClearNpcInventory();
+    m_npc_inventory_account = std::move(key); m_npc_inventory_epoch = epoch;
+}
+
+bool CPlayer::RestoreNpcInventoryEpoch(std::uint64_t epoch)
+{
+    if (epoch == UINT64_MAX) return false;
+    m_npc_inventory_epoch = epoch; return true;
+}
+
+bool CPlayer::RestoreNpcInventory(const SPlayerAccount& state, const std::string& scope_key)
+{
+    const auto* mob = dynamic_cast<const CMobBase*>(GetEntity());
+    if (!IsAuthenticated() || !mob || dynamic_cast<const CPlayerFlower*>(mob) || !m_npc_inventory_epoch) return false;
+    const auto prefix = NpcInventoryPrefix(m_npc_inventory_epoch);
+    if (!scope_key.starts_with(prefix) || scope_key.size() != prefix.size() + 32 ||
+        !std::all_of(scope_key.begin() + prefix.size(), scope_key.end(), [](char c) {
+            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+        })) return false;
+    if (!CAccountDataStore::RestoreSandboxAccount(scope_key, state)) return false;
+    CommitNpcInventory(scope_key, m_npc_inventory_epoch); return true;
+}
+
+std::string CPlayer::ProgressPrefix(SWorldHandle world) const
+{
+    return "@sandbox:" + std::to_string(world.id) + ":" + std::to_string(world.generation) + ":" +
+        std::to_string(SessionGeneration()) + ":" + m_account_name + ":";
+}
+
+bool CPlayer::RestoreIsolatedProgress(SWorldHandle world, const SPlayerAccount& state, const std::string& scope_key)
 {
     if (!world.generation || !IsAuthenticated()) return false;
-    const auto key = ProgressKey(world);
+    const auto prefix = ProgressPrefix(world);
+    std::string key = scope_key;
+    if (key.empty())
+    {
+        // 旧快照没有容器身份，恢复时分配新身份，拒绝旧客户端遗留请求。
+        std::string nonce;
+        if (!GenerateOpaqueId(nonce)) return false;
+        key = prefix + nonce;
+    }
+    else if (!key.starts_with(prefix) || key.size() != prefix.size() + 32 ||
+        !std::all_of(key.begin() + prefix.size(), key.end(), [](char ch) {
+            return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
+        })) return false;
     if (!CAccountDataStore::RestoreSandboxAccount(key, state)) return false;
     if (key != m_progress_account) CAccountDataStore::RemoveSandboxAccount(m_progress_account);
     m_progress_account = key;
@@ -92,35 +159,116 @@ void CPlayer::RefreshScopedProgress(CPlayerFlower* flower)
     int level = 1; std::int64_t exp = 0;
     if (CAccountDataStore::GetProgress(GetProgressAccountName(), level, exp))
     { flower->m_level = std::max(1, level); flower->m_exp = std::max<std::int64_t>(0, exp); }
-    // Never trim the previous scope's slots through the normal persisted
-    // unequip path. Rebuild them without returning temporary cards.
+    // 切换作用域时直接恢复布局，不能把临时花瓣退回正式背包。
     RestoreSavedLoadout(flower);
     flower->Health() = health_ratio * flower->GetFinalStats()->max_health;
 }
 
+CPlayer::SPreparedGameplayScope::SPreparedGameplayScope(CPlayer& player) : owner(player) {}
+CPlayer::SPreparedGameplayScope::~SPreparedGameplayScope()
+{
+    if (!published && created_account) CAccountDataStore::RemoveSandboxAccount(account);
+}
+
+std::unique_ptr<CPlayer::SPreparedGameplayScope> CPlayer::PrepareGameplayScope(
+    CGameWorld& destination, const IGameController* rules, CEntity* target, std::string& error)
+{
+    auto result = std::make_unique<SPreparedGameplayScope>(*this);
+    const bool isolated = rules && rules->UsesIsolatedProgress();
+    const SWorldHandle world{destination.GetId(), destination.GetInstanceGeneration()};
+    const bool scope_changes = !((!isolated && !HasIsolatedProgress()) ||
+        (isolated && HasIsolatedProgress() && m_progress_world == world));
+    if (!scope_changes && target == GetEntity() && (!GetWorld() || !GetWorld()->IsRecovering())) return result;
+    if (!IsAuthenticated()) { error = "未认证玩家不能切换进度"; return {}; }
+    result->changes = true;
+    result->leaving_isolated = scope_changes && HasIsolatedProgress();
+    result->world = isolated ? world : SWorldHandle{};
+    if (isolated && scope_changes)
+    {
+        std::string nonce;
+        if (!GenerateOpaqueId(nonce)) { error = "无法生成进度容器身份"; return {}; }
+        result->account = ProgressPrefix(world) + nonce;
+        result->created_account = true;
+        if (!CAccountDataStore::SandboxCloneAccount(result->account, m_account_name))
+        { error = "无法准备临时进度"; return {}; }
+    }
+    else if (isolated) result->account = m_progress_account;
+    const auto& account = isolated ? result->account : m_account_name;
+    if (!CAccountDataStore::GetProgress(account, result->level, result->exp))
+    { error = "目标进度不存在"; return {}; }
+    result->talent_points = CAccountDataStore::GetTalentPoints(account);
+    const auto saved_talents = CAccountDataStore::GetTalents(account);
+    for (auto* builtin : BuiltinTalents())
+        if (std::any_of(saved_talents.begin(), saved_talents.end(), [&](const auto& saved) {
+            return builtin->m_id == saved.id && builtin->m_rarity == saved.rarity && builtin->m_rank == saved.rank;
+        }))
+            result->talents.push_back(builtin);
+    for (;;)
+    {
+        const auto missing = std::find_if(result->talents.begin(), result->talents.end(), [&](const auto* talent) {
+            return talent->m_based && std::find(result->talents.begin(), result->talents.end(), talent->m_based) == result->talents.end();
+        });
+        if (missing == result->talents.end()) break;
+        result->talents.erase(missing);
+    }
+    for (const auto& entry : CAccountDataStore::GetCodex(account))
+        if (entry.mob_type && entry.rarity && entry.count)
+            result->codex[(uint32_t(entry.mob_type) << 8) | entry.rarity] = entry.count;
+    result->flower = dynamic_cast<CPlayerFlower*>(target);
+    if (result->flower)
+    {
+        result->capacity = std::max(0, game_config::mob_player_flower_max_petal_slots);
+        int count = std::clamp(game_config::mob_player_flower_initial_petal_slots, 0, result->capacity);
+        STalentContext context; context.player = this; context.entity = target; context.slot_num = &count;
+        for (auto* talent : result->talents) talent->Apply(ETalentEvent::RebuildSlotNum, context);
+        count = std::clamp(count, 0, result->capacity);
+        result->slots.resize(count);
+        const auto saved = CAccountDataStore::GetSlots(account);
+        for (int i = 0; i < count; ++i)
+        {
+            if (size_t(i) >= saved.size() || !saved[i].petal_type || !saved[i].rarity) continue;
+            const auto* proto = FindPetalPrototype(static_cast<EPetalType>(saved[i].petal_type));
+            if (!proto || !proto->m_p_behavior || !IsKnownRarity(static_cast<ERarity>(saved[i].rarity)))
+            { error = "目标进度含无效花瓣"; return {}; }
+            result->slots[i].SetPetal(proto, i, static_cast<ERarity>(saved[i].rarity));
+        }
+    }
+    return result;
+}
+
+void CPlayer::SPreparedGameplayScope::Commit(CEntity* departing)
+{
+    if (!changes || published) return;
+    auto previous = std::move(owner.m_progress_account);
+    owner.m_progress_account = std::move(account); owner.m_progress_world = world;
+    owner.m_talents = std::move(talents); owner.m_talent_points = talent_points;
+    owner.m_codex = std::move(codex); published = true;
+    if (flower && !flower->IsMarkedForDes())
+    {
+        const auto* old = flower->GetFinalStats();
+        const float health_ratio = old && old->max_health > 0.f ? std::clamp(flower->Health() / old->max_health, 0.f, 1.f) : 1.f;
+        flower->m_level = std::max(1, level); flower->m_exp = std::max<std::int64_t>(0, exp);
+        flower->InstallPreparedProgress(std::move(slots), capacity);
+        flower->RebuildFinalStats();
+        flower->Health() = health_ratio * flower->GetFinalStats()->max_health;
+    }
+    if (leaving_isolated && departing != flower)
+        owner.RefreshScopedProgress(dynamic_cast<CPlayerFlower*>(departing));
+    if (previous != owner.m_progress_account) CAccountDataStore::RemoveSandboxAccount(previous);
+}
+
 bool CPlayer::SynchronizeGameplayScope(CGameWorld& world, CEntity* departing)
 {
-    const bool isolated = world.GetController() && world.GetController()->UsesIsolatedProgress();
-    const SWorldHandle scope{world.GetId(), world.GetInstanceGeneration()};
-    if ((!isolated && !HasIsolatedProgress()) ||
-        (isolated && HasIsolatedProgress() && m_progress_world == scope)) return true;
-    const std::string next = isolated ? ProgressKey(scope) : std::string{};
-    if (isolated && !CAccountDataStore::SandboxCloneAccount(next, m_account_name)) return false;
-    const bool leaving_isolated = HasIsolatedProgress();
-    CAccountDataStore::RemoveSandboxAccount(m_progress_account);
-    m_progress_account = next;
-    m_progress_world = isolated ? scope : SWorldHandle{};
-    LoadSavedTalents(false);
-    LoadCodex(CAccountDataStore::GetCodex(GetProgressAccountName()));
-    auto* current = dynamic_cast<CPlayerFlower*>(GetEntity());
-    if (leaving_isolated && departing != current) RefreshScopedProgress(dynamic_cast<CPlayerFlower*>(departing));
-    RefreshScopedProgress(current);
+    std::string error;
+    auto prepared = PrepareGameplayScope(world, world.GetController(), GetEntity(), error);
+    if (!prepared) return false;
+    prepared->Commit(departing);
     return true;
 }
 
 bool CPlayer::HandleScheduledOperate(const ClientOperate& op, std::uint32_t delay_ticks, std::uint32_t sequence)
 {
-    if (!m_authenticated) return false;
+    if (!m_authenticated || (GetWorld() && GetWorld()->IsRecovering())) return false;
     auto* controller = GetPlayerController(*this);
     return controller && controller->PushOperate(op, delay_ticks, sequence);
 }
@@ -206,7 +354,7 @@ void CPlayer::RegisterInvalidReport()
 
 bool CPlayer::TickDropPickup()
 {
-    if (!m_authenticated || m_account_name.empty()) return false;
+    if (!m_authenticated || m_account_name.empty() || (GetWorld() && GetWorld()->IsRecovering())) return false;
 
     CEntity* entity = GetEntity();
     if (!entity || entity->IsMarkedForDes() || entity->IsDead()) return false;
@@ -248,8 +396,8 @@ void CPlayer::UnequipAllEquippedPetals()
         uint8_t old_type = static_cast<uint8_t>(slot.m_p_proto->m_type);
         uint8_t old_rarity = static_cast<uint8_t>(slot.m_stored_rarity);
         if (!flower->UnequipPetal(static_cast<int>(i))) continue;
-        CAccountDataStore::AddItem(GetProgressAccountName(), old_type, old_rarity, 1);
-        CAccountDataStore::ClearSlot(GetProgressAccountName(), static_cast<uint8_t>(i));
+        CAccountDataStore::AddItem(GetInventoryAccountName(), old_type, old_rarity, 1);
+        CAccountDataStore::ClearSlot(GetInventoryAccountName(), static_cast<uint8_t>(i));
     }
 }
 
@@ -277,7 +425,8 @@ void CPlayer::LoadSavedSlots(CFlower* target)
     auto* flower = target ? target : dynamic_cast<CFlower*>(GetEntity());
     if (!flower) return;
 
-    std::vector<SInventoryItem> saved_slots = CAccountDataStore::GetSlots(GetProgressAccountName());
+    const auto& account = target && target != GetEntity() ? GetProgressAccountName() : GetInventoryAccountName();
+    std::vector<SInventoryItem> saved_slots = CAccountDataStore::GetSlots(account);
     auto& slots = flower->GetSlots();
     for (size_t i = 0; i < saved_slots.size() && i < slots.size(); ++i)
     {
@@ -298,24 +447,18 @@ void CPlayer::RestoreSavedLoadout(CPlayerFlower* target)
     auto* flower = target ? target : dynamic_cast<CPlayerFlower*>(GetEntity());
     if (!flower) return;
 
-    // Controller-owned petals (and any stale runtime petals) must be removed
-    // without touching the account. The account's primary slots are restored
-    // below, after the flower has returned to the normal player slot shape.
+    // 清理模式卡片时不操作账户，再恢复保存的主槽。
     auto& slots = flower->GetSlots();
     for (size_t i = 0; i < slots.size(); ++i)
     {
         if (slots[i].m_p_proto) flower->ForceUnequipPetal(static_cast<int>(i));
         flower->SetBanned(false, static_cast<int>(i));
     }
-    // Also clear any controller-created copies belonging to an empty slot
-    // before a controller-specific slot count is removed.
+    // 移除模式槽位前，也清理空槽中残留的派生实体。
     flower->DestroyPetalEntities();
 
     flower->SetPetalSlotCapacity(game_config::mob_player_flower_max_petal_slots);
-    // Do not call RefreshTalentSlotCount() here: that routine persists
-    // petals removed from slots beyond the talent count. Those slots may hold
-    // controller-owned petals (EOU pheromones), which must never be written
-    // into the player's account while restoring a normal loadout.
+    // 不能调用会返还花瓣的 RefreshTalentSlotCount，模式花瓣不能写入正式账户。
     flower->SetPetalSlotCount(CountTalentSlots());
     LoadSavedSlots(flower);
 }
@@ -343,17 +486,14 @@ void CPlayer::LoadSavedTalents(bool refresh_effects)
 
 bool CPlayer::TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rarity)
 {
+    if (auto* context = GameContext(); context && !context->Extensions().CanUseFeature(*this, "inventory", feature_access::edit)) return false;
     if (!m_authenticated) return false;
     if (petal_type == 0) return false;
     if (!IsKnownRarity(static_cast<ERarity>(rarity))) return false;
 
     auto* flower = dynamic_cast<CFlower*>(GetEntity());
-    if (!flower) return false;
-    // A dead player flower is a corpse until the respawn path restores it.
-    // Reject loadout mutations here as well as in the network dispatcher so
-    // every caller (commands, tests and future controllers) observes the
-    // same invariant and cannot desynchronise the primary slots.
-    if (auto* player_flower = dynamic_cast<CPlayerFlower*>(flower); player_flower && player_flower->m_is_dead)
+    if (!flower || flower->IsMarkedForDes() ||
+        (flower->IsDead() && !dynamic_cast<CPlayerFlower*>(flower)))
         return false;
     IGameController* controller = nullptr;
     if (CGameWorld* world = flower->GameWorld()) controller = world->GetController();
@@ -365,11 +505,8 @@ bool CPlayer::TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rari
     if (slot_index >= slots.size()) return false;
 
     CPetalSlot& slot = slots[slot_index];
-    // A banned slot is still allowed to contain its saved petal, but it is
-    // not an operable loadout slot. EquipPetal() intentionally rejects it;
-    // reject it here as well so inventory is never mutated before that
-    // rejection is reached.
-    if (!slot.m_available || slot.m_banned) return false;
+    // 封槽保留已装备物品，但必须在扣库存前拒绝换装。
+    if (!slot.m_available || slot.IsBanned()) return false;
 
     const CPetalPrototype* proto = FindPetalPrototype(static_cast<EPetalType>(petal_type));
     if (!proto || !proto->m_p_behavior) return false;
@@ -383,33 +520,30 @@ bool CPlayer::TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rari
         if (!flower->CanUnequipPetal(slot_index)) return false;
     }
 
-    // Keep the inventory and the runtime slot mutation in one save batch. In
-    // particular, EquipPetal() used to be void and could silently reject a
-    // banned slot after this TakeItem(), permanently eating the new petal.
+    // 库存与运行时换装纳入同一保存批次。
     CAccountDataStore::CSaveBatch save_batch;
-    if (!CAccountDataStore::TakeItem(GetProgressAccountName(), petal_type, rarity, 1)) return false;
+    if (!CAccountDataStore::TakeItem(GetInventoryAccountName(), petal_type, rarity, 1)) return false;
 
     if (!flower->EquipPetal(slot_index, proto, static_cast<ERarity>(rarity)))
     {
-        // This is a defensive rollback for any future validation added to
-        // CFlower::EquipPetal(). The preflight above handles the known failure
-        // paths, but a failed operation must never consume inventory.
-        CAccountDataStore::AddItem(GetProgressAccountName(), petal_type, rarity, 1);
+        // 运行时校验失败时返还材料。
+        CAccountDataStore::AddItem(GetInventoryAccountName(), petal_type, rarity, 1);
         return false;
     }
 
-    if (replacing) CAccountDataStore::AddItem(GetProgressAccountName(), old_type, old_rarity, 1);
-    CAccountDataStore::SetSlot(GetProgressAccountName(), slot_index, petal_type, rarity);
+    if (replacing) CAccountDataStore::AddItem(GetInventoryAccountName(), old_type, old_rarity, 1);
+    CAccountDataStore::SetSlot(GetInventoryAccountName(), slot_index, petal_type, rarity);
     return true;
 }
 
 bool CPlayer::TryUnequipPetal(uint8_t slot_index)
 {
+    if (auto* context = GameContext(); context && !context->Extensions().CanUseFeature(*this, "inventory", feature_access::edit)) return false;
     if (!m_authenticated) return false;
 
     auto* flower = dynamic_cast<CFlower*>(GetEntity());
-    if (!flower) return false;
-    if (auto* player_flower = dynamic_cast<CPlayerFlower*>(flower); player_flower && player_flower->m_is_dead)
+    if (!flower || flower->IsMarkedForDes() ||
+        (flower->IsDead() && !dynamic_cast<CPlayerFlower*>(flower)))
         return false;
 
     auto& slots = flower->GetSlots();
@@ -427,13 +561,85 @@ bool CPlayer::TryUnequipPetal(uint8_t slot_index)
     uint8_t old_rarity = static_cast<uint8_t>(slot.m_stored_rarity);
     CAccountDataStore::CSaveBatch save_batch;
     if (!flower->UnequipPetal(slot_index)) return false;
-    CAccountDataStore::AddItem(GetProgressAccountName(), old_type, old_rarity, 1);
-    CAccountDataStore::ClearSlot(GetProgressAccountName(), slot_index);
+    CAccountDataStore::AddItem(GetInventoryAccountName(), old_type, old_rarity, 1);
+    CAccountDataStore::ClearSlot(GetInventoryAccountName(), slot_index);
     return true;
+}
+
+EEconomyOutcome CPlayer::TryApplyLoadout(const std::vector<SInventoryItem>& primary,
+                                       const std::vector<SInventoryItem>& secondary,
+                                       std::function<void()>* deferred_runtime)
+{
+    if (auto* context = GameContext(); context && !context->Extensions().CanUseFeature(*this, "inventory", feature_access::edit)) return EEconomyOutcome::Forbidden;
+    auto* flower = dynamic_cast<CFlower*>(GetEntity());
+    // 玩家尸体保留槽位和账户归属，可以保存配装；花瓣加载仍由存活状态控制。
+    if (!IsAuthenticated() || !flower || flower->IsMarkedForDes() ||
+        (flower->IsDead() && !dynamic_cast<CPlayerFlower*>(flower)))
+        return EEconomyOutcome::Forbidden;
+    auto* world = flower->GameWorld();
+    const auto* controller = world ? world->GetController() : nullptr;
+    if (!world || (controller && controller->LocksPetalLoadout())) return EEconomyOutcome::Forbidden;
+    auto& slots = flower->GetSlots();
+    if (primary.size() != slots.size() || secondary.size() != slots.size() || primary.size() > 64)
+        return EEconomyOutcome::Invalid;
+
+    auto saved_primary = CAccountDataStore::GetSlots(GetInventoryAccountName());
+    auto saved_secondary = CAccountDataStore::GetSecondarySlots(GetInventoryAccountName());
+    saved_primary.resize(std::max(saved_primary.size(), primary.size()));
+    saved_secondary.resize(std::max(saved_secondary.size(), secondary.size()));
+    const auto validate_change = [&](const SInventoryItem& old, const SInventoryItem& item) {
+        if (old == item) return EEconomyOutcome::Completed;
+        if ((!item.petal_type || !item.rarity) && (item.petal_type || item.rarity || item.count))
+            return EEconomyOutcome::Invalid;
+        if (item.petal_type)
+        {
+            const auto* proto = FindPetalPrototype(static_cast<EPetalType>(item.petal_type));
+            if (!proto || !proto->m_p_behavior || item.count != 1 || !IsKnownRarity(static_cast<ERarity>(item.rarity)))
+                return EEconomyOutcome::Invalid;
+            if (controller && !controller->CanEquipPetalType(proto->m_type)) return EEconomyOutcome::Forbidden;
+        }
+        if (old.petal_type && controller && !controller->CanUnequipPetalType(static_cast<EPetalType>(old.petal_type)))
+            return EEconomyOutcome::Forbidden;
+        return EEconomyOutcome::Completed;
+    };
+    std::vector<std::optional<CPetalSlot>> prepared(primary.size());
+    for (size_t i = 0; i < primary.size(); ++i)
+    {
+        const auto& slot = slots[i];
+        const SInventoryItem runtime = slot.m_p_proto ? SInventoryItem{static_cast<uint8_t>(slot.m_p_proto->m_type),
+            static_cast<uint8_t>(slot.m_stored_rarity), 1} : SInventoryItem{};
+        // 运行时装备必须属于当前背包作用域，不能把模式卡片加入资源池。
+        if (runtime != saved_primary[i]) return EEconomyOutcome::WrongScope;
+        for (const auto outcome : {validate_change(saved_primary[i], primary[i]),
+                                   validate_change(saved_secondary[i], secondary[i])})
+            if (outcome != EEconomyOutcome::Completed) return outcome;
+        if (primary[i] != runtime)
+        {
+            if ((primary[i].petal_type && slot.IsBanned()) ||
+                (runtime.petal_type && !flower->CanUnequipPetal(static_cast<int>(i))))
+                return EEconomyOutcome::Forbidden;
+            prepared[i].emplace();
+            prepared[i]->SetPetal(primary[i].petal_type ? FindPetalPrototype(static_cast<EPetalType>(primary[i].petal_type)) : nullptr,
+                static_cast<int>(i), static_cast<ERarity>(primary[i].rarity));
+        }
+        saved_primary[i] = primary[i]; saved_secondary[i] = secondary[i];
+    }
+    // 保留超出当前身体槽位容量的账户装备。
+    auto plan = CAccountDataStore::PrepareLoadout(GetInventoryAccountName(), saved_primary, saved_secondary);
+    if (!plan) return EEconomyOutcome::InsufficientItems;
+    // 先分配完成动作；回执建立成功后才清理现有花瓣。
+    auto staged = std::make_shared<std::vector<std::optional<CPetalSlot>>>(std::move(prepared));
+    std::function<void()> install = [flower, staged]() { flower->InstallPreparedLoadout(std::move(*staged)); };
+    CAccountDataStore::CSaveBatch batch;
+    if (!CAccountDataStore::CommitLoadout(std::move(*plan))) return EEconomyOutcome::StaleRevision;
+    if (deferred_runtime) *deferred_runtime = std::move(install);
+    else install();
+    return EEconomyOutcome::Completed;
 }
 
 bool CPlayer::TryCraftPetal(uint8_t petal_type, uint8_t rarity, uint32_t count, SCraftResult* result)
 {
+    if (auto* context = GameContext(); context && !context->Extensions().CanUseFeature(*this, "craft", feature_access::edit)) return false;
     if (!m_authenticated) return false;
     const CPetalPrototype* proto = FindPetalPrototype(static_cast<EPetalType>(petal_type));
     if (petal_type == 0 || !proto) return false;
@@ -442,16 +648,16 @@ bool CPlayer::TryCraftPetal(uint8_t petal_type, uint8_t rarity, uint32_t count, 
 
     SCraftResult local_result;
     SCraftResult* craft_result = result ? result : &local_result;
-    if (!CAccountDataStore::CraftItem(GetProgressAccountName(), petal_type, rarity, count, craft_result)) return false;
+    if (!CAccountDataStore::CraftItem(GetInventoryAccountName(), petal_type, rarity, count, craft_result)) return false;
 
     if (craft_result->successes > 0 && craft_result->result_rarity != 0)
     {
         ObtainPetalCard(petal_type, craft_result->result_rarity, craft_result->successes, false);
         ERarity result_rarity = static_cast<ERarity>(craft_result->result_rarity);
-        if (CServer::MeetsPetalReportRarity(result_rarity, game_config::min_craft_report_rarity))
+        CGameContext* context = GameContext();
+        if (!HasIsolatedInventory() && context && context->Events().ShouldReportRarity(result_rarity, game_config::min_craft_report_rarity))
         {
-            if (CServer* server = CServer::GetInstance())
-                server->BroadcastPetalReport("crafted", result_rarity, proto->m_name, m_name);
+            context->Events().ReportPetal("crafted", result_rarity, proto->m_name, m_name);
         }
     }
     return true;
@@ -467,7 +673,7 @@ bool CPlayer::ObtainPetalCard(uint8_t petal_type, uint8_t rarity, uint32_t count
     if (!IsKnownRarity(card_rarity)) return false;
 
     CAccountDataStore::CSaveBatch save_batch;
-    if (add_to_inventory) CAccountDataStore::AddItem(GetProgressAccountName(), petal_type, rarity, count);
+    if (add_to_inventory) CAccountDataStore::AddItem(GetInventoryAccountName(), petal_type, rarity, count);
 
     auto* flower = dynamic_cast<CPlayerFlower*>(GetEntity());
     std::int64_t per_card_exp = GetPetalCardExpForRarity(card_rarity);
@@ -486,6 +692,7 @@ bool CPlayer::ObtainPetalCard(uint8_t petal_type, uint8_t rarity, uint32_t count
 
 bool CPlayer::AddTalent(ETalentId id, ERarity rarity, int rank)
 {
+    if (auto* context = GameContext(); context && !context->Extensions().CanUseFeature(*this, "talent", feature_access::edit)) return false;
     if (!m_authenticated) return false;
 
     ITalent* talent = FindBuiltinTalent(id, rarity, rank);
@@ -504,6 +711,7 @@ bool CPlayer::AddTalent(ETalentId id, ERarity rarity, int rank)
 
 bool CPlayer::RemoveTalent(ETalentId id, ERarity rarity, int rank)
 {
+    if (auto* context = GameContext(); context && !context->Extensions().CanUseFeature(*this, "talent", feature_access::edit)) return false;
     if (!m_authenticated) return false;
 
     ITalent* target = FindBuiltinTalent(id, rarity, rank);
@@ -559,8 +767,7 @@ bool CPlayer::HasTalent(const ITalent* talent) const
 
 void CPlayer::ApplyTalents(ETalentEvent event, STalentContext& ctx) const
 {
-    // Learned talents and inventory slot capacity are permanent information.
-    // Only stat contributions are suppressed; state/skill events still run.
+    // 只抑制属性贡献，保留已学天赋、槽位信息及状态/技能事件。
     if (event == ETalentEvent::RebuildFlowerStats || event == ETalentEvent::RebuildPetalStats)
     {
         const auto* actor = ctx.flower ? static_cast<const CMobBase*>(ctx.flower)
@@ -625,7 +832,38 @@ bool CPlayer::ConsumeUseNewPlayerSpawn()
 void CPlayer::SetOwnedEntity(CEntity* entity)
 {
     if (m_transition_active) return;
+    if (CAccountDataStore::IsEconomyOperationActive()) throw std::logic_error("Cannot change body during an economy operation");
+    if (entity != GetEntity())
+    {
+        std::string key, error; std::uint64_t epoch = m_npc_inventory_epoch;
+        std::unique_ptr<SControlEquipment> equipment;
+        auto* mob = dynamic_cast<CMobBase*>(entity);
+        if (mob)
+        {
+            equipment = mob->CaptureControlEquipment();
+            if (!PrepareNpcInventory(*mob, key, epoch, error)) throw std::runtime_error(error);
+        }
+        CommitNpcInventory(std::move(key), epoch);
+        if (mob) mob->PreserveControlEquipment(std::move(equipment));
+    }
     CommitOwnedEntity(entity);
+}
+
+void CPlayer::BindRestoredEntity(CEntity* entity)
+{
+    ClearNpcInventory();
+    CommitOwnedEntity(entity);
+}
+
+bool CPlayer::EnsureNpcInventory(std::string& error)
+{
+    auto* mob = dynamic_cast<CMobBase*>(GetEntity());
+    if (!mob || dynamic_cast<CPlayerFlower*>(mob) || HasNpcInventory()) return true;
+    auto equipment = mob->CaptureControlEquipment();
+    std::string key; std::uint64_t epoch = m_npc_inventory_epoch;
+    if (!PrepareNpcInventory(*mob, key, epoch, error)) return false;
+    CommitNpcInventory(std::move(key), epoch); mob->PreserveControlEquipment(std::move(equipment));
+    return true;
 }
 
 void CPlayer::CommitOwnedEntity(CEntity* entity)
@@ -650,6 +888,7 @@ void CPlayer::CommitOwnedEntity(CEntity* entity)
 void CPlayer::ClearOwnedEntityFromWorld(CGameWorld* world)
 {
     if (!world || m_p_world != world) return;
+    ClearNpcInventory();
     m_needs_respawn = m_authenticated;
     CEntity* old_entity = GetEntity();
     if (auto* old_flower = dynamic_cast<CFlower*>(old_entity)) old_flower->MarkFinalStatsDirty();

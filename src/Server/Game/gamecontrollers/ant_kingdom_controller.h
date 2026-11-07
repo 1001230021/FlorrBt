@@ -3,40 +3,16 @@
 #include "../wall_board.h"
 #include "eou_slot_proxy.h"
 #include "eou_team.h"
-#include "mutable_terrain_controller.h"
-#include "pvp_controller.h"
+#include "open_world_rules.h"
+#include "match_rules.h"
 #include "../../../Shared/math_types.h"
 #include <cstdint>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
-// Ant-kingdom world controller (eou). Merges the mutable-terrain rules (dirt
-// layer + CWall markers on every in-rule tile) with the pvp team system
-// (fixed 2-player cap, one team per player, spectators beyond the cap).
-//
-// Ownership chain: controller -> teams -> pheromone groups -> (decisions)
-// mobs (the world owns the mob entities; groups only hold {id, generation}
-// handles). The controller owns team lifecycles, teams own pheromone
-// lifecycles, pheromones decide mob goals, players decide pheromones.
-//
-// Commands:
-//   /mark_wall             - toggle this team's flag on the cell under you
-//   /mark_wall [x,y]       - toggle this team's flag on the cell at [x,y]
-//   /pheromone [x,y]       - move this team's primary group target to [x,y]
-//   /build [storage|worker|soldier] - report or switch the team's build mode
-//                            (what a defend-thrown pheromone petal builds)
-// Only players with a match team (>= start_team) may use them.
-//
-// Construction parameters (overridable from the waiting room /setting):
-//   pheromone_group_count  - pheromone groups per team and pheromone petal
-//                            slots per player (default eou_pheromone_group_count,
-//                            integer in [0, 10]). Slot 0 stays reserved; slots
-//                            1..N hold one pheromone petal each, bound to
-//                            group 1..N.
-// What a defend-thrown pheromone petal builds. Storage keeps food; the two
-// hatchery modes pick which caste the tile raises (the EotU rule: the tile
-// type decides the ant). Values are snapshot-stable - never renumber.
+// EOU 显式组合刷怪、比赛与地形规则；模式拥有团队，世界拥有实体和地形。
+// 建筑类型写入快照，不能重编号。
 enum class EEouBuildMode : std::uint8_t
 {
     Storage = 0,
@@ -44,14 +20,21 @@ enum class EEouBuildMode : std::uint8_t
     SoldierHatchery = 2,
 };
 
-class CAntKingdomController : virtual public CMutableTerrainController,
-                              virtual public CAntHelPvpController
+class CWorldTerrain;
+class CAntKingdomController : public IGameController
 {
   public:
     static constexpr int kMaxPheromoneGroups = 10;
 
     explicit CAntKingdomController(CControllerParams params = {});
+    int PlayerTeam(std::uint32_t id) const { return m_match.PlayerTeam(id); }
+    bool HasMatchTeam(const CPlayer& player) const { return m_match.HasMatchTeam(player); }
+    std::optional<florrbt::Vector2f> SelectPlayerSpawn(CGameWorld& world, CPlayer& player, EPlayerSpawnReason reason) override
+    { return m_open.SelectPlayerSpawn(world, player, reason); }
+    EMobType PickHabitatMobType(CGameWorld& world, florrbt::Vector2f pos) override
+    { return m_open.PickHabitatMobType(world, pos); }
 
+    bool PrepareActivation(CWorldPreparation& preparation, std::string& error) const override;
     void OnActivate(CGameWorld& world) override;
     void OnDeactivate(CGameWorld& world) override;
     void OnTick(CGameWorld& world, float dt) override;
@@ -60,7 +43,6 @@ class CAntKingdomController : virtual public CMutableTerrainController,
     void OnPlayerEntityReady(CGameWorld& world, CPlayer& player, CPlayerFlower& flower,
                              EPlayerSpawnReason reason) override;
     void OnPlayerArrivalCommitted(CGameWorld& world, CPlayer& player) override;
-    bool WritePlayerScene(const CGameWorld& world, const CPlayer& player, IPlayerSceneWriter& writer) const override;
     void OnPlayerDepartureCommitted(CGameWorld& world, CPlayer& player, CEntity* departing) override;
     bool HandlePlayerCommand(CGameWorld& world, CPlayer& player,
                              const std::vector<std::string>& args) override;
@@ -70,13 +52,8 @@ class CAntKingdomController : virtual public CMutableTerrainController,
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
     bool ResolveReferences(CGameWorld& world, const IGameWorldResolver&, std::string& error) override;
     std::vector<SControllerParamInfo> ParamSchema() const override;
-    // Diamond resolution: the mutable-terrain base wins.
-    bool ForcesPrimordialNullification() const override
-    {
-        return CMutableTerrainController::ForcesPrimordialNullification();
-    }
-    // The pheromone petals are the only equippable loadout; the system owns
-    // them, so they can never be unequipped back into the backpack.
+    bool ForcesPrimordialNullification() const override { return true; }
+    // 信息素花瓣由模式提供，不能卸入玩家背包。
     bool LocksPetalLoadout() const override { return true; }
     bool CanEquipPetalType(EPetalType type) const override
     {
@@ -87,66 +64,43 @@ class CAntKingdomController : virtual public CMutableTerrainController,
         return type != ToPetalType(EModPetalType::EouPheromone);
     }
 
-    // Diggable wall markers for every in-rule dirt tile (see InsertWallsForTerrain).
-    CWall& WallBoard() { return m_wall_board; }
-    const CWall& WallBoard() const { return m_wall_board; }
+    CWall& WallBoard();
+    const CWall& WallBoard() const;
 
-    // Team registry (controller owns team lifecycles).
     CTeam* FindTeam(int team_id);
     const CTeam* FindTeam(int team_id) const;
     std::size_t TeamCount() const { return m_teams.size(); }
 
-    // Spawns a registered eou mob for a team into the world (nullptr on
-    // failure). The mob is inserted into the world and added to the team's
-    // group; the world owns the entity, the group only holds its handle.
+    // 实体归世界所有，团队仅登记其句柄。
     CEntity* SpawnEouMob(CGameWorld& world, int team_id, EMobType mob_type, florrbt::Vector2f pos);
 
-    // Skill slots disguised as vanilla petal slots for the client (see
-    // eou_slot_proxy.h).
+    // 逻辑技能暂借用花瓣槽显示，不属于玩家库存。
     const CEouSlotProxy* SlotProxy(int team_id) const override;
 
-    // Pheromone petal stopped: attack throw retargets the bound group,
-    // defend throw toggles a cell at the resting point.
+    // 攻击投掷更新目标，防御投掷操作落点巢室。
     void OnPheromonePetalStopped(CGameWorld& world, int team_id, int group_id, florrbt::Vector2f pos,
                                  bool defend) override;
 
-    // Worker deposit: ferry food into the nearest storage cell (overflow and
-    // storage-less colonies fall back to the team stash).
+    // 优先存入最近的储藏室，溢出部分尝试放入团队库存。
     float DepositWorkerFood(CGameWorld& world, int team_id, florrbt::Vector2f pos, float amount);
 
-    // A worker finished digging at `pos`: removes the wall cell there when it
-    // is still flagged by `team` and still standing. Returns false when the
-    // job vanished under the worker (already dug or the flag was withdrawn).
+    // 墙已挖开或标记撤销时，原任务不再生效。
     bool WorkerDigWall(CGameWorld& world, int team, florrbt::Vector2f pos);
 
   private:
-    bool PreservesControllerPetal(EPetalType type) const override
-    {
-        return type == ToPetalType(EModPetalType::EouPheromone);
-    }
-    // Scans the dirt layer and binds a cell wall to every in-rule tile.
-    void InsertWallsForTerrain(CGameWorld& world);
-    // Neutral food: the initial food field and the corpses every eou mob
-    // leaves behind (SpawnMobDefeated corpse path wakes through OnMobDefeated).
     void SpawnInitialFood(CGameWorld& world);
     int SpawnColonyFood(CGameWorld& world, const CTeam& team, int count);
     void ReplenishFood(CGameWorld& world);
     CEntity* SpawnFoodEntity(CGameWorld& world, florrbt::Vector2f pos, float amount, int food_type);
-    // Cells: a defense pheromone drop toggles the cell under the point.
     CEntity* SpawnCellEntity(CGameWorld& world, int team_id, ECouCellType type, florrbt::Vector2f pos,
                              EMobType egg_type = EMobType::None);
     void DestroyCellEntity(CGameWorld& world, CEntity* cell, int team_id);
     void ReleaseCellContents(CGameWorld& world, CEouCellMob& cell);
-    // Hatchery egg: creates the egg the cell binds to (retry-driven).
     CEntity* SpawnOrStandbyEgg(CGameWorld& world, CEouCellMob& cell, CTeam* team);
-    // Drives hatchery egg lifecycle (retry spawn + hatch when grown & fed).
     void TickTeamCells(CGameWorld& world, CTeam& team, float dt);
-    // Hooks a freshly created eou mob into its colony: team id, home point
-    // and membership in the team's primary pheromone group (which also wires
-    // the board). Used for both spawned and hatched mobs.
+    // 出生和孵化共用归队流程：设置阵营、巢穴及主信息素组。
     void AdoptEouMob(CGameWorld& world, CTeam& team, CEntity& entity);
-    // The queen: spawned at the team's home on team creation; her death loses
-    // the match for the team.
+    // 蚁后在巢穴生成，真实死亡判定该队失败。
     CEntity* SpawnQueen(CGameWorld& world, CTeam& team, florrbt::Vector2f pos);
     void OnQueenSlain(CGameWorld& world, int team_id);
     void SendTeamMessage(CGameWorld& world, int team_id, const std::string& message);
@@ -164,15 +118,15 @@ class CAntKingdomController : virtual public CMutableTerrainController,
     static bool ValidatePheromoneGroupCount(const std::string& value);
 
     int m_pheromone_group_count = 6;
-    CWall m_wall_board;
+    CWorldTerrain* m_terrain = nullptr;
+    COpenWorldRules m_open;
+    CMatchRules m_match;
+    bool m_initial_food_pending = false;
     std::unordered_map<int, CTeam> m_teams;
-    // What a defend-thrown pheromone petal builds for each team (default
-    // Storage; switched with /build storage|worker|soldier).
     std::unordered_map<int, EEouBuildMode> m_team_build_type;
     CEouSlotProxy m_slot_proxy;
     std::unordered_map<int, CEouSlotProxy> m_team_slot_proxies;
-    // Live food entities. The full handle prevents a newly spawned food mob
-    // from inheriting a stale entry after an id is recycled.
+    // 完整句柄避免实体 ID 复用后继承旧食物索引。
     std::unordered_set<SEntityHandle, SEntityHandleHash> m_food_entities;
     float m_food_replenish_timer = 0.f;
 };

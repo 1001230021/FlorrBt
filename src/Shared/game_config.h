@@ -25,14 +25,12 @@ inline constexpr float world_unit_scale = 2.0f;
 inline constexpr float WorldUnits(float value) { return value * world_unit_scale; }
 
 inline std::string account_data_path = "data/accounts.json";
-// Account persistence backend. MySQL is the runtime store; account_data_path
-// is retained for the one-time JSON migration tools.
+// 账号运行时使用 MySQL；account_data_path 仅保留给一次性 JSON 迁移。
 inline std::string account_backend = "mysql";
 inline std::string mysql_host = "127.0.0.1";
 inline int mysql_port = 3306;
 inline std::string mysql_user = "florrbt";
-// Prefer the FLORRBT_MYSQL_PASSWORD environment variable over storing the
-// real password here (same secret-override mechanism as email_password).
+// 真实密码优先通过 FLORRBT_MYSQL_PASSWORD 环境变量提供，沿用邮件密码的覆盖机制。
 inline std::string mysql_password = "";
 inline std::string mysql_database = "florrbt";
 inline std::string unique_petal_data_path = "data/unique_petals.json";
@@ -66,7 +64,6 @@ inline int email_smtp_starttls_port = 587;
 inline std::string email_smtp_security = "ssl";
 inline std::string email_imap_host = "imap.feishu.cn";
 inline int email_imap_ssl_port = 993;
-inline std::string email_curl_path = "curl.exe";
 inline int email_connect_timeout_seconds = 10;
 inline int email_send_timeout_seconds = 20;
 inline int email_verification_code_digits = 6;
@@ -79,8 +76,7 @@ inline int min_craft_report_rarity = 9;
 inline int min_drop_report_rarity = 9;
 inline int min_mob_spawn_report_rarity = 9;
 inline float default_acceleration = WorldUnits(150.0f);
-// Applied to every mobile creature after prototype-specific acceleration is
-// selected. Stationary entities keep their zero acceleration.
+// 在原型加速度之后统一缩放；静止实体仍保持零加速度。
 inline float mob_acceleration_multiplier = 1.5f;
 inline float flower_acceleration_multiplier = 1.25f;
 inline float default_air_base_mass = 16.0f;
@@ -174,9 +170,7 @@ inline float default_bandage_undead_unusual = 2.1f;
 inline float default_blood_sacrifice_base_radius = WorldUnits(10.0f);
 inline float default_blood_sacrifice_copy = 0.0f;
 inline float default_blood_sacrifice_delay = 10.0f;
-// Bone petal armor: high enough that a base (common) bone fully absorbs the
-// typical early-mob hit so its health bar and reload state match what the
-// player sees (no "damaged-looking but untouched" feedback).
+// 基础 Bone 护甲覆盖常见早期伤害，使受损表现与实际生命、重载状态一致。
 inline float default_bone_base_armor = 8.0f;
 inline float default_bone_base_damage = 18.0f;
 inline float default_bone_base_health = 8.0f;
@@ -213,9 +207,7 @@ inline float default_compass_base_health = 40.0f;
 inline float default_compass_base_radius = WorldUnits(10.0f);
 inline float default_compass_copy = 1.0f;
 inline float default_compass_magnet_range = WorldUnits(1024.0f);
-// Magnet petal: a yucca-like opener that grants an absorb-range bonus while
-// active (no bonus during preload/reload). The bonus is linear in rarity:
-// 0 at Common, the magnetism-talent value at Mythic.
+// Magnet 仅在加载完成后增加拾取范围；加成随稀有度线性增长，Common 为零。
 inline float default_magnet_base_damage = 5.0f;
 inline float default_magnet_base_health = 20.0f;
 inline float default_magnet_reload = 2.5f;
@@ -249,9 +241,7 @@ inline float default_drop_merge_phase_owner_coefficient = 0.2718281f;
 inline float default_drop_merge_phase_x_coefficient = 0.6180339f;
 inline float default_drop_merge_phase_y_coefficient = 0.4142135f;
 inline float default_drop_pickup_delay = 0.5f;
-// Drop inertia: drops inherit the dead mob's velocity for their target
-// center; the center decays to zero over this window while each drop glides
-// from that center to its final spot. Drops stay un-pickable during it.
+// 掉落物继承死亡生物的速度并逐渐归位；惯性阶段不可拾取。
 inline float default_drop_inertia_delay = 0.2f;
 inline float default_drop_pickup_range = WorldUnits(64.0f);
 inline float default_drop_radius = WorldUnits(8.0f);
@@ -288,11 +278,9 @@ inline float default_goldenleaf_base_reload_reduction = 0.033f;
 inline float default_goldenleaf_copy = 1.0f;
 inline float default_goldenleaf_mass = 3.0f;
 inline float default_horizon = WorldUnits(256.0f);
-// Inactive (skip-tick, outside every player's active view) ambient mobs retire
-// after this many seconds so they cannot pile up frozen at the view edge.
+// 长期处于所有玩家活跃视野之外的普通生物会被回收，避免在视野边缘冻结堆积。
 inline float mob_inactive_retire_seconds = 10.0f;
-// Player-only base view radius: six times the shared default so the player
-// sees 6× farther without changing mob/NPC-flower detection ranges.
+// 玩家基础视野单独设置，不改变怪物和 NPC 花朵的侦测范围。
 inline float default_player_flower_horizon = WorldUnits(1536.0f);
 inline float default_heavy_base_damage = 10.0f;
 inline float default_heavy_base_health = 150.0f;
@@ -353,17 +341,13 @@ inline int pvp_spectator_team = 1;
 inline bool pvp_lock_loadout = true;
 inline int eou_pheromone_group_count = 6;
 inline float eou_worker_scan_interval = 0.4f;
-// EOU workers dig team-flagged wall cells: standing within dig_range_tiles
-// of the wall's center for dig_time seconds removes the wall.
+// 工蚁靠近团队标记墙并持续挖掘达到设定时间后移除墙体。
 inline float eou_worker_dig_time = 2.0f;
 inline float eou_worker_dig_range_tiles = 0.8f;
 inline int eou_initial_worker_count = 3;
-// EOU pheromone groups reroute members time-sliced: a full group finishes
-// rerouting to a new target within about this many seconds.
+// 信息素分组分批重新寻路，参数为整组完成重规划的目标时长。
 inline float eou_group_reroute_window = 1.5f;
-// EOU food system: neutral food corpses every eou mob leaves behind, ants
-// gather from the nearest corpse (or one inside their own vision) and ferry
-// the food home to the team's storage cells (overflow goes to the stash).
+// 食物来自初始投放和尸体，工蚁采集后送回储藏格，溢出部分进入团队库存。
 inline float eou_food_carry_capacity = 25.0f;
 inline float eou_food_gather_rate = 24.0f;
 inline float eou_food_scan_interval = 1.0f;
@@ -384,7 +368,6 @@ inline float eou_food_mob_max_health = 500.0f;
 inline float eou_food_mob_armor = 100.0f;
 inline float eou_food_mob_radius = WorldUnits(12.0f);
 inline float eou_food_mob_mass = 100.0f;
-// EOU cells (hatchery/storage) and eggs.
 inline float eou_cell_size = WorldUnits(12.0f);
 inline float eou_egg_grow_time = 12.0f;
 inline float eou_egg_size_start = WorldUnits(6.0f);
@@ -392,17 +375,13 @@ inline float eou_egg_size_final = WorldUnits(20.0f);
 inline float eou_egg_hatch_food_cost = 50.0f;
 inline float eou_cell_food_capacity = 200.0f;
 inline float eou_cell_egg_retry_interval = 2.0f;
-// EOU queen: the colony's heart. She stands still in the nest; when she dies
-// her team loses the match.
+// 蚁后固定在巢穴，死亡时团队判负。
 inline float eou_queen_max_health = 3000.0f;
 inline float eou_queen_armor = 10.0f;
 inline float eou_queen_damage = 10.0f;
 inline float eou_queen_radius = WorldUnits(28.0f);
 inline float eou_queen_mass = 5000.0f;
-// EOU soldier ant: hatched from soldier hatchery cells (EotU-style, the tile
-// type picks the caste). Hunts enemy-team mobs/flowers inside the aggro
-// range, drops the chase past the leash range, and follows pheromones
-// otherwise. Costs more food to hatch than a worker.
+// 兵蚁优先追击范围内敌人，超出追击距离后恢复信息素跟随；孵化成本高于工蚁。
 inline float eou_soldier_max_health = 260.0f;
 inline float eou_soldier_armor = 2.0f;
 inline float eou_soldier_damage = 18.0f;
@@ -423,23 +402,18 @@ inline float default_moon_radius_step = WorldUnits(10.0f);
 inline float default_moon_reload = 100.0f;
 inline float default_moon_slowdown_time = 0.1f;
 inline float default_moon_stop_velocity_epsilon = 1.0f;
-// Linker keeps the Moon health scale as its chain integrity. The chain has
-// no outgoing damage; tension only consumes this integrity while stretched.
+// Linker 的链条完整度沿用 Moon 生命曲线；拉伸只消耗完整度，不造成主动伤害。
 inline float default_linker_base_health = default_moon_base_health;
 inline float default_linker_base_radius = WorldUnits(10.0f);
 inline float default_linker_copy = 1.0f;
 inline float default_linker_mass = 1.0f;
 inline float default_linker_mass_rarity_multiplier = 1.75f;
 inline float default_linker_reload = default_moon_reload;
-// Garden tiles are 512 server-world units wide (data/maps/garden.tmj).
-// Linker body length is the free span between endpoint surfaces: two tiles at
-// Common and half a tile at Primordial.  The physical center-distance limit
-// additionally includes both connected entities' current radii.
+// 链长表示端点表面之间的净空距离；中心距离上限还须加上双方当前半径。
 inline constexpr float garden_tile_world_size = 512.0f;
 inline float default_linker_chain_length_common = garden_tile_world_size * 2.0f;
 inline float default_linker_chain_length_primordial = garden_tile_world_size * 0.5f;
-// Chain elasticity: negative is the legacy one-sided rope, zero is a hard
-// fixed-length constraint, and positive values are increasingly soft springs.
+// 负弹性表示单向绳索，零表示定长约束，正值越大弹簧越软。
 inline float default_linker_chain_elasticity = -1.0f;
 inline float default_linker_chain_stiffness = 24.0f;
 inline float default_linker_chain_damping = 7.0f;
@@ -448,9 +422,7 @@ inline float default_linker_chain_mass_pull_min = 0.5f;
 inline float default_linker_chain_mass_pull_max = 8.0f;
 inline float default_linker_chain_damage_per_second = 600.0f;
 inline float default_linker_chain_max_correction = WorldUnits(24.0f);
-// After its first hit the Linker still follows its flower's orbit.  A small
-// share of that tether is reflected back into the flower, making the pair a
-// soft two-body constraint instead of an independently dragged projectile.
+// 第一次命中后仍保留花朵轨道牵引，并将部分力传回花朵形成柔性约束。
 inline float default_linker_flower_coupling = 0.16f;
 inline float default_linker_flower_max_reaction_speed = WorldUnits(120.0f);
 inline float default_missile_arm_time = 0.5f;
@@ -788,9 +760,7 @@ inline float default_glass_hit_cooldown = 1.0f;
 inline float default_glass_mass = 2.0f;
 inline float default_glass_reload = 2.5f;
 inline float default_healing_petal_target_delay = 0.5f;
-// Healing/absorption petals retain their orbit tangent and curve into their
-// target.  This duration is long enough to expose that arc to snapshots while
-// remaining much shorter than their reload cycle.
+// 治疗和吸收花瓣保留轨道切向速度，再沿弧线靠近目标；持续时间须能被快照观察到。
 inline float default_healing_petal_target_arc_momentum = 1.0f;
 inline float default_healing_petal_target_move_time = 0.24f;
 inline float default_healing_petal_target_range_multiplier = 5.0f;
@@ -817,20 +787,16 @@ inline float default_petal_target_acceleration_multiplier = 4.0f;
 inline float default_petal_target_acceleration_scale = 1.25f;
 inline int default_petal_target_max_primordial_lentils = 2;
 inline float default_petal_target_orbit_tether = 0.35f;
-// When a homing petal has reached a target, release it instead of letting the
-// target-selection vector pin it in place.  WorldUnits(8) is half of the
-// normal 16-world-unit tile spacing.
+// 追踪花瓣到达目标后释放，避免选目标逻辑将它钉在原地。
 inline float default_petal_target_release_distance = WorldUnits(8.0f);
 inline float default_petal_target_release_cooldown = 0.24f;
-// Return velocity is a spring with a quadratic distance gain.  The cap keeps
-// a bad snapshot/teleport from creating an unbounded one-tick displacement.
+// 回归速度随距离平方增强，并设置上限以约束传送或异常快照引起的单帧位移。
 inline float default_petal_target_return_distance_gain = 4.0f;
 inline float default_petal_target_return_max_speed = WorldUnits(1800.0f);
 inline float default_petal_throw_initial_deceleration = 0.25f;
 inline float default_petal_throw_min_deceleration = 0.001f;
 inline float default_petal_swap_min_reload = 2.5f;
-// Constant-rate interpolation for all flower-size modifiers (Soil and future
-// effects). WorldUnits(20)/s makes one Common Soil settle in about 0.5 s.
+// 所有花朵尺寸修正使用恒速插值。
 inline float default_flower_radius_change_speed = WorldUnits(20.0f);
 inline int default_pollen_copy_common = 1;
 inline int default_pollen_copy_rare = 2;
@@ -913,9 +879,7 @@ inline float mob_bee_radius = WorldUnits(12.0f);
 inline int mob_bee_team = 2;
 inline float mob_bee_wave_frequency = 5.2f;
 inline float mob_bee_wave_strength = 0.85f;
-    // Firefly: bee-like flight, retaliates with a chain lightning on taking damage.
-    // Rating tiers: below Super only retaliates against mob attackers, Super
-    // retaliates against any attacker, above Super also fires at enemies on its own.
+    // 萤火虫使用蜜蜂式飞行：低于 Super 仅反击怪物，Super 反击所有攻击者，更高档位还会主动攻击。
     inline float mob_firefly_armor = 1.0f;
     inline float mob_firefly_damage = 5.0f;
     inline float mob_firefly_mass = 2.5f;
@@ -929,8 +893,7 @@ inline float mob_bee_wave_strength = 0.85f;
 inline float mob_firefly_summon_interval_seconds = 6.0f;
 inline int mob_firefly_summon_limit_eternal = 18;
 inline int mob_firefly_summon_limit_primordial = 27;
-// Natural Firefly rolls have this chance to become the magic variant. The
-// variant otherwise inherits Firefly stats and habitats.
+// 自然萤火虫按此概率变为魔法变体，其余属性和栖息地保持一致。
 inline float mob_magic_firefly_spawn_chance = 0.10f;
 inline float mob_magic_firefly_support_range = WorldUnits(256.0f);
 inline float chain_lightning_speed_multiplier = 0.0f;
@@ -963,8 +926,7 @@ inline float mob_bubble_mass = 24.0f;
 inline float mob_bubble_max_health = 1.0f;
 inline float mob_bubble_radius = WorldUnits(20.0f);
 inline int mob_bubble_team = 2;
-// Crab keeps its fast dash independent of rarity. Rarity still scales its
-// ordinary health, damage and body stats through ScaleMobStats.
+// 冲刺速度与常规稀有度属性缩放分别配置。
 inline float mob_crab_acceleration = WorldUnits(600.0f);
 inline float mob_crab_armor = 1.0f;
 inline float mob_crab_damage = 35.0f;
@@ -981,8 +943,7 @@ inline float mob_crab_strafe_time_variance = 1.25f;
 inline float mob_crab_orbit_speed_variance = 0.32f;
 inline float mob_crab_orbit_distance_variance = 0.13f;
 inline float mob_crab_dash_distance = WorldUnits(180.0f);
-// Crab dash is a skill: it accelerates to 1.5x its current maximum speed and
-// cannot be requested again until the five-second skill cooldown expires.
+// 螃蟹冲刺按当前最大速度乘倍率，技能冷却期间不能再次请求。
 inline float mob_crab_dash_speed_multiplier = 1.5f;
 inline float mob_crab_dash_cooldown = 5.0f;
 inline float mob_crab_dash_recovery = 0.28f;
@@ -1176,15 +1137,10 @@ inline float mob_player_flower_radius = WorldUnits(18.0f);
 inline int mob_player_flower_team = 1;
 inline float player_level_exp_base = 25.0f;
 inline float player_level_exp_growth = 1.20f;
-// Legacy per-level base used only to anchor the level-50 experience cost,
-// so switching growth never shifts what level 50 costs (see
-// PlayerFlowerExpRequired).
+// 旧增长系数只用于固定 50 级经验锚点，修改后续增长率不改变该级成本。
 inline float player_level_exp_legacy_growth = 1.22f;
 inline float player_spawn_invincible_duration = 3.0f;
-// Keep Common..Epic's familiar sizes, then interpolate geometrically to the
-// Super anchor instead of multiplying ever-larger per-level factors. The
-// reference Mecha Flowers are roughly 13/20 player diameters at S/ET; Q uses
-// ET's level, and P continues with a smaller jump. Health/damage are separate.
+// Common 至 Epic 保留原尺寸，之后按几何插值靠近 Super 锚点；生命和伤害独立缩放。
 inline float mob_radius_level_step = 0.15f;
 inline float mob_radius_scale_super = 11.5f;
 inline float mob_radius_scale_eternal = 18.0f;
@@ -1233,7 +1189,7 @@ inline float mob_firefly_larva_max_velocity = default_max_velocity * 1.5f;
 inline float mob_firefly_larva_acceleration = default_acceleration * 1.5f;
 inline float mob_firefly_larva_turn_speed = mob_beetle_turn_speed * 4.0f;
 inline float mob_firefly_larva_segment_distance_radius_scale = 13.0f / 14.0f;
-inline float mob_firefly_larva_max_turn_radians = 0.5235987756f; // 30 degrees
+inline float mob_firefly_larva_max_turn_radians = 0.5235987756f; // 30 度。
 inline float mob_firefly_larva_grab_contact_radius_multiplier = 0.2f;
 inline float mob_firefly_larva_grab_scan_radius = WorldUnits(256.0f);
 inline float mob_firefly_larva_grab_break_radius_multiplier = 3.0f;
@@ -1270,8 +1226,7 @@ inline float mob_summoned_beetle_max_health = 100.0f;
 inline float mob_summoned_beetle_radius = WorldUnits(16.0f);
 inline float mob_summoned_beetle_scale_exp = 0.5f;
 inline int mob_summoned_beetle_team = 1;
-// Summoned-mob target search range multiplier (times mob horizon). Summons
-// search 0.5x wider than before.
+// 召唤物索敌距离相对于自身视野的倍率。
 inline float mob_summoned_search_range_multiplier = 3.0f;
 inline float mob_summoned_target_time = 0.35f;
 inline float mob_summoned_wander_follow_range_multiplier = 0.08f;
@@ -1304,21 +1259,18 @@ inline bool network_parallel_snapshot_build = true;
 inline float network_snapshot_view_radius_multiplier = 1.0f;
 inline uint8_t network_petal_type_offset = 100;
 inline size_t open_active_spawn_zones_per_tick = 8;
-// World instances per static map. Each map now defaults to a single
-// instance; garden and ant_hel expose their own override knobs.
+// 静态地图默认创建一个世界实例，garden 和 ant_hel 可单独覆盖。
 inline size_t open_world_instances_per_map = 1;
 inline size_t garden_world_instances = 1;
 inline size_t ant_hel_world_instances = 1;
 inline int open_active_spawn_near_player_attempts = 16;
 inline float open_active_spawn_near_player_radius = WorldUnits(512.0f);
 inline float open_drop_spread_radius = WorldUnits(32.0f);
-// Inactive high-difficulty zones still receive a small natural rare-spawn
-// budget, so ET/Unique mobs do not require a player to already be nearby.
+// 无玩家活跃的高难度区域仍保留少量稀有刷怪预算。
 inline size_t open_rare_spawn_zones_per_tick = 1;
 inline int open_rare_spawn_rolls_per_zone_tick = 4;
 inline float open_rare_spawn_min_difficulty = 70.0f;
-// Unique mobs roll this many Super-tier drop tables on defeat ("repeat
-// unique drop"): the mob's Super drop distribution is rolled N times.
+// Unique 生物死亡时重复抽取指定次数的 Super 掉落表。
 inline int unique_repeat_drop_rolls = 25;
 inline float open_initial_spawn_delay = 5.f;
 inline int open_idle_spawn_per_zone_tick = 1;
@@ -1330,8 +1282,7 @@ inline int open_max_zone_population = 2048;
 inline float open_min_spawn_distance = WorldUnits(128.0f);
 inline float open_rarity_difficulty_scale = 10.0f;
 inline float open_rarity_gaussian_sigma = 0.36f;
-// A mob two rarity levels above its habitat nearly closes natural spawning
-// around itself; the rate never reaches absolute zero so the area can recover.
+// 高出栖息地两档的生物显著压低附近自然刷新率，但保留非零恢复机会。
 inline float open_dominant_mob_range = WorldUnits(2048.0f);
 inline float open_dominant_mob_rate_strength = 12.0f;
 inline float open_dominant_mob_min_rate = 0.02f;
@@ -1353,7 +1304,7 @@ inline int player_talent_point_minor_bonus = 5;
 inline int player_talent_point_minor_level_interval = 5;
 inline int player_talent_point_major_bonus = 10;
 inline int player_talent_point_major_level_interval = 10;
-// Target offset used to represent full analog input, not a navigation goal.
+// 用于表示满幅模拟输入的目标偏移，不代表寻路终点。
 inline float player_move_target_distance = WorldUnits(100.0f);
 inline float player_respawn_x = 5376.0f;
 inline float player_respawn_y = 5376.0f;
@@ -1370,10 +1321,10 @@ inline std::string rcon_password = "";
 inline size_t rcon_generated_password_length = 6;
 inline float server_fixed_dt = 0.05f;
 inline bool weather_diurnal_enabled = true;
-// Simulation seconds required for one complete 24-hour virtual day.
+// 一个完整虚拟昼夜所需的模拟秒数。
 inline float weather_diurnal_day_duration = 6.0f * 60.0f * 60.0f;
 inline float weather_diurnal_start_time = 0.25f;
-// Seconds required for weather intensities to go from 0 to 1 (transition rate = 1 / duration).
+// 天气强度从 0 过渡到 1 所需秒数，速率为时长的倒数。
 inline float weather_diurnal_transition_duration = 20.0f;
 inline float slow_tick_profile_ms = 24.0f;
 inline float simulation_active_view_radius_cap = WorldUnits(2048.0f);
@@ -1468,8 +1419,7 @@ inline float gui_console_text_height_padding = 4.0f;
 inline float gui_console_text_wrap_padding_multiplier = 3.0f;
 inline unsigned int gui_console_window_height = 450;
 inline unsigned int gui_console_window_width = 800;
-// Honey is a hard-priority attractor, so it is checked every simulation tick
-// instead of waiting behind the slower random-target cadence.
+// Honey 为最高优先级诱饵，每帧检查，不受普通随机目标扫描周期限制。
 inline int honey_target_scan_interval_ticks = 1;
 inline size_t melee_target_los_candidate_limit = 8;
 inline float melee_target_los_recheck_interval = 0.25f;
@@ -1550,11 +1500,7 @@ inline float GetMobHealthScaleForLevel(int level)
 }
 inline float GetMobMassScaleForLevel(int level)
 {
-    // Precomputed from the former default mass curve. Each adjacent rarity
-    // difference was multiplied by 7.8, 8.0, 8.2, ..., 9.4 respectively
-    // (7.5 + (rarity1 + rarity2) * 0.1), then accumulated once here. Keeping
-    // the final values explicit avoids a runtime power/recurrence and keeps
-    // mobs, missiles, Wax and other users on exactly the same curve.
+    // 质量曲线已预计算，生物、导弹和 Wax 共用同一组值，避免运行时递推产生分歧。
     static constexpr std::array<float, 10> mass_scale_by_level = {
         1.0f,
         6.71632444f,
@@ -1587,7 +1533,7 @@ inline float mob_hornet_skill1_super_chance_after_eternal = 0.3478261f;
 inline float mob_hornet_skill1_super_chance = 0.08f;
 inline float mob_hornet_skill2_arc_pi_multiplier = 5.0f;
 inline float mob_hornet_skill2_move_speed_multiplier = 2.0f;
-// The circular barrage follows a circle with radius 3/4 of the caster's body.
+// 环形弹幕轨道半径为施法者身体半径的 3/4。
 inline float mob_hornet_skill2_orbit_radius_multiplier = 0.75f;
 inline float mob_hornet_skill3_cast_chance = 0.10f;
 inline float mob_hornet_skill3_grab_range_radius_multiplier = 2.0f;
@@ -1640,19 +1586,16 @@ inline float open_loot_min_damage_rate_normal = 0.05f;
 inline size_t open_controller_max_squad_size = 4;
 inline float open_squad_loot_damage_range = 1.f;
 inline size_t server_max_saved_chats = 256;
-// Legacy setting name: fraction of relative normal velocity transferred by
-// soft trap/summon contacts, not a per-body speed tax. Ordinary mobs use 1.
+// 保留旧配置名；该值表示柔性接触传递的相对法向速度比例，普通生物取 1。
 inline float world_mob_overlap_velocity_retention = 0.35f;
 inline float world_mob_overlap_weak_push = 0.32f;
-// Flower contact position correction (0..1). Values above 1 are capped so
-// penetration correction never launches the bodies apart.
+// 花朵接触的位置修正率限制在 [0,1]，避免过度推开造成弹跳。
 inline float mob_overlap_push_multiplier = 1.0f;
-// Non-flower mob pairs still collide physically, but separate more gently so
-// several attackers can pack around a flower instead of becoming a rigid shell.
+// 非花朵生物采用较柔和的分离，使多个攻击者能贴近花朵。
 inline float nonflower_mob_overlap_push_multiplier = 0.60f;
-// Effective collision mass is mass^exponent; base stats and Web mass stay intact.
+// 碰撞权重按质量指数计算，不改基础质量和 Web 的质量计算。
 inline float mob_contact_mass_exponent = 2.0f;
-// First contact includes position/damage; later passes transfer velocity only.
+// 压力迭代只传递速度，位置与伤害各结算一次。
 inline int mob_contact_velocity_passes = 3;
 inline std::uint64_t config_revision = 1;
 
@@ -1811,7 +1754,6 @@ inline std::unordered_map<std::string, config_entry>& GetConfigEntries()
         REGISTER_CONFIG("email_smtp_security", email_smtp_security),
         REGISTER_CONFIG("email_imap_host", email_imap_host),
         REGISTER_CONFIG("email_imap_ssl_port", email_imap_ssl_port),
-        REGISTER_CONFIG("email_curl_path", email_curl_path),
         REGISTER_CONFIG("email_connect_timeout_seconds", email_connect_timeout_seconds),
         REGISTER_CONFIG("email_send_timeout_seconds", email_send_timeout_seconds),
         REGISTER_CONFIG("email_verification_code_digits", email_verification_code_digits),
@@ -3307,4 +3249,4 @@ inline std::vector<std::string> ConfigNames()
     std::sort(names.begin(), names.end());
     return names;
 }
-} // namespace game_config
+}

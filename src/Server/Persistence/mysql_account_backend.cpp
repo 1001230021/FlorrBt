@@ -1,4 +1,7 @@
 #include "mysql_account_backend.h"
+#include "economy_codec.h"
+#include "account_identity_codec.h"
+#include "../../Engine/json_value.h"
 
 #include "../../Shared/game_config.h"
 
@@ -7,6 +10,7 @@
 #include <cctype>
 #include <cstring>
 #include <map>
+#include <limits>
 #include <mutex>
 #include <set>
 #include <sstream>
@@ -21,14 +25,11 @@ namespace mysql_account_backend
 namespace
 {
 constexpr int kSchemaVersion = 1;
-// container column of account_items
 constexpr int kContainerInventory = 0;
 constexpr int kContainerSlots = 1;
 constexpr int kContainerSecondarySlots = 2;
 
-// Last successfully published state, used to skip unchanged accounts.
-// Guarded by a mutex for safety, though callers are already sequential
-// (startup load, then the single save worker).
+// 缓存最后成功发布的状态；加载与保存顺序执行，额外由互斥锁保护。
 std::mutex g_publish_state_mutex;
 std::map<std::string, SPlayerAccount> g_published_accounts;
 bool g_publish_state_seeded = false;
@@ -43,7 +44,6 @@ bool IsSafeDatabaseIdentifier(const std::string& name)
     });
 }
 
-// RAII wrapper over one MYSQL connection.
 class CMysqlConnection
 {
   public:
@@ -79,11 +79,8 @@ class CMysqlConnection
                                 game_config::mysql_password.c_str(), game_config::mysql_database.c_str(),
                                 static_cast<unsigned int>(std::max(0, game_config::mysql_port)), nullptr, 0))
         {
-            // A fresh deployment often has the server running but not the
-            // application database. Reconnect without a default database,
-            // create this validated identifier, then select it. If the user
-            // lacks CREATE privilege, the original connection error remains
-            // actionable and no data is touched.
+            // 初次部署可能尚无应用数据库；先不指定库连接，再创建已验证名称并选择。
+            // 缺少建库权限时保留连接错误，不修改已有数据。
             if (mysql_errno(m_connection) == ER_BAD_DB_ERROR)
             {
                 mysql_close(m_connection);
@@ -141,7 +138,7 @@ class CMysqlConnection
             m_reusable = false;
             if (error)
             {
-                // Statements may contain password hashes/account contents.
+                // 语句可能包含密码哈希和账号内容，不能直接记录。
                 std::string head = sql.substr(0, sql.find(' '));
                 std::replace(head.begin(), head.end(), '\n', ' ');
                 *error = "MySQL query failed (" + head + (sql.size() > 96 ? "..." : "") +
@@ -152,7 +149,6 @@ class CMysqlConnection
         return true;
     }
 
-    // Escapes arbitrary bytes for inclusion inside a single-quoted literal.
     std::string Escape(const std::string& value) const
     {
         std::string buffer;
@@ -174,7 +170,6 @@ class CMysqlConnection
     bool m_reusable = false;
 };
 
-// RAII result set.
 class CMysqlResult
 {
   public:
@@ -199,7 +194,6 @@ bool Query(CMysqlConnection& connection, const std::string& sql, std::string* er
     return connection.Execute(sql, error);
 }
 
-// Runs a SELECT and hands rows to the visitor: visitor(MYSQL_ROW, lengths).
 template <typename TVisitor>
 bool QueryRows(CMysqlConnection& connection, const std::string& sql, std::string* error, TVisitor&& visitor)
 {
@@ -233,8 +227,7 @@ long long FieldInt(MYSQL_ROW row, int index, long long fallback = 0)
 bool EnsureSchema(CMysqlConnection& connection, std::string* error)
 {
     if (connection.SchemaReady()) return true;
-    // utf8mb4_bin keeps account-name comparisons byte-exact, matching the
-    // in-memory store's case-sensitive lookups.
+    // 采用二进制排序，保持账号名比较与内存中的大小写敏感查找一致。
     static const char* kStatements[] = {
         "CREATE TABLE IF NOT EXISTS accounts ("
         " name VARCHAR(64) NOT NULL PRIMARY KEY,"
@@ -247,6 +240,40 @@ bool EnsureSchema(CMysqlConnection& connection, std::string* error)
         " talent_points INT NOT NULL DEFAULT 0,"
         " extra_json MEDIUMTEXT NULL,"
         " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+
+        "CREATE TABLE IF NOT EXISTS account_unique_petals ("
+        " petal_type SMALLINT NOT NULL PRIMARY KEY,"
+        " account_name VARCHAR(64) NOT NULL,"
+        " forge_cost INT UNSIGNED NOT NULL,"
+        " CONSTRAINT fk_account_unique FOREIGN KEY (account_name) REFERENCES accounts(name)"
+        "  ON DELETE CASCADE ON UPDATE CASCADE"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+
+        "CREATE TABLE IF NOT EXISTS account_recovery_credentials ("
+        " account_name VARCHAR(64) NOT NULL,"
+        " device_id CHAR(32) NOT NULL,"
+        " verifier VARCHAR(128) NOT NULL,"
+        " expires_at BIGINT NOT NULL,"
+        " PRIMARY KEY (account_name, device_id),"
+        " CONSTRAINT fk_account_recovery FOREIGN KEY (account_name) REFERENCES accounts(name)"
+        "  ON DELETE CASCADE ON UPDATE CASCADE"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+        "CREATE TABLE IF NOT EXISTS account_identity_state ("
+        " account_name VARCHAR(64) NOT NULL PRIMARY KEY, account_id CHAR(32) NOT NULL UNIQUE, state_json MEDIUMTEXT NOT NULL,"
+        " CONSTRAINT fk_account_identity FOREIGN KEY (account_name) REFERENCES accounts(name) ON DELETE CASCADE ON UPDATE CASCADE"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+        "CREATE TABLE IF NOT EXISTS account_external_identities ("
+        " provider VARCHAR(16) NOT NULL, application VARCHAR(128) NOT NULL, subject VARCHAR(128) NOT NULL, account_name VARCHAR(64) NOT NULL,"
+        " PRIMARY KEY (provider, application, subject),"
+        " CONSTRAINT fk_account_external FOREIGN KEY (account_name) REFERENCES accounts(name) ON DELETE CASCADE ON UPDATE CASCADE"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+
+        "CREATE TABLE IF NOT EXISTS account_economy_state ("
+        " account_name VARCHAR(64) NOT NULL PRIMARY KEY,"
+        " state_json MEDIUMTEXT NOT NULL,"
+        " CONSTRAINT fk_account_economy FOREIGN KEY (account_name) REFERENCES accounts(name)"
+        "  ON DELETE CASCADE ON UPDATE CASCADE"
         ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 
         "CREATE TABLE IF NOT EXISTS account_items ("
@@ -306,8 +333,7 @@ void AppendItemRows(std::ostringstream& values, CMysqlConnection& connection, co
     for (size_t index = 0; index < items.size(); ++index)
     {
         const SInventoryItem& item = items[index];
-        // The inventory is a bag (empty stacks carry no meaning), while slot
-        // containers must keep their empty positions to preserve layout.
+        // 背包可忽略空堆叠，装备槽必须保留空位以维持布局。
         if (skip_empty && (item.petal_type == 0 || item.rarity == 0 || item.count == 0)) continue;
         if (!first) values << ",";
         first = false;
@@ -381,8 +407,7 @@ bool WriteAccountRows(CMysqlConnection& connection, const SPlayerAccount& accoun
         for (const SAccountCodexEntry& entry : account.codex)
         {
             if (entry.mob_type == 0 || entry.rarity == 0 || entry.count == 0) continue;
-            // The table key is (mob, rarity); collapse duplicates the same way
-            // the in-memory store treats them (first entry wins on load).
+            // 按生物及稀有度合并重复项，与内存加载一致保留首项。
             if (!seen_codex_keys.insert({ entry.mob_type, entry.rarity }).second) continue;
             if (!first_codex) codex_values << ",";
             first_codex = false;
@@ -400,7 +425,7 @@ bool WriteAccountRows(CMysqlConnection& connection, const SPlayerAccount& accoun
     }
     return true;
 }
-} // namespace
+}
 
 bool Available() { return true; }
 
@@ -412,11 +437,13 @@ bool Initialize(std::string* error)
     return EnsureSchema(connection, error);
 }
 
-bool LoadAll(std::vector<SPlayerAccount>& accounts, std::uint64_t& generation, std::string* error)
+bool LoadAll(std::vector<SPlayerAccount>& accounts, std::uint64_t& generation, std::string* error,
+             bool* unique_ledger_initialized)
 {
     if (error) error->clear();
     accounts.clear();
     generation = 0;
+    if (unique_ledger_initialized) *unique_ledger_initialized = false;
 
     CMysqlConnection connection;
     if (!connection.Open(error)) return false;
@@ -501,6 +528,56 @@ bool LoadAll(std::vector<SPlayerAccount>& accounts, std::uint64_t& generation, s
                    });
     if (!ok) return false;
 
+    ok = QueryRows(connection,
+        "SELECT account_name, device_id, verifier, expires_at FROM account_recovery_credentials ORDER BY account_name, expires_at, device_id",
+        error, [&](MYSQL_ROW row, unsigned long* lengths) {
+            const auto account = index_by_name.find(FieldOrEmpty(row, lengths, 0));
+            if (account == index_by_name.end()) return;
+            accounts[account->second].recovery_credentials.push_back({FieldOrEmpty(row, lengths, 1), FieldOrEmpty(row, lengths, 2), FieldInt(row, 3)});
+        });
+    if (!ok) return false;
+
+    bool invalid_economy_state = false;
+    bool invalid_identity = false;
+    ok = QueryRows(connection, "SELECT account_name, state_json FROM account_identity_state", error,
+        [&](MYSQL_ROW row, unsigned long* lengths) {
+            const auto account = index_by_name.find(FieldOrEmpty(row, lengths, 0));
+            const auto value = CJsonValue::Parse(FieldOrEmpty(row, lengths, 1), error);
+            if (account == index_by_name.end() || !value || !ReadAccountIdentity(&*value, accounts[account->second], error)) invalid_identity = true;
+        });
+    if (!ok || invalid_identity) return false;
+    ok = QueryRows(connection, "SELECT account_name, state_json FROM account_economy_state", error,
+        [&](MYSQL_ROW row, unsigned long* lengths) {
+            const auto account = index_by_name.find(FieldOrEmpty(row, lengths, 0));
+            const auto value = CJsonValue::Parse(FieldOrEmpty(row, lengths, 1), error);
+            if (account == index_by_name.end() || !value || !ReadEconomyState(&*value, accounts[account->second].economy, error))
+                invalid_economy_state = true;
+        });
+    if (!ok || invalid_economy_state) return false;
+
+    bool invalid_unique_row = false;
+    ok = QueryRows(connection,
+                   "SELECT account_name, petal_type, forge_cost FROM account_unique_petals ORDER BY account_name, petal_type",
+                   error, [&](MYSQL_ROW row, unsigned long* lengths) {
+                       const auto account = index_by_name.find(FieldOrEmpty(row, lengths, 0));
+                       const auto type = FieldInt(row, 1, -1), cost = FieldInt(row, 2, -1);
+                       if (account == index_by_name.end() || type <= 0 || type > 255 || !IsKnownPetalTypeId(static_cast<int>(type)) ||
+                           cost < 0 || cost > (std::numeric_limits<int>::max)())
+                       { invalid_unique_row = true; return; }
+                       accounts[account->second].unique_petals.push_back({static_cast<uint8_t>(type), static_cast<int>(cost)});
+                   });
+    if (!ok) return false;
+    if (invalid_unique_row) { if (error) *error = "Invalid MySQL Unique ownership record"; return false; }
+    bool invalid_ledger_version = false;
+    ok = QueryRows(connection, "SELECT meta_value FROM store_meta WHERE meta_key = 'unique_ledger_version'", error,
+                   [&](MYSQL_ROW row, unsigned long* lengths) {
+                       const auto version = FieldOrEmpty(row, lengths, 0);
+                       if (version != "0" && version != "1") invalid_ledger_version = true;
+                       if (unique_ledger_initialized) *unique_ledger_initialized = version == "1";
+                   });
+    if (!ok) return false;
+    if (invalid_ledger_version) { if (error) *error = "Unsupported MySQL Unique ledger version"; return false; }
+
     ok = QueryRows(connection, "SELECT meta_value FROM store_meta WHERE meta_key = 'save_generation'", error,
                    [&](MYSQL_ROW row, unsigned long*) {
                        if (!row[0])
@@ -516,8 +593,7 @@ bool LoadAll(std::vector<SPlayerAccount>& accounts, std::uint64_t& generation, s
                    });
     if (!ok) return false;
 
-    // Seed change detection so the first post-load publish only writes what
-    // actually changed since startup.
+    // 加载后建立差异基线，首次保存只写入变化。
     {
         std::lock_guard<std::mutex> lock(g_publish_state_mutex);
         g_published_accounts.clear();
@@ -527,12 +603,12 @@ bool LoadAll(std::vector<SPlayerAccount>& accounts, std::uint64_t& generation, s
     return true;
 }
 
-bool PublishSnapshot(const SAccountSnapshot& accounts, std::uint64_t generation, std::string* error)
+bool PublishSnapshot(const SAccountSnapshot& accounts, std::uint64_t generation, std::string* error,
+                     bool unique_ledger_initialized)
 {
     if (error) error->clear();
 
-    // Work out the change set against the last published state.
-    struct Change { const SPlayerAccount* account; bool items; bool talents; bool codex; };
+    struct Change { const SPlayerAccount* account; bool items; bool talents; bool codex; bool unique; bool recovery; bool economy; bool identity; };
     std::vector<Change> changed;
     std::vector<std::string> removed;
     {
@@ -552,7 +628,11 @@ bool PublishSnapshot(const SAccountSnapshot& accounts, std::uint64_t generation,
                     fresh || it->second.inventory != account.inventory || it->second.slots != account.slots ||
                              it->second.secondary_slots != account.secondary_slots,
                     fresh || it->second.talents != account.talents,
-                    fresh || it->second.codex != account.codex });
+                    fresh || it->second.codex != account.codex,
+                    fresh || it->second.unique_petals != account.unique_petals,
+                    fresh || it->second.recovery_credentials != account.recovery_credentials,
+                    fresh || it->second.economy != account.economy,
+                    fresh || it->second.account_id != account.account_id || it->second.linked_identities != account.linked_identities });
             }
         }
         for (const auto& [name, unused] : g_published_accounts)
@@ -587,22 +667,90 @@ bool PublishSnapshot(const SAccountSnapshot& accounts, std::uint64_t generation,
         }
     }
     if (ok)
+    {
+        // 先删除双方旧归属再插入新归属，转移不依赖账号遍历顺序。
+        for (const Change& change : changed)
+            if (change.unique && !Query(connection,
+                "DELETE FROM account_unique_petals WHERE account_name = " + connection.Quoted(change.account->name),
+                &transaction_error)) { ok = false; break; }
+    }
+    if (ok)
+    {
+        for (const Change& change : changed)
+        {
+            if (!change.unique) continue;
+            for (const auto& record : change.account->unique_petals)
+                if (!Query(connection, "INSERT INTO account_unique_petals (petal_type, account_name, forge_cost) VALUES (" +
+                    std::to_string(record.petal_type) + "," + connection.Quoted(change.account->name) + "," +
+                    std::to_string(record.cost) + ")", &transaction_error)) { ok = false; break; }
+            if (!ok) break;
+        }
+    }
+    if (ok)
+        for (const Change& change : changed)
+        {
+            if (!change.recovery) continue;
+            const auto name = connection.Quoted(change.account->name);
+            if (!Query(connection, "DELETE FROM account_recovery_credentials WHERE account_name = " + name, &transaction_error))
+            { ok = false; break; }
+            for (const auto& credential : change.account->recovery_credentials)
+                if (!Query(connection, "INSERT INTO account_recovery_credentials (account_name, device_id, verifier, expires_at) VALUES (" +
+                    name + "," + connection.Quoted(credential.device_id) + "," + connection.Quoted(credential.verifier) + "," +
+                    std::to_string(credential.expires_at) + ")", &transaction_error)) { ok = false; break; }
+            if (!ok) break;
+        }
+    if (ok)
+        for (const auto& change : changed) if (change.identity)
+            if (!Query(connection, "DELETE FROM account_external_identities WHERE account_name = " + connection.Quoted(change.account->name), &transaction_error)) { ok = false; break; }
+    if (ok)
+        for (const auto& change : changed) if (change.identity)
+        {
+            const auto& account = *change.account; const auto name = connection.Quoted(account.name);
+            if (!Query(connection, "INSERT INTO account_identity_state (account_name, account_id, state_json) VALUES (" + name + "," +
+                connection.Quoted(account.account_id) + "," + connection.Quoted(AccountIdentityJson(account)) +
+                ") ON DUPLICATE KEY UPDATE account_id = VALUES(account_id), state_json = VALUES(state_json)", &transaction_error)) { ok = false; break; }
+            for (const auto& identity : account.linked_identities)
+                if (!Query(connection, "INSERT INTO account_external_identities (provider, application, subject, account_name) VALUES (" +
+                    connection.Quoted(identity.provider) + "," + connection.Quoted(identity.application) + "," + connection.Quoted(identity.subject) + "," + name + ")", &transaction_error)) { ok = false; break; }
+            if (!ok) break;
+        }
+    if (ok)
+        for (const Change& change : changed)
+            if (change.economy && !Query(connection,
+                "INSERT INTO account_economy_state (account_name, state_json) VALUES (" + connection.Quoted(change.account->name) + "," +
+                connection.Quoted(EconomyStateJson(change.account->economy)) + ") ON DUPLICATE KEY UPDATE state_json = VALUES(state_json)",
+                &transaction_error)) { ok = false; break; }
+    if (ok)
+        ok = Query(connection,
+            "INSERT INTO store_meta (meta_key, meta_value) VALUES ('unique_ledger_version', '" +
+            std::string(unique_ledger_initialized ? "1" : "0") + "') ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)",
+            &transaction_error);
+    if (ok)
         ok = Query(connection,
                    "INSERT INTO store_meta (meta_key, meta_value) VALUES ('save_generation', '" +
                        std::to_string(generation) +
                        "') ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)",
                    &transaction_error);
+    const bool commit_attempted = ok;
     if (ok) ok = Query(connection, "COMMIT", &transaction_error);
 
     if (!ok)
     {
         std::string rollback_error;
-        Query(connection, "ROLLBACK", &rollback_error);
+        const bool rolled_back = Query(connection, "ROLLBACK", &rollback_error);
+        // COMMIT 回应丢失不代表未提交；下次完整重写，并考虑删除本次尝试新增的账号。
+        if (commit_attempted || !rolled_back)
+        {
+            std::lock_guard<std::mutex> lock(g_publish_state_mutex);
+            for (const auto& account : accounts)
+                if (account && !IsSandboxAccount(account->name))
+                    g_published_accounts.try_emplace(account->name, *account);
+            g_publish_state_seeded = false;
+        }
         if (error) *error = transaction_error;
         return false;
     }
 
-    // Commit succeeded: fold the change set into the published state.
     {
         std::lock_guard<std::mutex> lock(g_publish_state_mutex);
         for (const Change& change : changed) g_published_accounts[change.account->name] = *change.account;
@@ -612,12 +760,13 @@ bool PublishSnapshot(const SAccountSnapshot& accounts, std::uint64_t generation,
     return true;
 }
 
-bool PublishSnapshot(const std::vector<SPlayerAccount>& accounts, std::uint64_t generation, std::string* error)
+bool PublishSnapshot(const std::vector<SPlayerAccount>& accounts, std::uint64_t generation, std::string* error,
+                     bool unique_ledger_initialized)
 {
     SAccountSnapshot snapshot;
     snapshot.reserve(accounts.size());
     for (const auto& account : accounts) snapshot.push_back(std::make_shared<const SPlayerAccount>(account));
-    return PublishSnapshot(snapshot, generation, error);
+    return PublishSnapshot(snapshot, generation, error, unique_ledger_initialized);
 }
 
 void ResetPublishState()
@@ -626,7 +775,7 @@ void ResetPublishState()
     g_published_accounts.clear();
     g_publish_state_seeded = false;
 }
-} // namespace mysql_account_backend
+}
 
 #else // !FLORRBT_WITH_MYSQL
 
@@ -641,17 +790,17 @@ bool Unavailable(std::string* error)
                  "set account_backend json or rebuild with the MySQL client library.";
     return false;
 }
-} // namespace
+}
 
 bool Available() { return false; }
 bool Initialize(std::string* error) { return Unavailable(error); }
-bool LoadAll(std::vector<SPlayerAccount>&, std::uint64_t&, std::string* error) { return Unavailable(error); }
-bool PublishSnapshot(const std::vector<SPlayerAccount>&, std::uint64_t, std::string* error)
+bool LoadAll(std::vector<SPlayerAccount>&, std::uint64_t&, std::string* error, bool*) { return Unavailable(error); }
+bool PublishSnapshot(const std::vector<SPlayerAccount>&, std::uint64_t, std::string* error, bool)
 {
     return Unavailable(error);
 }
-bool PublishSnapshot(const SAccountSnapshot&, std::uint64_t, std::string* error) { return Unavailable(error); }
+bool PublishSnapshot(const SAccountSnapshot&, std::uint64_t, std::string* error, bool) { return Unavailable(error); }
 void ResetPublishState() {}
-} // namespace mysql_account_backend
+}
 
 #endif // FLORRBT_WITH_MYSQL

@@ -5,6 +5,9 @@
 #include "../../Shared/tools.h"
 #include "../../Shared/version.h"
 #include "../Game/controllers/melee_controller.h"
+#include "../Persistence/economy_codec.h"
+#include "../../Engine/json_value.h"
+#include <cstdlib>
 #include "../Game/controllers/player_controller.h"
 #include "../Game/controller_factory.h"
 #include "../Game/chain.h"
@@ -41,9 +44,7 @@
 namespace
 {
 constexpr std::string_view snapshot_magic = "florrbt-hot-reload";
-// Snapshot files are local state, but they can still be truncated or manually
-// edited.  Never let a corrupt array turn into an unbounded allocation during
-// restore.  Runtime arrays in this project are all far smaller than this cap.
+// 本地快照也可能被截断或修改，限制数组长度以防损坏数据触发无界分配。
 constexpr std::size_t max_snapshot_array_entries = 4096;
 constexpr std::size_t max_snapshot_worlds = 1024;
 constexpr std::size_t max_snapshot_entities_per_world = 65536;
@@ -194,6 +195,7 @@ void CaptureEntityCommon(const CEntity& entity, CSnapshotWriter& writer)
     writer.Field("tick_horizon", entity.TickHorizon());
     writer.Field("tags", entity.Tags());
     writer.Field("team", entity.Team());
+    writer.Field("base_team", entity.BaseTeam());
     writer.Field("mass", entity.Mass());
     if (std::isfinite(entity.Health())) writer.Field("health", entity.Health());
     writer.Field("facing_angle", entity.FacingAngle());
@@ -213,7 +215,7 @@ void RestoreEntityCommon(CEntity& entity, const CSnapshotReader& reader)
                    static_cast<int>(EEntityTickMode::Default), static_cast<int>(EEntityTickMode::PlayerVisible)));
     entity.TickHorizon() = std::max(0.f, reader.Float("tick_horizon", entity.TickHorizon()));
     entity.Tags() = reader.UInt32("tags", entity.Tags());
-    entity.Team() = reader.Int("team", entity.Team());
+    entity.SetTeam(reader.Int("base_team", reader.Int("team", entity.Team())));
     entity.Mass() = std::max(0.f, reader.Float("mass", std::max(0.f, entity.Mass())));
     if (reader.Has("health")) entity.Health() = reader.Float("health", entity.Health());
     entity.FacingAngle() = reader.Float("facing_angle", std::isfinite(entity.FacingAngle())
@@ -259,10 +261,7 @@ bool RestoreController(CMobBase& mob, const json_t* value, std::string& error)
         return false;
     }
 
-    // Firefly Larva originally used the generic melee controller. Its
-    // serialized movement fields are layout-compatible with the dedicated
-    // controller, so migrate the stable key instead of silently restoring the
-    // old controller and losing skill dispatch after a hot reload.
+    // 旧萤火虫幼虫使用通用近战控制器；移动字段兼容，迁移类型标识以恢复专属技能调度。
     if (mob.GetMobType() == EMobType::FireflyLarva && key == "controller.melee")
         key = "controller.firefly_larva";
 
@@ -292,7 +291,8 @@ CJsonOwner CaptureState(const CState& state, std::string& error)
 {
     CJsonOwner result = MakeJsonObject();
     CSnapshotWriter writer(result.get());
-    writer.Field("version", 1u);
+    writer.Field("version", 2u);
+    writer.Field("rule_managed", state.IsRuleManaged());
     writer.Field("timer", state.m_timer);
     writer.Field("rarity", static_cast<int>(state.m_rarity));
 
@@ -301,8 +301,7 @@ CJsonOwner CaptureState(const CState& state, std::string& error)
         writer.Field("type", "state.poison");
         writer.Field("basic_damage", poison->GetBasicDmg());
         const SEntityHandle& applier = poison->GetApplierRef();
-        // Keep the legacy id/generation names while adding the world identity
-        // needed to survive room recreation and id reuse.
+        // 保留旧字段名，并补充世界身份以区分房间重建和 ID 复用。
         writer.Field("applier_id", applier.id);
         writer.UInt64("applier_generation", applier.generation);
         writer.Field("applier_world_id", applier.world_id);
@@ -362,11 +361,13 @@ std::unique_ptr<CState> RestoreState(CMobBase& owner, const json_t* value, std::
 {
     CSnapshotReader reader(value);
     const std::uint32_t version = reader.UInt32("version", 1);
-    if (version != 1)
+    if (version != 1 && version != 2)
     {
         error = "Unsupported state snapshot version " + std::to_string(version);
         return {};
     }
+    if (version >= 2 && !json_is_boolean(reader.Node("rule_managed")))
+    { error = "State origin metadata is missing or invalid"; return {}; }
     const std::string type = reader.String("type");
     float timer = reader.Float("timer", endless);
     if (timer < 0.f && timer != endless) timer = 0.f;
@@ -449,7 +450,8 @@ CJsonOwner CaptureFlower(const CFlower& flower)
         slot_writer.Field("start_copy_index", slot.m_start_copy_index);
         slot_writer.Field("runtime_type", static_cast<int>(slot.m_runtime_type));
         slot_writer.Field("available", slot.m_available);
-        slot_writer.Field("banned", slot.m_banned);
+        slot_writer.Field("banned", slot.IsBanned());
+        slot_writer.Field("policy_banned", slot.IsPolicyBanned());
         slot_writer.Node("bonus_active", ByteArray(slot.m_bonus_active).release());
         slot_writer.Node("reload_timers", FloatArray(slot.m_reload_timers).release());
         slot_writer.Node("reload_durations", FloatArray(slot.m_reload_durations).release());
@@ -511,9 +513,7 @@ bool RestoreFlower(CFlower& flower, const json_t* value, std::string& error)
             slot.m_stored_rarity = rarity;
             slot.m_slot_index = static_cast<int>(i);
         }
-        // Slot position is structural, not user data.  Trusting a serialized
-        // arbitrary slot index would let a detached petal attach to a
-        // different slot during the dependent-entity phase.
+        // 槽位是结构信息，不能让快照任意指定并把脱槽花瓣挂到其他槽位。
         slot.m_slot_index = static_cast<int>(i);
         slot.m_start_copy_index = std::clamp(slot_reader.Int("start_copy_index"), -1,
                                              static_cast<int>(max_snapshot_array_entries) - 1);
@@ -526,17 +526,13 @@ bool RestoreFlower(CFlower& flower, const json_t* value, std::string& error)
         else
             slot.m_runtime_type = type;
         slot.m_available = slot_reader.Bool("available", true);
-        slot.m_banned = slot_reader.Bool("banned");
+        slot.SetPolicyBan(slot_reader.Bool("policy_banned", slot_reader.Bool("banned")));
         slot.m_bonus_active = ReadByteArray(slot_reader.Node("bonus_active"));
         slot.m_reload_timers = ReadFloatArray(slot_reader.Node("reload_timers"));
         slot.m_reload_durations = ReadFloatArray(slot_reader.Node("reload_durations"));
         slot.m_reload_ignore_multiplier = ReadByteArray(slot_reader.Node("reload_ignore_multiplier"));
         slot.m_spawn_cost_paid = ReadByteArray(slot_reader.Node("spawn_cost_paid"));
-        // SetPetal() already established the canonical copy count from the
-        // registered prototype.  Serialized vectors are state for those
-        // copies, not authority to enlarge the slot.  Accepting their
-        // largest length made a damaged snapshot manufacture thousands of
-        // phantom copies and later caused the parallel arrays to drift.
+        // 副本数量由原型确定；快照数组仅恢复这些副本，不能扩大槽位。
         slot.NormalizeRuntimeState();
     }
 
@@ -588,10 +584,7 @@ void RestoreEntityFloatMap(const json_t* value, const CGameWorld* world,
         SEntityHandle handle{ id, generation, world_id, world_instance_generation };
 
         const bool has_world_identity = reader.Has("world_id") && reader.Has("world_instance_generation");
-        // Old snapshots only had an id (or id + generation). Resolve those
-        // once against the restored world so the transient entry receives a
-        // canonical, fully qualified handle. A qualified handle that belongs
-        // to another world must not take this fallback.
+        // 旧句柄缺少世界身份时，在已恢复的世界中补全；带世界身份的句柄不得跨世界回退。
         if (!has_world_identity)
         {
             CEntity* entity = handle.generation != 0 ? world->GetEntity(id, handle.generation) : world->GetEntity(id);
@@ -615,12 +608,11 @@ void CaptureHandle(const CSnapshotWriter& writer, std::string_view prefix, const
 bool HasSerializedWorldIdentity(const CSnapshotReader& reader, std::string_view prefix)
 {
     const std::string base(prefix);
-    // A qualified handle must never fall back to the legacy id/generation
-    // fields when its world identity does not resolve in this world.
+    // 完整句柄解析失败时，不得回退到旧 ID/代数绑定其他世界的实体。
     return reader.Has(base + "_world_id") && reader.Has(base + "_world_instance_generation");
 }
 
-// Older snapshots may omit the generation; resolve such ids in the restored world.
+// 旧快照可缺少代数，按已恢复世界中的实体补全。
 CEntity* ResolveRestoredEntity(CGameWorld* world, int id, std::uint64_t generation)
 {
     if (!world || id < 0) return nullptr;
@@ -650,7 +642,6 @@ SEntityHandle RestoreHandle(const CSnapshotReader& reader, std::string_view pref
 void CaptureProjectile(const CProjectile& projectile, CSnapshotWriter& writer)
 {
     CaptureHandle(writer, "owner", projectile.m_owner_ref);
-    // Keep the legacy names for older tooling and snapshot readers.
     writer.Field("owner_id", projectile.m_owner_ref.id);
     writer.UInt64("owner_generation", projectile.m_owner_ref.generation);
     writer.Field("velocity", projectile.m_vel);
@@ -692,6 +683,19 @@ CJsonOwner CaptureMob(const CMobBase& mob, std::string& error)
 
     CJsonOwner controller = CaptureController(mob.GetController());
     writer.Node("controller", controller ? controller.release() : json_null());
+    writer.Field("player_control_lease", mob.HasPlayerControlLease());
+    writer.Field("control_return_team", mob.ControlReturnTeam());
+    CJsonOwner suspended = CaptureController(mob.SuspendedController());
+    writer.Node("suspended_controller", suspended ? suspended.release() : json_null());
+    if (const auto* equipment = mob.ControlReturnEquipment())
+    {
+        auto value = MakeJsonObject(); CSnapshotWriter saved(value.get());
+        saved.Field("capacity", equipment->capacity);
+        auto slots = MakeJsonArray();
+        for (const auto& slot : equipment->slots)
+            AppendJson(slots.get(), json_pack("[i,i,b,b]", int(slot.type), int(slot.rarity), slot.available, slot.policy_banned));
+        saved.Node("slots", slots.release()); writer.Node("control_return_equipment", value.release());
+    }
 
     CJsonOwner runtime = MakeJsonObject();
     CSnapshotWriter runtime_writer(runtime.get());
@@ -717,6 +721,7 @@ CJsonOwner CaptureMob(const CMobBase& mob, std::string& error)
         CSnapshotWriter entry_writer(entry.get());
         entry_writer.Field("account_name", record.m_account_name);
         entry_writer.Field("progress_account", record.m_progress_account);
+        entry_writer.Field("inventory_account", record.m_inventory_account);
         entry_writer.Field("total_damage", record.m_total_dmg);
         entry_writer.Field("reset_timer", record.m_reset_timer);
         AppendJson(damage.get(), entry.release());
@@ -967,7 +972,7 @@ CJsonOwner CaptureEntity(const CEntity& entity, bool& ephemeral, std::string& er
         data_writer.Field("rarity", static_cast<int>(drop->GetRarity()));
         data_writer.Field("owner_id", drop->GetOwnerId());
         data_writer.Field("owner_account", drop->GetOwnerAccount());
-        data_writer.Field("owner_progress_account", drop->GetOwnerProgressAccount());
+        data_writer.Field("owner_inventory_account", drop->GetOwnerInventoryAccount());
         data_writer.Field("stack_num", static_cast<int>(drop->GetStackNum()));
         data_writer.Field("pickup_delay", drop->GetPickupDelay());
         data_writer.Field("merge_timer", drop->GetMergeTimer());
@@ -1030,9 +1035,7 @@ bool IsDependentEntityKind(std::string_view kind)
 
 int DependentEntityRestoreStage(std::string_view kind)
 {
-    // Restore owners before their dependants. Petals depend on independent
-    // flowers; projectiles may depend on petals; chains may use either a
-    // petal or a mob as endpoint/lease. Entity ids do not encode this graph.
+    // 按拥有关系恢复：花朵、花瓣、投射物、chain。实体 ID 不能表达依赖顺序。
     if (kind == "petal") return 0;
     if (kind == "missile" || kind == "dandelion_missile" || kind == "pollen_projectile" ||
         kind == "trap_projectile")
@@ -1095,8 +1098,7 @@ bool RestoreMobInitialState(CMobBase& mob, const CSnapshotReader& data, std::str
         error = "Mob runtime snapshot is invalid";
         return false;
     }
-    // Runtime handles may point to petals/projectiles or a later mob. Restore
-    // them only after all independent and dependent objects have identities.
+    // 全部对象建立身份后再恢复运行时句柄，允许引用花瓣、投射物及后创建的生物。
     return true;
 }
 
@@ -1147,10 +1149,9 @@ bool CreateIndependentEntity(CGameWorld& world, const json_t* record, std::strin
                                             data.Float("lifetime"),
                                             static_cast<std::uint16_t>(std::clamp(data.Int("stack_num", 1), 0, 65535)));
         drop->RestoreRuntime(data.Float("pickup_delay"), data.Float("merge_timer"), data.Float("lifetime"));
-        // A legacy numeric ID cannot prove which account originally owned a
-        // private drop. Fail closed, never bind it to a possibly reused ID.
+        // 旧数字 ID 无法证明私有掉落的账号归属，不能绑定到可能复用该 ID 的玩家。
         drop->RestoreOwnerAccount(data.String("owner_account"));
-        drop->RestoreOwnerProgressAccount(data.String("owner_progress_account", drop->GetOwnerAccount()));
+        drop->RestoreOwnerInventoryAccount(data.String("owner_inventory_account", data.String("owner_progress_account", drop->GetOwnerAccount())));
         entity = std::move(drop);
     } else if (kind == "portal")
     {
@@ -1229,7 +1230,7 @@ void RestorePetalRuntime(CPetal& petal, const CSnapshotReader& data, EPetalType 
     if (auto* moon = dynamic_cast<CMoonPetal*>(&petal))
     {
         moon->m_orbit_center = data.Vector2("moon_orbit_center");
-        // Old snapshots saved only total orbital velocity (no external drift).
+        // 旧快照只有轨道总速度，没有外部漂移。
         moon->m_orbit_velocity = data.Vector2("moon_orbit_velocity", petal.m_vel);
         moon->m_orbit_phase = data.Float("moon_orbit_phase", game_config::pi);
         moon->m_orbit_initialized = data.Bool("moon_orbit_initialized");
@@ -1539,8 +1540,9 @@ bool RestoreWorldController(CGameWorld& world, const json_t* value, std::string&
 {
     if (!value || json_is_null(value))
     {
-        world.SetController(nullptr, false);
-        return true;
+        const auto installed = world.SetController(nullptr, false);
+        if (!installed) error = installed.error;
+        return static_cast<bool>(installed);
     }
 
     CSnapshotReader reader(value);
@@ -1560,7 +1562,8 @@ bool RestoreWorldController(CGameWorld& world, const json_t* value, std::string&
             error = "No world controller factory registered for " + key;
             return false;
         }
-        world.SetController(std::move(replacement), false);
+        const auto installed = world.SetController(std::move(replacement), false);
+        if (!installed) { error = installed.error; return false; }
         controller = world.GetController();
     }
     CSnapshotReader data(reader.Node("data"));
@@ -1570,8 +1573,7 @@ bool RestoreWorldController(CGameWorld& world, const json_t* value, std::string&
         return false;
     }
     if (!controller->RestoreSnapshot(data, reader.UInt32("version", 1), error)) return false;
-    // Import old controller-owned squad state. New writers store it only in
-    // the extensions section, which is restored after controllers/players.
+    // 兼容旧控制器内的队伍数据；新格式在控制器和玩家之后恢复扩展分节。
     if (data.Has("squads") && world.GameContext())
         return world.GameContext()->Extensions().RestoreLegacySquads(world, data, error);
     return true;
@@ -1583,15 +1585,27 @@ CJsonOwner CaptureWorlds(CServer& server, std::string& error)
     for (CGameWorld* world : server.GetWorlds())
     {
         if (!world) continue;
+        if (world->IsRecovering()) { error = "房间正在恢复，不能保存不完整快照"; return {}; }
         CJsonOwner world_value = MakeJsonObject();
         CSnapshotWriter writer(world_value.get());
         writer.Field("world_id", world->GetId());
         writer.Field("map_path", world->GetMapPath());
+        auto terrain = MakeJsonObject(); CSnapshotWriter terrain_writer(terrain.get());
+        world->Terrain().CaptureSnapshot(terrain_writer);
+        writer.Node("terrain", terrain.release());
         writer.UInt64("next_entity_generation", world->NextEntityGeneration());
         CJsonOwner config = MakeJsonObject(); CSnapshotWriter settings(config.get());
         settings.Field("squads", world->ExtensionConfig().squads);
         settings.Field("weather_visuals", world->ExtensionConfig().weather_visuals);
         settings.Field("weather_spawns", world->ExtensionConfig().weather_spawns);
+        auto features = MakeJsonArray();
+        for (const auto& rule : world->ExtensionConfig().features)
+        {
+            auto value = MakeJsonObject(); CSnapshotWriter feature(value.get());
+            feature.Field("key", rule.key); feature.Field("visible", rule.visible); feature.Field("access", int(rule.access));
+            AppendJson(features.get(), value.release());
+        }
+        settings.Node("features", features.release());
         writer.Node("extension_config", config.release());
         CJsonOwner controller = CaptureWorldController(world->GetController());
         writer.Node("controller", controller ? controller.release() : json_null());
@@ -1637,8 +1651,48 @@ bool RestoreMobState(CServer& server, CGameWorld& world, const json_t* record, s
     CSnapshotReader record_reader(record);
     CSnapshotReader data(record_reader.Node("data"));
     if (!RestoreController(*mob, data.Node("controller"), error)) return false;
+    std::unique_ptr<IController> suspended;
+    if (const auto* saved = data.Node("suspended_controller"); saved && !json_is_null(saved))
+    {
+        CSnapshotReader saved_controller(saved);
+        auto key = saved_controller.String("type");
+        if (mob->GetMobType() == EMobType::FireflyLarva && key == "controller.melee") key = "controller.firefly_larva";
+        suspended = CreateController(key);
+        CSnapshotReader saved_data(saved_controller.Node("data"));
+        if (!suspended || !saved_data.IsValid() || suspended->IsPlayerControlled())
+        { error = "Invalid suspended controller " + key; return false; }
+        if (!suspended->RestoreSnapshot(saved_data, saved_controller.UInt32("version", 1), error)) return false;
+    }
+    std::unique_ptr<SControlEquipment> equipment;
+    if (const auto* saved = data.Node("control_return_equipment"))
+    {
+        CSnapshotReader original(saved); const auto* slots = original.Node("slots");
+        const int capacity = original.Int("capacity", -1);
+        if (!dynamic_cast<CFlower*>(mob) || dynamic_cast<CPlayerFlower*>(mob) ||
+            capacity < 0 || capacity > static_cast<int>(max_snapshot_slots) || !json_is_array(slots) || json_array_size(slots) > static_cast<size_t>(capacity))
+        { error = "Invalid NPC equipment restore layout"; return false; }
+        equipment = std::make_unique<SControlEquipment>(); equipment->capacity = capacity;
+        for (size_t i = 0; i < json_array_size(slots); ++i)
+        {
+            const auto* slot = json_array_get(slots, i);
+            if (!json_is_array(slot) || json_array_size(slot) != 4 || !json_is_integer(json_array_get(slot, 0)) ||
+                !json_is_integer(json_array_get(slot, 1)) || !json_is_boolean(json_array_get(slot, 2)) || !json_is_boolean(json_array_get(slot, 3)))
+            { error = "Invalid NPC equipment slot"; return false; }
+            const auto type = json_integer_value(json_array_get(slot, 0)), rarity = json_integer_value(json_array_get(slot, 1));
+            if (type < 0 || type > UINT8_MAX || rarity < 0 || rarity > UINT8_MAX ||
+                (type && (!IsKnownPetalTypeId(static_cast<int>(type)) || !IsKnownRarity(static_cast<ERarity>(rarity)))))
+            { error = "Unknown NPC equipment definition"; return false; }
+            equipment->slots.push_back({static_cast<uint8_t>(type), static_cast<uint8_t>(rarity),
+                json_is_true(json_array_get(slot, 2)), json_is_true(json_array_get(slot, 3))});
+        }
+    }
+    else if (data.Bool("player_control_lease")) equipment = mob->CaptureControlEquipment();
+    if (!mob->RestorePlayerControlLease(data.Bool("player_control_lease"), data.Int("control_return_team"),
+                                       std::move(suspended), error, std::move(equipment))) return false;
     CSnapshotReader runtime(data.Node("runtime"));
     if (!mob->RestoreRuntimeSnapshot(runtime, data.UInt32("runtime_version", 1), error)) return false;
+    if (dynamic_cast<CTitanFlower*>(mob) && runtime.Has("forge_cooldown_timer"))
+        server.MergeLegacyTitanForgeCooldownForRestore(runtime.Float("forge_cooldown_timer"));
     if (auto* hornet = dynamic_cast<IHornetMob*>(mob); hornet && !runtime.Has("special_actions"))
     {
         CSnapshotReader controller(data.Node("controller"));
@@ -1648,6 +1702,33 @@ bool RestoreMobState(CServer& server, CGameWorld& world, const json_t* record, s
     }
 
     mob->ClearStatesForRestore();
+    // 旧快照只保存生效后的阵营/限制值，先还原已知旧来源，再附加状态；新格式独立保存原始基线。
+    const CSnapshotReader common(record_reader.Node("common"));
+    if (!common.Has("base_team"))
+        if (const auto* states = data.Node("states"); json_is_array(states))
+            for (size_t i = 0; i < json_array_size(states); ++i)
+            {
+                const CSnapshotReader state(json_array_get(states, i));
+                if (state.String("type") == "state.corruption")
+                { mob->SetTeam(state.Int("original_team", mob->BaseTeam())); break; }
+            }
+    if (auto* flower = dynamic_cast<CFlower*>(mob))
+    {
+        const CSnapshotReader saved_flower(data.Node("flower"));
+        const auto* slots = saved_flower.Node("slots");
+        if (const auto* states = data.Node("states"); json_is_array(states))
+            for (size_t i = 0; i < json_array_size(states); ++i)
+            {
+                const CSnapshotReader state(json_array_get(states, i));
+                const int index = state.Int("slot_index", -1);
+                if (state.String("type") != "state.ban_slot" || index < 0 || static_cast<size_t>(index) >= flower->GetSlots().size()) continue;
+                if (!CSnapshotReader(json_array_get(slots, index)).Has("policy_banned"))
+                {
+                    const auto* controller = world.GetController();
+                    flower->SetBanned(controller && controller->LocksPetalLoadout(), index);
+                }
+            }
+    }
     if (const json_t* states = data.Node("states"); json_is_array(states))
     {
         if (!CheckSnapshotArrayLimit(states, max_snapshot_states, "Mob state list", error)) return false;
@@ -1656,6 +1737,8 @@ bool RestoreMobState(CServer& server, CGameWorld& world, const json_t* record, s
         {
             std::unique_ptr<CState> state = RestoreState(*mob, json_array_get(states, i), error);
             if (!state) return false;
+            const bool legacy_rule = dynamic_cast<CNullificationState*>(state.get()) || dynamic_cast<CCorruptionState*>(state.get());
+            state->SetRuleManaged(CSnapshotReader(json_array_get(states, i)).Bool("rule_managed", legacy_rule));
             mob->AddState(std::move(state));
         }
     }
@@ -1677,16 +1760,25 @@ bool RestoreMobState(CServer& server, CGameWorld& world, const json_t* record, s
             if (account.empty()) continue;
             const float total_damage = std::clamp(entry.Float("total_damage"), 0.f, 1.e30f);
             const float reset_timer = std::clamp(entry.Float("reset_timer"), 0.f, 86400.f);
-            mob->GetDamageData().push_back({ account, total_damage, reset_timer, entry.String("progress_account") });
+            mob->GetDamageData().push_back({ account, total_damage, reset_timer, entry.String("progress_account"),
+                entry.String("inventory_account", entry.String("progress_account", account)) });
         }
     }
+    return true;
+}
+
+bool MigrateWorlds(std::uint32_t version, json_t* data, std::string& error)
+{
+    if (version != 1 || !json_is_array(data) || json_array_size(data) > max_snapshot_worlds)
+    { error = "无法迁移旧版世界快照"; return false; }
+    // 旧地形字段在世界构造阶段迁入 CWorldTerrain，新写入使用世界级记录。
     return true;
 }
 
 bool RestoreWorlds(CServer& server, const json_t* data, std::uint32_t version, ESnapshotRestorePhase phase,
                    std::string& error)
 {
-    if (version != 1)
+    if (version != 2)
     {
         error = "Unsupported worlds section version " + std::to_string(version);
         return false;
@@ -1742,6 +1834,21 @@ bool RestoreWorlds(CServer& server, const json_t* data, std::uint32_t version, E
         {
             world->ClearEntitiesForRestore();
             if (!world->ReloadMapForRestore(error)) return false;
+            if (world_reader.Has("terrain"))
+            {
+                CSnapshotReader terrain(world_reader.Node("terrain"));
+                if (!terrain.IsValid() || !world->Terrain().RestoreSnapshot(terrain, terrain.UInt32("version", 1), error) ||
+                    !world->Terrain().ResolveReferences(error)) return false;
+            }
+            else
+            {
+                // 旧存档将地形和墙板放在控制器内，恢复时迁入世界。
+                CSnapshotReader old_controller(world_reader.Node("controller"));
+                CSnapshotReader terrain(old_controller.Node("data"));
+                if (terrain.Has("terrain_dirty") || terrain.Has("wall_width"))
+                    if (!world->Terrain().RestoreSnapshot(terrain, 1, error) ||
+                        !world->Terrain().ResolveReferences(error)) return false;
+            }
             SWorldExtensionConfig config = map_declarations::ExtensionsForMap(world->GetMapPath());
             CSnapshotReader saved_controller(world_reader.Node("controller"));
             config.squads = saved_controller.String("type") != world_controller_keys::waiting;
@@ -1751,8 +1858,21 @@ bool RestoreWorlds(CServer& server, const json_t* data, std::uint32_t version, E
                 CSnapshotReader settings(world_reader.Node("extension_config"));
                 if (!settings.IsValid()) { error = "Invalid world extension configuration"; return false; }
                 config = {settings.Bool("squads"), settings.Bool("weather_visuals"), settings.Bool("weather_spawns")};
+                if (const auto* features = settings.Node("features"))
+                {
+                    if (!json_is_array(features) || json_array_size(features) > 64) { error = "Invalid world feature rules"; return false; }
+                    for (size_t i = 0; i < json_array_size(features); ++i)
+                    {
+                        CSnapshotReader feature(json_array_get(features, i));
+                        const auto key = feature.String("key"); const auto access = feature.Int("access", -1);
+                        if (key.empty() || key.size() > 64 || access < 0 || access > feature_access::all ||
+                            std::any_of(config.features.begin(), config.features.end(), [&](const auto& rule) { return rule.key == key; }))
+                        { error = "Invalid world feature policy"; return false; }
+                        config.features.push_back({key, feature.Bool("visible", true), static_cast<uint8_t>(access)});
+                    }
+                }
             }
-            // Recreate the scope even when restoring into the same world.
+            // 即使恢复到同一世界，也重建作用域。
             if (world->GameContext())
                 world->GameContext()->Extensions().DetachWorld({world->GetId(), world->GetInstanceGeneration()});
             world->ConfigureExtensions(config);
@@ -1843,16 +1963,23 @@ bool RestoreWorlds(CServer& server, const json_t* data, std::uint32_t version, E
     return true;
 }
 
-CJsonOwner CaptureProgressScope(const CPlayer& player, std::string& error)
+CJsonOwner CaptureProgressScope(const CPlayer& player, std::string& error, bool npc_inventory = false)
 {
     SPlayerAccount state;
-    if (!CAccountDataStore::CaptureSandboxAccount(player.GetProgressAccountName(), state))
+    if (!CAccountDataStore::CaptureSandboxAccount(npc_inventory ? player.GetInventoryAccountName() : player.GetProgressAccountName(), state))
     { error = "Missing isolated progress for " + player.GetAccountName(); return {}; }
     auto result = MakeJsonObject(); CSnapshotWriter writer(result.get());
-    writer.Field("world_id", player.ProgressWorld().id);
-    writer.UInt64("world_generation", player.ProgressWorld().generation);
+    const auto world = npc_inventory && player.GetWorld()
+        ? SWorldHandle{player.GetWorld()->GetId(), player.GetWorld()->GetInstanceGeneration()} : player.ProgressWorld();
+    writer.Field("world_id", world.id);
+    writer.Field("scope_key", npc_inventory ? player.GetInventoryAccountName() : player.GetProgressAccountName());
+    writer.UInt64("world_generation", world.generation);
     writer.Field("level", state.level); writer.Int64("exp", state.exp);
     writer.Field("talent_points", state.talent_points);
+    const auto economy_text = EconomyStateJson(state.economy);
+    CJsonOwner economy(json_loads(economy_text.c_str(), JSON_REJECT_DUPLICATES, nullptr));
+    if (!economy) { error = "Cannot capture progress request ledger"; return {}; }
+    writer.Node("economy", economy.release());
     auto items = [&](const char* key, const std::vector<SInventoryItem>& values) {
         auto array = MakeJsonArray();
         for (const auto& value : values)
@@ -1871,7 +1998,8 @@ CJsonOwner CaptureProgressScope(const CPlayer& player, std::string& error)
     return result;
 }
 
-bool RestoreProgressScope(CPlayer& player, CGameWorld* world, const CSnapshotReader& reader, std::string& error)
+bool RestoreProgressScope(CPlayer& player, CGameWorld* world, const CSnapshotReader& reader, std::string& error,
+                           bool npc_inventory = false)
 {
     const SWorldHandle scope{reader.UInt32("world_id"), reader.UInt64("world_generation")};
     if (!reader.IsValid() || !world || scope != SWorldHandle{world->GetId(), world->GetInstanceGeneration()})
@@ -1879,6 +2007,12 @@ bool RestoreProgressScope(CPlayer& player, CGameWorld* world, const CSnapshotRea
     SPlayerAccount state;
     state.level = reader.Int("level", -1); state.exp = reader.Int64("exp", -1);
     state.talent_points = reader.Int("talent_points", -1);
+    if (const auto* economy = reader.Node("economy"))
+    {
+        std::unique_ptr<char, decltype(&std::free)> text(json_dumps(economy, JSON_COMPACT), &std::free);
+        const auto value = text ? CJsonValue::Parse(text.get(), &error) : std::optional<CJsonValue>{};
+        if (!value || !ReadEconomyState(&*value, state.economy, &error)) return false;
+    }
     if (state.level < 1 || state.exp < 0 || state.talent_points < 0)
     { error = "Invalid isolated progress values"; return false; }
     auto triples = [&](const char* key, size_t limit, auto accept) {
@@ -1915,7 +2049,8 @@ bool RestoreProgressScope(CPlayer& player, CGameWorld* world, const CSnapshotRea
             state.codex.push_back({std::uint8_t(type), std::uint8_t(rarity), std::uint32_t(count)}); return true;
         }))
     { error = "Invalid isolated inventory/talent/codex state"; return false; }
-    return player.RestoreIsolatedProgress(scope, state);
+    return npc_inventory ? player.RestoreNpcInventory(state, reader.String("scope_key")) :
+        player.RestoreIsolatedProgress(scope, state, reader.String("scope_key"));
 }
 
 CJsonOwner CapturePlayers(CServer& server, std::string& error)
@@ -1932,8 +2067,16 @@ CJsonOwner CapturePlayers(CServer& server, std::string& error)
         CSnapshotWriter writer(value.get());
         writer.Field("player_id", player->GetId());
         writer.UInt64("session_generation", player->SessionGeneration());
+        writer.Field("auth_device_id", player->RecoveryDeviceId());
+        writer.UInt64("npc_inventory_epoch", player->NpcInventoryEpoch());
         writer.Field("name", player->GetName());
         writer.Field("account_name", player->GetAccountName());
+        if (player->HasNpcInventory() && player->GetEntity())
+        {
+            auto inventory = CaptureProgressScope(*player, error, true);
+            if (!inventory) return {};
+            writer.Node("npc_inventory", inventory.release());
+        }
         if (player->HasIsolatedProgress())
         {
             auto progress = CaptureProgressScope(*player, error);
@@ -2021,6 +2164,14 @@ bool RestorePlayers(CServer& server, const json_t* data, std::uint32_t version, 
             if (reader.Has("session_generation") && !player->RestoreSessionGeneration(reader.UInt64("session_generation")))
             { error = "Invalid player session generation"; return false; }
             player->Authenticate(account_name);
+            const auto auth_device_id = reader.String("auth_device_id");
+            if (!auth_device_id.empty() && (auth_device_id.size() != 32 ||
+                !std::all_of(auth_device_id.begin(), auth_device_id.end(), [](char c) {
+                    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+                }))) { error = "Invalid player recovery device identity"; return false; }
+            player->SetRecoveryDeviceId(auth_device_id);
+            if (!player->RestoreNpcInventoryEpoch(reader.UInt64("npc_inventory_epoch")))
+            { error = "Invalid NPC inventory epoch"; return false; }
 
             CGameWorld* world = server.FindWorldById(reader.UInt32("world_id"));
             SEntityHandle entity_ref;
@@ -2037,9 +2188,12 @@ bool RestorePlayers(CServer& server, const json_t* data, std::uint32_t version, 
                 error = "Player " + account_name + " references a missing controlled entity";
                 return false;
             }
-            player->SetOwnedEntity(entity);
+            player->BindRestoredEntity(entity);
             if (reader.Has("isolated_progress") &&
                 !RestoreProgressScope(*player, world, CSnapshotReader(reader.Node("isolated_progress")), error)) return false;
+            if (reader.Has("npc_inventory") &&
+                !RestoreProgressScope(*player, world, CSnapshotReader(reader.Node("npc_inventory")), error, true)) return false;
+            if (!reader.Has("npc_inventory") && !player->EnsureNpcInventory(error)) return false;
             player->LoadSavedTalents(false);
             player->LoadCodex(CAccountDataStore::GetCodex(player->GetProgressAccountName()));
             player->RestoreTalentPoints(std::max(0, reader.Int("talent_points", player->GetTalentPoints())));
@@ -2195,8 +2349,7 @@ bool MigrateWeatherDiurnal(std::uint32_t from_version, json_t* data, std::string
         writer.Field("has_meteorology_override", false);
     }
 
-    // Versions 1..3 store a discrete from/to weather plus a transition factor; convert it
-    // to the per-type intensity model used by version 4.
+    // 将旧版离散天气及过渡比例转换为版本 4 的分天气强度。
     {
         CSnapshotReader reader(data);
         const int weather_from = reader.Int("weather_from", static_cast<int>(EWeatherType::Clear));
@@ -2297,8 +2450,7 @@ bool RestoreRng(CServer&, const json_t* data, std::uint32_t version, ESnapshotRe
         error = "Unsupported RNG section version " + std::to_string(version);
         return false;
     }
-    // Object factories consume randomness while reconstructing instances.
-    // Resume the saved stream only after those factories and reference repair.
+    // 工厂重建会消耗随机数，待对象和引用恢复后再恢复随机流。
     if (phase != ESnapshotRestorePhase::RebuildDerivedData) return true;
     CSnapshotReader reader(data);
     std::istringstream global_rng(reader.String("global_mt19937"));
@@ -2385,14 +2537,13 @@ void EnsureBuiltinSections()
 {
     static std::once_flag once;
     std::call_once(once, []() {
-        // Optional when reading pre-topology snapshots of static worlds.
         RegisterSnapshotSection({ "world_topology", 1, false, CaptureWorldTopology, RestoreWorldTopology, {} });
         RegisterSnapshotSection({ "rng", 1, true, CaptureRng, RestoreRng, {} });
         RegisterSnapshotSection(
             { "titan_forge_cooldowns", 1, false, CaptureTitanForgeCooldowns, RestoreTitanForgeCooldowns, {} });
         RegisterSnapshotSection(
             { "weather_diurnal", 4, false, {}, RestoreWeatherDiurnal, MigrateWeatherDiurnal, false });
-        RegisterSnapshotSection({ "worlds", 1, true, CaptureWorlds, RestoreWorlds, {} });
+        RegisterSnapshotSection({ "worlds", 2, true, CaptureWorlds, RestoreWorlds, MigrateWorlds });
         RegisterSnapshotSection({ "players", 2, true, CapturePlayers, RestorePlayers, MigratePlayers });
         RegisterSnapshotSection({ "extensions", 1, false, CaptureExtensions, RestoreExtensions, {} });
     });
@@ -2405,11 +2556,7 @@ bool IsKnownEntitySnapshotKind(std::string_view kind)
            kind == "pollen_projectile" || kind == "chain";
 }
 
-// Validate the shape and identities of the destructive sections before the
-// first restore phase clears live worlds or players.  The phase callbacks
-// still validate their semantic fields, but malformed top-level data must not
-// be allowed to leave a server half-restored merely because a later entry was
-// bad.
+// 破坏性恢复前先验证分节结构和身份，避免后续坏记录使服务器只恢复一半。
 bool ValidateSnapshotStructure(CServer& server, const json_t* sections, std::string& error)
 {
     std::unordered_map<std::uint32_t, std::string> topology_maps;
@@ -2543,7 +2690,7 @@ bool ValidateSnapshotStructure(CServer& server, const json_t* sections, std::str
     }
     return true;
 }
-} // namespace
+}
 
 bool RegisterSnapshotSection(SSnapshotSectionCodec codec, std::string* error)
 {
@@ -2569,7 +2716,8 @@ bool CHotReloadSnapshotService::Capture(CServer& server, const std::filesystem::
     if (server.GetWorldModule() && server.GetWorldModule()->IsSimulationActive())
     { error = "Cannot capture an incomplete world simulation frame"; return false; }
     for (CGameWorld* world : server.GetWorlds())
-        if (world && world->IsTransitionActive()) { error = "Cannot capture a transition in progress"; return false; }
+        if (world && (world->IsTransitionActive() || world->IsTicking() || world->IsCombatEventActive()))
+        { error = "Cannot capture a transition or simulation in progress"; return false; }
     for (CGameWorld* world : server.GetWorlds())
         if (world) world->FlushEntityRemovals();
     std::string account_error;
@@ -2610,11 +2758,7 @@ bool CHotReloadSnapshotService::Capture(CServer& server, const std::filesystem::
 
 bool CHotReloadSnapshotService::Restore(CServer& server, const std::filesystem::path& path, std::string& error)
 {
-    // Restore is destructive: CreateObjects clears live entity/player storage.
-    // Keep one in-process rollback snapshot so a semantic failure in a later
-    // phase cannot strand the server in a half-restored state.  The guard
-    // prevents the rollback restore itself from recursively creating another
-    // backup of the already-mutated state.
+    // 清空实体/玩家前保存回滚快照；回滚自身不得再为已损坏的中间状态递归备份。
     static thread_local bool rollback_in_progress = false;
     std::filesystem::path rollback_path;
     bool rollback_ready = false;
@@ -2707,6 +2851,7 @@ bool CHotReloadSnapshotService::Restore(CServer& server, const std::filesystem::
     }
 
     server.SetTickForRestore(root_reader.UInt64("tick"));
+    server.Extensions().BeginRestore();
 
     constexpr std::array phases = {
         ESnapshotRestorePhase::CreateObjects,      ESnapshotRestorePhase::RestoreState,
@@ -2749,6 +2894,7 @@ bool CHotReloadSnapshotService::Restore(CServer& server, const std::filesystem::
         }
     }
 
+    server.Extensions().RefreshAllWorlds();
     if (rollback_ready)
     {
         std::error_code cleanup_error;

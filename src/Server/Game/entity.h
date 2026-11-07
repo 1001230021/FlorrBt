@@ -2,6 +2,7 @@
 #include "../../Shared/shared.h"
 #include "../../Shared/math_types.h"
 #include "../../Shared/terrain_rules.h"
+#include "../../Shared/source_effects.h"
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -13,12 +14,8 @@
 class CGameWorld;
 class CGameContext;
 
-// A stable reference to an entity.  An id alone is not sufficient because
-// CGameWorld intentionally reuses ids after cleanup; generation closes that
-// hole.  The world instance fields additionally prevent a handle captured in
-// one room from resolving an entity in a different room after a transfer or
-// room recreation.  Zero world_instance_generation is accepted only for
-// legacy snapshots and is always resolved against the caller's world.
+// 实体 ID 可复用，必须用代数区分生命周期，并用世界实例身份隔离房间。
+// 仅旧快照允许缺少世界代数，此时只能在调用方所属世界解析。
 struct SEntityHandle
 {
     int id = -1;
@@ -29,9 +26,7 @@ struct SEntityHandle
     bool IsValid() const { return id >= 0 && generation != 0; }
     bool HasWorldIdentity() const { return world_instance_generation != 0; }
 
-    // Legacy snapshots have id + generation but no process-local world
-    // identity. They can still be compared safely after being restored into
-    // the current world; fully-qualified handles must match their world too.
+    // 旧句柄恢复到当前世界后可按 ID 与代数比较；完整句柄还必须匹配世界身份。
     bool RefersTo(const SEntityHandle& other) const
     {
         if (!IsValid() || !other.IsValid() || id != other.id || generation != other.generation) return false;
@@ -112,8 +107,6 @@ class CEntity
     bool IsEntityType(EEntityType type) const { return m_entity_type.Is(type); }
     bool IsProjectileType(EProjectileType type) const { return m_entity_type.Is(type); }
 
-    // Reference accessors keep both `entity->Pos().x = v` and `entity->Health()`
-    // styles uniform across the codebase; all state lives in the private section.
     florrbt::Vector2f& Pos() { return m_pos; }
     const florrbt::Vector2f& Pos() const { return m_pos; }
     florrbt::Vector2f& PrevPos() { return m_prev_pos; }
@@ -140,16 +133,20 @@ class CEntity
     const size_t& LargeSpatialIndex() const { return m_large_spatial_index; }
     std::uint64_t& ActiveTickMarker() { return m_active_tick_marker; }
     const std::uint64_t& ActiveTickMarker() const { return m_active_tick_marker; }
+    std::uint64_t BirthTickMarker() const { return m_birth_tick_marker; }
+    bool FrameUsesWorldTick() const { return m_frame_world_tick; }
     std::uint64_t& CollisionSyncMarker() { return m_collision_sync_marker; }
     const std::uint64_t& CollisionSyncMarker() const { return m_collision_sync_marker; }
     bool& IsMarkedForDes() { return m_is_marked_for_des; }
     const bool& IsMarkedForDes() const { return m_is_marked_for_des; }
     std::uint32_t& Tags() { return m_tags; }
     const std::uint32_t& Tags() const { return m_tags; }
-    int& Team() { return m_team; }
-    const int& Team() const { return m_team; }
+    const int& Team() const { return m_team.Value(); }
+    int BaseTeam() const { return m_team.Base(); }
+    void SetTeam(int team) { m_team.SetBase(team); }
+    void SetTeamOverride(std::uint64_t source, int team, int priority) { m_team.SetSource(source, team, priority); }
+    virtual void RevokeStateEffects(std::uint64_t source) { m_team.RemoveSource(source); }
     void SetTickHorizon(float value) { m_tick_horizon = value; }
-    // Non-const reference overload lets existing `TickHorizon() = v` calls work.
     float& TickHorizon() { return m_tick_horizon; }
     float& Mass() { return m_mass; }
     const float& Mass() const { return m_mass; }
@@ -164,10 +161,23 @@ class CEntity
     SEntityStats& EntityStats() { return m_entity_stats; }
     const SEntityStats& EntityStats() const { return m_entity_stats; }
 
-    virtual void Tick(float dt) = 0;
+    enum class ETickPhase : std::uint8_t { Begin, Intent, Forces, Motion, Constraints, Environment, Actions, Requests, Effects };
+    // 单体驱动与世界分阶段驱动共用入口，派生实体不能再次串联完整 Tick。
+    virtual void Tick(float dt) final;
+    void TickPhase(ETickPhase phase, float dt);
+    virtual void OnTickBegin(float) {}
+    virtual void OnTickIntent(float) {}
+    virtual void OnTickForces(float) {}
+    virtual void OnTickMotion(float) {}
+    virtual void OnTickConstraints(float) {}
+    virtual void OnTickEnvironment(float) {}
+    virtual void OnTickActions(float) {}
+    virtual void OnTickActionRequests(float) {}
+    virtual void OnTickEffects(float) {}
 
     bool IsCollision(const CEntity& other) const;
-    virtual void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type);
+    virtual void TakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type) final;
+    virtual void OnTakeDamage(float dmg, CEntity* attacker, EDamageType dmg_type);
     void OnCollision(CEntity* other);
     virtual const SEntityStats& GetEntityStats() const { return m_entity_stats; }
     virtual bool IsDead() const { return m_health <= 0.f; }
@@ -181,6 +191,8 @@ class CEntity
     virtual bool IsVisible() const { return !IsDead(); }
     virtual void OnBeforeRemoved(EEntityRemovalReason) {}
     virtual void CollectTransferDependencies(std::vector<SEntityHandle>&) const {}
+    // 结构依赖默认与宿主同帧活跃；拥有额外槽位部件的实体可扩展此列表。
+    virtual void CollectTickDependencies(std::vector<SEntityHandle>& output) const { CollectTransferDependencies(output); }
     virtual void RemapTransferredReferences(TEntityHandleRemap) noexcept {}
     virtual void OnWorldTransferCommitted() {}
     void MarkForDestroy(EEntityRemovalReason reason = EEntityRemovalReason::Despawned);
@@ -226,11 +238,13 @@ class CEntity
     size_t m_conditional_tick_index = (std::numeric_limits<size_t>::max)();
     size_t m_large_spatial_index = (std::numeric_limits<size_t>::max)();
     std::uint64_t m_active_tick_marker = 0;
+    std::uint64_t m_birth_tick_marker = 0;
+    bool m_frame_world_tick = true;
     std::uint64_t m_collision_sync_marker = 0;
     bool m_is_marked_for_des = false;
     std::uint32_t m_tags = 0;
 
-    int m_team = 0;
+    CSourcedValue<int> m_team;
     float m_mass = 0.f;
     float m_health = 1.f;
     float m_mana = 0.f;

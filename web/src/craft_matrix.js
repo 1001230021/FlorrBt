@@ -1,5 +1,4 @@
-// Retained cells and viewport-local card preparation. Inventory changes update
-// counts, not hundreds of SVG/name nodes; offscreen cards wait until needed.
+// 复用合成格，仅更新数量；视口外卡片延迟创建，避免反复生成 SVG 和名称节点。
 import { bindTouchLongPress } from "./touch_gestures.js";
 
 export function createCraftMatrix({ root, createStack, visualKey, describe, formatCount,
@@ -72,8 +71,7 @@ export function createCraftMatrix({ root, createStack, visualKey, describe, form
     if (!previous || previous.count !== item.count || previous.name !== item.name || previous.forge !== item.forge)
       record.title = item.baseCount > 0 ? describe(item) : "";
     if (item.count > 0) {
-      // Existing visible cards patch synchronously, so selection counts and
-      // incoming authoritative inventory updates never lag behind input.
+      // 已显示卡片同步更新，避免选择数量落后于输入及权威背包。
       if (record.stack && record.visible && isOpen()) renderCard(record);
       else queue(record);
     } else {
@@ -86,7 +84,7 @@ export function createCraftMatrix({ root, createStack, visualKey, describe, form
           record.vanishing = true;
           vanish(stack, { durationMs: 280, onFinish: () => {
             stack.remove();
-            // A late fade completion must not erase a replenished/new card.
+            // 旧淡出回调不能删除新补入的卡片。
             if (record.stack === stack) {
               record.stack = record.badge = null;
               record.vanishing = false;
@@ -119,9 +117,7 @@ export function createCraftMatrix({ root, createStack, visualKey, describe, form
         cell.onpointerdown = event => {
           if (event.button !== undefined && event.button !== 0) return;
           if (event.pointerType === "touch") {
-            // Keep the list's native vertical scrolling available. The
-            // long-press recognizer below will still consume a stationary
-            // touch and add the whole available stack.
+            // 保留纵向滚动；静止长按仍可一次选中整堆。
             event.stopPropagation();
             return;
           }
@@ -137,7 +133,7 @@ export function createCraftMatrix({ root, createStack, visualKey, describe, form
           const item = record.item;
           if (item?.lit && item.count > 0) onLongPress(item);
         });
-        // Focusing an offscreen cell via keyboard must prepare it as well.
+        // 键盘聚焦到屏外格时同样准备卡片。
         cell.addEventListener("focus", () => { record.visible = true; renderCard(record); });
         observer?.observe(cell);
       }
@@ -146,8 +142,7 @@ export function createCraftMatrix({ root, createStack, visualKey, describe, form
     for (const [key, record] of records) if (!live.has(key)) {
       observer?.unobserve(record.cell); pending.delete(record); record.cell.remove(); records.delete(key);
     }
-    // Do not append every existing child: even an unchanged append invalidates
-    // grid layout and forces repaint of the entire scrolling matrix.
+    // 不重复追加已有节点，避免触发整个矩阵布局和重绘。
     let cursor = matrix.firstElementChild;
     for (const cell of ordered) {
       if (cell === cursor) cursor = cursor.nextElementSibling;

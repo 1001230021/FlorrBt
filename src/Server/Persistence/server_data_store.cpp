@@ -83,6 +83,6 @@ class CServerDataStore final : public IServerDataStore
     bool m_unique_petals_initialized = false;
     bool m_initialized = false;
 };
-} // namespace
+}
 
 std::unique_ptr<IServerDataStore> CreateServerDataStore() { return std::make_unique<CServerDataStore>(); }

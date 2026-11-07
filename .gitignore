@@ -372,6 +372,7 @@ FlorrBt.Dependencies.local.props
 /dependencies/
 data/server.cfg
 deploy/windows-web/web.env.ps1
+deploy/windows/account_links.ps1
 .env
 .env.*
 !.env.example

@@ -50,8 +50,7 @@ export function collectSceneRenderPasses({
     }
 
     if (isDropEntity(snap.entityType) || entityHasState(snap, stateDigging)) {
-      // Loose cards lie on the terrain, not on top of mobs whose IDs happen
-      // to sort earlier. Their fade/rotation stays in this same layer.
+      // 掉落卡片固定在地形层，淡出和旋转不因实体 ID 排序越过生物。
       passes.ground.push(entity);
     } else if (snap.entityType === chainEntityType) {
       passes.underlay.push(entity);

@@ -16,10 +16,13 @@
 #include <vector>
 
 class CEntity;
+class CPetalSlot;
+class IGameController;
 class CGameContext;
 class CGameWorld;
 class CFlower;
 class CPlayerFlower;
+class CMobBase;
 class ITalent;
 struct SCraftResult;
 struct STalentContext;
@@ -58,21 +61,20 @@ class CPlayer
     void ApplySavedProgress();
     void LoadSavedTalents(bool refresh_effects = true);
     void LoadSavedSlots(CFlower* target = nullptr);
-    // Rebuild the runtime loadout from the account after a controller has
-    // temporarily replaced or stripped the player's slots (for example, a
-    // PVP/EOU room). Account slots remain the source of truth.
+    // 退出临时装备规则后，从账户恢复布局；模式提供的卡片不能进入背包。
     void RestoreSavedLoadout(CPlayerFlower* target = nullptr);
     bool TryEquipPetal(uint8_t slot_index, uint8_t petal_type, uint8_t rarity);
     bool TryUnequipPetal(uint8_t slot_index);
+    EEconomyOutcome TryApplyLoadout(const std::vector<SInventoryItem>& primary,
+                                   const std::vector<SInventoryItem>& secondary,
+                                   std::function<void()>* deferred_runtime = nullptr);
     bool TryCraftPetal(uint8_t petal_type, uint8_t rarity, uint32_t count, SCraftResult* result = nullptr);
     bool ObtainPetalCard(uint8_t petal_type, uint8_t rarity, uint32_t count = 1, bool add_to_inventory = true);
     bool AddTalent(ETalentId id, ERarity rarity, int rank = 0);
     bool RemoveTalent(ETalentId id, ERarity rarity, int rank = 0);
     void AddTalentPoints(int amount);
     int GetTalentPoints() const { return m_talent_points; }
-    // Hot-reload restores the in-memory value captured with the session.  It
-    // deliberately does not write the account store: persistence remains the
-    // responsibility of the normal talent mutation paths.
+    // 热重载只恢复会话值，不通过该入口改写账户。
     void RestoreTalentPoints(int points) { m_talent_points = std::max(0, points); }
     const std::vector<ITalent*>& GetTalents() const { return m_talents; }
     bool HasTalent(const ITalent* talent) const;
@@ -85,17 +87,16 @@ class CPlayer
     bool ConsumeUseNewPlayerSpawn();
 
     void SetOwnedEntity(CEntity* entity);
+    void BindRestoredEntity(CEntity* entity);
+    bool EnsureNpcInventory(std::string& error);
     bool IsTransitionActive() const { return m_transition_active; }
-    // Used by world restore/destruction before entity storage is replaced.
-    // Unlike SetOwnedEntity(nullptr), this also clears a stale world/handle
-    // pair when the old entity is already missing.
+    // 世界替换或销毁前撤销绑定；实体已消失时也要清除旧世界和句柄。
     void ClearOwnedEntityFromWorld(CGameWorld* world);
     CEntity* GetEntity() const;
     CGameWorld* GetWorld() const { return m_p_world; }
     CGameContext* GameContext() const;
     void Authenticate(const std::string& account_name);
 
-    // Bestiary: record a mob defeat and read the runtime codex.
     void RecordCodexKill(uint8_t mob_type, uint8_t rarity);
     const std::unordered_map<uint32_t, uint32_t>& GetCodex() const { return m_codex; }
     void LoadCodex(const std::vector<SAccountCodexEntry>& entries);
@@ -103,6 +104,8 @@ class CPlayer
     sf::TcpSocket& GetSocket() { return m_socket; }
     uint32_t GetId() const { return m_player_id; }
     std::uint64_t SessionGeneration() const { return m_session_generation; }
+    const std::string& RecoveryDeviceId() const { return m_recovery_device_id; }
+    void SetRecoveryDeviceId(std::string device) { m_recovery_device_id = std::move(device); }
     SPlayerSessionRef SessionRef() const { return {m_player_id, m_session_generation, m_account_name}; }
     bool MatchesSession(const SPlayerSessionRef& reference) const
     { return m_authenticated && m_player_id == reference.id && m_session_generation == reference.generation && m_account_name == reference.account; }
@@ -116,13 +119,21 @@ class CPlayer
     }
     const std::string&     GetName() const { return m_name; }
     const std::string& GetAccountName() const { return m_account_name; }
-    // Stable login identity is separate from the current gameplay data scope.
+    // 登录身份固定，玩法进度作用域独立切换。
     const std::string& GetProgressAccountName() const
     { return m_progress_account.empty() ? m_account_name : m_progress_account; }
     bool HasIsolatedProgress() const { return !m_progress_account.empty(); }
     SWorldHandle ProgressWorld() const { return m_progress_world; }
     bool SynchronizeGameplayScope(CGameWorld& world, CEntity* departing = nullptr);
-    bool RestoreIsolatedProgress(SWorldHandle world, const SPlayerAccount& state);
+    bool RestoreIsolatedProgress(SWorldHandle world, const SPlayerAccount& state, const std::string& scope_key = {});
+    const std::string& GetInventoryAccountName() const
+    { return m_npc_inventory_account.empty() ? GetProgressAccountName() : m_npc_inventory_account; }
+    bool HasNpcInventory() const { return !m_npc_inventory_account.empty(); }
+    bool HasIsolatedInventory() const { return HasNpcInventory() || HasIsolatedProgress(); }
+    std::uint64_t NpcInventoryEpoch() const { return m_npc_inventory_epoch; }
+    bool RestoreNpcInventoryEpoch(std::uint64_t epoch);
+    bool RestoreNpcInventory(const SPlayerAccount& state, const std::string& scope_key);
+    void ClearNpcInventory();
     const std::string& GetRemoteAddress() const { return m_remote_address; }
     bool HasOwnedEntity() const { return m_p_world != nullptr && m_entity_ref.IsValid(); }
     bool NeedsRespawn() const { return m_needs_respawn; }
@@ -149,10 +160,35 @@ class CPlayer
   private:
     friend class CWorldTransfer;
     friend class CGameWorld;
+    friend class CPlayerLifecycleService;
+    struct SPreparedGameplayScope
+    {
+        explicit SPreparedGameplayScope(CPlayer& owner);
+        ~SPreparedGameplayScope();
+        void Commit(CEntity* departing = nullptr);
+        CPlayer& owner;
+        bool changes = false, published = false, leaving_isolated = false, created_account = false;
+        std::string account;
+        SWorldHandle world;
+        std::vector<ITalent*> talents;
+        std::unordered_map<uint32_t, uint32_t> codex;
+        int talent_points = 0, level = 1, capacity = 0;
+        std::int64_t exp = 0;
+        CPlayerFlower* flower = nullptr;
+        std::vector<CPetalSlot> slots;
+    };
+    std::unique_ptr<SPreparedGameplayScope> PrepareGameplayScope(CGameWorld& world, const IGameController* rules,
+                                                               CEntity* target, std::string& error);
     void CommitOwnedEntity(CEntity* entity);
+    bool PrepareNpcInventory(const CMobBase& target, std::string& key, std::uint64_t& epoch, std::string& error) const;
+    void CommitNpcInventory(std::string key, std::uint64_t epoch);
+    std::string NpcInventoryPrefix(std::uint64_t epoch) const;
     bool m_transition_active = false;
     inline static std::atomic<std::uint64_t> s_next_session_generation{0};
     std::uint64_t m_session_generation = ++s_next_session_generation;
+    std::string m_recovery_device_id;
+    std::string m_npc_inventory_account;
+    std::uint64_t m_npc_inventory_epoch = 0;
     sf::TcpSocket m_socket;
     CGameWorld* m_p_world = nullptr;
     SEntityHandle m_entity_ref;
@@ -175,11 +211,11 @@ class CPlayer
     float m_second_chance_cooldown = 0.f;
     bool m_use_new_player_spawn = false;
     std::vector<ITalent*> m_talents;
-    // Bestiary runtime cache: key = (mob_type << 8) | rarity, value = kill count.
+    // 键为生物类型与稀有度的组合，值为击杀数。
     std::unordered_map<uint32_t, uint32_t> m_codex;
 
     void SaveTalentState() const;
     void NormalizeTalentOrder();
     void RefreshScopedProgress(CPlayerFlower* flower);
-    std::string ProgressKey(SWorldHandle world) const;
+    std::string ProgressPrefix(SWorldHandle world) const;
 };

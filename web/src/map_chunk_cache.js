@@ -11,8 +11,7 @@ const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bot
 export function getMapRasterProfile(scale, dpr, tileWidth, tileHeight, mapExtent = 128) {
   const requested = Math.max(1 / 256, Math.min(32, (scale || 1) * (dpr || 1)));
   const density = 2 ** Math.ceil(Math.log2(requested));
-  // Aligned power-of-two regions: old parents/children remain useful when
-  // zoom crosses a resolution threshold. Sub-tile regions support closeups.
+  // 区域按二次幂对齐，跨缩放档位时可复用父子块；小于瓦片的区域用于近景。
   const span = Math.max(1 / 64, Math.min(128, 2 ** Math.floor(Math.log2(Math.max(1, mapExtent))),
     2 ** Math.floor(Math.log2(chunkPixelLimit / (Math.max(tileWidth, tileHeight) * density)))));
   return { density, span, key: `${span}:${density}`, label: `${span}@${density}x` };
@@ -30,9 +29,7 @@ function expand(bounds, amount) {
     top: bounds.top - amount, bottom: bounds.bottom + amount };
 }
 
-// A chunk is a complete stack within one render pass. Transparent passes are
-// drawn into their own surface and replace coverage instead of alpha-stacking
-// the overview, parent and child rasters of the same translucent pixels.
+// 每块包含当前绘制通道的完整图层。透明通道独立合成并替换覆盖，避免总览和父子块重复叠加透明度。
 export function createMapChunkCache({ map, state, worldScale, worldToScreen,
   createCanvas, drawTile, isActive, requestDraw, budget = sceneRasterBudget,
   clock = () => performance.now(), yieldWork = () => new Promise(resolve => setTimeout(resolve, 0)),
@@ -41,6 +38,7 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
   let wanted = new Map(), queue = [], busy = false, scheduled = false, disposed = false;
   let revision = 0, previousCamera = null, inFlight = null;
   let planKey = "", queueDirty = false;
+  let directCanvas = null;
   map.chunkCache = entries;
   map.chunkBuildQueue = queue;
 
@@ -69,8 +67,7 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
     const y0 = Math.floor(ahead.top / h), y1 = Math.ceil(ahead.bottom / h);
     const nextKey = `${profile.key}:${revision}:${x0}:${x1}:${y0}:${y1}:` +
       `${Math.floor(visible.left / w)}:${Math.ceil(visible.right / w)}:${Math.floor(visible.top / h)}:${Math.ceil(visible.bottom / h)}`;
-    // Most frames only move within the same cells. Keep their descriptors,
-    // priorities and queue instead of allocating and sorting them at 120Hz.
+    // 相机未跨块时复用描述、优先级和队列，避免每帧分配排序。
     if (nextKey === planKey) {
       if (queueDirty) refreshQueue();
       return visible;
@@ -166,33 +163,42 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
     });
   }
 
-  function drawDirect(ctx, job, dpr) {
-    ctx.save();
-    ctx.fillStyle = map.backgroundColor || "#1ea761";
-    const from = worldToScreen({ x: job.left, y: job.top });
-    const to = worldToScreen({ x: job.right, y: job.bottom });
-    const coverage = pixelCoverage(from, to, dpr);
-    if (transparent) ctx.clearRect(coverage.x, coverage.y, coverage.width, coverage.height);
-    else ctx.fillRect(from.x - 1, from.y - 1,
-      (job.right - job.left) * worldScale() + 2, (job.bottom - job.top) * worldScale() + 2);
+  function buildDirect(job) {
+    // 缺失块也须按世界坐标采样。直接缩放 SVG 的边缘抗锯齿会留下缝隙，整数裁剪无法补齐；
+    // 因此复用有界临时画布，并绘入真实相邻像素。
+    const { density } = job.profile;
+    const width = Math.round((job.right - job.left) * density);
+    const height = Math.round((job.bottom - job.top) * density);
+    if (!directCanvas) directCanvas = createCanvas(width + gutter * 2, height + gutter * 2);
+    if (directCanvas.width !== width + gutter * 2) directCanvas.width = width + gutter * 2;
+    if (directCanvas.height !== height + gutter * 2) directCanvas.height = height + gutter * 2;
+    const context = directCanvas.getContext("2d");
+    if (!context) return null;
+    context.globalAlpha = 1;
+    if (transparent) context.clearRect(0, 0, directCanvas.width, directCanvas.height);
+    else {
+      context.fillStyle = map.backgroundColor || "#1ea761";
+      context.fillRect(0, 0, directCanvas.width, directCanvas.height);
+    }
+    const tw = map.tileWidth, th = map.tileHeight;
+    const x0 = Math.floor((job.left - gutter / density) / tw);
+    const y0 = Math.floor((job.top - gutter / density) / th);
+    const x1 = Math.ceil((job.right + gutter / density) / tw);
+    const y1 = Math.ceil((job.bottom + gutter / density) / th);
     for (const layer of layers) {
-      if (layer.visible === false || !layer.tiles?.length) continue;
-      ctx.globalAlpha = layer.opacity ?? 1;
-      for (let ty = Math.floor(job.top / map.tileHeight); ty < Math.ceil(job.bottom / map.tileHeight); ty++) {
-        for (let tx = Math.floor(job.left / map.tileWidth); tx < Math.ceil(job.right / map.tileWidth); tx++) {
+      if (layer.visible === false || !layer.tiles?.length || !(layer.width > 0 && layer.height > 0)) continue;
+      context.globalAlpha = layer.opacity ?? 1;
+      for (let ty = y0; ty < y1; ty++) {
+        for (let tx = x0; tx < x1; tx++) {
           const sy = Math.max(0, Math.min(layer.height - 1, ty)), sx = Math.max(0, Math.min(layer.width - 1, tx));
           const raw = layer.tiles[sy * layer.width + sx] >>> 0, image = map.tileImages.get(raw & 0x1fffffff);
           if (!image?.complete || !image.naturalWidth || image.failed) continue;
-          const a = worldToScreen({ x: tx * map.tileWidth, y: ty * map.tileHeight });
-          const b = worldToScreen({ x: (tx + 1) * map.tileWidth, y: (ty + 1) * map.tileHeight });
-          const coverage = pixelCoverage(a, b, dpr);
-          ctx.save(); ctx.beginPath(); ctx.rect(coverage.x, coverage.y, coverage.width, coverage.height); ctx.clip();
-          drawTile(image, a, b.x - a.x, b.y - a.y, raw, ctx);
-          ctx.restore();
+          drawTile(image, { x: (tx * tw - job.left) * density + gutter,
+            y: (ty * th - job.top) * density + gutter }, tw * density, th * density, raw, context);
         }
       }
     }
-    ctx.restore();
+    return { ...job, canvas: directCanvas, pixelWidth: width, pixelHeight: height };
   }
 
   function draw(ctx, now, prepare = true) {
@@ -204,6 +210,7 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
     const contains = (entry, job) => entry.left <= job.left && entry.top <= job.top &&
       entry.right >= job.right && entry.bottom >= job.bottom;
     const drawEntry = entry => {
+      if (!entry) return;
       budget.touch(entry);
       const from = worldToScreen({ x: entry.left, y: entry.top });
       const to = worldToScreen({ x: entry.right, y: entry.bottom });
@@ -227,34 +234,28 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
       if (exact) {
         drawEntry(exact);
       } else {
-        // A settled view only needs exact lookups. Old-level coverage is
-        // searched/sorted lazily once, only on frames with cache misses.
+        // 仅缓存缺失时搜索并排序旧档位覆盖，稳定视野只做精确查找。
         candidates ??= [...entries.values()].filter(entry => overlaps(entry, visible))
           .sort((a, b) => a.profile.density - b.profile.density);
         const parent = candidates.findLast(entry => contains(entry, job));
         if (parent) drawEntry(parent);
-        // Finer children may already cover a new, coarser cell after zooming
-        // out. Preserve them until the replacement is complete.
+        // 缩小时先保留已覆盖该区域的精细子块，待粗粒度替换块完成。
         const children = candidates.filter(entry => overlaps(entry, job) &&
           !contains(entry, job) && (!parent || entry.profile.density > parent.profile.density));
         if (!parent && job.profile.span <= 4) {
-          // Extreme DPI can exceed the cache budget. Use decoded vectors for
-          // close-up misses; never stretch a tiny overview or allocate huge
-          // canvases. Far cells keep the overview/previous level.
-          drawDirect(ctx, job, dpr);
+          // 极高 DPI 可能超过预算；近景缺失块使用不超过 1028px 的临时画布，远景沿用旧档位等待异步完成。
+          drawEntry(buildDirect(job));
         }
         for (const child of children) drawEntry(child);
       }
       ctx.restore();
     }
-    // Only the chosen coverage is pinned. Pinning all overlapping old levels
-    // forever would prevent a higher-quality replacement from being admitted.
+    // 只固定选中的覆盖块，避免旧档位长期占满预算而无法装入清晰替换块。
     if (prepare) pump();
   }
 
   async function warm() {
-    // The owner/camera may arrive in a newer snapshot during preparation.
-    // Re-check once before publishing instead of warming only the old view.
+    // 准备期间相机可能已随新快照移动，发布前再次检查当前视野。
     for (let pass = 0; pass < 2; pass++) {
       plan(clock());
       for (const job of [...wanted.values()].filter(job => job.visible && !entries.has(job.key))) {
@@ -273,7 +274,7 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
     const tile = { left: col * map.tileWidth, top: row * map.tileHeight,
       right: (col + 1) * map.tileWidth, bottom: (row + 1) * map.tileHeight };
     for (const entry of entries.values()) {
-      // Include neighbours that carry this tile in their sampling gutter.
+      // 相邻块的采样边缘也可能包含该瓦片，需要一并失效。
       if (overlaps(expand(entry, gutter / entry.profile.density), tile)) budget.remove(entry);
     }
   }
@@ -281,6 +282,8 @@ export function createMapChunkCache({ map, state, worldScale, worldToScreen,
   function dispose() {
     disposed = true; revision += 1; queue.length = 0; wanted.clear();
     for (const entry of entries.values()) budget.remove(entry);
+    if (directCanvas) directCanvas.width = directCanvas.height = 0;
+    directCanvas = null;
   }
 
   return { draw, warm, invalidate, dispose };

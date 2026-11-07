@@ -1,6 +1,4 @@
 #include "drop.h"
-#include "../../Persistence/unique_petal_registry.h"
-#include "../../server.h"
 #include "../gameworld.h"
 #include "../gamecontext.h"
 #include "../player.h"
@@ -25,7 +23,7 @@ float InitialDropMergeTimer(florrbt::Vector2f pos, int owner_id)
     return interval *
            std::clamp(phase, game_config::default_drop_merge_phase_min, game_config::default_drop_merge_phase_max);
 }
-} // namespace
+}
 
 CDrop::CDrop() : CDrop(nullptr, { 0.f, 0.f }, PetalType::None, ERarity::Null, drop_owner_all, 0.f, 0) {}
 
@@ -44,7 +42,7 @@ CDrop::CDrop(CGameWorld* world, florrbt::Vector2f pos, PetalType type, ERarity r
             if (player && player->IsAuthenticated() && player->GetId() == static_cast<uint32_t>(m_owner_id))
             {
                 m_owner_account = player->GetAccountName();
-                m_owner_progress_account = player->GetProgressAccountName();
+                m_owner_inventory_account = player->GetInventoryAccountName();
                 break;
             }
 }
@@ -57,25 +55,12 @@ void CDrop::BeginInertiaDrop(florrbt::Vector2f center_start, florrbt::Vector2f c
     m_inertia_target = Pos();
     m_inertia_center_start = center_start;
     m_inertia_center_velocity = center_velocity;
-    // Un-pickable the whole window.
     m_unable_picked_timer = std::max(m_unable_picked_timer, m_inertia_duration);
 }
 
-void CDrop::Tick(float dt)
+void CDrop::OnTickMotion(float dt)
 {
-    if (IsMarkedForDes()) return;
-
-    if (m_type == PetalType::None || m_rarity == ERarity::Null || m_stack_num == 0)
-    {
-        MarkForDestroy(EEntityRemovalReason::Despawned);
-        return;
-    }
-
-    if (m_unable_picked_timer > 0.f) m_unable_picked_timer = std::max(0.f, m_unable_picked_timer - dt);
-
-    // Inertia gliding: the center drifts with the inherited velocity while it
-    // decays linearly to zero; the drop lerps from that moving center to its
-    // final spot over the same window.
+    // 继承速度按时间衰减，掉落物同时从移动中心平滑归位。
     if (m_inertia_active)
     {
         m_inertia_elapsed = std::min(m_inertia_duration, m_inertia_elapsed + dt);
@@ -87,7 +72,7 @@ void CDrop::Tick(float dt)
         const float drift_y = m_inertia_center_velocity.y * (drift_t - drift_t * drift_t / (2.f * tau));
         const float center_x = m_inertia_center_start.x + drift_x;
         const float center_y = m_inertia_center_start.y + drift_y;
-        const float ease = t * t * (3.f - 2.f * t); // smoothstep
+        const float ease = t * t * (3.f - 2.f * t);
         Pos() = { center_x + (m_inertia_target.x - center_x) * ease,
                   center_y + (m_inertia_target.y - center_y) * ease };
         PrevPos() = Pos();
@@ -98,6 +83,20 @@ void CDrop::Tick(float dt)
             m_inertia_active = false;
         }
     }
+}
+
+void CDrop::OnTickActions(float dt)
+{
+    if (IsMarkedForDes()) return;
+
+    if (m_type == PetalType::None || m_rarity == ERarity::Null || m_stack_num == 0)
+    {
+        MarkForDestroy(EEntityRemovalReason::Despawned);
+        return;
+    }
+
+    if (m_unable_picked_timer > 0.f) m_unable_picked_timer = std::max(0.f, m_unable_picked_timer - dt);
+
 
     if (m_timer <= 0.f)
     {
@@ -123,8 +122,8 @@ void CDrop::Tick(float dt)
 bool CDrop::IsOwnedBy(const CPlayer& player) const
 {
     return m_owner_id == drop_owner_all || (player.IsAuthenticated() && !m_owner_account.empty() &&
-        m_owner_account == player.GetAccountName() && (m_owner_progress_account.empty() ?
-            !player.HasIsolatedProgress() : m_owner_progress_account == player.GetProgressAccountName()));
+        m_owner_account == player.GetAccountName() && (m_owner_inventory_account.empty() ?
+            !player.HasIsolatedInventory() : m_owner_inventory_account == player.GetInventoryAccountName()));
 }
 
 bool CDrop::CanBePickedUpBy(const CPlayer& player) const
@@ -139,11 +138,10 @@ bool CDrop::PickUpTo(CPlayer& player)
 {
     if (!CanBePickedUpBy(player)) return false;
 
-    if (m_rarity == ERarity::Unique && !player.HasIsolatedProgress())
+    if (m_rarity == ERarity::Unique && !player.HasIsolatedInventory())
     {
-        CServer* server = CServer::GetInstance();
-        IUniquePetalRegistry* registry = server ? server->GetUniquePetalRegistry() : nullptr;
-        if (!registry || !registry->GetUnique(m_type, 0, player.GetAccountName())) return false;
+        CGameContext* context = GameContext();
+        if (!context || !context->UniquePetals().ClaimUniquePetal(player, m_type)) return false;
 
         player.ObtainPetalCard(static_cast<uint8_t>(m_type), static_cast<uint8_t>(m_rarity), 1, false);
         MarkForDestroy(EEntityRemovalReason::Consumed);
@@ -152,12 +150,12 @@ bool CDrop::PickUpTo(CPlayer& player)
 
     if (!player.ObtainPetalCard(static_cast<uint8_t>(m_type), static_cast<uint8_t>(m_rarity), m_stack_num))
         return false;
-    if (CServer::MeetsPetalReportRarity(m_rarity, game_config::min_drop_report_rarity))
+    CGameContext* context = GameContext();
+    if (!player.HasIsolatedInventory() && context && context->Events().ShouldReportRarity(m_rarity, game_config::min_drop_report_rarity))
     {
         if (const CPetalPrototype* proto = FindPetalPrototype(m_type))
         {
-            if (CServer* server = CServer::GetInstance())
-                server->BroadcastPetalReport("found", m_rarity, proto->m_name, player.GetName());
+            context->Events().ReportPetal("found", m_rarity, proto->m_name, player.GetName());
         }
     }
     MarkForDestroy(EEntityRemovalReason::Consumed);
@@ -177,7 +175,7 @@ void CDrop::MergeNearbyDrops()
         if (other->m_timer <= 0.f || other->m_inertia_active || other->m_unable_picked_timer > 0.f) return;
         if ((m_owner_id == drop_owner_all) != (other->m_owner_id == drop_owner_all)) return;
         if (m_owner_id != drop_owner_all && (m_owner_account.empty() || m_owner_account != other->m_owner_account)) return;
-        if (m_owner_progress_account != other->m_owner_progress_account) return;
+        if (m_owner_inventory_account != other->m_owner_inventory_account) return;
         if (other->Id() <= Id()) return;
 
         uint16_t max_stack = std::numeric_limits<uint16_t>::max();

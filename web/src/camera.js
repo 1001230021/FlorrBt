@@ -3,10 +3,7 @@ import { normalizeViewZoomPercent } from "./client_config.js";
 import { clamp } from "./protocol.js";
 import { stepRenderZoom } from "./render_timing.js";
 
-// Pure camera/world-space math: view scaling, world<->screen transforms and
-// small easing helpers. No game imports — entity simulation lives in
-// sim_entities.js, the canvas backing store in viewport.js (re-exported here
-// so existing call sites keep working until they migrate).
+// 相机纯数学：缩放、坐标转换和缓动；模拟及画布尺寸分别由其他模块管理。
 export {
   maxRenderScale,
   minRenderScale,
@@ -39,9 +36,7 @@ export function lerpAngle(start, end, amount) {
 }
 
 export function screenViewRadius() {
-  // The view circle (radius = viewRadius) circumscribes the canvas rectangle:
-  // screen diagonal == circle diameter, so the server's snapshot circle covers
-  // every pixel on screen (no corner pop-in).
+  // 视野圆外接画布矩形，确保服务端快照覆盖屏幕四角。
   return Math.max(96, Math.hypot(state.canvasWidth, state.canvasHeight) / 2);
 }
 
@@ -58,15 +53,10 @@ export function updateViewZoom(dt) {
   state.renderViewZoomPercent = stepRenderZoom(state.renderViewZoomPercent, viewZoomPercent(), dt);
 }
 
-// The server radius describes the complete snapshot the client is allowed to
-// see. A lower client percentage shrinks the camera field of view, making the
-// same world units occupy more screen pixels. The authoritative server radius
-// remains untouched for networking, audio and missing-entity grace handling.
+// 客户端缩小视野只改变显示比例；网络、声音和实体离场宽限仍使用权威半径。
 export function effectiveViewRadius() {
   const serverRadius = Number(state.viewRadius);
   if (!Number.isFinite(serverRadius) || serverRadius <= 0) return 0;
-  // 100% is the normal view. Lower percentages show a smaller world radius,
-  // so flowers and other entities appear proportionally larger.
   const deathFocus = clamp(Number(state.deathViewFactor) || 1, 0.45, 1);
   const zoom = Number.isFinite(state.renderViewZoomPercent) ? state.renderViewZoomPercent : viewZoomPercent();
   return serverRadius * (zoom / 100) * deathFocus;
@@ -74,9 +64,7 @@ export function effectiveViewRadius() {
 
 let cachedScale = 1, cachedWidth, cachedHeight, cachedRadius, cachedZoom, cachedZoomTarget, cachedDeath;
 export function worldScale() {
-  // Thousands of transforms per frame share these exact camera inputs.
-  // Also key temporary debug render state, so restoring the game cannot
-  // accidentally reuse the observer's scale (no manual invalidation needed).
+  // 缓存键包含临时调试相机，避免回到游戏时复用观察者缩放。
   if (cachedWidth !== state.canvasWidth || cachedHeight !== state.canvasHeight ||
       cachedRadius !== state.viewRadius || cachedZoom !== state.renderViewZoomPercent ||
       cachedZoomTarget !== state.viewZoomPercent || cachedDeath !== state.deathViewFactor) {

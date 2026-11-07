@@ -1,6 +1,4 @@
-// UI coordinates measured inside the game area of the supplied florr clips
-// (1910 x 884, excluding browser chrome). These are presentation coordinates,
-// not camera/world zoom, DPR, server slots or gameplay constants.
+// 界面坐标基于参考游戏区域，不参与相机、像素比或服务器玩法常量。
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const number = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const rowWidth = (count, size, gap) => count * size + Math.max(0, count - 1) * gap;
@@ -26,8 +24,7 @@ export function calculateUiLayout({ width = 1910, height = 884, mobile = false,
   const toggleRoom = mobile ? 50 : 0;
   const available = Math.max(80, mobile ? width - safe.right - slotLeft - toggleRoom - 8 : usableW - 32 * s);
   const natural = Math.max(rowWidth(pCount, 77, 3), rowWidth(rCount, 55, 2));
-  // Keep every real slot. Only unusually long mobile rows scroll rather than
-  // making their touch targets disappear outside the viewport.
+  // 保留全部真实槽位，过长移动端行通过滚动访问。
   const slotScale = Math.max(mobile ? 26 / 77 : 32 / 77, Math.min(s, available / natural));
   const primary = 77 * slotScale, secondary = 55 * slotScale;
   const primaryGap = 3 * slotScale, secondaryGap = 2 * slotScale;
@@ -60,19 +57,18 @@ export function calculateUiLayout({ width = 1910, height = 884, mobile = false,
   return { width, height, mobile, scale, safe, top, quick, loadout, chat, minimap, fullMinimap,
     portraitOrigin: { x: safe.left, y: top.y + top.size + 20 * s },
     panel: { left: panelLeft, bottom: panelBottom, maxHeight: panelMaxHeight,
-      craftWidth: panelWidth(612), craftHeight: Math.min(698 * s, panelMaxHeight),
-      talentWidth: panelWidth(654), talentHeight: Math.min(654 * s, panelMaxHeight),
-      inventoryWidth: panelWidth(520), inventoryHeight: Math.min(640 * s, panelMaxHeight),
+      craftWidth: panelWidth(536), craftHeight: Math.min(596 * s, panelMaxHeight),
+      talentWidth: panelWidth(576), talentHeight: Math.min(576 * s, panelMaxHeight),
+      inventoryWidth: panelWidth(360), inventoryHeight: Math.min(520 * s, panelMaxHeight),
       top: top.y + top.size + 6 * s,
-      settingsWidth: Math.min(480 * s, usableW - 16 * s),
-      settingsHeight: Math.min(600 * s, usableH - top.size - 32 * s),
-      codexWidth: Math.min(760 * s, usableW - 16 * s),
-      codexHeight: Math.min(640 * s, usableH - top.size - 32 * s) },
+      settingsWidth: Math.min(400 * s, usableW - 16 * s),
+      settingsHeight: Math.min(520 * s, usableH - top.size - 32 * s),
+      codexWidth: Math.min(528 * s, usableW - 16 * s),
+      codexHeight: Math.min(520 * s, usableH - top.size - 32 * s) },
     actionBottom: mobile && width < height ? loadout.bottom + loadout.height + 58 * s : safe.bottom + 10,
   };
 }
 
-// Returns the actual canvas coordinates used by both owner and squad HUDs.
 export function getHudPortraitLayout(layout, memberIndex = -1) {
   const s = layout.scale, member = memberIndex >= 0;
   const centerY = layout.portraitOrigin.y + (member ? 132 + memberIndex * 62 : 32) * s;

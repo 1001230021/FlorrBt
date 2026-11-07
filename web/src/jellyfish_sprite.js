@@ -6,9 +6,7 @@ const JELLYFISH_VIEWBOX = 110;
 const JELLYFISH_SPRITE_SCALE = 4.8;
 const JELLY_CACHE = { started: false, body: null, tentacles: [] };
 
-// Jellyfish do not turn their body toward their movement target.  Keeping the
-// uploaded SVG at one world-facing angle also prevents server angle updates
-// from making the bell and tentacles snap while it changes targets.
+// 水母身体保持固定世界朝向，避免换目标时伞盖和触手突然转动。
 export function drawJellyfish(ctx, pos, radius, entityId, time) {
   const cache = jellyfishAsset();
   const spriteSize = Math.max(1, radius * JELLYFISH_SPRITE_SCALE);
@@ -47,9 +45,7 @@ function drawTentacles(ctx, tentacles, spriteSize, entityId, time) {
   ctx.translate(-JELLYFISH_VIEWBOX * 0.5, -JELLYFISH_VIEWBOX * 0.5);
 
   for (const tentacle of tentacles) {
-    // Keep every root attached to the bell, then bend the middle and tip
-    // independently.  Rotating the original path as one rigid piece made the
-    // limbs look like clock hands rather than soft tentacles.
+    // 触手根部固定，分别弯曲中段和末梢，避免整条刚性旋转。
     const motionSeed = entitySeed(tentacle.index, entityId);
     const speedUnit = unitSeed(motionSeed);
     const phaseUnit = unitSeed(entitySeed(tentacle.index + 29, entityId));

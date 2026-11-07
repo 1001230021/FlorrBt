@@ -37,13 +37,8 @@ import {
 } from "./i18n.js";
 import { setRenderScaleMode } from "./render_scale.js";
 
-// Client-side console commands (typed into the in-game console or chat with a
-// leading slash; unknown names fall through to the server as chat commands).
-//
-// game.js injects its command surface here instead of this module importing
-// game.js: everything the handlers need from the god module / the ui layer
-// arrives through initClientCommands, so this module never joins the
-// game.js import cycle (enforced by tools/check_client_deps.mjs).
+// 客户端命令由 game.js 注入操作接口，避免循环导入。
+// 未识别的命令交给服务器处理；依赖方向由检查脚本约束。
 let context = null;
 
 export function initClientCommands(commandContext) {
@@ -303,9 +298,7 @@ export function executeClientCommand(line) {
   context.sendChat(ChatFlag.Local, `/${line}`);
 }
 
-// Pulls an explicit "keyboard"/"mouse" token off the front of the argument
-// list, if there is one. Without it the device is inferred from the key name
-// (mouse1/wheelup -> mouse, everything else -> keyboard).
+// 优先读取显式设备前缀，否则从键名推断设备。
 function takeDeviceToken(args) {
   const first = String(args[0] || "").toLowerCase();
   if (first === "keyboard" || first === "kb") {
@@ -367,7 +360,6 @@ function executeBindCommand(args) {
     return;
   }
 
-  // `bind <key>` with no command reports what that key currently runs.
   if (parsed.commands.length === 0) {
     const target = device || deviceForInputKey(parsed.key);
     const bound = commandsForInputKey(context.bindings, target, parsed.key);
@@ -400,7 +392,7 @@ function executeBindCommand(args) {
   }
 
   const target = device || deviceForInputKey(parsed.key);
-  // Rebinding a key while it is held would strand its hold sources.
+  // 改绑定前先释放旧来源，避免按住状态残留。
   releaseInputHolds({ device: target, key: parsed.key });
   bindInputKey(context.bindings, target, parsed.key, parsed.commands);
   context.onBindingsChanged?.();
@@ -438,7 +430,6 @@ function executeUnbindAllCommand(args) {
   context.onBindingsChanged?.();
 }
 
-// `reset <target>`: put a group of client-side state back to its defaults.
 function executeResetCommand(args) {
   const target = String(args.shift() || "").toLowerCase();
 
@@ -490,8 +481,7 @@ function executeResetCommand(args) {
   context.addConsoleLine(t("commands.reset.usage"));
 }
 
-// Exported: the settings panel's language selector routes through the same
-// handler as the `language` console command.
+// 语言选择与控制台命令共用入口。
 export async function executeLanguageCommand(args) {
   const current = getCurrentLocale();
   if (!args.length) {
@@ -761,7 +751,7 @@ function executeClientSetCommand(args) {
   context.saveSettings();
   context.onClientConfigChanged?.(result.name);
   context.requestRedraw();
-  // Petal label config changes need the cards rebuilt in their new size.
+  // 标签配置改变后按新尺寸重建卡片。
   if (
     result.name === "petal_label_max_font_px" ||
     result.name === "petal_label_max_width_px"

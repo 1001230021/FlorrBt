@@ -15,9 +15,7 @@ struct DropStack
     std::uint16_t count = 1;
 };
 
-// Per-player reward finalization only. Equivalent to merging matching stacks
-// until no remaining pair fits, in one pass; never touches existing loot or
-// rerolls probabilities, and ordinary mobs retain every individual result.
+// 仅在单个玩家奖励生成时合并可容纳的同类堆叠，不改既有掉落或重掷概率；普通生物保留独立结果。
 template <typename TDrop> std::vector<DropStack> FinalizeDropStacks(const std::vector<TDrop>& drops, bool merge)
 {
     std::vector<DropStack> result;

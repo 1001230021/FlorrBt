@@ -44,8 +44,7 @@ class CMeleeController : public IController
 
     SEntityHandle m_target_ref;
     florrbt::Vector2f m_target_pos = { 0.f, 0.f };
-    // Radius of the entity currently chased: move approach stops at
-    // mob.Radius() + target.Radius() so melee mobs reach contact range.
+    // 目标半径用于计算实际接触距离，避免近战过早停止靠近。
     float m_target_radius = 0.f;
     float m_change_target_count = game_config::melee_target_time;
     float m_target_los_check_timer = 0.f;
@@ -59,14 +58,13 @@ class CMeleeController : public IController
     int m_honey_target_scan_cooldown = -1;
 };
 
-// Firefly: neutral (only honey, retaliation and lit bulbs), plus a periodic
-// habitat summon skill for Eternal/Unique/Primordial.
-class CFireflyController; // defined after CNeutralMeleeController below
+class CFireflyController;
 
 class CLeafcutterSoldierController : public CMeleeController, public CPickupController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    void OnActions(CMobBase* mob, float dt) override;
     std::string_view SnapshotKey() const override { return "controller.leafcutter_soldier"; }
     void CaptureSnapshot(CSnapshotWriter& writer) const override;
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
@@ -127,13 +125,12 @@ class CNeutralMeleeController : public CMeleeController
     std::string_view SnapshotKey() const override { return "controller.neutral_melee"; }
 };
 
-// Firefly: neutral (only honey, retaliation and lit bulbs), plus a periodic
-// habitat summon skill for Eternal/Unique/Primordial.
+// 中立萤火虫追逐 Honey、灯泡及反击目标；Eternal/Unique/Primordial 定期召唤栖息地生物。
 class CFireflyController : public CNeutralMeleeController
 {
   public:
     explicit CFireflyController(EMobType summon_type = EMobType::None) : m_summon_type(summon_type) {}
-    void OnTick(CMobBase* mob, float dt) override;
+    void OnActions(CMobBase* mob, float dt) override;
     std::string_view SnapshotKey() const override { return "controller.firefly"; }
     void CaptureSnapshot(CSnapshotWriter& writer) const override;
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
@@ -147,19 +144,18 @@ class CFireflyController : public CNeutralMeleeController
     EMobType m_summon_type = EMobType::None;
 };
 
-// Navigation chooses an opponent, but the larva's grab skill owns every
-// activation rule (contact range, teams, nullification and current grab).
+// 导航选择对手，抓取技能统一判断激活条件。
 class CFireflyLarvaController final : public CMeleeController
 {
   public:
-    void OnTick(CMobBase* mob, float dt) override;
+    void OnActions(CMobBase* mob, float dt) override;
     std::string_view SnapshotKey() const override { return "controller.firefly_larva"; }
 };
 
 class CTermiteOvermindController final : public CNeutralMeleeController
 {
   public:
-    void OnTick(CMobBase* mob, float dt) override;
+    void OnActions(CMobBase* mob, float dt) override;
     std::string_view SnapshotKey() const override { return "controller.termite_overmind"; }
     void CaptureSnapshot(CSnapshotWriter& writer) const override;
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
@@ -181,14 +177,14 @@ class CRandomWanderController : public CMeleeController
 class CQueenAntController : public CMeleeController
 {
   public:
-    void OnTick(CMobBase* mob, float dt) override;
+    void OnActions(CMobBase* mob, float dt) override;
     std::string_view SnapshotKey() const override { return "controller.queen_ant"; }
 };
 
 class CSpiderController : public CMeleeController
 {
   public:
-    void OnTick(CMobBase* mob, float dt) override;
+    void OnActions(CMobBase* mob, float dt) override;
     std::string_view SnapshotKey() const override { return "controller.spider"; }
     void CaptureSnapshot(CSnapshotWriter& writer) const override;
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
@@ -201,6 +197,7 @@ class CCrabController final : public CMeleeController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    void OnActions(CMobBase* mob, float dt) override;
     std::string_view SnapshotKey() const override { return "controller.crab"; }
     void CaptureSnapshot(CSnapshotWriter& writer) const override;
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
@@ -234,13 +231,14 @@ class CHornetRangedController : public CMeleeController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    void OnActions(CMobBase* mob, float dt) override;
     std::string_view SnapshotKey() const override { return "controller.hornet_ranged"; }
 };
 
 class CJellyfishController final : public CHornetRangedController
 {
   public:
-    void OnTick(CMobBase* mob, float dt) override;
+    void OnActions(CMobBase* mob, float dt) override;
     std::string_view SnapshotKey() const override { return "controller.jellyfish"; }
     void CaptureSnapshot(CSnapshotWriter& writer) const override;
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
@@ -271,6 +269,7 @@ class CSpecialHornetController : public CMeleeController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    void OnActions(CMobBase* mob, float dt) override;
     std::string_view SnapshotKey() const override { return "controller.hornet_special"; }
     void CaptureSnapshot(CSnapshotWriter& writer) const override;
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
@@ -281,12 +280,15 @@ class CSpecialHornetController : public CMeleeController
     int m_cycle_attack_count = 0;
 };
 
-// One mob-owned executor is shared by AI and player input, and survives possession.
+// AI 与玩家输入共用生物持有的执行器，附身切换保留技能状态。
 class CHornetSkillActions : public CPickupController
 {
   public:
     bool TryStart(CMobBase* mob, int skill_index, CEntity* target);
-    bool Tick(CMobBase* mob, float dt);
+    void BeginTick(CMobBase* mob, float dt);
+    bool TickMotion(CMobBase* mob, float dt);
+    void Constrain(CMobBase* mob);
+    void TickActions(CMobBase* mob, float dt);
     bool IsActive() const { return m_state != EState::Idle; }
     std::uint8_t WindupSkillId() const
     {
@@ -362,6 +364,7 @@ class CBumbleBeeController : public IController
 {
   public:
     void OnTick(CMobBase* mob, float dt) override;
+    void OnActions(CMobBase* mob, float dt) override;
     std::string_view SnapshotKey() const override { return "controller.bumble_bee"; }
     void CaptureSnapshot(CSnapshotWriter& writer) const override;
     bool RestoreSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;

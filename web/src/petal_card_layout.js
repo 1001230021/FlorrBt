@@ -1,6 +1,4 @@
-// The label limits are specified at the standard 56px card size, exactly
-// like world-drop labels. DOM cards express that size as container units so
-// primary, reserve, inventory and flight clones use the same proportions.
+// 标签以标准 56px 卡片为基准，主槽、副槽、背包和飞行卡片共用比例。
 export const petalCardReferenceSize = 56;
 
 export function getPetalLabelFontSize(widthAt100, maxFont = 14, maxWidth = 45) {

@@ -41,6 +41,30 @@ const manualMinimapTileMatrices = Object.freeze({
   ]),
 });
 
+function createOverlayCoverage(layers, width, height) {
+  const span = 8, columns = Math.ceil(width / span), rows = Math.ceil(height / span);
+  const counts = new Uint32Array(columns * rows);
+  const update = (row, col, before, after) => {
+    if (before === after || row < 0 || col < 0 || row >= height || col >= width) return;
+    const index = Math.floor(row / span) * columns + Math.floor(col / span);
+    counts[index] += after ? 1 : -1;
+  };
+  for (const layer of layers) {
+    if (layer.visible === false || (layer.opacity ?? 1) <= 0) continue;
+    for (let row = 0; row < Math.min(height, layer.height); row++)
+      for (let col = 0; col < Math.min(width, layer.width); col++)
+        if (layer.tiles[row * layer.width + col]) update(row, col, false, true);
+  }
+  return { update, intersects(left, top, right, bottom) {
+    if (![left, top, right, bottom].every(Number.isFinite)) return true;
+    const firstX = Math.max(0, Math.floor(left / span)), lastX = Math.min(columns - 1, Math.floor(right / span));
+    const firstY = Math.max(0, Math.floor(top / span)), lastY = Math.min(rows - 1, Math.floor(bottom / span));
+    for (let y = firstY; y <= lastY; y++) for (let x = firstX; x <= lastX; x++)
+      if (counts[y * columns + x]) return true;
+    return false;
+  } };
+}
+
 export function createMapRenderer({
   ctx = dom.ctx,
   state = appState,
@@ -215,18 +239,14 @@ export function createMapRenderer({
         minimapCollisionCells,
         checkpointZones,
         spawnDifficultyCells,
-        collisionWallBuckets: buildCollisionWallBuckets(
-          collisionWalls,
-          tileWidth,
-          tileHeight,
-        ),
         chunkCache: new Map(),
         chunkBuildQueue: [],
       };
       map.renderLayers = layers.filter(layer => layer.role === "terrain");
       map.overlayPasses = ["shortcut", "shortcut_cover"].map(role => {
         const passLayers = layers.filter(layer => layer.role === role);
-        return { ...map, role, layers: passLayers, renderLayers: passLayers };
+        return { ...map, role, layers: passLayers, renderLayers: passLayers,
+          tileCoverage: createOverlayCoverage(passLayers, mapWidth, mapHeight) };
       }).filter(pass => pass.layers.length);
       await buildFullMapOverview(map, token);
       for (const pass of map.overlayPasses) {
@@ -244,8 +264,7 @@ export function createMapRenderer({
           createCanvas: createMapRenderCanvas, drawTile: drawTileImage, requestDraw, transparent: true,
           isActive: () => token === state.mapLoadToken || state.map === map });
       }
-      // Publish only after the initial visible region has complete layers,
-      // not merely an 8px-per-tile overview. Ordinary movement remains async.
+      // 初始可见区域的完整图层准备好后才发布；正常移动仍异步加载。
       await map.rasterCache.warm();
       for (const pass of map.overlayPasses) await pass.rasterCache.warm();
       if (token !== state.mapLoadToken) { releaseMapRasters(map); return null; }
@@ -255,8 +274,7 @@ export function createMapRenderer({
         releaseMapRasters(mapTransition.from);
       state.map = map;
       state.mapName = path;
-      // Do not allocate an extra hundreds-of-MB framebuffer at 4K/4x DPR.
-      // In that case publish the already-prepared map sharply instead.
+      // 高分辨率下避免为过渡额外分配数百 MB 画布，直接显示准备好的地图。
       const transitionBytes = (state.canvasWidth || 1) * (state.canvasHeight || 1) * (state.dpr || 1) ** 2 * 4;
       if (previousMap && previousMap !== map && transitionBytes <= 32 * 1024 * 1024) {
         mapTransition = {
@@ -414,15 +432,12 @@ export function createMapRenderer({
       }
     }
 
-    // Match the original Garden green more closely. This is only the
-    // fallback under loaded tile layers; the map assets remain authoritative.
+    // 图层未覆盖区域使用花园底色。
     ctx.fillStyle = state.map ? "#1ea761" : "#edf3f7";
     ctx.fillRect(0, 0, state.canvasWidth, state.canvasHeight);
 
     if (transition && progress < 1) {
-      // The old map is already prepared, so only reuse its overview/chunks;
-      // all chunk construction remains reserved for the new authoritative
-      // map. This keeps the crossfade smooth even for large maps.
+      // 过渡期间旧地图只复用现有块，把构建预算留给新地图。
       drawMapLayer(transition.from, 1, false, now);
       drawMapLayer(transition.to, progress, true, now);
     } else {
@@ -449,7 +464,7 @@ export function createMapRenderer({
 
   function drawMapLayer(map, alpha, prepare, now) {
     if (!map || alpha <= 0) return;
-    // Apply transition alpha once to the complete map, not once per layer.
+    // 过渡透明度在完整地图合成后应用一次。
     const output = ctx;
     if (alpha < 1) {
       const dpr = state.dpr || 1;
@@ -468,7 +483,6 @@ export function createMapRenderer({
       ctx.fillRect(0, 0, state.canvasWidth, state.canvasHeight);
       drawMapOverview(map, worldScale());
       map.rasterCache?.draw(ctx, now, prepare);
-      drawShortcutPass(map, "shortcut", 1, prepare, now);
       drawMapDecorations(map);
       ctx.restore();
     } finally { ctx = output; }
@@ -483,6 +497,14 @@ export function createMapRenderer({
   function drawShortcutPass(map, role, alpha, prepare, now) {
     const pass = map?.overlayPasses?.find(item => item.role === role);
     if (!pass || alpha <= 0) return;
+    const scale = worldScale();
+    if (!(scale > 0)) return;
+    const origin = worldToScreen({ x: 0, y: 0 });
+    // 稀疏索引只负责保守排除空区域；保留一整格余量，覆盖镜头抖动与边缘采样。
+    if (pass.tileCoverage && !pass.tileCoverage.intersects(
+      -origin.x / scale / map.tileWidth - 1, -origin.y / scale / map.tileHeight - 1,
+      (state.canvasWidth - origin.x) / scale / map.tileWidth + 1,
+      (state.canvasHeight - origin.y) / scale / map.tileHeight + 1)) return;
     const dpr = state.dpr || 1;
     const width = Math.max(1, Math.round(state.canvasWidth * dpr));
     const height = Math.max(1, Math.round(state.canvasHeight * dpr));
@@ -515,13 +537,21 @@ export function createMapRenderer({
     ctx.restore();
   }
 
-  function drawShortcutCover(now = performance.now()) {
+  function drawShortcutLayer(role, now) {
     if (mapTransition) {
       const linear = clamp((now - mapTransition.startedAt) / mapTransitionDurationMs, 0, 1);
       const progress = linear * linear * (3 - 2 * linear);
-      drawShortcutPass(mapTransition.from, "shortcut_cover", 1 - progress, false, now);
-      drawShortcutPass(mapTransition.to, "shortcut_cover", progress, true, now);
-    } else drawShortcutPass(state.map, "shortcut_cover", 1, true, now);
+      drawShortcutPass(mapTransition.from, role, 1 - progress, false, now);
+      drawShortcutPass(mapTransition.to, role, progress, true, now);
+    } else drawShortcutPass(state.map, role, 1, true, now);
+  }
+
+  function drawShortcutSurface(now = performance.now()) {
+    drawShortcutLayer("shortcut", now);
+  }
+
+  function drawShortcutCover(now = performance.now()) {
+    drawShortcutLayer("shortcut_cover", now);
   }
 
   function drawMapOverview(map, scale) {
@@ -638,33 +668,25 @@ export function createMapRenderer({
   }
 
 
-  function resolvePredictedCircleMotion(start, end, radius) {
-    const map = state.map;
-    if (!map?.collisionWalls?.length)
-      return { pos: { x: end.x, y: end.y }, normals: [] };
-    return resolveCircleMotion(
-      map,
-      start,
-      end,
-      Math.max(0, Number(radius) || 0),
-    );
-  }
-
   function applyTerrainDelta(layerIndex, row, col, gid) {
     const map = state.map;
     if (!map) return false;
     const layer = map.layers[layerIndex];
     if (!layer || !layer.tiles || !layer.width || !layer.height) return false;
+    if (!Number.isInteger(row) || !Number.isInteger(col) || row < 0 || col < 0 || row >= layer.height || col >= layer.width)
+      return false;
     const index = row * layer.width + col;
     if (index < 0 || index >= layer.tiles.length) return false;
     if (layer.tiles[index] === gid) return false;
+    if (layer.visible !== false && (layer.opacity ?? 1) > 0)
+      map.overlayPasses?.find(pass => pass.role === layer.role)?.tileCoverage?.update(row, col, !!layer.tiles[index], !!gid);
     layer.tiles[index] = gid;
+    map.terrainRevision = (map.terrainRevision || 0) + 1;
 
     map.rasterCache?.invalidate(row, col);
     for (const pass of map.overlayPasses || []) pass.rasterCache?.invalidate(row, col);
 
-    // If the new tile's image just became available, drop the raster cache so
-    // the next overview rebuild includes it.
+    // 新瓦片图像就绪后失效光栅缓存，使下次总览重建包含它。
     if (gid && map.overviewTileImagesCache) {
       const canonicalGid = canonicalTileGid(gid);
       if (
@@ -674,8 +696,7 @@ export function createMapRenderer({
         map.overviewTileImagesCache = null;
     }
 
-    // The fallback must change with the terrain, not show a removed wall
-    // for another half second while a full-map rebuild is debounced.
+    // 地形变化时立即更新后备图，避免等待整图重建期间仍显示已删除墙体。
     updateOverviewTile(map, row, col);
     for (const pass of map.overlayPasses || []) updateOverviewTile(pass, row, col);
     requestDraw();
@@ -713,11 +734,7 @@ export function createMapRenderer({
         !(wall.maxX >= minX && wall.minX <= maxX && wall.maxY >= minY && wall.minY <= maxY),
     );
     if (map.collisionWalls.length === before) return false;
-    map.collisionWallBuckets = buildCollisionWallBuckets(
-      map.collisionWalls,
-      map.tileWidth,
-      map.tileHeight,
-    );
+    map.terrainRevision = (map.terrainRevision || 0) + 1;
     const minimapSubdivisions = map.minimapSubdivisions || 1;
     const minimapCellColumns = Math.max(1, map.width * minimapSubdivisions);
     map.minimapCollisionCells = buildMinimapCollisionCells(
@@ -737,11 +754,11 @@ export function createMapRenderer({
 
   return {
     drawGrid,
+    drawShortcutSurface,
     drawShortcutCover,
     loadMap,
     applyTerrainDelta,
     applyWallRemove,
-    resolvePredictedCircleMotion,
     dispose() {
       state.mapLoadToken += 1;
       releaseMapRasters(state.map);
@@ -1331,8 +1348,7 @@ function normalizeMapPath(path) {
     .replace(/\\/g, "/")
     .replace(/^(?:\.\/|\/)+/, "");
   if (!normalized) return "";
-  // Older debug servers send a display name ("garden"), not a map filename.
-  // Keep explicit filenames intact, and resolve legacy names to Tiled JSON.
+  // 旧调试服务发送地图简称，需补全文件名；显式路径保持原样。
   const suffixIndex = normalized.search(/[?#]/);
   const suffix = suffixIndex < 0 ? "" : normalized.slice(suffixIndex);
   if (suffixIndex >= 0) normalized = normalized.slice(0, suffixIndex);
@@ -1539,158 +1555,6 @@ function finalizeCollisionWall(vertices, closed) {
   return { vertices, closed, minX, minY, maxX, maxY };
 }
 
-function buildCollisionWallBuckets(walls, tileWidth, tileHeight) {
-  const size = Math.max(
-    128,
-    Math.min(
-      1024,
-      Math.max(Number(tileWidth) || 512, Number(tileHeight) || 512),
-    ),
-  );
-  const buckets = new Map();
-  for (let id = 0; id < (walls?.length || 0); id += 1) {
-    const wall = walls[id];
-    const minX = Math.floor(wall.minX / size);
-    const minY = Math.floor(wall.minY / size);
-    const maxX = Math.floor(wall.maxX / size);
-    const maxY = Math.floor(wall.maxY / size);
-    for (let y = minY; y <= maxY; y += 1) {
-      for (let x = minX; x <= maxX; x += 1) {
-        const key = `${x}:${y}`;
-        let bucket = buckets.get(key);
-        if (!bucket) buckets.set(key, (bucket = []));
-        bucket.push(id);
-      }
-    }
-  }
-  return { size, buckets };
-}
-
-function collisionWallsInBounds(map, minX, minY, maxX, maxY) {
-  const index = map?.collisionWallBuckets;
-  if (!index?.buckets) return map?.collisionWalls || [];
-  const ids = new Set();
-  const firstX = Math.floor(minX / index.size);
-  const firstY = Math.floor(minY / index.size);
-  const lastX = Math.floor(maxX / index.size);
-  const lastY = Math.floor(maxY / index.size);
-  for (let y = firstY; y <= lastY; y += 1) {
-    for (let x = firstX; x <= lastX; x += 1) {
-      for (const id of index.buckets.get(`${x}:${y}`) || []) ids.add(id);
-    }
-  }
-  return [...ids].map((id) => map.collisionWalls[id]);
-}
-
-function resolveCircleMotion(map, start, end, radius) {
-  const motion = { x: end.x - start.x, y: end.y - start.y };
-  const travel = Math.hypot(motion.x, motion.y);
-  const maxStep = Math.max(2, radius * 0.5);
-  const steps = Math.max(1, Math.ceil(travel / maxStep));
-  const step = { x: motion.x / steps, y: motion.y / steps };
-  const pos = { x: start.x, y: start.y };
-  const normals = [];
-
-  for (let i = 0; i < steps; i += 1) {
-    const previous = { x: pos.x, y: pos.y };
-    pos.x += step.x;
-    pos.y += step.y;
-    for (let pass = 0; pass < 4; pass += 1) {
-      let pushed = false;
-      const walls = collisionWallsInBounds(
-        map,
-        Math.min(previous.x, pos.x) - radius - 1,
-        Math.min(previous.y, pos.y) - radius - 1,
-        Math.max(previous.x, pos.x) + radius + 1,
-        Math.max(previous.y, pos.y) + radius + 1,
-      );
-      for (const wall of walls) {
-        if (wall?.shortcut) continue; // Prediction is for the player-controlled actor.
-        const normal = pushCircleOutOfWall(pos, radius, wall, step);
-        if (!normal) continue;
-        pushed = true;
-        normals.push(normal);
-      }
-      if (!pushed) break;
-    }
-  }
-  return { pos, normals };
-}
-
-function pushCircleOutOfWall(pos, radius, wall, motion) {
-  if (
-    !wall ||
-    pos.x + radius < wall.minX ||
-    pos.x - radius > wall.maxX ||
-    pos.y + radius < wall.minY ||
-    pos.y - radius > wall.maxY
-  )
-    return null;
-
-  const count = wall.closed ? wall.vertices.length : wall.vertices.length - 1;
-  let bestDistanceSq = Number.POSITIVE_INFINITY;
-  let closest = null;
-  let edgeA = null;
-  let edgeB = null;
-  for (let i = 0; i < count; i += 1) {
-    const a = wall.vertices[i];
-    const b = wall.vertices[(i + 1) % wall.vertices.length];
-    const point = closestPointOnSegment(pos, a, b);
-    const dx = pos.x - point.x;
-    const dy = pos.y - point.y;
-    const distanceSq = dx * dx + dy * dy;
-    if (distanceSq >= bestDistanceSq) continue;
-    bestDistanceSq = distanceSq;
-    closest = point;
-    edgeA = a;
-    edgeB = b;
-  }
-  if (!closest) return null;
-
-  const inside = wall.closed && pointInPolygon(pos, wall.vertices);
-  const distance = Math.sqrt(Math.max(0, bestDistanceSq));
-  if (!inside && distance >= radius) return null;
-
-  let normal;
-  if (distance > 0.000001) {
-    const scale = 1 / distance;
-    normal = inside
-      ? { x: (closest.x - pos.x) * scale, y: (closest.y - pos.y) * scale }
-      : { x: (pos.x - closest.x) * scale, y: (pos.y - closest.y) * scale };
-  } else {
-    const edgeX = edgeB.x - edgeA.x;
-    const edgeY = edgeB.y - edgeA.y;
-    const edgeLength = Math.hypot(edgeX, edgeY) || 1;
-    normal = { x: -edgeY / edgeLength, y: edgeX / edgeLength };
-    if (wall.closed) {
-      const probe = { x: pos.x + normal.x, y: pos.y + normal.y };
-      if (pointInPolygon(probe, wall.vertices))
-        normal = { x: -normal.x, y: -normal.y };
-    } else if (normal.x * motion.x + normal.y * motion.y > 0) {
-      normal = { x: -normal.x, y: -normal.y };
-    }
-  }
-
-  const penetration = inside ? radius + distance : radius - distance;
-  const skin = 0.5;
-  pos.x += normal.x * (penetration + skin);
-  pos.y += normal.y * (penetration + skin);
-  return normal;
-}
-
-function closestPointOnSegment(point, a, b) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const lengthSq = dx * dx + dy * dy;
-  if (lengthSq <= 0.000001) return { x: a.x, y: a.y };
-  const t = clamp(
-    ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq,
-    0,
-    1,
-  );
-  return { x: a.x + dx * t, y: a.y + dy * t };
-}
-
 function pointInPolygon(point, vertices) {
   let inside = false;
   for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i, i += 1) {
@@ -1716,7 +1580,7 @@ function transformTilePoint(x, y, width, height, flipH, flipV, flipD) {
   return { x, y };
 }
 
-function drawTileImage(image, pos, width, height, raw, targetCtx) {
+export function drawTileImage(image, pos, width, height, raw, targetCtx) {
   const flipH = (raw & 0x80000000) !== 0;
   const flipV = (raw & 0x40000000) !== 0;
   const flipD = (raw & 0x20000000) !== 0;

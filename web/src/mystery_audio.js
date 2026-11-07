@@ -353,7 +353,7 @@ function resetPlaybackPosition(audio) {
   try {
     audio.currentTime = 0;
   } catch {
-    // Metadata may not be available yet; playback will still begin at zero.
+    // 元数据尚未就绪时仍从零开始播放。
   }
 }
 

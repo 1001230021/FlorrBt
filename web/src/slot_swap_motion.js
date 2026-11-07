@@ -1,8 +1,6 @@
 import { getCardFlightPose } from "./petal_card_layout.js";
 
-// Visual-only swaps. Packets/optimistic transactions stay with game.js.
-// A pair owns its hidden slots until it lands, including inventory refreshes.
-// Repeated swaps reverse the existing ghosts from their current positions.
+// 仅管理换槽动画；飞行期间独占隐藏槽，反复换槽从当前影像位置逆转。
 export function createSlotSwapMotion({ onSettled = () => {}, durationMs = 260,
   document: doc = globalThis.document, clock = () => performance.now(),
   schedule = callback => requestAnimationFrame(callback), cancel = id => cancelAnimationFrame(id),
@@ -32,15 +30,14 @@ export function createSlotSwapMotion({ onSettled = () => {}, durationMs = 260,
       for (const flight of pair.flights) {
         flight.pose = getCardFlightPose(flight.from, flight.to, progress);
         const { pose, from } = flight;
-        // One transform for the entire card, including its text. No per-frame
-        // font/width mutations and no re-rasterized replacement at mid-flight.
+        // 整卡统一变换，包含文字，不逐帧改字号或中途替换栅格。
         flight.ghost.style.transform = `translate(${pose.x - from.x}px, ${pose.y - from.y}px) scale(${pose.size / from.size})`;
       }
       if (progress >= 1) {
         release(pair); pairs.delete(index); settled = true;
       }
     }
-    // Publish all completed pairs together before the next browser paint.
+    // 浏览器下一次绘制前统一发布已完成的卡片对。
     if (settled) onSettled();
     queue();
   }
@@ -59,8 +56,7 @@ export function createSlotSwapMotion({ onSettled = () => {}, durationMs = 260,
     ghost.className = "petal-flight";
     ghost.setAttribute("aria-hidden", "true");
     ghost.style.setProperty("--slot-rarity-color", from.style.getPropertyValue("--slot-rarity-color"));
-    // Preserve the actual displayed label, copy count, image URLs and live
-    // transforms (e.g. Compass/Mimic), rather than constructing a default card.
+    // 复制实际标签、数量、图像及活跃变换，保留罗盘/拟态等显示状态。
     ghost.appendChild(stack.cloneNode(true));
     for (const selector of [":scope > .slot-durability-overlays", ":scope > .slot-value"]) {
       const overlay = from.querySelector(selector);

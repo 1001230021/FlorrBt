@@ -78,10 +78,8 @@ void CChatExtension::Broadcast(const SChatEntry& chat)
     if (chat.flag == EChatFlag::Squad)
     {
         CPlayer* sender = m_players->FindPlayerById(chat.player_id);
-        CEntity* entity = sender ? sender->GetEntity() : nullptr;
-        CGameWorld* world = entity ? entity->GameWorld() : nullptr;
-        if (!world || world->GetId() != chat.world_id || world->GetInstanceGeneration() != chat.world_instance_generation) return;
-        if (const auto* squads = m_squads ? m_squads->FindSquads({world->GetId(), world->GetInstanceGeneration()}) : nullptr)
+        if (!sender || !sender->MatchesSession(chat.sender_session)) return;
+        if (const auto* squads = m_squads ? m_squads->Parties() : nullptr)
             for (CPlayer* member : squads->Members(*sender)) if (member) SendTo(*member, chat);
         return;
     }
@@ -116,13 +114,20 @@ void CChatExtension::Broadcast(const SChatEntry& chat)
 void CChatExtension::HandleMessage(CPlayer& player, EChatFlag flag, const std::string& message)
 {
     CEntity* entity = player.GetEntity();
-    if (!player.IsAuthenticated() || !entity || entity->IsMarkedForDes()) return;
+    if (!player.IsAuthenticated() || (entity && entity->IsMarkedForDes())) return;
+    if (flag != EChatFlag::Global && flag != EChatFlag::Local && flag != EChatFlag::Squad) return;
+    if (flag == EChatFlag::Local && !entity) return;
     if (player.IsMuted())
     {
         SendSystem(player, "You are muted for " + std::to_string(static_cast<int>(std::ceil(player.GetMuteTimer()))) + "s.");
         return;
     }
-    Broadcast(Submit(entity->GameWorld(), entity->Pos(), flag == EChatFlag::Local ? flag : EChatFlag::Global,
+    if (flag == EChatFlag::Squad)
+    {
+        const auto* party = m_squads ? m_squads->Parties() : nullptr;
+        if (!party || party->Members(player).size() <= 1) { SendSystem(player, "你尚未加入队伍。"); return; }
+    }
+    Broadcast(Submit(player.GetWorld(), entity ? entity->Pos() : florrbt::Vector2f{}, flag,
                      player.GetId(), player.GetName(), message));
 }
 
@@ -150,10 +155,10 @@ bool CChatExtension::HandleCommand(CPlayer& player, const std::vector<std::strin
         if (candidate && (Lower(candidate->GetName()) == Lower(args[target_index]) ||
             Lower(candidate->GetAccountName()) == Lower(args[target_index]))) { target = candidate.get(); break; }
     if (!target) { SendSystem(player, "Whisper failed: player not found."); return true; }
-    // Preserve the existing private-message history policy: whispers are not
-    // appended to the public moderation transcript.
+    // 私聊不写入公开举报记录。
     SChatEntry entry;
     entry.flag = EChatFlag::Whisper; entry.player_id = player.GetId(); entry.player_name = player.GetName();
+    entry.sender_session = player.SessionRef();
     entry.target_player_id = static_cast<int>(target->GetId()); entry.message = Join(args, target_index + 1);
     entry.system_time = NowSeconds();
     SendTo(player, entry); if (target != &player) SendTo(*target, entry);

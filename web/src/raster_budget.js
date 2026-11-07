@@ -1,6 +1,4 @@
-// Shared, byte-accounted LRU for map composites and sprite rasters. Visible
-// entries are pinned for the current frame; allocation fails instead of
-// evicting something still being drawn. No full-cache sort on a miss.
+// 地图合成与实体栅格共用按字节计量的 LRU；当帧可见项固定，空间不足时拒绝分配。
 export class RasterBudget {
   constructor(limitBytes) {
     this.limitBytes = limitBytes;
@@ -15,8 +13,7 @@ export class RasterBudget {
   touch(key, pin = true) {
     const entry = this.entries.get(key);
     if (!entry) return false;
-    // A shared sprite may be drawn thousands of times in the same frame.
-    // It is already pinned/recent; don't relink the LRU on each body part.
+    // 同一贴图一帧可绘制数千次，已固定的项不重复调整 LRU。
     if (entry.frame === this.frame) return true;
     if (pin) entry.frame = this.frame;
     this.entries.delete(key);

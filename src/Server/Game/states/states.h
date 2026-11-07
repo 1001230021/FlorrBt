@@ -10,16 +10,21 @@ class CPoisonState : public CState
 {
   public:
     CPoisonState(CMobBase* owner, float timer, float basic_dmg, ERarity rarity, CEntity* applier);
+    bool PrepareAttachment(CMobBase& owner) override;
 
     void Tick(float dt) override;
+    std::optional<SStateContinuousEffect> CaptureContinuousEffect() const override
+    {
+        if (!m_is_valid) return std::nullopt;
+        return SStateContinuousEffect{m_basic_dmg, EDamageType::Poison, m_applier_ref};
+    }
 
     bool IsValid() const { return m_is_valid; }
     float GetBasicDmg() const { return m_basic_dmg; }
     const SEntityHandle& GetApplierRef() const { return m_applier_ref; }
     void RemapTransferredReferences(TEntityHandleRemap mapping) noexcept override
     { m_applier_ref = RemapTransferredHandle(m_applier_ref, mapping); }
-    // Legacy accessors retained for old snapshot/debug consumers. The state
-    // itself stores one qualified handle, not separate id/generation fields.
+    // 内部只保存完整句柄，旧访问器仅供兼容读取。
     int GetApplierId() const { return m_applier_ref.id; }
     std::uint64_t GetApplierGeneration() const { return m_applier_ref.generation; }
 
@@ -33,21 +38,19 @@ class CBanSlotState : public CState
 {
   public:
     CBanSlotState(CMobBase* owner, float timer, int slot, ERarity rarity);
-    ~CBanSlotState() override;
+    void OnAttached(CMobBase& owner) override;
     void Tick(float dt) override;
     int GetSlotIndex() const { return m_slot_index; }
-    void RemapTransferredReferences(TEntityHandleRemap mapping) noexcept override
-    { m_flower_ref = RemapTransferredHandle(m_flower_ref, mapping); }
 
   private:
     int m_slot_index = -1;
-    SEntityHandle m_flower_ref;
 };
 
 class CPincerSpeedReduceState : public CState
 {
   public:
     CPincerSpeedReduceState(CMobBase* owner, float timer, ERarity rarity);
+    bool PrepareAttachment(CMobBase& owner) override;
 
     void Tick(float dt) override { m_timer -= dt; }
     bool IsValid() const { return m_is_valid; }
@@ -60,6 +63,7 @@ class CWebSpeedReduceState : public CState
 {
   public:
     CWebSpeedReduceState(CMobBase* owner, float timer, float desired_multiplier, float reference_mass);
+    bool PrepareAttachment(CMobBase& owner) override;
 
     void Tick(float dt) override { m_timer -= dt; }
     bool IsValid() const { return m_is_valid; }
@@ -115,7 +119,7 @@ class CCorruptionState : public CState
 {
   public:
     CCorruptionState(CMobBase* owner, float timer, ERarity rarity);
-    ~CCorruptionState() override;
+    void OnAttached(CMobBase& owner) override;
 
     int GetOriginalTeam() const { return m_old_team; }
     void RestoreOriginalTeam(int team) { m_old_team = team; }
@@ -147,6 +151,7 @@ class CInvincibleState : public CState
 {
   public:
     CInvincibleState(CMobBase* owner, float timer, ERarity rarity);
+    void OnAttached(CMobBase& owner) override;
 
     void Tick(float dt) override;
 
@@ -175,6 +180,7 @@ class CPsionicConnectionState : public CState
 {
   public:
     CPsionicConnectionState(CMobBase* owner, float timer, ERarity rarity);
+    bool PrepareAttachment(CMobBase& owner) override;
 
     void Tick(float dt) override
     {
@@ -250,4 +256,4 @@ float GetMedicMultiplier(const CMobBase* mob);
 void ApplyDandelionAntiHeal(CMobBase* mob, ERarity rarity);
 bool TrySharePsionicDamage(CMobBase* receiver, float dmg, CEntity* attacker, EDamageType dmg_type);
 float GetBandageUndeadDuration(ERarity rarity);
-bool ApplyHallucinogenicExposure(CMobBase* mob, ERarity rarity, float evolution_amount);
+void ApplyHallucinogenicExposure(CMobBase* mob, ERarity rarity, float evolution_amount);

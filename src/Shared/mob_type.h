@@ -4,9 +4,7 @@
 #include <cstdint>
 #include <string_view>
 
-// Native (vanilla / open-world) mobs ONLY. Controller-specific mobs live in
-// mod_mob_type.h (EModMobType) and register through RegisterModMob; keep this
-// enum free of controller content.
+// 这里只定义基础生物；玩法专属类型在 mod_mob_type.h 中声明并通过 RegisterModMob 注册。
 enum class EMobType : int
 {
     None = 0,
@@ -58,7 +56,7 @@ enum class EMobType : int
 
 using MobType = EMobType;
 
-// Controller-specific ids map into the shared mob id space above the natives.
+// 玩法专属 ID 映射到基础类型之外的共享编号空间。
 constexpr EMobType ToMobType(EModMobType type) { return static_cast<EMobType>(type); }
 
 inline constexpr std::array<std::string_view, 45> mob_type_names = {
@@ -87,9 +85,7 @@ inline std::string_view GetMobTypeName(EMobType type)
 
 inline std::string_view GetMobTypeName(uint8_t type) { return GetMobTypeName(static_cast<EMobType>(type)); }
 
-// Numeric IDs cross persistence, console and debug boundaries. Keep one
-// authoritative validity check covering both native and controller-owned
-// manifests instead of relying on a factory lookup after an unchecked cast.
+// 持久化、控制台和调试入口共用此校验，覆盖基础类型与玩法专属类型。
 inline bool IsKnownMobTypeId(int value)
 {
     if (value <= static_cast<int>(EMobType::None) || value >= kMobIdCapacity) return false;

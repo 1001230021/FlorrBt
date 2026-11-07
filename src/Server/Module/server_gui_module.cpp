@@ -142,8 +142,7 @@ std::vector<std::string> WorldIdsAndMapNames()
     return values;
 }
 
-// Game thread only: enumerates live worlds/entities for the completion
-// snapshot the GUI thread consumes.
+// 游戏线程采集世界和实体，发布补全快照给界面线程。
 void CollectEntityRefs(std::vector<std::string>& stubs, std::vector<std::string>& refs)
 {
     CServer* server = CServer::GetInstance();
@@ -162,8 +161,7 @@ void CollectEntityRefs(std::vector<std::string>& stubs, std::vector<std::string>
     std::sort(refs.begin(), refs.end());
 }
 
-// GUI thread: entity completion against the published snapshot. Keeps the old
-// two-step behavior (list "world:" stubs until a world is typed).
+// 界面线程仅查询已发布快照；未输入世界时先显示世界前缀。
 std::vector<std::string> EntityRefsFromSnapshot(std::string_view prefix,
                                                 const IServerGuiModule::SCompletionSnapshot& snapshot)
 {
@@ -342,7 +340,7 @@ sf::String WrapText(const sf::String& str, const sf::Font& font, unsigned int ch
     result += current_line;
     return result;
 }
-} // namespace
+}
 
 IServerGuiModule::log_line::log_line(ELogPriority line_priority, sf::String line_text, const sf::Font& font)
     : priority(line_priority), text(std::move(line_text)),
@@ -363,8 +361,7 @@ void IServerGuiModule::StartGuiThread()
     m_stop_requested = false;
     m_thread_exited = false;
     RefreshCompletionSnapshot();
-    // The sink only enqueues raw lines; the GUI thread wraps and lays them
-    // out. Installed before the thread starts so no line can slip past.
+    // 日志接收器只入队，排版由界面线程完成；先安装接收器再启动线程。
     if (m_log_sink_id == 0)
     {
         m_log_sink_id =
@@ -453,8 +450,6 @@ void IServerGuiModule::Tick(float dt)
 
     if (m_thread_exited)
     {
-        // The window was closed (X button / Escape) or failed to open: fold
-        // the finished thread and reflect that in the config flag.
         StopGuiThread();
         game_config::gui_console_enabled = false;
         return;
@@ -462,8 +457,7 @@ void IServerGuiModule::Tick(float dt)
 
     if (!m_thread.joinable()) StartGuiThread();
 
-    // Commands typed in the GUI run here, on the game thread, exactly like
-    // lines typed into the OS console.
+    // 界面命令由游戏线程执行，与系统控制台一致。
     std::vector<std::string> commands;
     {
         std::lock_guard<std::mutex> lock(m_pending_commands_mutex);
@@ -494,7 +488,6 @@ void IServerGuiModule::RefreshCompletionSnapshot()
     m_completion_snapshot = std::move(snapshot);
 }
 
-// GUI thread. Returns false when the user asked to close the console.
 bool IServerGuiModule::ProcessEvents()
 {
     while (const std::optional event = m_window.pollEvent())
@@ -660,7 +653,7 @@ void IServerGuiModule::CloseGui()
     m_render_accumulator = 0.f;
 }
 
-// Called from the logger on arbitrary threads: only formats and enqueues.
+// 日志可来自任意线程，此处只格式化并入队。
 void IServerGuiModule::PushLine(std::string sender, ELogPriority priority, std::string text)
 {
     std::string formatted = CLogger::FormatLine(sender, priority, text);
@@ -682,7 +675,6 @@ void IServerGuiModule::DrainPendingLogLines()
     }
 }
 
-// GUI thread: wraps a formatted line to the window width and lays it out.
 void IServerGuiModule::AppendLine(ELogPriority priority, const std::string& formatted)
 {
     const bool was_at_bottom = m_first_visible_line >= MaxFirstVisibleLine();
@@ -722,8 +714,7 @@ void IServerGuiModule::ExecuteInput()
     const std::string input = ToUtf8(m_input);
     AppendLine(ELogPriority::Debug, CLogger::FormatLine("graphical", ELogPriority::Debug, "> " + input));
     {
-        // Executed by Tick on the game thread: console commands touch game
-        // state and must never run from the GUI thread.
+        // 命令涉及游戏状态，由游戏线程的 Tick 执行。
         std::lock_guard<std::mutex> lock(m_pending_commands_mutex);
         m_pending_commands.push_back(input);
     }

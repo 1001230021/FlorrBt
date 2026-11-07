@@ -2,8 +2,7 @@
 #include <cstdint>
 #include <string_view>
 
-// Layer names are interpreted only at the map boundary. Physics and gameplay
-// consume these roles, never tile GIDs or texture names.
+// 只在地图解析边界解释图层名；物理与玩法使用图层角色，不依赖图块 ID 或贴图名。
 enum class EMapLayerRole : std::uint8_t { Terrain, Shortcut, ShortcutCover };
 inline EMapLayerRole MapLayerRole(std::string_view name)
 {
@@ -21,8 +20,7 @@ inline bool IncludesWall(EWallQuery query, EWallQuery category)
 enum class ECapabilityRestriction : std::uint8_t { None = 0, Petals = 1, StatModifiers = 2 };
 enum class ERestrictionSource : std::uint8_t { Shortcut, Digging, Count };
 
-// Runtime restrictions do not modify loadout ownership, skills, or CState.
-// Sources compose: ending digging must not resume petals inside a shortcut.
+// 限制来源可叠加，不改装备归属、技能或 CState；密道内结束挖掘不能恢复花瓣。
 class SCapabilityState
 {
   public:

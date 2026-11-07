@@ -1,8 +1,6 @@
 import { getCurrentLocale } from "./i18n.js";
 
-// Per-locale replacement entries. Longer keys win: at every position the
-// longest matching key is replaced first, so "eat apple" becomes the whole
-// phrase translation instead of two word-level translations.
+// 每个位置优先匹配最长词条，避免短词抢占整句替换。
 const replacementEntries = {
   "zh-Hans": [
     ["eat apple", "吃苹果"],

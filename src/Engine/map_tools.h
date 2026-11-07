@@ -1,4 +1,6 @@
 #pragma once
+#include <climits>
+#include <map>
 
 #include "json_value.h"
 #include "logger.h"
@@ -116,6 +118,8 @@ struct FlorrBtMap
         const int* operator[](int row) const { return tiles.data() + row * width; }
     };
     std::vector<Layer> tile_layers;
+    // 与碰撞定义同时解析，玩法无需再次读取地图或图块集文件。
+    std::map<std::uint32_t, std::string> tile_images;
 
     struct Checkpoint
     {
@@ -444,26 +448,6 @@ inline bool BuildWallFromJsonObject(const CJsonValue& obj, FlorrBtMap::Wall& wal
 
 inline int CanonicalTileGid(int gid) { return gid & 0x1fffffff; }
 
-inline const Tileset* FindTilesetForGid(const Map& map, int gid)
-{
-    const Tileset* result = nullptr;
-    for (size_t i = 0; i < map.tileset_count; ++i)
-    {
-        const Tileset& tileset = map.tilesets[i];
-        if (gid >= tileset.firstgid) result = &tileset;
-    }
-    return result;
-}
-
-inline const Tile* FindTilesetTile(const Tileset& tileset, int local_id)
-{
-    for (size_t i = 0; i < tileset.tile_count; ++i)
-    {
-        if (tileset.tiles[i].id == local_id) return &tileset.tiles[i];
-    }
-    return nullptr;
-}
-
 inline void TransformTileWall(FlorrBtMap::Wall& wall, int raw_gid, int tile_x, int tile_y, int map_tile_width,
                               int map_tile_height, int source_width, int source_height)
 {
@@ -488,46 +472,6 @@ inline void TransformTileWall(FlorrBtMap::Wall& wall, int raw_gid, int tile_x, i
     FinalizeWallBounds(wall);
 }
 
-inline void AddTileCollisionWalls(const Map& map, FlorrBtMap& fbt_map)
-{
-    for (const auto& layer : fbt_map.tile_layers)
-    {
-        if (layer.role == EMapLayerRole::ShortcutCover) continue;
-        for (int y = 0; y < layer.height; ++y)
-        {
-            for (int x = 0; x < layer.width; ++x)
-            {
-                int raw_gid = layer[y][x];
-                int gid = CanonicalTileGid(raw_gid);
-                if (gid <= 0) continue;
-
-                const Tileset* tileset = FindTilesetForGid(map, gid);
-                if (!tileset) continue;
-
-                int local_id = gid - tileset->firstgid;
-                const Tile* tile = FindTilesetTile(*tileset, local_id);
-                if (!tile || !tile->objectgroup) continue;
-
-                int source_width = tile->imagewidth > 0 ? tile->imagewidth : tileset->tilewidth;
-                int source_height = tile->imageheight > 0 ? tile->imageheight : tileset->tileheight;
-                for (size_t object_index = 0; object_index < tile->objectgroup->object_count; ++object_index)
-                {
-                    FlorrBtMap::Wall wall;
-                    if (!BuildWallFromObject(tile->objectgroup->objects[object_index], wall)) continue;
-                    wall.category = layer.role == EMapLayerRole::Shortcut ? EWallQuery::Shortcut : EWallQuery::Solid;
-                    TransformTileWall(wall, raw_gid, x, y, fbt_map.tile_width, fbt_map.tile_height, source_width,
-                                      source_height);
-                    wall.id = static_cast<int>(fbt_map.walls.size());
-                    fbt_map.walls.push_back(std::move(wall));
-                }
-            }
-        }
-    }
-
-    for (size_t i = 0; i < fbt_map.walls.size(); ++i)
-        fbt_map.walls[i].id = static_cast<int>(i);
-}
-
 struct JsonTileCollision
 {
     int image_width = 256;
@@ -536,7 +480,8 @@ struct JsonTileCollision
 };
 
 inline void AddJsonTilesetCollisionDefs(const CJsonValue& tileset, int first_gid,
-                                        std::unordered_map<int, JsonTileCollision>& out_defs)
+                                        std::unordered_map<int, JsonTileCollision>& out_defs,
+                                        std::map<std::uint32_t, std::string>* images = nullptr)
 {
     int tileset_tile_width = tileset.Find("tilewidth") ? tileset.Find("tilewidth")->AsInt(256) : 256;
     int tileset_tile_height = tileset.Find("tileheight") ? tileset.Find("tileheight")->AsInt(256) : 256;
@@ -545,6 +490,10 @@ inline void AddJsonTilesetCollisionDefs(const CJsonValue& tileset, int first_gid
 
     for (const CJsonValue& tile : tiles->AsArray())
     {
+        const auto tile_id = tile.Find("id") ? tile.Find("id")->AsInt(-1) : -1;
+        if (tile_id < 0 || first_gid <= 0 || tile_id > INT_MAX - first_gid) continue;
+        if (const auto* image = tile.Find("image"); images && image && image->IsString())
+            (*images)[static_cast<std::uint32_t>(first_gid + tile_id)] = image->AsString();
         const CJsonValue* objectgroup = tile.Find("objectgroup");
         const CJsonValue* objects = objectgroup ? objectgroup->Find("objects") : nullptr;
         if (!objects || !objects->IsArray()) continue;
@@ -562,7 +511,6 @@ inline void AddJsonTilesetCollisionDefs(const CJsonValue& tileset, int first_gid
         }
         if (!def.walls.empty())
         {
-            int tile_id = tile.Find("id") ? tile.Find("id")->AsInt(0) : 0;
             out_defs[first_gid + tile_id] = std::move(def);
         }
     }
@@ -594,10 +542,10 @@ inline void AddJsonTileCollisionWalls(const std::filesystem::path& map_path, Flo
                 LOG_WARN("maploader", "Failed to read tileset json: " + source_path.string() + " (" + error + ")");
                 continue;
             }
-            AddJsonTilesetCollisionDefs(*tileset_json, first_gid, collision_defs);
+            AddJsonTilesetCollisionDefs(*tileset_json, first_gid, collision_defs, &fbt_map.tile_images);
         } else
         {
-            AddJsonTilesetCollisionDefs(tileset_ref, first_gid, collision_defs);
+            AddJsonTilesetCollisionDefs(tileset_ref, first_gid, collision_defs, &fbt_map.tile_images);
         }
     }
 
@@ -1028,9 +976,8 @@ inline std::unique_ptr<FlorrBtMap> LoadMapFromTmj(const std::string& path)
         }
     }
 
-    size_t walls_before_tiles = fbt_map->walls.size();
-    AddTileCollisionWalls(*map, *fbt_map);
-    if (fbt_map->walls.size() == walls_before_tiles) AddJsonTileCollisionWalls(resolved_path, *fbt_map);
+    // 内嵌与外部图块集共用解析路径，避免内嵌墙体使外部图块集的碰撞定义被跳过。
+    AddJsonTileCollisionWalls(resolved_path, *fbt_map);
     AddJsonClassObjectLayers(resolved_path, *fbt_map);
     LOG_INFO("maploader", "Map collision walls registered: " + std::to_string(fbt_map->walls.size()));
     return fbt_map;

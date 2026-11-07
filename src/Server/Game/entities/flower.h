@@ -7,6 +7,7 @@
 #include "petals/petal_slot.h"
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,13 +28,19 @@ class CFlower : public CAttackableMob<SFlowerStats>
     }
     ~CFlower() override;
 
-    void Tick(float dt) override;
+    void OnTickBegin(float dt) override;
+    void OnTickMotion(float dt) override;
+    void OnTickEnvironment(float dt) override;
+    void OnTickActions(float dt) override;
+    void OnTickEffects(float dt) override;
+    void CollectTickDependencies(std::vector<SEntityHandle>& output) const override;
+    void CommitActionView() override;
 
     void Heal(float amount);
     void RestoreMana(float amount);
     bool TryConsumeMana(float amount);
     float GetMaxMana() const { return std::max(0.f, m_final_stats.max_mana); }
-    void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
+    void OnTakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
     void ClearPetals();
     void DestroyPetalEntities();
     void ReloadPetals();
@@ -68,21 +75,22 @@ class CFlower : public CAttackableMob<SFlowerStats>
         m_petal_state_dirty = true;
     }
     std::uint64_t GetFinalStatsRevision() const { return m_final_stats_revision; }
-    // Returns false without changing the slot when the requested operation is
-    // not valid (for example, a controller/state-banned slot). Callers that
-    // also mutate inventory must use the result before committing those
-    // mutations.
+    // 操作无效时保持槽位不变并返回 false；涉及背包的调用方必须先检查结果再提交库存变更。
     bool EquipPetal(int slot_index, const CPetalPrototype* proto, ERarity rarity);
     void LoadPetalSlot(int slot_index, const CPetalPrototype* proto, ERarity rarity);
     bool UnequipPetal(int slot_index);
     void ForceUnequipPetal(int slot_index);
     bool CanUnequipPetal(int slot_index) const;
     void ApplyExclusivity(EPetalType type);
+    void InstallPreparedLoadout(std::vector<std::optional<CPetalSlot>> prepared);
+    void InstallPreparedProgress(std::vector<CPetalSlot> prepared, int capacity);
     void RefreshNullificationState();
     void RefreshCorruptionState();
     std::vector<CPetalSlot>& GetSlots() { return m_slots; }
     const std::vector<CPetalSlot>& GetSlots() const { return m_slots; }
     void SetBanned(bool banned, int slot_index);
+    void SetSlotBanSource(std::uint64_t source, int slot_index, bool banned);
+    void RevokeStateEffects(std::uint64_t source) override;
     float GetShield() const { return m_shield; }
     float GetStoredPetalRotationAngle() const { return m_petal_rotation_angle; }
     void RestoreFlowerRuntime(float shield, float mana, float petal_rotation_angle)
@@ -96,6 +104,7 @@ class CFlower : public CAttackableMob<SFlowerStats>
 
     void InitSlots();
     void SetPetalSlotCapacity(int capacity);
+    int GetPetalSlotCapacity() const { return m_petal_slot_capacity; }
     void SetPetalSlotCount(int count);
 
     int m_total_copies = 0;
@@ -155,13 +164,12 @@ class CTitanFlower final : public CFlower
                  const SFlowerStats& base = SFlowerStats{})
         : CFlower(pworld, pos, r, mob_type, rarity, base)
     {
-        // Titans must never be retired by the inactivity sweep, regardless of
-        // player rarity (view range) or distance.
+        // Titan 不参与视野外的闲置回收。
         TickMode() = EEntityTickMode::Always;
         SetPetalSlotCount(game_config::titan_petal_slot_count);
     }
 
-    void Tick(float dt) override;
+    void OnTickBegin(float dt) override;
     void CaptureRuntimeSnapshot(CSnapshotWriter& writer) const override;
     bool RestoreRuntimeSnapshot(const CSnapshotReader& reader, std::uint32_t version, std::string& error) override;
     void ReplaceForgedUniquePetal(EPetalType type);
@@ -180,8 +188,8 @@ class CPlayerFlower : public CFlower
     CPlayerFlower(CGameWorld* pworld, florrbt::Vector2f pos, float r, EMobType mob_type, ERarity rarity,
                   const SFlowerStats& base = SFlowerStats{});
 
-    void Tick(float dt) override;
-    void TakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
+    void OnTickActions(float dt) override;
+    void OnTakeDamage(float dmg, CEntity* attacker, EDamageType damage_type) override;
     void RebuildFinalStats() override;
     void RefreshTalentSlotCount();
     bool IsDead() const override { return m_is_dead || CFlower::IsDead(); }

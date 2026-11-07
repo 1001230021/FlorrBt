@@ -9,8 +9,7 @@ const validPoint = point => Number.isFinite(point?.x) && Number.isFinite(point?.
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
 export function getBurrowTransition(previous, next, continuous = true) {
-  // Only compare consecutive observations of the same living entity. Joining
-  // mid-burrow, visibility changes, respawns and teleports aren't emergence.
+  // 仅比较同一存活实体的连续观测；中途加入、可见性改变、重生或传送不算出土。
   if (!continuous || !previous || !next || previous.entityId !== next.entityId ||
       previous.entityType !== next.entityType || ((previous.flags | next.flags) & flagDead)) return null;
   if (previous.generation !== next.generation) return null;
@@ -61,7 +60,7 @@ export function createBurrowParticles({ random = Math.random, isVisible = () => 
       for (const particle of particles) {
         particle.age += dt;
         if (particle.age >= particle.life) continue;
-        // Analytic drag keeps travel and fade independent of frame rate.
+        // 解析阻力使位移和淡出与帧率无关。
         particle.x += particle.vx * displacement; particle.y += particle.vy * displacement;
         particle.vx *= decay; particle.vy *= decay; particle.rot += particle.vrot * dt;
         particles[alive++] = particle;

@@ -2,10 +2,7 @@
 
 #include <type_traits>
 
-// Small, dependency-free math value types used by the simulation and wire
-// protocol.  Keeping these types in Shared makes the game model independent
-// from a rendering/windowing library; platform adapters can convert to a
-// library-specific vector only at the actual I/O boundary.
+// 模拟和协议共用的无外部依赖数学值类型；仅在输入输出边界转换为平台库类型。
 namespace florrbt
 {
 template <typename T> struct Vector2
@@ -91,4 +88,4 @@ template <typename T> constexpr Vector2<T> operator/(Vector2<T> value, T scalar)
 using Vector2f = Vector2<float>;
 using Vector2i = Vector2<int>;
 using Vector2u = Vector2<unsigned int>;
-} // namespace florrbt
+}

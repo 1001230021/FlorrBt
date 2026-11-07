@@ -1,7 +1,5 @@
-// Ad-hoc redraw requests from outside the tick loop (map chunks finishing,
-// petal icons decoding) coalesce here: at most one extra drawScene per frame,
-// and none at all when tick() already drew that frame. game.js binds the
-// actual draw function at startup so callers never import the god module.
+// 额外重绘请求合并到每帧至多一次；主循环已绘制的帧不再重画。
+// 绘制函数由游戏启动时注入。
 let redrawHandler = null;
 let drawFrameQueued = false;
 let lastDrawnFrameTime = 0;
@@ -10,8 +8,7 @@ export function setRedrawHandler(handler) {
   redrawHandler = handler;
 }
 
-// tick() reports every frame it draws so coalesced requests can skip frames
-// that were already painted (rAF timestamps match).
+// 主循环报告已绘制时间戳，让合并请求跳过重复帧。
 export function noteFrameDrawn(time) {
   lastDrawnFrameTime = time;
 }

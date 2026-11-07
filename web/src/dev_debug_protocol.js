@@ -1,4 +1,4 @@
-// Independent observer protocol; never reuse player auth/input framing.
+// 观察者协议独立于玩家认证和输入协议。
 export const DEBUG_MAGIC = 0xd0;
 export const DEBUG_VERSION = 1;
 export const DEBUG_REQUEST_LIMIT = 32768;

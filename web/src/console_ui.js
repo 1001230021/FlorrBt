@@ -17,10 +17,8 @@ const defaultCompletionSources = Object.freeze({
   bind_device: () => ["keyboard", "mouse"],
   bind_cmd: () => builtinCommandNames(),
   bind_key: () => inputKeyNames(),
-  // First token of `bind`/`unbind`: an explicit device or the key itself.
   bind_target: () => ["keyboard", "mouse", ...inputKeyNames()],
-  // Second token: still a key when a device was given, already a command
-  // otherwise -- offer both rather than guessing wrong.
+  // 未显式设备时第二项已是命令，否则仍是按键；补全兼顾两者。
   bind_key_cmd: () => [...inputKeyNames(), ...builtinCommandNames()],
   reset_target: () => ["config", "bindings", "settings", "all"],
 });

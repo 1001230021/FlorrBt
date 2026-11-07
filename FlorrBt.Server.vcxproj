@@ -96,6 +96,14 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\Server\Auth\email_verification_service.h" />
+    <ClInclude Include="src\Server\Transport\remote_transport.h" />
+    <ClInclude Include="src\Server\Game\systems\world_terrain.h" />
+    <ClInclude Include="src\Server\Game\systems\natural_spawn_population.h" />
+    <ClInclude Include="src\Server\Game\systems\combat_events.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\open_world_rules.h" />
+    <ClInclude Include="src\Server\Game\gamecontrollers\match_rules.h" />
+    <ClInclude Include="src\Server\Game\extensions\party_extension.h" />
+    <ClInclude Include="src\Server\Transport\report_review.h" />
     <ClInclude Include="src\Server\Game\extension.h" />
     <ClInclude Include="src\Server\Game\world_transition.h" />
     <ClInclude Include="src\Server\Game\extensions\extension_runtime.h" />
@@ -160,6 +168,7 @@
     <ClInclude Include="src\Server\Module\server_gui_module.h" />
     <ClInclude Include="src\Server\Module\world_module.h" />
     <ClInclude Include="src\Server\Persistence\account_store.h" />
+    <ClInclude Include="src\Server\Persistence\economy_codec.h" />
     <ClInclude Include="src\Server\Persistence\account_migration.h" />
     <ClInclude Include="src\Server\Persistence\mysql_account_backend.h" />
     <ClInclude Include="src\Server\Persistence\server_data_store.h" />
@@ -170,6 +179,14 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Server\Auth\email_verification_service.cpp" />
+    <ClCompile Include="src\Server\Transport\remote_transport.cpp" />
+    <ClCompile Include="src\Server\Game\systems\world_terrain.cpp" />
+    <ClCompile Include="src\Server\Game\systems\natural_spawn_population.cpp" />
+    <ClCompile Include="src\Server\Game\systems\combat_events.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\open_world_rules.cpp" />
+    <ClCompile Include="src\Server\Game\gamecontrollers\match_rules.cpp" />
+    <ClCompile Include="src\Server\Game\extensions\party_extension.cpp" />
+    <ClCompile Include="src\Server\Transport\report_review.cpp" />
     <ClCompile Include="src\Server\HotReload\hot_reload_snapshot.cpp" />
     <ClCompile Include="src\Server\HotReload\snapshot_archive.cpp" />
     <ClCompile Include="src\Server\commands.cpp" />
@@ -225,6 +242,7 @@
     <ClCompile Include="src\Server\Module\server_gui_module.cpp" />
     <ClCompile Include="src\Server\Module\world_module.cpp" />
     <ClCompile Include="src\Server\Persistence\account_store.cpp" />
+    <ClCompile Include="src\Server\Persistence\economy_codec.cpp" />
     <ClCompile Include="src\Server\Persistence\account_migration.cpp" />
     <ClCompile Include="src\Server\Persistence\mysql_account_backend.cpp" />
     <ClCompile Include="src\Server\Persistence\server_data_store.cpp" />
@@ -237,6 +255,19 @@
       <Project>{7F95A41D-B68C-40A8-8761-F7E0B3B2E3C1}</Project>
     </ProjectReference>
   </ItemGroup>
+  <Import Project="tools\msbuild\remote_transport.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
+  <ItemGroup>
+    <ClCompile Include="src\Server\Game\extensions\player_feature_extensions.cpp" />
+    <ClCompile Include="src\Server\Module\network_features.cpp" />
+    <ClCompile Include="src\Server\Module\network_account_links.cpp" />
+    <ClCompile Include="src\Server\Auth\oauth_provider.cpp" />
+    <ClCompile Include="src\Server\Auth\account_link_service.cpp" />
+    <ClCompile Include="src\Server\Persistence\account_identity_codec.cpp" />
+    <ClInclude Include="src\Server\Game\extensions\player_feature_extensions.h" />
+    <ClInclude Include="src\Server\Auth\oauth_provider.h" />
+    <ClInclude Include="src\Server\Auth\account_link_service.h" />
+    <ClInclude Include="src\Server\Persistence\account_identity_codec.h" />
+  </ItemGroup>
 </Project>

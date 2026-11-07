@@ -5,9 +5,7 @@
 #include <cstdint>
 #include <string_view>
 
-// Native (vanilla / open-world) petals ONLY. Controller-specific petals live
-// in mod_petal_type.h (EModPetalType) and register through
-// RegisterModPetalDefinition; keep this enum free of controller content.
+// 这里只定义基础花瓣；玩法专属类型在 mod_petal_type.h 中声明并通过 RegisterModPetalDefinition 注册。
 enum class EPetalType : int
 {
     None = 0,
@@ -78,15 +76,12 @@ enum class EPetalType : int
     Lightning,
     Battery,
     Bulb,
-    // 68..80 are pinned controller-owned wire ids declared in
-    // mod_petal_type.h.  They remain holes here so native and controller
-    // content cannot be confused at the type-definition boundary.
+    // 68..80 留给 mod_petal_type.h 中的玩法专属协议 ID，基础类型不得占用。
 };
 
 using PetalType = EPetalType;
 
-// Controller-specific ids map into the shared petal id space (they carry
-// their pinned wire id, so this is a pure value cast).
+// 玩法专属 ID 沿用固定协议值，可直接映射到共享编号空间。
 constexpr EPetalType ToPetalType(EModPetalType type) { return static_cast<EPetalType>(type); }
 
 inline constexpr std::array<std::string_view, 81> petal_type_names = {
@@ -103,8 +98,7 @@ inline constexpr std::array<std::string_view, 81> petal_type_names = {
 };
 
 static_assert(petal_type_names.size() == 81, "pinned petal wire name table must retain its size");
-// The controller-owned petal holes must stay holes on the native side and
-// must be filled on the mod side; their numeric wire ids remain stable.
+// 基础枚举中的预留空位必须由扩展表定义，且协议编号保持稳定。
 static_assert(petal_type_names[static_cast<size_t>(EModPetalType::Brush)] == "None" &&
                   petal_type_names[static_cast<size_t>(EModPetalType::Eraser)] == "None" &&
                   petal_type_names[static_cast<size_t>(EModPetalType::EouPheromone)] == "None",
@@ -115,8 +109,7 @@ static_assert(!GetModPetalTypeName(static_cast<int>(EModPetalType::Brush)).empty
               "mod petal ids must be declared in the mod_petal_type.h manifest");
 static_assert(!GetModPetalTypeName(static_cast<int>(EModPetalType::Magnet)).empty(),
               "custom petal ids must be declared in the mod petal manifest");
-// Live petals retain their compact `100 + id` network encoding. Drops no
-// longer share that byte range, so only the live-petal limit remains.
+// 活跃花瓣仍受 100 + id 的单字节上限约束，掉落物使用独立编码。
 static_assert(server_petal_entity_type_offset + kPetalIdCapacity - 1 <= 255,
               "petal network IDs no longer fit in uint8_t");
 
@@ -126,8 +119,7 @@ inline std::string_view GetPetalTypeName(EPetalType type)
     if (index < petal_type_names.size())
     {
         const std::string_view name = petal_type_names[index];
-        // Reserved mod slots read "None" natively; fall through to the mod
-        // manifest so brush/eraser/pheromone keep their real names.
+        // 基础表中的扩展空位标为 None，继续查扩展清单以获取实际名称。
         if (name != "None" || index == 0) return name;
     }
     if (index >= kPetalIdCapacity) return "UnknownPetal";
@@ -137,8 +129,7 @@ inline std::string_view GetPetalTypeName(EPetalType type)
 
 inline std::string_view GetPetalTypeName(uint8_t type) { return GetPetalTypeName(static_cast<EPetalType>(type)); }
 
-// Single validity check for numeric petal ids from the wire, persistence, or
-// console input: true for every native and declared mod petal id.
+// 协议、持久化和控制台入口共用的花瓣 ID 校验，覆盖全部已声明类型。
 inline bool IsKnownPetalTypeId(int value)
 {
     if (value <= 0 || value >= kPetalIdCapacity) return false;

@@ -1,6 +1,4 @@
-/* Geometry only. ui_layout.js supplies the same coordinates to Canvas HUDs
-   and these DOM surfaces. Colours/motion/input stay in their existing layers.
-   This sheet intentionally follows styles.css and mobile.css. */
+/* 仅定义几何布局，与 ui_layout.js 共用坐标；在基础及移动端样式后加载。 */
 :root {
   --layout-safe-top: env(safe-area-inset-top, 0px);
   --layout-safe-right: env(safe-area-inset-right, 0px);
@@ -17,14 +15,14 @@
   --top-action-size: 48px; --top-action-gap: 7px;
   --quick-left: 8px; --quick-bottom: 10px; --quick-size: 64px; --quick-gap: 10px;
   --panel-left: 92px; --panel-bottom: 18px; --panel-top: 62px;
-  --craft-width: 612px; --craft-height: 698px;
-  --talent-width: 654px; --talent-height: 654px;
-  --inventory-width: 520px; --inventory-height: 640px;
-  --settings-width: 480px; --settings-height: 600px;
-  --codex-width: 760px; --codex-height: 640px;
+  --craft-width: 536px; --craft-height: 596px;
+  --talent-width: 576px; --talent-height: 576px;
+  --inventory-width: 360px; --inventory-height: 520px;
+  --settings-width: 400px; --settings-height: 520px;
+  --codex-width: 528px; --codex-height: 520px;
 }
 
-/* Keep the original entry points, not a new navigation/menu strip. */
+
 :is(body, body.mobile-ui) .top-left-actions {
   left: var(--top-action-left); top: var(--top-action-top); gap: var(--top-action-gap);
 }
@@ -44,7 +42,7 @@
 }
 :is(body, body.mobile-ui) .quick-action kbd {
   right: calc(2px * var(--ui-scale)); bottom: calc(3px * var(--ui-scale));
-  font: 900 calc(13px * var(--ui-scale))/1 "Florr UI", "Sarasa SC", sans-serif;
+  font: 900 calc(13px * var(--ui-scale))/1 var(--ui-font-family);
 }
 :is(body, body.mobile-ui) .quick-talent-points {
   top: calc(-7px * var(--ui-scale)); right: calc(-6px * var(--ui-scale));
@@ -52,8 +50,7 @@
   font-size: calc(14px * var(--ui-scale)); line-height: calc(21px * var(--ui-scale));
 }
 
-/* The card SVG outline occupies 100/110 of the element. 77/55px elements
-   give the measured 70/50px card outlines without changing any SVG art. */
+/* SVG 轮廓占元素 100/110，按该比例计算元素尺寸，使实卡与空槽一致。 */
 :is(body, body.mobile-ui) .slots-panel {
   left: var(--loadout-left, 50%); right: auto; bottom: var(--loadout-bottom, 7px);
   width: var(--loadout-width, max-content); max-width: none; transform: none;
@@ -87,8 +84,7 @@
 body.loadout-overflow .slot-row { max-width: var(--loadout-width); overflow-x: auto; overscroll-behavior: contain; justify-content: start; }
 body.loadout-overflow .slot-key-hints { max-width: var(--loadout-width); overflow: hidden; }
 
-/* Chat normally sits beside the loadout at bottom-left; the shared layout
-   raises it on narrow screens. Opening chat does not move the flower slots. */
+/* 窄屏抬高聊天框，打开聊天不移动装备槽。 */
 :is(body, body.mobile-ui) .chat-panel,
 body.mobile-ui.slots-collapsed .chat-panel {
   left: var(--chat-left, 100px); bottom: var(--chat-bottom, 20px);
@@ -110,17 +106,17 @@ body.mobile-ui.slots-collapsed .chat-panel {
   padding: 0; align-content: end; background: transparent;
 }
 
-/* Primary panels share the same lower-left rail and clear its buttons. */
+
 body:not(.mobile-ui) .game-panel {
   left: var(--panel-left); bottom: var(--panel-bottom);
-  border-width: calc(6px * var(--ui-scale)); border-radius: calc(3px * var(--ui-scale));
-  padding: calc(8px * var(--ui-scale)) calc(12px * var(--ui-scale));
-  gap: calc(7px * var(--ui-scale));
+  border-width: calc(4px * var(--ui-scale)); border-radius: calc(3px * var(--ui-scale));
+  padding: calc(6px * var(--ui-scale)) calc(8px * var(--ui-scale));
+  gap: calc(5px * var(--ui-scale));
   --game-panel-closed-transform: translateX(calc(-100% - var(--panel-left) - 12px));
 }
-body:not(.mobile-ui) .panel-title { min-height: calc(30px * var(--ui-scale)); font-size: calc(24px * var(--ui-scale)); }
+body:not(.mobile-ui) .panel-title { min-height: max(26px, calc(28px * var(--ui-scale))); font-size: max(16px, calc(22px * var(--ui-scale))); padding-inline: max(28px, calc(32px * var(--ui-scale))); }
 body:not(.mobile-ui) .panel-close {
-  top: 0; right: 0; width: calc(30px * var(--ui-scale)); height: calc(30px * var(--ui-scale));
+  top: 0; right: 0; width: max(24px, calc(26px * var(--ui-scale))); height: max(24px, calc(26px * var(--ui-scale)));
   font-size: calc(24px * var(--ui-scale)); line-height: 1; padding: 0;
 }
 body:not(.mobile-ui) .backpack-panel {
@@ -129,38 +125,38 @@ body:not(.mobile-ui) .backpack-panel {
 }
 body:not(.mobile-ui) .inventory-list { max-height: calc(var(--inventory-height) - 96px * var(--ui-scale)); }
 body:not(.mobile-ui) .inventory-grid {
-  grid-template-columns: repeat(auto-fill, calc(66px * var(--ui-scale)));
+  grid-template-columns: repeat(auto-fill, calc(58px * var(--ui-scale)));
   gap: calc(5px * var(--ui-scale)); justify-content: start;
 }
 body:not(.mobile-ui) .inventory-item,
-body:not(.mobile-ui) .inventory-item .petal-stack { width: calc(66px * var(--ui-scale)); height: calc(66px * var(--ui-scale)); }
-.inventory-controls { gap: calc(10px * var(--ui-scale)); }
-body:not(.mobile-ui) .inventory-search { height: calc(26px * var(--ui-scale)); font-size: calc(14px * var(--ui-scale)); }
+body:not(.mobile-ui) .inventory-item .petal-stack { width: calc(58px * var(--ui-scale)); height: calc(58px * var(--ui-scale)); }
+.inventory-controls { gap: calc(6px * var(--ui-scale)); }
+body:not(.mobile-ui) .inventory-search { height: max(30px, calc(30px * var(--ui-scale))); font-size: max(13px, calc(14px * var(--ui-scale))); padding-block: 2px; line-height: 1.3; }
 body:not(.mobile-ui) .inventory-stacking { font-size: calc(13px * var(--ui-scale)); }
 body:not(.mobile-ui) .craft-panel { width: var(--craft-width); height: var(--craft-height); }
 body:not(.mobile-ui) .craft-workbench {
-  --craft-card-size: calc(66px * var(--ui-scale));
-  --craft-orbit-radius: calc(100px * var(--ui-scale));
+  --craft-card-size: calc(58px * var(--ui-scale));
+  --craft-orbit-radius: calc(82px * var(--ui-scale));
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
 }
-body:not(.mobile-ui) .craft-stage { height: calc(250px * var(--ui-scale)); }
+body:not(.mobile-ui) .craft-stage { height: calc(224px * var(--ui-scale)); }
 body:not(.mobile-ui) .craft-action { padding: 0; transform: translateX(calc(-62px * var(--ui-scale))); }
-body:not(.mobile-ui) .craft-action button { height: calc(36px * var(--ui-scale)); font-size: calc(16px * var(--ui-scale)); }
-body:not(.mobile-ui) .craft-selection { font-size: calc(16px * var(--ui-scale)); }
+body:not(.mobile-ui) .craft-action button { height: auto; min-height: max(32px, calc(36px * var(--ui-scale))); font-size: max(13px, calc(16px * var(--ui-scale))); }
+body:not(.mobile-ui) .craft-selection { font-size: max(13px, calc(16px * var(--ui-scale))); }
 body:not(.mobile-ui) .craft-chance,
-body:not(.mobile-ui) .craft-failure-note { font-size: calc(14px * var(--ui-scale)); }
-body:not(.mobile-ui) .craft-notes { padding: calc(5px * var(--ui-scale)) 0 calc(8px * var(--ui-scale)); }
+body:not(.mobile-ui) .craft-failure-note { font-size: max(12px, calc(14px * var(--ui-scale))); }
+body:not(.mobile-ui) .craft-notes { padding: calc(3px * var(--ui-scale)) 0 calc(5px * var(--ui-scale)); }
 body:not(.mobile-ui) .craft-matrix {
   grid-template-columns: repeat(var(--craft-rarity-count, 9), minmax(0, 1fr));
   gap: calc(4px * var(--ui-scale));
 }
 body:not(.mobile-ui) .craft-matrix-cell { width: 100%; height: auto; aspect-ratio: 1; background: transparent; }
 body:not(.mobile-ui) .craft-matrix-cell .petal-stack { width: 100%; height: 100%; }
-body:not(.mobile-ui) .craft-panel.forge-mode .forge-matrix { grid-template-columns: repeat(auto-fill, calc(62px * var(--ui-scale))); }
+body:not(.mobile-ui) .craft-panel.forge-mode .forge-matrix { grid-template-columns: repeat(auto-fill, calc(54px * var(--ui-scale))); }
 body:not(.mobile-ui) :is(.inventory-list, .craft-list) {
-  padding: calc(10px * var(--ui-scale)) calc(12px * var(--ui-scale)) calc(4px * var(--ui-scale)) calc(2px * var(--ui-scale));
+  padding: max(6px, calc(8px * var(--ui-scale))) calc(12px * var(--ui-scale)) calc(3px * var(--ui-scale)) calc(2px * var(--ui-scale));
 }
-/* Empty wells use the SVG card's silhouette, not the larger button box. */
+/* 空槽使用卡片实际轮廓，而非较大的按钮边界。 */
 .craft-stage-slot, .craft-stage-slot:not(.filled), .craft-stage-slot.empty,
 .craft-stage-slot.craft-card-fading, .craft-panel.forge-mode .craft-stage-slot:not(.filled),
 .craft-matrix-cell.empty { background: transparent; }
@@ -181,46 +177,45 @@ body:not(.mobile-ui) .talent-footer {
   position: absolute; left: calc(12px * var(--ui-scale)); right: calc(8px * var(--ui-scale)); bottom: calc(6px * var(--ui-scale));
   height: calc(36px * var(--ui-scale)); min-height: calc(36px * var(--ui-scale)); pointer-events: none;
 }
-body:not(.mobile-ui) .talent-footer button { font-size: calc(13px * var(--ui-scale)); }
+body:not(.mobile-ui) .talent-footer button { font-size: max(12px, calc(13px * var(--ui-scale))); }
 body:not(.mobile-ui) .talent-footer button { pointer-events: auto; }
 body:not(.mobile-ui) .talent-help { font-size: calc(11px * var(--ui-scale)); }
 
-/* Top panels anchor immediately under the top-left action strip. */
+
 body:not(.mobile-ui) .settings-panel {
   left: var(--top-action-left); top: var(--panel-top); bottom: auto;
   width: var(--settings-width); height: auto; max-height: var(--settings-height);
   padding: calc(6px * var(--ui-scale)); box-shadow: none;
 }
-body:not(.mobile-ui) .settings-panel .panel-title { min-height: calc(44px * var(--ui-scale)); }
+body:not(.mobile-ui) .settings-panel .panel-title { min-height: calc(36px * var(--ui-scale)); }
 body:not(.mobile-ui) .settings-list {
   max-height: calc(var(--settings-height) - 150px * var(--ui-scale));
-  padding: calc(12px * var(--ui-scale)) calc(28px * var(--ui-scale));
+  padding: calc(8px * var(--ui-scale)) calc(14px * var(--ui-scale));
 }
-body:not(.mobile-ui) .settings-tabs { padding: 0 calc(18px * var(--ui-scale)); gap: calc(8px * var(--ui-scale)); }
-body:not(.mobile-ui) .settings-tabs button { font-size: calc(14px * var(--ui-scale)); height: calc(32px * var(--ui-scale)); padding: 0; }
-body:not(.mobile-ui) .settings-row { min-height: calc(44px * var(--ui-scale)); padding: calc(6px * var(--ui-scale)) 0; border: 0; gap: calc(8px * var(--ui-scale)); }
-body:not(.mobile-ui) .settings-label { font-size: calc(16px * var(--ui-scale)); }
+body:not(.mobile-ui) .settings-tabs { padding: 0 calc(10px * var(--ui-scale)); gap: calc(5px * var(--ui-scale)); }
+body:not(.mobile-ui) .settings-tabs button { font-size: max(12px, calc(14px * var(--ui-scale))); height: auto; min-height: max(28px, calc(32px * var(--ui-scale))); padding: 3px; }
+body:not(.mobile-ui) .settings-row { min-height: calc(36px * var(--ui-scale)); padding: calc(4px * var(--ui-scale)) 0; border: 0; gap: calc(6px * var(--ui-scale)); }
+body:not(.mobile-ui) .settings-label { font-size: max(13px, calc(16px * var(--ui-scale))); }
 .settings-row[data-setting-type="toggle"] { grid-template-columns: auto minmax(0, 1fr); }
 .settings-row[data-setting-type="toggle"] .settings-square-toggle { grid-column: 1; grid-row: 1; justify-self: start; }
 .settings-row[data-setting-type="toggle"] .settings-label { grid-column: 2; grid-row: 1; }
 body:not(.mobile-ui) .settings-square-toggle { width: calc(28px * var(--ui-scale)); height: calc(28px * var(--ui-scale)); min-width: 0; min-height: 0; border-radius: 2px; }
 body:not(.mobile-ui) .settings-square-toggle-fill { width: 100%; height: 100%; background-size: 85% 85%; }
-body:not(.mobile-ui) .settings-row[data-setting-type="choice"] { grid-template-columns: auto minmax(0, 1fr); }
-body:not(.mobile-ui) .settings-choice { min-width: 0; height: calc(28px * var(--ui-scale)); font-size: calc(14px * var(--ui-scale)); }
-body:not(.mobile-ui) #emailSettingsRow { margin: 0 calc(28px * var(--ui-scale)); }
+body:not(.mobile-ui) .settings-row[data-setting-type="choice"] { grid-template-columns: minmax(0, 1fr) minmax(100px, 2fr); }
+body:not(.mobile-ui) .settings-choice { min-width: 0; height: auto; min-height: max(30px, calc(30px * var(--ui-scale))); font-size: max(13px, calc(14px * var(--ui-scale))); }
+body:not(.mobile-ui) #emailSettingsRow { margin: 0 calc(14px * var(--ui-scale)); }
 body:not(.mobile-ui) .game-panel.codex-panel {
   left: var(--top-action-left); top: var(--panel-top); bottom: auto;
   width: max-content; max-width: var(--codex-width); height: auto; max-height: var(--codex-height);
   padding: calc(4px * var(--ui-scale)) calc(6px * var(--ui-scale)) calc(6px * var(--ui-scale));
 }
 body:not(.mobile-ui) .codex-grid {
-  --codex-gap: calc(6px * var(--ui-scale));
-  --codex-card-size: min(calc(64px * var(--ui-scale)), calc((var(--codex-width) - 48px * var(--ui-scale) - (var(--codex-columns, 11) - 1) * var(--codex-gap)) / var(--codex-columns, 11)));
+  --codex-gap: calc(5px * var(--ui-scale));
+  --codex-card-size: calc(56px * var(--ui-scale));
   max-height: calc(var(--codex-height) - 68px * var(--ui-scale));
 }
 
-/* Mobile keeps the user-requested two rows, chat above them, full-viewport
-   panels and simple A/B/X. Never scale the whole body or its touch surface. */
+/* 移动端保留两行槽位、上方聊天及 A/B/X，不整体缩放页面和触摸区域。 */
 body.mobile-ui .slot-key-hints, body.mobile-ui .slot-swap-hint { display: none; }
 body.mobile-ui.slots-collapsed .slot-row-wrap.secondary-wrap { margin-top: 0; }
 body.mobile-ui.slots-collapsed .slot-row.secondary { max-height: 0; overflow: hidden; }
@@ -234,13 +229,17 @@ body.mobile-ui .talent-panel { grid-template-rows: auto minmax(0, 1fr) auto; }
 body.mobile-ui .talent-points { position: absolute; top: calc(var(--mobile-top) + 8px); left: var(--mobile-left); font-size: 18px; }
 body.mobile-ui .mobile-slot-menu { left: var(--loadout-left); bottom: calc(var(--loadout-bottom) + var(--loadout-height) + 8px); }
 
-/* Keep FBT authentication fields, but let the title/form float over the
-   world like the reference instead of a large blue dialog. */
+
 #authPanel {
-  width: min(360px, calc(100vw - 32px)); border: 0; background: transparent;
+  width: min(300px, calc(100vw - 32px)); border: 0; background: transparent;
   padding: 8px; gap: 6px;
 }
-#authPanel h1 { margin-bottom: 22px; font-size: clamp(38px, calc(66px * var(--ui-scale)), 88px); text-shadow: 3px 0 #222, -3px 0 #222, 0 3px #222, 0 -3px #222; }
+#authPanel h1 {
+  margin: 0 0 24px; font-size: clamp(54px, calc(84px * var(--ui-scale)), 112px);
+  font-weight: 900; line-height: 1.1; letter-spacing: -.025em;
+  -webkit-text-stroke: clamp(4px, calc(7px * var(--ui-scale)), 10px) #111;
+  paint-order: stroke fill; text-shadow: none;
+}
 #authPanel .auth-version { display: block; margin: 4px 0 0; font-size: 12px; }
 #authPanel label { margin: 8px 0; }
 #authPanel .auth-status { min-height: 18px; }

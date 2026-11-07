@@ -1,9 +1,6 @@
 #include "waitingcontroller.h"
 #include "../../HotReload/snapshot_archive.h"
-#include "../../Module/network_module.h"
-#include "../../Module/world_module.h"
 #include "../../../Shared/tools.h"
-#include "../../server.h"
 #include "../entities/flower.h"
 #include "../gamecontext.h"
 #include "../gameworld.h"
@@ -57,7 +54,7 @@ std::string ToLowerCopy(std::string text)
     return text;
 }
 
-// Resolves a /setting map value to a map path: "garden" -> "data/maps/garden.tmj".
+// 将地图简称解析为资源路径，例如 garden 对应 data/maps/garden.tmj。
 std::string ResolveGameMapPath(const std::string& value)
 {
     const bool looks_like_path = value.find('/') != std::string::npos ||
@@ -68,27 +65,17 @@ std::string ResolveGameMapPath(const std::string& value)
     if (std::filesystem::exists(candidate, ec)) return candidate;
     return {};
 }
-} // namespace
+}
 
 CWaitingController::CWaitingController(SWaitingControllerConfig config) : m_config(config)
 {
     m_config.minimum_player_count = std::max(1u, m_config.minimum_player_count);
 }
 
-void CWaitingController::OnActivate(CGameWorld& world) { MaintainPetalBans(world); }
-
 void CWaitingController::OnDeactivate(CGameWorld& world)
 {
-    // Teardown hands any players still waiting over to the game world; without
-    // a game world they are just un-banned (petal access restored).
-    CGameWorld* destination_world = ResolveDestinationWorld(world);
-    if (destination_world && destination_world != &world)
-        ReleasePlayers(world, *destination_world);
-    else
-    {
-        for (CPlayer* player : CollectWaitingPlayers(world))
-            SetPlayerPetalsBanned(player, false);
-    }
+    // 离开玩法只撤销自身限制，跨世界迁移由统一事务入口负责。
+    for (CPlayer* player : CollectWaitingPlayers(world)) SetPlayerPetalsBanned(player, false);
 }
 
 void CWaitingController::OnTick(CGameWorld& world, float dt)
@@ -271,7 +258,7 @@ bool CWaitingController::HandleSettingCommand(CGameWorld& world, CPlayer& player
             return true;
         }
         m_config.game_map_path = map_path;
-        // Derive the default controller from the map unless one was chosen.
+        // 未明确指定玩法时，使用地图声明的默认控制器。
         if (m_config.game_controller_key.empty())
             m_config.game_controller_key = std::string(map_declarations::ControllerKeyForMap(map_path));
         SendSystemMessage(world, player, "map set to " + map_path +
@@ -331,9 +318,7 @@ bool CWaitingController::HandleSettingCommand(CGameWorld& world, CPlayer& player
         return true;
     }
 
-    // Generic controller parameters: any key declared by the destination
-    // controller's ParamSchema can be set here. Values pass the 审查函数
-    // first, then a type-level legality check, and are stored as overrides.
+    // 按目标控制器声明的参数表校验，并保存为创建时的覆盖值。
     const std::vector<SControllerParamInfo> schema =
         ControllerParamSchemaForKey(m_config.game_controller_key);
     for (const SControllerParamInfo& info : schema)
@@ -356,7 +341,14 @@ bool CWaitingController::HandleSettingCommand(CGameWorld& world, CPlayer& player
                                                  " value for " + key + ": " + value);
             return true;
         }
-        m_config.game_controller_params.Set(key, value);
+        auto candidate = m_config.game_controller_params;
+        candidate.Set(key, value);
+        if (!CreateWorldController(m_config.game_controller_key, candidate))
+        {
+            SendSystemMessage(world, player, "参数组合无效，请检查参赛与观战阵营是否冲突。");
+            return true;
+        }
+        m_config.game_controller_params = std::move(candidate);
         SendSystemMessage(world, player, key + " set to " + value);
         return true;
     }
@@ -369,7 +361,7 @@ bool CWaitingController::ShouldRelease(size_t player_count) const
 {
     if (m_config.release_policy == EWaitingReleasePolicy::MinimumPlayers)
         return player_count >= static_cast<size_t>(m_config.minimum_player_count);
-    // A manual start request releases whenever at least one player waits.
+    // 手动开局只要求至少一名等待玩家。
     if (m_start_requested) return player_count > 0;
     return false;
 }
@@ -387,11 +379,10 @@ CGameWorld* CWaitingController::ResolveOrCreateDestinationWorld(CGameWorld& worl
     if (destination_world && destination_world != &world) return destination_world;
 
     if (m_config.room_code < 0) return nullptr;
-    CServer* server = CServer::GetInstance();
-    IWorldModule* world_module = server ? server->GetWorldModule() : nullptr;
-    if (!world_module) return nullptr;
+    CGameContext* context = world.GameContext();
+    if (!context) return nullptr;
 
-    CGameWorld* created_world = world_module->CreateRoomGameWorld(m_config.room_code);
+    CGameWorld* created_world = context->Worlds().CreateRoomGameWorld(m_config.room_code);
     if (!created_world) return nullptr;
     m_config.destination_world_id = created_world->GetId();
     return created_world;
@@ -402,16 +393,13 @@ size_t CWaitingController::CountWaitingPlayers(CGameWorld& world) const { return
 std::vector<CPlayer*> CWaitingController::CollectWaitingPlayers(CGameWorld& world) const
 {
     std::vector<CPlayer*> result;
-    CGameContext* context = world.GameContext();
-    if (!context) return result;
-
-    for (const auto& player : context->Players())
+    for (auto* player : world.Players())
     {
         if (!player) continue;
         CEntity* entity = player->GetEntity();
         if (!entity || entity->GameWorld() != &world || entity->IsMarkedForDes() || entity->IsDead()) continue;
         if (!dynamic_cast<CPlayerFlower*>(entity)) continue;
-        result.push_back(player.get());
+        result.push_back(player);
     }
     return result;
 }

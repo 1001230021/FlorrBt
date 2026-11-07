@@ -6,12 +6,10 @@
 namespace florrbt
 {
 inline constexpr std::string_view name = "FlorrBt";
-// Wire version triple sent by the client in its first packet; the server
-// rejects clients that do not match. Keep in sync with the version string and
-// with web/src/version.js.
+// 首包校验协议版本，须与客户端及构建版本同步。
 inline constexpr std::uint8_t version_major = 1;
 inline constexpr std::uint8_t version_minor = 0;
-inline constexpr std::uint8_t version_patch = 5;
-inline constexpr std::string_view version = "1.0.5";
-inline constexpr std::string_view version_label = "FlorrBt v1.0.5";
-} // namespace florrbt
+inline constexpr std::uint8_t version_patch = 9;
+inline constexpr std::string_view version = "1.0.9";
+inline constexpr std::string_view version_label = "FlorrBt v1.0.9";
+}

@@ -6,9 +6,7 @@
 
 class CPlayer;
 
-// Deathmatch world: every player is teamless (team 0), free loadouts and
-// talents, everyone fights everyone. The room params mirror the waiting
-// room map setting so the map can be swapped before /start.
+// 死亡竞赛使用 team 0 自由混战，允许自定义装备与天赋；地图参数可在开局前调整。
 class CDeathmatchController : public IGameController
 {
   public:

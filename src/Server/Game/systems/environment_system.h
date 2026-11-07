@@ -5,7 +5,7 @@
 class CGameWorld;
 class CMobBase;
 
-// Owned by the world. No controller/region/entity pointers survive a call.
+// 由世界持有，不跨调用保留控制器、区域或实体指针。
 class CEnvironmentSystem
 {
   public:
