@@ -392,6 +392,9 @@ class CEOUMob : public CMob<TStats>, public IEouMob
     float m_wander_timer = 0.f;
 };
 
+template <>
+CEOUMob<SMobStats>::SFoodTarget CEOUMob<SMobStats>::FindEouFoodTarget(CGameWorld* world);
+
 // 工蚁优先挖掘可达的团队标记墙，其次采集和搬运食物。
 // 分组重规划沿用工蚁当前目标，不能让信息素覆盖正在执行的挖掘任务。
 class CEouWorkerAnt final : public CEOUMob<SMobStats>

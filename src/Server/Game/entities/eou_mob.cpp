@@ -226,6 +226,7 @@ namespace
 constexpr float kEouFoodSearchMaxRange = 320.f;
 }
 
+template <>
 CEOUMob<SMobStats>::SFoodTarget CEOUMob<SMobStats>::FindEouFoodTarget(CGameWorld* world)
 {
     SFoodTarget result;
